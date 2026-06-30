@@ -1,0 +1,70 @@
+import { createClient } from "@/lib/supabase"
+import { NextResponse } from "next/server"
+
+export async function GET(request: Request) {
+  try {
+    const { searchParams } = new URL(request.url)
+    const idempresa = searchParams.get("idempresa")
+    
+    console.log("[v0] Citas-vehiculos API called with idempresa:", idempresa)
+
+    const supabase = await createClient()
+
+    // Fetch vehicle appointments with empty status filtered by company
+    let query = supabase
+      .from("citasvehiculos")
+      .select("*")
+      .is("estatus", null)
+      .order("fechallegada", { ascending: false })
+
+    if (idempresa) {
+      query = query.eq("idempresa", parseInt(idempresa))
+      console.log("[v0] Filtering by idempresa:", parseInt(idempresa))
+    }
+
+    const { data, error } = await query
+
+    if (error) {
+      console.error("[v0] Error fetching vehicle appointments:", error)
+      return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+
+    console.log("[v0] Found vehicle appointments:", data?.length || 0)
+    console.log("[v0] Vehicle appointments data:", data)
+
+    return NextResponse.json(data || [])
+  } catch (error) {
+    console.error("[v0] Unexpected error in vehicle appointments API:", error)
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+  }
+}
+
+export async function PATCH(request: Request) {
+  try {
+    const body = await request.json()
+    const { id, estatus } = body
+
+    if (!id) {
+      return NextResponse.json({ error: "ID is required" }, { status: 400 })
+    }
+
+    const supabase = await createClient()
+
+    const { data, error } = await supabase
+      .from("citasvehiculos")
+      .update({ estatus })
+      .eq("id", id)
+      .select()
+      .single()
+
+    if (error) {
+      console.error("[v0] Error updating vehicle appointment status:", error)
+      return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+
+    return NextResponse.json(data)
+  } catch (error) {
+    console.error("[v0] Unexpected error updating vehicle appointment:", error)
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+  }
+}

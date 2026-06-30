@@ -1,0 +1,721 @@
+"use client"
+
+import type React from "react"
+
+import { useState, useEffect } from "react"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
+import { RefreshCw, FileText, UserPlus, ArrowLeft, Camera, Check } from "lucide-react"
+import {
+  getPendingUnloadOrders,
+  getDistributionOrders,
+  type PendingLoadOrder,
+  generatePackingPDF,
+  getCarguDescarguePersonnel,
+  type PersonnelEmployee,
+  assignPersonnelToOrder,
+  getPackingItems,
+  type PackingItem,
+  confirmPacking,
+} from "@/lib/packing-actions"
+import { updateOrderInitioCargue } from "@/lib/orders-actions"
+import { useToast } from "@/hooks/use-toast"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
+import { useIsMobile } from "@/components/qr-camera-scanner"
+import { useAuth } from "@/components/auth-provider"
+
+export function Packing() {
+  const { toast } = useToast()
+  const { profile, selectedEmpresaId } = useAuth()
+  const [orders, setOrders] = useState<PendingLoadOrder[]>([])
+  const [loading, setLoading] = useState(true)
+  const [generatingPDF, setGeneratingPDF] = useState<number | null>(null)
+
+  const [personnelDialogOpen, setPersonnelDialogOpen] = useState(false)
+  const [selectedOrder, setSelectedOrder] = useState<PendingLoadOrder | null>(null)
+  const [personnel, setPersonnel] = useState<PersonnelEmployee[]>([])
+  const [selectedPersonnel, setSelectedPersonnel] = useState<string[]>([])
+  const [loadingPersonnel, setLoadingPersonnel] = useState(false)
+  const [assigningPersonnel, setAssigningPersonnel] = useState(false)
+  const [auxiliaresInput, setAuxiliaresInput] = useState("")
+
+  const [showPackingView, setShowPackingView] = useState(false)
+  const [packingItems, setPackingItems] = useState<PackingItem[]>([])
+  const [verifiedItems, setVerifiedItems] = useState<Set<number>>(new Set())
+  const [loadingPacking, setLoadingPacking] = useState(false)
+  const [confirmingPacking, setConfirmingPacking] = useState(false)
+
+  const [photoDialogOpen, setPhotoDialogOpen] = useState(false)
+  const [selectedPhotosOrder, setSelectedPhotosOrder] = useState<PendingLoadOrder | null>(null)
+  const [selectedPhotos, setSelectedPhotos] = useState<File[]>([])
+  const [uploadingPhotos, setUploadingPhotos] = useState(false)
+  const [photoPreviewUrls, setPhotoPreviewUrls] = useState<string[]>([])
+
+  const [confirmedPackingOrders, setConfirmedPackingOrders] = useState<Set<number>>(new Set())
+
+  const isMobile = useIsMobile()
+
+  // Function to compress image
+  const compressImage = async (file: File, quality: number = 0.6, maxWidth: number = 1200): Promise<File> => {
+    return new Promise((resolve) => {
+      const canvas = document.createElement("canvas")
+      const ctx = canvas.getContext("2d")
+      const img = new Image()
+      img.crossOrigin = "anonymous"
+
+      img.onload = () => {
+        let { width, height } = img
+
+        // Scale down if larger than maxWidth
+        if (width > maxWidth) {
+          height = (height * maxWidth) / width
+          width = maxWidth
+        }
+
+        canvas.width = width
+        canvas.height = height
+        ctx?.drawImage(img, 0, 0, width, height)
+
+        canvas.toBlob(
+          (blob) => {
+            if (blob) {
+              const compressedFile = new File([blob], file.name, {
+                type: "image/jpeg",
+                lastModified: Date.now(),
+              })
+              resolve(compressedFile)
+            } else {
+              resolve(file) // Fallback to original if compression fails
+            }
+          },
+          "image/jpeg",
+          quality
+        )
+      }
+
+      img.onerror = () => resolve(file) // Fallback to original on error
+      img.src = URL.createObjectURL(file)
+    })
+  }
+
+  const loadOrders = async () => {
+    setLoading(true)
+    try {
+      // Fetch both unload orders (Descargue) and distribution orders (Distribucion)
+      const [unloadResult, distributionResult] = await Promise.all([
+        getPendingUnloadOrders(selectedEmpresaId),
+        getDistributionOrders(selectedEmpresaId),
+      ])
+
+      const allOrders: PendingLoadOrder[] = []
+
+      if (unloadResult.success) {
+        allOrders.push(...unloadResult.data)
+      }
+
+      if (distributionResult.success) {
+        allOrders.push(...distributionResult.data)
+      }
+
+      if (allOrders.length === 0) {
+        toast({
+          title: "Información",
+          description: "No hay órdenes pendientes",
+        })
+      }
+
+      // Sort all orders by ordendecargue descending
+      allOrders.sort((a, b) => {
+        const numA = parseInt(a.ordendecargue, 10)
+        const numB = parseInt(b.ordendecargue, 10)
+        return numB - numA
+      })
+
+      setOrders(allOrders)
+    } catch (error) {
+      console.error("[v0] Error loading orders:", error)
+      toast({
+        title: "Error",
+        description: "Error al cargar las órdenes",
+        variant: "destructive",
+      })
+    }
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    if (selectedEmpresaId) {
+      loadOrders()
+    }
+  }, [selectedEmpresaId])
+
+  const handleAssignPersonnel = async (order: PendingLoadOrder) => {
+    setSelectedOrder(order)
+    setSelectedPersonnel([])
+    setAuxiliaresInput("")
+    setPersonnelDialogOpen(true)
+
+    setLoadingPersonnel(true)
+    const result = await getCarguDescarguePersonnel(selectedEmpresaId)
+
+    if (result.success) {
+      setPersonnel(result.data)
+    } else {
+      toast({
+        title: "Error",
+        description: result.message,
+        variant: "destructive",
+      })
+    }
+    setLoadingPersonnel(false)
+  }
+
+  const togglePersonnelSelection = (employeeName: string) => {
+    setSelectedPersonnel((prev) =>
+      prev.includes(employeeName) ? prev.filter((name) => name !== employeeName) : [...prev, employeeName],
+    )
+  }
+
+  const handleConfirmAssignment = async () => {
+    if (!selectedOrder || selectedPersonnel.length === 0) {
+      toast({
+        title: "Error",
+        description: "Debe seleccionar al menos un empleado",
+        variant: "destructive",
+      })
+      return
+    }
+
+    const currentUserName = profile?.usuario || "Usuario desconocido"
+
+    setAssigningPersonnel(true)
+    const result = await assignPersonnelToOrder(
+      selectedOrder.id,
+      selectedPersonnel,
+      auxiliaresInput,
+      currentUserName,
+      selectedOrder,
+    )
+
+    if (result.success) {
+      toast({
+        title: "Éxito",
+        description: result.message,
+      })
+      setPersonnelDialogOpen(false)
+      setAuxiliaresInput("")
+      await loadOrders()
+    } else {
+      toast({
+        title: "Error",
+        description: result.message,
+        variant: "destructive",
+      })
+    }
+    setAssigningPersonnel(false)
+  }
+
+  const handleSimpleVerification = (itemId: number) => {
+    setVerifiedItems((prev) => {
+      const newSet = new Set(prev)
+      if (newSet.has(itemId)) {
+        newSet.delete(itemId)
+      } else {
+        newSet.add(itemId)
+      }
+      return newSet
+    })
+  }
+
+  const handlePerformPacking = async (order: PendingLoadOrder) => {
+    setSelectedOrder(order)
+    setShowPackingView(true)
+
+    setLoadingPacking(true)
+    const result = await getPackingItems(order.ordendecargue)
+
+    if (result.success) {
+      setPackingItems(result.data)
+      setVerifiedItems(new Set())
+    } else {
+      toast({
+        title: "Error",
+        description: result.message,
+        variant: "destructive",
+      })
+    }
+    setLoadingPacking(false)
+  }
+
+  const handleConfirmPacking = async () => {
+    if (!selectedOrder) return
+
+    try {
+      setConfirmingPacking(true)
+      const result = await confirmPacking(selectedOrder.id)
+
+      if (result.success) {
+        setConfirmedPackingOrders((prev) => new Set(prev).add(selectedOrder.id))
+
+        toast({
+          title: "Éxito",
+          description: "Packing confirmado exitosamente",
+        })
+        setShowPackingView(false)
+        setSelectedOrder(null)
+      } else {
+        toast({
+          title: "Error",
+          description: result.message || "Error al confirmar el packing",
+          variant: "destructive",
+        })
+      }
+    } catch (error: any) {
+      console.error("[v0] Error confirming packing:", error)
+      toast({
+        title: "Error",
+        description: error.message || "Error al confirmar el packing",
+        variant: "destructive",
+      })
+    } finally {
+      setConfirmingPacking(false)
+    }
+  }
+
+  const handleGeneratePDF = async (order: PendingLoadOrder) => {
+    setGeneratingPDF(order.id)
+    console.log("[v0] Packing: Starting PDF generation for order:", order.id)
+    
+    const result = await generatePackingPDF(order.id, order.ordendecargue, order.cliente, order.placa, order.conductor)
+
+    if (result.success && result.pdfUrl) {
+      console.log("[v0] Packing: PDF generated successfully, updating iniciocargue")
+      
+      // Update iniciocargue with current time in Colombia
+      const updateResult = await updateOrderInitioCargue(order.id)
+      console.log("[v0] Packing: updateOrderInitioCargue result:", updateResult)
+
+      toast({
+        title: "Éxito",
+        description: "PDF generado exitosamente",
+      })
+      window.open(result.pdfUrl, "_blank")
+    } else {
+      console.log("[v0] Packing: PDF generation failed")
+      toast({
+        title: "Error",
+        description: result.error || "Error al generar el PDF",
+        variant: "destructive",
+      })
+    }
+    setGeneratingPDF(null)
+  }
+
+  const handleUploadPhotos = (order: PendingLoadOrder) => {
+    setSelectedPhotosOrder(order)
+    setSelectedPhotos([])
+    setPhotoPreviewUrls([])
+    setPhotoDialogOpen(true)
+  }
+
+  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+
+    if (files.length + selectedPhotos.length > 30) {
+      toast({
+        title: "Error",
+        description: "Máximo 30 fotos permitidas",
+        variant: "destructive",
+      })
+      return
+    }
+
+    const newPreviewUrls = files.map((file) => URL.createObjectURL(file))
+    setPhotoPreviewUrls([...photoPreviewUrls, ...newPreviewUrls])
+    setSelectedPhotos([...selectedPhotos, ...files])
+  }
+
+  const handleRemovePhoto = (index: number) => {
+    const newPhotos = selectedPhotos.filter((_, i) => i !== index)
+    const newPreviews = photoPreviewUrls.filter((_, i) => i !== index)
+
+    URL.revokeObjectURL(photoPreviewUrls[index])
+
+    setSelectedPhotos(newPhotos)
+    setPhotoPreviewUrls(newPreviews)
+  }
+
+  const handleSavePhotos = async () => {
+    if (!selectedPhotosOrder || selectedPhotos.length === 0) {
+      toast({
+        title: "Error",
+        description: "Debe seleccionar al menos una foto",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setUploadingPhotos(true)
+
+    try {
+      // Comprimimos SIEMPRE (no solo con >5). Las camaras de movil
+      // generan archivos de 3-5MB cada uno; sumar varios en un solo
+      // POST excede el limite ~4.5MB de Vercel y la peticion ni
+      // siquiera entra al endpoint, dejando el dialog colgado en
+      // "Guardando..." sin que el usuario pueda cerrar.
+      toast({
+        title: "Optimizando fotos",
+        description: `Procesando ${selectedPhotos.length} foto(s)...`,
+      })
+      const photosToUpload = await Promise.all(
+        selectedPhotos.map((photo) => compressImage(photo, 0.6, 1280)),
+      )
+
+      // Subimos foto a foto en peticiones independientes para evitar
+      // el limite de tamano del body. Si alguna falla abortamos sin
+      // finalizar la orden y mostramos el error real del servidor.
+      const orderId = selectedPhotosOrder.id.toString()
+      const urls: string[] = []
+      for (let i = 0; i < photosToUpload.length; i++) {
+        const photo = photosToUpload[i]
+        toast({
+          title: "Subiendo fotos",
+          description: `Subiendo ${i + 1} de ${photosToUpload.length}...`,
+        })
+        const fd = new FormData()
+        fd.append("orderId", orderId)
+        fd.append("mode", "append")
+        fd.append("files", photo)
+        const res = await fetch("/api/upload-picking-photos", {
+          method: "POST",
+          body: fd,
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok || !data?.success || !Array.isArray(data?.urls)) {
+          throw new Error(
+            data?.error ||
+              data?.details ||
+              `Error subiendo la foto ${i + 1}. Intenta nuevamente.`,
+          )
+        }
+        urls.push(...data.urls)
+      }
+
+      // Llamada de cierre (modo "finalize"): solo manda JSON, no
+      // archivos, asi siempre cabe en el body y siempre cierra la
+      // orden persistiendo `fotospicking` y `fincargue`.
+      const finalizeFd = new FormData()
+      finalizeFd.append("orderId", orderId)
+      finalizeFd.append("mode", "finalize")
+      finalizeFd.append("urls", JSON.stringify(urls))
+      const finalizeRes = await fetch("/api/upload-picking-photos", {
+        method: "POST",
+        body: finalizeFd,
+      })
+      const finalizeData = await finalizeRes.json().catch(() => ({}))
+      if (!finalizeRes.ok || !finalizeData?.success) {
+        throw new Error(
+          finalizeData?.error ||
+            finalizeData?.details ||
+            "No se pudo cerrar la orden tras subir las fotos",
+        )
+      }
+
+      toast({
+        title: "Éxito",
+        description: `${urls.length} foto(s) guardadas exitosamente`,
+      })
+      setPhotoDialogOpen(false)
+      setSelectedPhotos([])
+      setPhotoPreviewUrls([])
+      await loadOrders()
+    } catch (error: any) {
+      console.error("[v0] Error uploading photos:", error)
+      toast({
+        title: "Error",
+        description: error?.message || "Error al guardar las fotos",
+        variant: "destructive",
+      })
+    } finally {
+      setUploadingPhotos(false)
+    }
+  }
+
+  if (showPackingView && selectedOrder) {
+    return (
+      <div className="space-y-4 p-4">
+        <div className="flex items-center gap-4">
+          <Button onClick={() => setShowPackingView(false)} variant="ghost" size="icon">
+            <ArrowLeft className="h-5 w-5" />
+          </Button>
+          <h2 className="text-2xl font-bold">Verificación de Packing - {selectedOrder.ordendecargue}</h2>
+        </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Productos para Verificar</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {loadingPacking ? (
+              <div className="text-center py-8">Cargando productos...</div>
+            ) : (
+              <div className="space-y-2">
+                {packingItems.map((item) => {
+                  const isVerified = verifiedItems.has(item.id)
+
+                  return (
+                    <div
+                      key={item.id}
+                      className={`flex items-center gap-4 p-3 border rounded-lg transition-colors ${
+                        isVerified ? "bg-green-50 border-green-200" : ""
+                      }`}
+                    >
+                      <div className="w-24">
+                        {isVerified ? (
+                          <div className="flex items-center justify-center gap-1 text-green-600">
+                            <Check className="h-5 w-5" />
+                            <span className="font-semibold text-sm">Verificado</span>
+                          </div>
+                        ) : (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleSimpleVerification(item.id)}
+                            className="w-full"
+                          >
+                            <Check className="h-4 w-4 mr-1" />
+                            Verificar
+                          </Button>
+                        )}
+                      </div>
+                      <div className="flex-1">
+                        <div className="font-medium">{item.producto}</div>
+                        <div className="text-sm text-muted-foreground">Cantidad: {item.cantidad}</div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            <div className="mt-6 flex justify-end gap-2">
+              <Button onClick={() => setShowPackingView(false)} variant="outline">
+                Cancelar
+              </Button>
+              <Button
+                onClick={handleConfirmPacking}
+                disabled={confirmingPacking || verifiedItems.size !== packingItems.length}
+              >
+                {confirmingPacking ? "Confirmando..." : "Confirmar Packing"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle>Órdenes de Descargue Pendientes</CardTitle>
+          <Button onClick={loadOrders} disabled={loading} variant="outline" size="sm">
+            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
+            Actualizar
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <div className="text-center py-8 text-muted-foreground">Cargando órdenes...</div>
+        ) : orders.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground">No hay órdenes de descargue pendientes</div>
+        ) : (
+          <div className="max-h-[calc(100vh-220px)] overflow-y-auto">
+            <div className="overflow-x-auto">
+              <table className="w-full text-[10px]">
+                <thead className="bg-muted sticky top-0 z-10">
+                  <tr>
+                    <th className="py-1 px-2 text-left font-semibold">Orden</th>
+                    <th className="py-1 px-2 text-left font-semibold">Fecha Orden</th>
+                    <th className="py-1 px-2 text-left font-semibold">Fecha Descargue</th>
+                    <th className="py-1 px-2 text-left font-semibold">Cliente</th>
+                    <th className="py-1 px-2 text-left font-semibold">Placa</th>
+                    <th className="py-1 px-2 text-left font-semibold">Conductor</th>
+                    <th className="py-1 px-2 text-left font-semibold">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {orders.map((order) => (
+                    <tr key={order.id} className="border-b hover:bg-muted/50">
+                      <td className="py-1 px-2">{order.ordendecargue}</td>
+                      <td className="py-1 px-2">{order.fechaorden || "-"}</td>
+                      <td className="py-1 px-2">{order.fechacargue || "-"}</td>
+                      <td className="py-1 px-2">{order.cliente}</td>
+                      <td className="py-1 px-2">{order.placa}</td>
+                      <td className="py-1 px-2">{order.conductor}</td>
+                      <td className="py-1 px-2">
+                        {/* Nuevo flujo de Packing: PDF -> Personal -> Fotos.
+                            El cargue de fotos es el paso final y el que cierra
+                            la orden (escribe `fincargue`); por eso "Asignar
+                            Personal" ya no requiere fotos previas y "Cargar
+                            Fotos" pasa a depender de que ya exista personal
+                            asignado. */}
+                        <div className="flex flex-wrap gap-1">
+                          <Button
+                            onClick={() => handleGeneratePDF(order)}
+                            disabled={generatingPDF === order.id || !!order.iniciocargue}
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-[10px] px-2"
+                          >
+                            <FileText className="h-3 w-3 mr-1" />
+                            {generatingPDF === order.id ? "Generando..." : "PDF"}
+                          </Button>
+                          <Button
+                            onClick={() => handleAssignPersonnel(order)}
+                            disabled={!order.iniciocargue || !!order.auxiliares}
+                            size="sm"
+                            variant="secondary"
+                            className="h-7 text-[10px] px-2"
+                          >
+                            <UserPlus className="h-3 w-3 mr-1" />
+                            Asignar Personal
+                          </Button>
+                          <Button
+                            onClick={() => handleUploadPhotos(order)}
+                            disabled={!order.auxiliares}
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-[10px] px-2"
+                          >
+                            <Camera className="h-3 w-3 mr-1" />
+                            Cargar Fotos
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </CardContent>
+
+      {/* Personnel Dialog */}
+      <Dialog open={personnelDialogOpen} onOpenChange={setPersonnelDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Asignar Personal - {selectedOrder?.ordendecargue}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label className="text-sm font-medium mb-2 block">Usuario Actual</Label>
+              <Input value={profile?.usuario || "Usuario desconocido"} disabled className="bg-muted" />
+            </div>
+
+            <div>
+              <Label className="text-sm font-medium mb-2 block">Auxiliares</Label>
+              <Textarea
+                value={auxiliaresInput}
+                onChange={(e) => setAuxiliaresInput(e.target.value)}
+                placeholder="Ingrese los nombres de los auxiliares separados por comas"
+                rows={3}
+              />
+            </div>
+
+            <div>
+              <Label className="text-sm font-medium mb-2 block">Seleccionar Personal</Label>
+              {loadingPersonnel ? (
+                <div className="text-center py-4">Cargando personal...</div>
+              ) : (
+                <div className="grid grid-cols-2 gap-2 max-h-60 overflow-y-auto">
+                  {personnel.map((emp) => (
+                    <div
+                      key={emp.id}
+                      className={`p-2 border rounded cursor-pointer transition-colors ${
+                        selectedPersonnel.includes(emp.nombreempleado)
+                          ? "bg-primary text-primary-foreground"
+                          : "hover:bg-muted"
+                      }`}
+                      onClick={() => togglePersonnelSelection(emp.nombreempleado)}
+                    >
+                      {emp.nombreempleado}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setPersonnelDialogOpen(false)} variant="outline">
+              Cancelar
+            </Button>
+            <Button onClick={handleConfirmAssignment} disabled={assigningPersonnel || selectedPersonnel.length === 0}>
+              {assigningPersonnel ? "Asignando..." : "Confirmar Asignación"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Photo Upload Dialog */}
+      <Dialog open={photoDialogOpen} onOpenChange={setPhotoDialogOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh]">
+          <DialogHeader>
+            <DialogTitle>Cargar Fotos - {selectedPhotosOrder?.ordendecargue}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Input
+                type="file"
+                accept="image/*"
+                multiple
+                capture="environment"
+                onChange={handlePhotoChange}
+                className="cursor-pointer"
+              />
+              <p className="text-sm text-muted-foreground mt-1">
+                Máximo 30 fotos. {selectedPhotos.length} seleccionadas.
+              </p>
+            </div>
+
+            {photoPreviewUrls.length > 0 && (
+              <div className="grid grid-cols-3 gap-2 max-h-96 overflow-y-auto">
+                {photoPreviewUrls.map((url, index) => (
+                  <div key={index} className="relative group">
+                    <img
+                      src={url || "/placeholder.svg"}
+                      alt={`Preview ${index + 1}`}
+                      className="w-full h-32 object-cover rounded"
+                    />
+                    <Button
+                      onClick={() => handleRemovePhoto(index)}
+                      variant="destructive"
+                      size="sm"
+                      className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      ✕
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setPhotoDialogOpen(false)} variant="outline">
+              Cancelar
+            </Button>
+            <Button onClick={handleSavePhotos} disabled={uploadingPhotos || selectedPhotos.length === 0}>
+              {uploadingPhotos ? "Guardando..." : "Guardar Fotos"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Card>
+  )
+}

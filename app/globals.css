@@ -1,0 +1,296 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* Updated to LiPGO brand colors: #5bc0de accent, #F4F7FC background, #ffffff cards, #343a40 text, #dee2e6 borders */
+  --background: #F4F7FC;
+  --foreground: #343a40;
+  --card: #ffffff;
+  --card-foreground: #343a40;
+  --popover: #ffffff;
+  --popover-foreground: #343a40;
+  --primary: #5bc0de;
+  --primary-foreground: #ffffff;
+  --secondary: #6c757d;
+  --secondary-foreground: #ffffff;
+  --muted: #e9ecef;
+  --muted-foreground: #6c757d;
+  --accent: #5bc0de;
+  --accent-foreground: #ffffff;
+  --destructive: #dc3545;
+  --destructive-foreground: #ffffff;
+  --border: #dee2e6;
+  --input: #dee2e6;
+  --ring: #5bc0de;
+  --chart-1: #5bc0de;
+  --chart-2: #0dcaf0;
+  --chart-3: #198754;
+  --chart-4: #ffc107;
+  --chart-5: #fd7e14;
+  --radius: 0.75rem;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #343a40;
+  --sidebar-primary: #5bc0de;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e9ecef;
+  --sidebar-accent-foreground: #343a40;
+  --sidebar-border: #dee2e6;
+  --sidebar-ring: #5bc0de;
+}
+
+.dark {
+  /* Dark mode variants maintaining LiPGO brand consistency */
+  --background: #1a1d20;
+  --foreground: #e9ecef;
+  --card: #212529;
+  --card-foreground: #e9ecef;
+  --popover: #212529;
+  --popover-foreground: #e9ecef;
+  --primary: #5bc0de;
+  --primary-foreground: #ffffff;
+  --secondary: #495057;
+  --secondary-foreground: #e9ecef;
+  --muted: #343a40;
+  --muted-foreground: #adb5bd;
+  --accent: #5bc0de;
+  --accent-foreground: #ffffff;
+  --destructive: #dc3545;
+  --destructive-foreground: #ffffff;
+  --border: #495057;
+  --input: #495057;
+  --ring: #5bc0de;
+  --chart-1: #5bc0de;
+  --chart-2: #0dcaf0;
+  --chart-3: #198754;
+  --chart-4: #ffc107;
+  --chart-5: #fd7e14;
+  --sidebar: #212529;
+  --sidebar-foreground: #e9ecef;
+  --sidebar-primary: #5bc0de;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #343a40;
+  --sidebar-accent-foreground: #e9ecef;
+  --sidebar-border: #495057;
+  --sidebar-ring: #5bc0de;
+}
+
+@theme inline {
+  --font-sans: 'Geist', 'Geist Fallback';
+  --font-mono: 'Geist Mono', 'Geist Mono Fallback';
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  
+  /* Hide scrollbar for stats cards horizontal scroll on mobile */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* ===========================================================================
+   PRINT STYLES — exportacion a PDF del "Cierre del Día"
+   ---------------------------------------------------------------------------
+   Cuando el usuario presiona "Generar PDF" en el dashboard de cierre, se
+   dispara `window.print()`. Estrategia (importante):
+
+     1. Forzamos tamaño de pagina Carta (Letter) en orientacion vertical
+        con margenes pequeños (0.4in) para aprovechar la hoja.
+     2. NO usamos `position: absolute` para el contenedor imprimible.
+        Antes lo haciamos, pero los navegadores Chromium recortan el
+        contenido absoluto al final de la hoja (no paginan), lo que
+        causaba que la ultima seccion (Distribución de Turnos en RRHH)
+        desapareciera al imprimir.
+     3. En su lugar, ocultamos con `display: none` todo lo que NO sea
+        ancestro del bloque imprimible usando el selector `:has()`, y
+        aplanamos los ancestros con `display: contents` para eliminar
+        sus paddings/margenes sin sacarlo del flujo. Asi la pagina queda
+        igual y el contenido pagina naturalmente en caso de superar 1
+        hoja.
+     4. Mantenemos los colores de iconos y badges
+        (`print-color-adjust: exact`) — necesario en Chromium para que
+        la paleta no se pierda al imprimir.
+
+   La clase `no-print` esta disponible como ayuda para ocultar elementos
+   adicionales (botones de accion, etc.).
+   =========================================================================== */
+
+@media print {
+  /* `margin: 0` en @page hace que el navegador no tenga "zona segura"
+     fuera del area imprimible para dibujar su header/footer automatico
+     (URL, fecha, paginacion, titulo del documento). En Chromium esto
+     suprime esas marcas sin que el usuario tenga que desactivarlas en
+     "Mas opciones → Encabezados y pies de pagina". El margen visual
+     se restituye con padding en el propio `#cierre-dia-print`. */
+  @page {
+    size: letter portrait;
+    margin: 0;
+  }
+
+  /* No gastamos tinta con el fondo de la app. */
+  html,
+  body {
+    background: #ffffff !important;
+  }
+
+  /* Forzamos que Chromium/Firefox respeten colores definidos por
+     variables CSS, currentColor y backgrounds de las tarjetas KPI. */
+  *,
+  *::before,
+  *::after {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
+  }
+
+  /* Ocultamos CUALQUIER elemento dentro del body que no sea:
+       (a) un ancestro del bloque imprimible — los identificamos por
+           `:has(#cierre-dia-print)`,
+       (b) el bloque imprimible mismo,
+       (c) un descendiente del bloque imprimible — usando `#cierre-dia-print *`.
+     Esto cubre la barra superior (TopBar con selector de empresa y
+     campanas de alertas), el boton "Volver" y cualquier otra UI que
+     viva en niveles intermedios del arbol, no solo a nivel del body.
+     `:has()` requiere Chromium 105+, Firefox 121+, Safari 15.4+. */
+  body *:not(:has(#cierre-dia-print)):not(#cierre-dia-print):not(#cierre-dia-print *) {
+    display: none !important;
+  }
+
+  /* Aplanamos TODOS los ancestros del bloque imprimible con
+     `display: contents` para que sus paddings/margenes/grids no
+     introduzcan espacio vacio antes de nuestro contenido. El propio
+     bloque imprimible queda en flujo natural, permitiendo que el
+     navegador pagine correctamente cuando el contenido supere 1 hoja. */
+  body *:has(#cierre-dia-print):not(#cierre-dia-print) {
+    display: contents !important;
+  }
+
+  /* Estilo final del bloque imprimible. Como pusimos `@page { margin:
+     0 }` para suprimir el header/footer automatico del navegador,
+     ahora reponemos los margenes visuales con `padding` para que el
+     contenido NO toque el borde fisico de la hoja al imprimir.
+     Reducimos el padding y la fuente base para que todo el cierre
+     operativo quepa en UNA sola hoja tamaño carta.
+
+     Forzamos UNA sola pagina:
+     - `height: 11in` (alto exacto de carta) con `overflow: hidden`
+       impide que cualquier desbordamiento minimo (1-2px) genere una
+       segunda hoja en blanco que el navegador venia agregando.
+     - `page-break-after: avoid` y `break-after: avoid` evitan que el
+       motor de paginado inserte un salto despues del contenedor.
+   */
+  #cierre-dia-print {
+    box-shadow: none !important;
+    border: 0 !important;
+    margin: 0 !important;
+    padding: 0.3in !important;
+    font-size: 9px !important;
+    line-height: 1.25 !important;
+    width: 8.5in !important;
+    height: 11in !important;
+    max-height: 11in !important;
+    overflow: hidden !important;
+    box-sizing: border-box !important;
+    position: relative !important;
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  /* Refuerzo: ningun descendiente debe forzar un salto despues, lo
+     que en algunos navegadores (Chromium con margenes negativos) era
+     la causa de la pagina 2 fantasma. */
+  #cierre-dia-print *,
+  #cierre-dia-print *::after {
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+  }
+
+  /* Compactamos espaciados verticales internos del cierre operativo
+     para que las 4-5 secciones (Pedidos, Despachos, Asistencia,
+     RRHH, etc.) entren en la misma pagina sin recortes. */
+  #cierre-dia-print section {
+    margin-bottom: 0.45rem !important;
+  }
+  #cierre-dia-print .gap-2 {
+    gap: 0.3rem !important;
+  }
+  #cierre-dia-print .gap-3 {
+    gap: 0.4rem !important;
+  }
+  #cierre-dia-print .p-3 {
+    padding: 0.35rem !important;
+  }
+  #cierre-dia-print .p-4 {
+    padding: 0.45rem !important;
+  }
+  #cierre-dia-print .mb-3 {
+    margin-bottom: 0.4rem !important;
+  }
+
+  /* Helper explicito para componentes que quieran ocultarse al imprimir
+     sin depender solo del @media print interno. */
+  .no-print {
+    display: none !important;
+  }
+
+  /* Evitamos cortes a la mitad SOLO en bloques pequeños (tarjetas
+     individuales y tablas). No usamos break-inside:avoid en las
+     secciones grandes (`<section>`) porque eso empujaba la RRHH entera
+     a una pagina 2 que se recortaba. */
+  #cierre-dia-print [data-keep-together],
+  #cierre-dia-print table {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}
+

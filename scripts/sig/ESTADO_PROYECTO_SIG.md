@@ -1,0 +1,133 @@
+# ESTADO DEL PROYECTO — Sistema Integrado de Gestión (SIG) en LIPgo
+
+> Documento de continuidad. Consolida TODO lo construido para el SIG (ISO 9001 /
+> 14001 / 45001) dentro de LIPgo. Última actualización: 2026-06-28.
+> Carpeta de trabajo: `C:\Users\JILFRETH\LIPGO`. Credenciales Supabase en `.env.local` (NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY) — NO hardcodear.
+
+---
+
+## 1. Objetivo y reglas
+- Construir el SIG completo dentro de **LIPgo** para que un auditor use la app como
+  soporte de prueba ("nada por fuera"). Normas: ISO 9001:2015, 14001:2015, 45001:2018.
+- **LIPgo = soporte del SIG.** LIP es el operador (outsourcing); las empresas 1-4 son
+  los CLIENTES (LA VERDAD ES EL ID, no el texto libre): **1=Harinera Indupan · 2=Avimol (= "La Insuperable", mismo proyecto) · 3=Cedi Funza · 4=Cedi Medellín**. Alcance SIG = LIP (idempresa **100**).
+- DATA-FIX (2026-06-28): `ausentismosst` tenía los 101 registros mal etiquetados como idempresa=1; re-etiquetados por cédula→headcount.idempresa (+ respaldo texto: H.INDUPAN→1, LA INSUPERABLE→2, CEDI→3). Distribución final: Indupan 31, Avimol 54, Cedi Funza 16. El selector global ya filtra bien las hojas Registros/Resumen/Costos.
+- Encuadre: **VALOR AGREGADO de LIP**, no "responsabilidad compartida". Medir la gestión
+  propia de LIP (su tramo), no la del cliente.
+- SQL siempre **aditivo e idempotente** (el usuario lo corre en Supabase SQL Editor).
+- Los Paneles LIP y módulos filtran por el **SELECTOR GLOBAL** (useAuth().selectedEmpresaId), no dropdowns internos.
+
+## 2. Dónde está cada módulo (menú → permiso)
+**Certificaciones LIP** (grupo, icon BadgeCheck) → subgrupo **"Sistema Integrado (SIG) · Transversal"**:
+- Dashboard SIG · Análisis de Contexto (DOFA) · Matriz Integrada · Repositorio por Norma ·
+  Objetivos y Metas (6.2) · No Conformidades (10.2) · **Tablero Gerencial · Balanced Scorecard (9.1)** = módulo "Indicadores SIG" · Mapa de Interacción · Satisfacción y PQRSF.
+- Subgrupos por norma: ISO 9001 (Centro Evidencia, Repositorio), ISO 14001 (Aspectos, Matriz Legal), ISO 45001/0312 (14 submódulos SST).
+- **Permiso de todo el SIG transversal = `sig_matriz`** (decisión: queda agrupado, NO granular). Pestañas por norma: `sig_iso9001/14001/45001`.
+
+**Almacenamiento**: "Panel de Inventario (Exactitud y movimientos)" (PanelInventarioLIP) + "Cuadre y Correcciones (Cierre mensual)" (CuadreInventario) → permiso operativo **`auditoria_inventario`**. "Transacciones de Inventario" (movimientos + correcciones unificadas, con clave + nomenclatura).
+**Gestión LIP** (grupo `lip`, subgrupo "Operación Lip") — módulos del COORDINADOR: **"Tablero del Coordinador"** (antes "Panel LIP · Operación"; clave interna sigue siendo "Panel LIP Operación", permiso sig_matriz) · **"Satisfacción y PQRSF"** (permiso propio `satisfaccion_pqrsf`) · **"Calificación del Conductor"** (kiosko, `calificacion_conductor`). Subgrupo "Administración LIP" quedó con Registrar Gasto + Dashboard Gastos. **Gestión Humana**: "Panel LIP · Gestión Humana" (sig_matriz) + **"Recobro de Incapacidades"** (`recobro_incapacidades`).
+**Gestión Financiera** (grupo NUEVO `financiera`, icon Wallet) — Facturación se elevó desde Gestión LIP: subgrupo "Facturación" (**"Indicador de Facturación por Proyectos"** [nuevo, permiso `facturacion_proyectos`] · Facturación Proyectos · Tarifas · Gestión de Facturas) + subgrupo "Resultados" (Estado de Resultados, movido desde Gestión LIP). TODOS conservan sus permisos. OJO: el sidebar tiene `allMenuItems` (lista curada de grupos) — al crear un grupo nuevo hay que AGREGARLO ahí o no aparece en el menú (icono+label).
+- **El módulo "Indicadores SIG" se renombró (label) a "BSC · Cuadro de Mando Integral"** (clave interna y permiso sig_matriz sin cambio).
+- **Permisos NUEVOS con columna propia en `permisos_usuarios`** (la tabla es columna-por-permiso; ver [[logica-permisos-lipgo]]): recobro_incapacidades, satisfaccion_pqrsf, calificacion_conductor, ingresos_mp, saldos_empaque, saldos_materia_prima. Los 3 del MRP eran "no protegidos" (visibles a todos) → ahora gobernados.
+
+## 3. SQL para correr en Supabase (estado)
+Carpeta `scripts/sig/`. Ver `_LEEME_EJECUTAR_EN_SUPABASE.md`. Idempotentes.
+- 01-18: base del SIG (matriz, permisos, DOFA, aspectos, objetivos, legal, contexto, NC, alcance LIP=100, indicadores, interacción, inventario cuadre, satisfacción, acta, tipos movimiento, invtrans.cod_movimiento).
+- **19** ajuste_inventario_campos (location/direccion/cod_movimiento/aprobación/invtrans_id) — corrido.
+- **20** indicadores_bsc (columnas BSC + indicadores servicio LIP + amarre objetivos) — corrido.
+- **21** claves_movimiento (inv_clave_movimiento, clave Gerencia=2323) — corrido.
+- **22** indicadores_sla_vivo (IND-CD-07/GH-04/G-06 en vivo) — corrido.
+- **23** ausentismo_vivo (IND-GH-02 desde registroasistencia) — corrido.
+- (SQL 24 de permisos granulares se DESCARTÓ: el SIG queda agrupado bajo sig_matriz.)
+- **25** parametros_anio (tabla parametros_legales_anio: SMLV/auxilio por año; seed 2025=1.423.500/200.000, 2026=1.750.905/249.095) — corrido.
+- **26** costos_arl (columna ausentismosst.costos_arl + recálculo AT) — corrido (25 AT, suma ARL $3.890.900).
+- **27** recobro_incapacidades (ausentismosst: estado_recobro/valor_recobrado/fecha_radicado_recobro/obs_recobro) — corrido.
+- **28** recobro_soportes (ausentismosst: soporte_radicado_url/soporte_pago_url) — corrido.
+- **29** indicador_recobro (sig_indicadores IND-GH-04 = gh_recobro) — corrido.
+- **30** permisos_mrp (permisos_usuarios: ingresos_mp/saldos_empaque/saldos_materia_prima) — corrido.
+- **31** permiso_recobro (permisos_usuarios.recobro_incapacidades + backfill = ausentismos) — corrido.
+- **32** permiso_satisfaccion (permisos_usuarios.satisfaccion_pqrsf + backfill = sig_matriz) — corrido.
+- **33** calificacion_conductor (sig_satisfaccion.ref_orden/placa + índice único parcial; permisos_usuarios.calificacion_conductor + backfill) — corrido.
+- **34** metas_colaborador (tabla sig_metas_colaborador: metas individuales del trabajador) — corrido.
+- **35** indicador_facturacion (sig_indicadores IND-CD-06 = lip_facturacion, proceso CD, meta 95%) — corrido.
+- **36** cierre_facturacion_historica (marca meses ANTERIORES con estadofactura null como 'CF - Cerrado' en cabeceraoc; idempresa 1-4, excluye proyección/tolva; reversible) — **PENDIENTE de correr** (decisión de finanzas; no borra datos, solo pone el estado para que el indicador no cuente backlog histórico).
+- SQL CORRIDOS: 01-23, 25-35. **Pendiente: 36** (cierre histórico de facturación, opcional/cuando finanzas confirme).
+
+## 4. Inventario operativo (clave)
+- `saldoinvdetalle`/`invglobal` se mantienen por **TRIGGER en la base** desde `invtrans` (validado).
+  Para mover stock basta insertar en `invtrans`; el trigger ajusta saldos. Borrar la fila lo revierte.
+- **Transacciones de Inventario** (form único, con/sin QR): tipo → concepto/código de nomenclatura
+  (701/702/551/101/601/561) → producto/lote/ubicación → cantidad → **clave del responsable** (valida vs `inv_clave_movimiento`; Gerencia=2323) → registra en invtrans (cod_movimiento + [autoriza: <responsable>]).
+- Cascada: **Almacén(bodega) → Localización(de esa bodega con saldo, vía getLocationsByWarehouse) → Producto → Lote → Cantidad**.
+- **Cuadre y Correcciones**: conteo físico → genera correcciones → "Cerrar mes" postea a invtrans + Acta firmada por cliente. Gestión de transacciones muestra columna "Cód. Mov.".
+
+## 5. Indicadores / Balanced Scorecard (cerebro del SIG)
+- Módulo "Indicadores SIG" = **Tablero Gerencial · BSC**. Tabs: Perspectivas (BSC) / Por objetivo / Por área / Catálogo + scorecard global. Filtra por selector global + fechas.
+- Indicadores en vivo (getIndicadoresValores, calculo_auto): desp_cumplimiento, desp_meta_ton (cumpl. tonelaje vs EMPRESA_META_DIA_TON), sla_tiempos, sla_global, inv_exactitud, gh_activos, **gh_ausentismo**, gh_cobertura, sat_cliente/conductor, lip_evidencia, lip_tiempo_cargue, etc.
+- Amarrados a `sig_objetivos` (objetivo_id). Metadata BSC: perspectiva, area, finalidad, cliente interno/externo, contribución, eficacia.
+
+## 6. SLA / planta / fuentes de verdad
+- SLA en `lib/sla-acordados.ts` (de los 2 acuerdos Indupan/Avimol, Mayo 2026):
+  Tiempos cargue máx por vehículo: Turbo 30 PT · Sencillo 45/50 · Dobletroque 70/100 · Tractomula(Mula) 120/150 (PT/SUB). Camioneta→Turbo.
+- **PLANTA_ACORDADA** (directriz Gerencia): Indupan 19 (17 aux+1 coord ops+1 coord SST compartido c/Funza) · Avimol 23 (20 aux+2 montacarguistas+1 coord ops) · Cedi Funza 7 (5 aux+1 montac.+1 coord ops) · Cedi Medellín 7 (7 aux, 1 líder). El nº de aux sube en picos.
+- **Ausentismo médico** = `registroasistencia` (control diario = programación de turnos + tabla/registro de asistencia + novedades de personal; los 4 proyectos): turnos con **INCAPACIDAD** / turnos programados. NO cuenta licencia no remunerada, vacaciones, descansos ni retiros (solo incapacidad). Validado: Indupan ~3.9% · Avimol ~2.4% · Funza ~6.6% · Medellín ~2.2%.
+- **Dashboard de análisis integral** (módulo Ausentismos · Gestión Humana, pestaña "Análisis (control diario)", componente `ausentismos-analisis-diario.tsx`, acción `getAnalisisAusentismoDiario`): funciona para los 4 proyectos (selector global; sin selección = consolidado [1,2,3,4]). La NOVEDAD evidencia el tipo: **incapacidad (salud)** vs **falta no médica (licencia no remunerada)** vs **planeadas** (vacaciones/descanso/licencias) vs retiro. Muestra: KPIs, programados vs incapacidad por mes (evidencia ajuste de planta por toneladas), causas/códigos más repetidos, top reincidentes. NO existe código de "falta injustificada" en el sistema. Programación de turnos es módulo reciente (~3 meses) = acción de mejora. HALLAZGO Indupan: Osvaldo Castro concentra 59 de ~94 incapacidades (incapacidad larga); ausentismo cayó de 5-7% (Q1) a 1.2-2.5% (abr-jun). El dashboard es INTERACTIVO: selector global (manda) + filtros año/mes; tarjetas tocables → drill-down con el detalle de eventos (fecha/colaborador/novedad). DATO 2025 vs 2026: `ausentismosst` (Excel SST-MAT-06, pestañas Registros/Resumen/Costos) es 89 de 2025 + 12 de 2026 solo Indupan; `registroasistencia` (pestaña Análisis) = 2026 completo los 4 proyectos = fuente de verdad. IND-GH-02 renombrado a "Ausentismo médico (incapacidad)".
+- **COSTOS de ausentismo** (regla auditable, en `lib/ausentismos-actions.ts` puente + SQL 25/26): base = MAX(headcount.salario, SMLV del año)/30 = salario_día (SIN auxilio de transporte; en incapacidad no se paga). **EG**: días 1‑2 empresa + días 3+ EPS, al 66.67%. **AT**: ARL al 100% (`costos_arl` = días×salario_día; costo empresa 0). Dashboard de Costos suma empresa+EPS+ARL. SMLV por año en tabla editable `parametros_legales_anio` (2025/2026). Backfill 2026 de ausentismosst hecho (Indupan 15/Avimol 50/Funza 4/Medellín 6 borradores) con SMLV 2026; 25 AT con costos_arl (suma $3.890.900).
+- **DATA FIXES ausentismo (2026-06-28/29)**: ausentismosst se re-etiquetó por idempresa real (cédula→headcount; LA INSUPERABLE→2, CEDI→3) y se normalizó centro_trabajo al nombre canónico de empresas (no más "CEDI" suelto). Se QUITÓ el filtro interno de proyecto en el módulo (manda el selector global). El filtro de año ya muestra 2025 y 2026 por proyecto.
+- SLA tiempos en vivo: Indupan 76.8% · Avimol 48.2% · Funza 41.8% · Medellín 88.6%.
+- Cobertura (activos/planta): Indupan 79% · Avimol 104% · Funza 100% · Medellín 114%.
+- Join tiempos: `citasvehiculos.ocargue = cabeceraoc.ordendecargue` (tipo vehículo); tiempo = fincargue−iniciocargue.
+- NOTA: "inactivos" del headcount = retiros definitivos + personal de apoyo de picos → NO se usa para rotación (se eliminó el % engañoso). PT vs SUB no fiable por orden → SLA usa tiempo PT.
+
+## 6b. Bloques nuevos (sesión 2026-06-29)
+- **Recobro de Incapacidades** (Gestión Humana → Relaciones Laborales). Regla: EG (EPS) días 1‑2 los asume la empresa, día 3+ recobrable; AT (ARL) recobrable 100%. Recobrable = costos_eps + costos_arl (fallback días×salario_día×66.67% EG / ×100% AT). Dashboard: recobrable/recobrado/pendiente/en riesgo/% recuperación/costo empresa; gestión caso a caso (diálogo "Gestionar") con estado PENDIENTE→RADICADO→RECOBRADO o GLOSADO/PERDIDO, valor recobrado, fecha, obs y **2 soportes** (📧 correo EPS/ARL para RADICADO, 🧾 pago para cerrar RECOBRADO; candados de ciclo). Soportes en bucket `archivos` vía `/api/recobro/upload`. La **hoja de Costos de incapacidades se MOVIÓ aquí** (pestaña Costos; se quitó de Ausentismos). Indicador BSC **IND‑GH‑04 = gh_recobro** (meta 90%). Archivos: `lib/recobros.ts` (consts/tipos), `lib/recobros-actions.ts` (actualizarRecobro), `components/rrhh/recobro-incapacidades.tsx`. Campo `costos_arl` agregado también al formulario "Nuevo Ausentismo" (un campo de entidad que rota EPS/AT según tipo_evento).
+- **Panel LIP · Operación (coordinador)**: cabecera reorganizada como "Objetivos del coordinador · alineados al BSC" (semáforo vs meta: cumplimiento cargues 98%, **SLA tiempos 90%**, meta toneladas, **satisfacción conductor 85%**). Bloque nuevo **"Cumplimiento de SLA de tiempos por vehículo"**: tabla real vs SLA acordado por tipo, evolución mensual del %, órdenes fuera de SLA. getPanelOperacionLIP extendido (sla{pct,porTipo,porMes,fuera} + satConductor). El histórico de metas de volumen sigue en Dashboard Operaciones LIP (vista `metadia`, diario/mensual/anual) — NO duplicar.
+- **Calificación del Conductor** (Gestión LIP, kiosko EN CALIENTE al fin de cargue): caras 🟢🟡🔴 = 100/60/20% (cal 5/3/1; "malo"=20% no 0% para que cuente en el promedio del BSC). Se habilita en órdenes con `fincargue` marcado; datos del conductor desde `citasvehiculos` (nombreconductor/placa por ocargue). Guarda en `sig_satisfaccion` (tipo='conductor', canal='kiosko', ref_orden) → **alimenta directo IND‑G‑02** por proyecto y gerencial. KPI **cobertura de calificación** = objetivo del coordinador. Arranca filtrado al MES ACTUAL (perf). Archivos: `lib/calificacion-conductor.ts` (consts/tipos), `lib/calificacion-conductor-actions.ts`, `components/sst/calificacion-conductor.tsx`. NOTA TÉCNICA: el guardado usa **upsert manual** por ref_orden (ON CONFLICT no aplica con índice parcial); el DialogContent del kiosko lleva DialogTitle sr-only (Radix lo exige).
+
+## 6c. Tablero del Coordinador, Portal del Trabajador y Gestión Financiera (sesión 2026-06-29 pm)
+- **Tablero del Coordinador** (`components/sst/panel-operacion-lip.tsx`, antes "Panel LIP · Operación"): cabecera = SCORECARD (cumplimiento global + tabla indicador/meta/resultado/semáforo, agrupado Servicio·SLA / Conductor / Equipo / Facturación). Bloque SLA por vehículo. Sección "Facturación pendiente por solicitar" (solo `estadofactura` null; valor desde tabla `facturacion`: empresas 1-2 MAX peso×MAX tarifa, resto suma valor_a_facturar; KPIs valor pendiente/en riesgo>8d/días máx/% gestión; tabla). Acotado al MES ACTUAL por defecto (piso `factFloor=desde||mesIni`). Gráficas profesionalizadas. getPanelOperacionLIP devuelve además: sla, satConductor, coberturaCalificacion, coberturaPlanta, ausentismo, facturacion{...}.
+- **Portal del Trabajador → "Mi aporte"** (`app/portal/(shell)/mi-aporte/page.tsx` + `lib/portal-objetivos(.ts/-actions.ts)`): INDIVIDUAL (login por cédula). Tarjetas por área con meta+semáforo+mensaje+consejo+impacto en desempeño; puntaje de compromiso + nivel; línea de tiempo logros/incumplimientos; conexión con `evaluaciones_desempeno`. PRODUCTIVIDAD (meta justa): meta del día del proyecto (getMetaDiaForEmpresa) ÷ personas PROGRAMADAS y que ASISTIERON ese día (registroasistencia puesto≠null y asistencia null), sumada en sus días; ACTUAL = toneladas_auxiliar (de la orden, = cabeceraoc.auxiliares/toneladasauxiliares). SLA individual = sus cargues a tiempo. Menú en `components/portal/portal-shell.tsx`. Tabla `sig_metas_colaborador` (SQL 34) para metas manuales.
+- **Gestión Financiera** (grupo NUEVO): Indicador de Facturación por Proyectos (`components/sst/facturacion-proyectos-indicador.tsx` + `getFacturacionPorProyecto`): compara los 4 proyectos, mes actual por defecto + **filtro "Ver histórico"** (desde=2020-01-01). BSC IND‑CD‑06 `lip_facturacion`. Validación junio: Indupan 93% · Avimol 95% · Funza 75% · **Medellín 0%** (no usa el flujo). Histórico: Indupan 50% · Medellín 58% (backlog que SÍ se facturó). SQL 36 marca el backlog 'CF - Cerrado' (NO borra; se ve con el filtro histórico) para que el indicador no lo cuente.
+
+## 6d. Inventario — Conciliación mensual y exactitud (sesión 2026-06-30)
+- **Panel LIP · Inventario** (`components/sst/panel-inventario-lip.tsx` + `getPanelInventarioLIP`/`getConciliacionMensualInventario`). Se quitó el texto "se factura a LIP".
+- **MODELO DE MOVIMIENTOS (cliente, firme):** Plantas (Avimol/Indupan): INGRESOS = aprobación de producción (PT, módulo Producción) + devoluciones (Transacciones). SALIDAS = órdenes de cargue + reproceso (avería). Cedis (Funza/Medellín): INGRESOS = órdenes de descargue (vienen de plantas) + devoluciones. SALIDAS = cargue + reproceso. **Traslados internos NO alteran stock. PROYECCIÓN (es nómina) y TOLVA se EXCLUYEN.** No debe haber salida sin orden de cargue.
+- **Nomenclatura de orden = periodo:** `[iniciales][AAAA][MM][DD][consecutivo]`. Prefijos: Indupan=IND, Avimol=AVI, **Cedi Funza=MOL**, Cedi Medellín=MED. Descargues a veces son numéricos puros (fallback a fecha); Distribución lleva `Dis-`/sufijo `D`. El mes se toma del CÓDIGO de la orden.
+- **Conciliación mensual** (pestaña nueva): mes a mes (mes del CÓDIGO de orden), saldo acumulado **REAL** ANCLADO al stock (`saldo_inicial = stock_actual − Σ(ingresos−salidas)`; NO se resetea/floorea). Faltante de un mes = si el acumulado quedaría negativo = **producción no ingresada** → botón "Generar" abre **Acta de ajuste** (imprimible). Columna **Estado**: mayo y anteriores = "Conciliado", mes actual (junio) = "Pendiente" (se ajusta con inventario físico).
+- **REGLA FINAL DE SALIDAS (cliente, firme):** SOLO **órdenes de cargue** (cod 601 / origen "orden de cargue") cuentan como salida. Reproceso, **"BODEGA GENERAL"**, transacción manual y cod 702 **NO aplican como salida** (no reducen para el cuadre). INGRESOS = recepción 101 + inicial 561 + producción/aprobación/descargue + devolución (Entrada manual). Traslados 311 = neto 0 (verificado: entradas≈salidas), se excluyen. Proyección y tolva excluidas.
+- **DATOS: todo es 2026** (invtrans + cabeceraoc arrancan ene-2026; NO hay 2025 cargado). Decisión: el indicador **arranca en 2026**. **STOCK VIVO `saldoinvdetalle` SIN negativos = correcto al 100%** (no tocar: el trigger sumaría al stock e inflaría; NO inyectar aperturas a invtrans). VALIDACIÓN FINAL: **Avimol, Funza y Medellín CONCILIAN a 0**; **Indupan NO** (faltante ene-abr = cargue > producción registrada → producción no ingresada en esos meses, es dato de producción a regularizar por el equipo, no error de software). Las salidas "BODEGA GENERAL IND" (~27K, cod 702) traen ref de orden pero NO se cuentan (cliente: "eso no aplica, solo órdenes de cargue").
+- **FIX selector:** las pestañas (Conciliación/Kardex/Cuadre diario/Preservación) ahora recargan al cambiar selector global/año/mes (antes solo al hacer clic → datos viejos). Tabs controladas + useEffect en [tab, selectedEmpresaId, anio, mes].
+- **NO hay SQL nuevo para inventario** (la conciliación es de SOLO LECTURA; el acta es imprimible, no persiste aún). Mañana (2026-07-01) inventario físico → ajusta SOLO junio.
+
+## 7. Sistema visual de marca LIP
+- `components/sst/sig-ui.tsx`: **SigHeader** (banner degradado navy→teal), **SigFilterBar/SigField/sigControl** (filtros), **SigKpi** (tarjeta KPI premium), **SigSection**. Paleta SST_TOKENS: navy #0D3B6E, teal #00B4CC, light #E6F4F8, ink #0A2540.
+- Aplicado: 3 Paneles LIP, BSC (header+filtros+scorecard SigKpi), Cuadre (header+KPIs SigKpi), y header en los 10 módulos SIG.
+
+## 8. Decisiones del cliente (NO romper)
+- Empresas 1-4 = clientes; SIG a nivel LIP (100). Valor agregado, no responsabilidad compartida.
+- Merma NO se cobra a LIP (es reproceso); solo faltantes. Inventario coincide ~100% salvo Cedi Funza.
+- Permisos SIG quedan **agrupados bajo sig_matriz** (no granular) — así está concebido.
+- Un solo formulario para mover/ajustar inventario (no dos). Clave por responsable (2323 Gerencia).
+
+## 9. Pendientes / oportunidades
+- Cargar ausentismo histórico de los Cedis si se requiere detalle SST (ausentismosst solo tiene Indupan; el indicador ya usa registroasistencia para los 4).
+- Confirmar planta Cedis si cambia. PT vs SUB por orden (afinar SLA). Órdenes sin cita de vehículo (mejorar cobertura de medición).
+- Bloques de norma por construir/avanzar: Auditoría interna (9.2), Revisión por la dirección (9.3), Acciones correctivas/eficacia (10.2 PHVA), reforzar 14001/45001.
+- **Línea de tiempo de atención LIP vs Cliente** (PROPUESTO, falta que el cliente confirme la atribución): descomponer llegada→pesaje final por hitos (`horavehiculo/horallegada, horasanitario, horaorden, horalote, pesajeinicial, iniciocargue→fincargue, pesajefinal`) marcando cada segmento LIP o Cliente, para medir a LIP SOLO por su tramo (justo) y dar el soporte/trazabilidad completo. Propuesta de atribución: cargue (inicio→fin)=LIP; pesajes y sanitario=Cliente; orden/lote=LIP. PENDIENTE confirmación del cliente.
+- **Optimizaciones de Gestión LIP NO aplicadas** (el cliente eligió solo "acotar a mes actual"): (2) acotar fetch de citasvehiculos a las órdenes del periodo; (3) separar kiosko de encuestas manuales en Satisfacción y PQRSF; (4) reagrupar menú del coordinador.
+- **PATRÓN TÉCNICO (no romper)**: un archivo `"use server"` solo exporta funciones async → constantes/tipos/interfaces van en un módulo hermano sin la directiva (ej. recobros.ts, calificacion-conductor.ts). Un `DialogContent` (Radix) SIEMPRE requiere `DialogTitle` (usar sr-only si va oculto).
+- Memoria viva del proyecto: `~/.claude/.../memory/sig-matriz-integrada.md` (detalle por bloque) + `lipgo-proyecto-ruta.md` + `sig-encuadre-lip.md`.
+
+## 10. Toolchain
+- Node portable: `C:\Users\JILFRETH\nodejs-portable\node-v22.11.0-win-x64\node.exe`. Dev: `pnpm dev` (localhost:3000).
+- Diagnósticos DB: script `.mjs` DENTRO de `C:\Users\JILFRETH\LIPGO` (ESM resuelve node_modules local); leer credenciales de `.env.local` (NO hardcodear la service role). Borrar el script al terminar.
+- **CREDENCIALES (2026-06-30):** migradas de hardcode a variables de entorno (`.env.local`, en .gitignore). Código usa `process.env.NEXT_PUBLIC_SUPABASE_URL/ANON_KEY` y `process.env.SUPABASE_SERVICE_ROLE_KEY`. NO volver a hardcodear (el repo está en GitHub).
+- Verificación de tipos: `npx tsc --noEmit` (exit 2 = errores PREEXISTENTES en otros archivos; filtrar por el archivo tocado para ver los propios).
+
+## 11. Certificaciones (matriz/normas) — modelo de % y notas técnicas
+(Consolidado del antiguo ESTADO_DEL_PROYECTO_SIG.md, ya unificado aquí.)
+- **Módulo Certificaciones LIP** (objetivo: que un auditor use LIPgo como soporte). Subgrupo SIG: Dashboard SIG (auditoría, KPIs por norma + PHVA + brechas + Listado Maestro + export PDF jsPDF), Matriz Integrada (37 numerales × 3 normas, agrupada PHVA; ISO 9001 toma estado real de `iso_clausulas`), Repositorio por Norma (ficha + control de cambios `sig_documento_versiones`). ISO 14001: Aspectos e Impactos + Matriz Legal Ambiental. ISO 45001: módulos 0312 (Matriz 60, IPEVR, EPP…).
+- **Modelo de % (alineado al ente certificador):** ICONTEC no da puntaje numérico → el tablero muestra **% Implementación documental** (Cargado+Aprobado / aplicables) con semáforo `colorPct` (>85 verde, 60-85 ámbar, <60 rojo) + **% Verificado por auditor** (solo Aprobado) como secundario. ISO 45001 referencia **SG-SST 0312** ponderado (Art.27) + valoración (Art.28): empresa 1 = 52% · Crítico. Misma fuente que Matriz 60 + Plan de Mejoramiento.
+- **Nota técnica `sig_documentos.id` es UUID** pero `sig_documento_cobertura.documento_id` quedó BIGINT y no se pudo convertir → **workaround:** la referencia al documento se guarda en `observacion` con prefijo `doc:<uuid>` (cobertura, vincular y seed lo usan; `parseDocRef`).
+- **Repo rolled-back:** credenciales HARDCODEADAS en supabase-admin/server/auth-provider (no hay `.env.local`); `auth-provider` perdió el guard SSR. Service role en `lib/supabase-admin.ts`.
+- **Cuentas app del SIG:** `gerentecertificaciones@lipgo.app` (empresa_id=1), `coordinadorsst@lipgo.app`. `gerenciageneral@lip-sas.com` NO existe en auth (es solo el identificador de Claude Code).

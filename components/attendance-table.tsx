@@ -1,0 +1,659 @@
+"use client"
+
+import { useState, useEffect } from "react"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { useAuth } from "@/components/auth-provider"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Loader2, Clock, Users, Save, AlertTriangle } from "lucide-react"
+import { useToast } from "@/hooks/use-toast"
+
+interface AttendanceRecord {
+  identificacion: string
+  nombre: string
+  // Hora de entrada programada (registroasistencia.horaentradaprogramada).
+  // Puede llegar como "HH:MM" o "HH:MM:SS". Es null si la persona no
+  // tenia un turno programado para hoy.
+  horaProgramada: string | null
+  horaLlegada: string | null
+  // `horaSalida` proviene de `registroasistencia.horasalida` para el
+  // dia de hoy. Es null mientras el operador no haya marcado la
+  // salida en el modulo de Registro de Asistencia.
+  horaSalida: string | null
+  // Valores actuales de `registroasistencia` para el dia. Pueden ser
+  // null si la persona aun no ha sido procesada o si la fila aun no
+  // ha cerrado el codigo de novedad.
+  puesto: string | null
+  asistencia: string | null
+  alreadyAssigned: boolean // Added to track if already assigned today
+}
+
+/**
+ * Convierte "HH:MM" o "HH:MM:SS" a minutos desde medianoche. Devuelve
+ * NaN si el string no tiene formato valido — el caller debe filtrarlo
+ * antes de comparar para evitar comparaciones contra NaN (que siempre
+ * son false y enmascararian la regla de "Llegada tarde").
+ */
+function timeToMinutes(t: string | null | undefined): number {
+  if (!t) return Number.NaN
+  const parts = t.split(":")
+  if (parts.length < 2) return Number.NaN
+  const h = Number(parts[0])
+  const m = Number(parts[1])
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return Number.NaN
+  return h * 60 + m
+}
+
+/**
+ * `true` si la persona llego tarde respecto a su hora programada.
+ * Reglas: ambos valores deben existir y parsear a numeros validos. Si
+ * no hay hora programada (sin turno) no se considera tardanza, aunque
+ * haya llegado: la columna mostrara solo "-".
+ */
+function isLate(
+  horaLlegada: string | null,
+  horaProgramada: string | null,
+): boolean {
+  const llegada = timeToMinutes(horaLlegada)
+  const programada = timeToMinutes(horaProgramada)
+  if (!Number.isFinite(llegada) || !Number.isFinite(programada)) return false
+  return llegada > programada
+}
+
+/**
+ * Devuelve la hora actual en Colombia (zona America/Bogota) expresada
+ * como minutos desde las 00:00. Lo construimos desde Intl.DateTimeFormat
+ * en lugar de `Date.getHours()` para que sea correcto sin importar la
+ * zona horaria del navegador (un usuario podria estar conectado desde
+ * otra TZ pero la regla de negocio se evalua siempre con hora local
+ * Colombia).
+ */
+function getColombiaMinutes(): number {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Bogota",
+      hour12: false,
+      hour: "2-digit",
+      minute: "2-digit",
+    }).formatToParts(new Date())
+    const h = Number(parts.find((p) => p.type === "hour")?.value ?? "0")
+    const m = Number(parts.find((p) => p.type === "minute")?.value ?? "0")
+    // Intl puede devolver "24" como hora a medianoche en algunos
+    // entornos; lo normalizamos a 0 para no exceder 24*60.
+    return ((h % 24) * 60) + m
+  } catch {
+    const d = new Date()
+    return d.getHours() * 60 + d.getMinutes()
+  }
+}
+
+interface ShiftAssignment {
+  identificacion: string
+  nombre: string
+  type: "operaciones" | "especialidades" | "novedad" | null
+  puesto: string | null
+}
+
+const OPERACIONES_OPTIONS = [
+  "Cargue/Descargue",
+  "Tolva Planchador",
+  "Tolva Bulto",
+  "Distribución Externa",
+  "Auxiliar Mixto",
+
+]
+
+const ESPECIALIDADES_OPTIONS = [
+  "Pacas",
+  "Cosedor",
+  "Arrume Negro",
+  "Reempaque",
+  "Aseo",
+  "Limpieza de Estibas",
+  "Clasificacion huevos",
+  "Cargue/Descargue Huevos",
+  "Estibado PT",
+  "Salvado",
+  "Producción",
+  "Descanso",
+  "Distribución Turno",
+  "Montacargas de producción",
+  "Montacargas de cargue",
+  "Operador PT (Carrusel)",
+]
+
+export default function AttendanceTable() {
+  const { selectedEmpresaId } = useAuth()
+  const { toast } = useToast()
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [records, setRecords] = useState<AttendanceRecord[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const [shiftAssignments, setShiftAssignments] = useState<Map<string, ShiftAssignment>>(new Map())
+
+  // Hora actual en Colombia (America/Bogota) expresada como minutos
+  // desde 00:00. Se usa para marcar con la alerta "Registrar novedad"
+  // a las personas que ya pasaron su hora programada de entrada y
+  // siguen ausentes con puesto asignado. Refrescamos cada 60s para
+  // que la marca aparezca sola sin necesidad de recargar.
+  const [nowColMinutes, setNowColMinutes] = useState<number>(() =>
+    getColombiaMinutes(),
+  )
+  useEffect(() => {
+    const id = setInterval(() => setNowColMinutes(getColombiaMinutes()), 60_000)
+    return () => clearInterval(id)
+  }, [])
+
+  useEffect(() => {
+    if (selectedEmpresaId) {
+      fetchAttendanceData()
+    }
+  }, [selectedEmpresaId])
+
+  const fetchAttendanceData = async () => {
+    try {
+      setLoading(true)
+      setError(null)
+
+      // `cache: "no-store"` y el cache-buster en la URL evitan que el
+      // navegador o un middleware sirvan una respuesta vieja en la que
+      // un Ausente todavia aparecia como "Procesado". La tabla es muy
+      // sensible a estado en tiempo real (asistencia, novedades), asi
+      // que siempre vamos a origen.
+      const response = await fetch(
+        `/api/attendance/table?empresaId=${selectedEmpresaId}&t=${Date.now()}`,
+        { cache: "no-store" },
+      )
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error || "Error al cargar los datos")
+      }
+
+      setRecords(result.data || [])
+    } catch (err) {
+      console.error("[v0] Error fetching attendance table:", err)
+      setError(err instanceof Error ? err.message : "Error al cargar los datos de asistencia")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleCheckboxChange = (
+    identificacion: string,
+    nombre: string,
+    type: "operaciones" | "especialidades" | "novedad",
+    isPresent: boolean,
+  ) => {
+    if (!isPresent && type !== "novedad") {
+      toast({
+        title: "No permitido",
+        description: "Las personas ausentes solo pueden tener novedades registradas",
+        variant: "destructive",
+      })
+      return
+    }
+
+    if (isPresent && type === "novedad") {
+      toast({
+        title: "No permitido",
+        description: "Las personas presentes no pueden tener novedades registradas",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setShiftAssignments((prev) => {
+      const newMap = new Map(prev)
+      const current = newMap.get(identificacion)
+
+      // Toggle off if clicking the same type
+      if (current?.type === type) {
+        newMap.delete(identificacion)
+      } else {
+        // Set new type
+        newMap.set(identificacion, {
+          identificacion,
+          nombre,
+          type,
+          puesto: null,
+        })
+      }
+
+      return newMap
+    })
+  }
+
+  const handlePuestoChange = (identificacion: string, puesto: string) => {
+    setShiftAssignments((prev) => {
+      const newMap = new Map(prev)
+      const current = newMap.get(identificacion)
+
+      if (current) {
+        newMap.set(identificacion, {
+          ...current,
+          puesto,
+        })
+      }
+
+      return newMap
+    })
+  }
+
+  const handleRegisterShifts = async () => {
+    const shiftsToRegister = Array.from(shiftAssignments.values()).filter((shift) => {
+      // For operaciones and especialidades, puesto must be selected
+      if (shift.type === "operaciones" || shift.type === "especialidades") {
+        return shift.puesto !== null
+      }
+      // For novedad, no puesto needed
+      return shift.type === "novedad"
+    })
+
+    if (shiftsToRegister.length === 0) {
+      toast({
+        title: "Error",
+        description: "No hay turnos válidos para registrar",
+        variant: "destructive",
+      })
+      return
+    }
+
+    try {
+      setSaving(true)
+
+      const response = await fetch("/api/attendance/register-shifts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          shifts: shiftsToRegister,
+          empresaId: selectedEmpresaId,
+        }),
+      })
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error || "Error al registrar los turnos")
+      }
+
+      toast({
+        title: "Éxito",
+        description: result.message || "Turnos registrados correctamente",
+      })
+
+      // Clear selections and refresh data
+      setShiftAssignments(new Map())
+      await fetchAttendanceData()
+    } catch (err) {
+      console.error("[v0] Error registering shifts:", err)
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Error al registrar los turnos",
+        variant: "destructive",
+      })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const presentCount = records.filter((r) => r.horaLlegada).length
+  const absentCount = records.filter((r) => !r.horaLlegada).length
+  const selectedCount = shiftAssignments.size
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-3xl font-bold tracking-tight">Tabla de Asistencia</h2>
+        <p className="text-muted-foreground">Registro de asistencia del día de hoy</p>
+      </div>
+
+      {error && (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {/* Summary Cards */}
+      <div className="grid gap-4 md:grid-cols-3">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Personal</CardTitle>
+            <Users className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{records.length}</div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Presentes</CardTitle>
+            <Clock className="h-4 w-4 text-green-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-green-600">{presentCount}</div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Ausentes</CardTitle>
+            <Clock className="h-4 w-4 text-red-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-red-600">{absentCount}</div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Attendance Table */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Registro de Asistencia</CardTitle>
+          <CardDescription>Lista del personal activo y su hora de llegada</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {/* Tabla densa: bajamos el tamano global a `text-xs` y
+              reducimos padding horizontal/vertical para que las 10
+              columnas quepan sin scroll horizontal en pantallas de
+              1366px+. Los headers usan `text-[11px] uppercase` para
+              comprimir su ancho sin perder jerarquia visual. Las
+              celdas tienen `whitespace-nowrap` por defecto para que
+              "Hora de Llegada", "Hora Programada", etc. no rompan en
+              dos lineas. La columna Nombre permite wrap (override mas
+              abajo) porque suele ser la unica con texto largo. */}
+          <div className="rounded-md border max-h-[600px] overflow-y-auto text-xs [&_th]:py-1.5 [&_td]:py-1.5 [&_th]:px-2 [&_td]:px-2 [&_th]:text-[11px] [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:whitespace-nowrap [&_td]:whitespace-nowrap">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  {/* Titulos abreviados para reducir ancho. "Identif."
+                      en lugar de "Identificacion", "Programada" /
+                      "Llegada" / "Salida" sin el prefijo "Hora de" — la
+                      columna de horas es obvia por contexto y formato. */}
+                  <TableHead>Identif.</TableHead>
+                  <TableHead>Nombre</TableHead>
+                  <TableHead>Programada</TableHead>
+                  <TableHead>Llegada</TableHead>
+                  <TableHead>Salida</TableHead>
+                  <TableHead>Puesto</TableHead>
+                  <TableHead>Estado</TableHead>
+                  <TableHead className="text-center">Operac.</TableHead>
+                  <TableHead className="text-center">Especialid.</TableHead>
+                  <TableHead className="text-center">Novedad</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {records.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={10} className="text-center text-muted-foreground py-8">
+                      No hay registros de personal activo
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  records.map((record) => {
+                    const assignment = shiftAssignments.get(record.identificacion)
+                    const isPresent = !!record.horaLlegada
+                    const isAssigned = record.alreadyAssigned
+
+                    return (
+                      <TableRow
+                        key={record.identificacion}
+                        className={isAssigned ? "bg-blue-50/50 dark:bg-blue-950/20" : ""}
+                      >
+                        <TableCell className="font-medium tabular-nums">{record.identificacion}</TableCell>
+                        {/* `whitespace-normal` revierte el `nowrap`
+                            global del wrapper para esta columna, que
+                            es la unica con texto potencialmente largo
+                            (nombres con varios apellidos). La badge
+                            "Programado" baja a `text-[10px]` y padding
+                            reducido para ocupar menos. */}
+                        <TableCell className="whitespace-normal min-w-[160px]">
+                          <div className="flex flex-wrap items-center gap-1">
+                            <span>{record.nombre}</span>
+                            {isAssigned && (
+                              <Badge
+                                variant="secondary"
+                                className="text-[10px] px-1.5 py-0 leading-4"
+                              >
+                                Programado
+                              </Badge>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {record.horaProgramada ? (
+                            // Hora programada (sin colorear) — sirve de
+                            // referencia para comparar con la hora de
+                            // llegada. Recortamos los segundos si vienen
+                            // (algunas filas legacy traen "HH:MM:SS")
+                            // para que sea visualmente consistente con
+                            // la columna de llegada.
+                            <span className="text-foreground font-medium tabular-nums">
+                              {record.horaProgramada.slice(0, 5)}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">-</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {record.horaLlegada ? (
+                            // Llegada tarde: hora en rojo + badge
+                            // compacto "Tarde" (texto recortado para
+                            // no estirar la columna). Mostramos solo
+                            // HH:MM aunque venga "HH:MM:SS" — los
+                            // segundos no aportan en una vista densa.
+                            isLate(record.horaLlegada, record.horaProgramada) ? (
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-red-600 font-semibold tabular-nums">
+                                  {record.horaLlegada.slice(0, 5)}
+                                </span>
+                                <Badge
+                                  variant="destructive"
+                                  className="text-[9px] uppercase tracking-wide px-1 py-0 leading-4"
+                                >
+                                  Tarde
+                                </Badge>
+                              </div>
+                            ) : (
+                              <span className="text-green-600 font-medium tabular-nums">
+                                {record.horaLlegada.slice(0, 5)}
+                              </span>
+                            )
+                          ) : (
+                            <span className="text-muted-foreground">-</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {record.horaSalida ? (
+                            <span className="text-blue-600 font-medium tabular-nums">
+                              {record.horaSalida.slice(0, 5)}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">-</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {record.puesto ? (
+                            // Badge outline mas compacta (text-[10px],
+                            // padding reducido) para no inflar el ancho
+                            // de la columna cuando el puesto es largo.
+                            <Badge
+                              variant="outline"
+                              className="font-medium text-[10px] px-1.5 py-0 leading-4"
+                            >
+                              {record.puesto}
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground">-</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {isPresent ? (
+                            <Badge
+                              variant="default"
+                              className="bg-green-600 text-[10px] px-1.5 py-0 leading-4"
+                            >
+                              Presente
+                            </Badge>
+                          ) : (
+                            (() => {
+                              // Alerta "Registrar novedad": aplica a personas
+                              // que tienen puesto asignado, estan AUSENTES y
+                              // cuya hora programada es mayor a la hora
+                              // actual en Colombia (es decir, todavia no
+                              // llega su turno pero el sistema ya las
+                              // detecto como ausentes — el supervisor debe
+                              // registrar la novedad por anticipado). Si la
+                              // hora programada ya paso, no mostramos esta
+                              // alerta porque se cubre con el flujo normal
+                              // del modulo de Novedades de Personal.
+                              const programadaMin = timeToMinutes(record.horaProgramada)
+                              const debeRegistrarNovedad =
+                                !!record.puesto &&
+                                Number.isFinite(programadaMin) &&
+                                programadaMin > nowColMinutes
+                              return (
+                                <div className="flex flex-col items-start gap-1">
+                                  <Badge
+                                    variant="destructive"
+                                    className="text-[10px] px-1.5 py-0 leading-4"
+                                  >
+                                    Ausente
+                                  </Badge>
+                                  {debeRegistrarNovedad && (
+                                    <Badge
+                                      className="gap-1 bg-amber-500 hover:bg-amber-500 text-white text-[10px] px-1.5 py-0 leading-4 animate-pulse"
+                                    >
+                                      <AlertTriangle className="h-3 w-3" />
+                                      Registrar novedad
+                                    </Badge>
+                                  )}
+                                </div>
+                              )
+                            })()
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col items-center gap-2">
+                            <Checkbox
+                              checked={assignment?.type === "operaciones"}
+                              onCheckedChange={() =>
+                                handleCheckboxChange(record.identificacion, record.nombre, "operaciones", isPresent)
+                              }
+                              disabled={isAssigned || !isPresent}
+                              // Tamano y contraste reforzados para que las
+                              // celdas Operaciones / Especialidades / Novedad
+                              // sean facilmente clickeables en una tabla
+                              // densa y se distingan del fondo aun en filas
+                              // alternadas. Borde mas grueso + tonalidad
+                              // slate fuerte y tick blanco al marcar.
+                              className="h-5 w-5 border-2 border-slate-400 data-[state=checked]:bg-emerald-600 data-[state=checked]:border-emerald-700 data-[state=checked]:text-white shadow-sm transition-colors"
+                            />
+                            {assignment?.type === "operaciones" && (
+                              <Select
+                                value={assignment.puesto || ""}
+                                onValueChange={(value) => handlePuestoChange(record.identificacion, value)}
+                              >
+                                {/* Trigger compacto (h-7, text-xs,
+                                    140px) para no estirar la columna
+                                    en la version densa. */}
+                                <SelectTrigger className="w-[140px] h-7 text-xs">
+                                  <SelectValue placeholder="Seleccionar" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {OPERACIONES_OPTIONS.map((op) => (
+                                    <SelectItem key={op} value={op} className="text-xs">
+                                      {op}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col items-center gap-2">
+                            <Checkbox
+                              checked={assignment?.type === "especialidades"}
+                              onCheckedChange={() =>
+                                handleCheckboxChange(record.identificacion, record.nombre, "especialidades", isPresent)
+                              }
+                              disabled={isAssigned || !isPresent}
+                              className="h-5 w-5 border-2 border-slate-400 data-[state=checked]:bg-emerald-600 data-[state=checked]:border-emerald-700 data-[state=checked]:text-white shadow-sm transition-colors"
+                            />
+                            {assignment?.type === "especialidades" && (
+                              <Select
+                                value={assignment.puesto || ""}
+                                onValueChange={(value) => handlePuestoChange(record.identificacion, value)}
+                              >
+                                <SelectTrigger className="w-[140px] h-7 text-xs">
+                                  <SelectValue placeholder="Seleccionar" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {ESPECIALIDADES_OPTIONS.map((esp) => (
+                                    <SelectItem key={esp} value={esp} className="text-xs">
+                                      {esp}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <Checkbox
+                            checked={assignment?.type === "novedad"}
+                            onCheckedChange={() =>
+                              handleCheckboxChange(record.identificacion, record.nombre, "novedad", isPresent)
+                            }
+                            disabled={isAssigned || isPresent}
+                            // Para "Novedad" usamos el mismo tamano y borde
+                            // pero un acento ambar al marcar, que comunica
+                            // mejor su semantica de excepcion vs. asignacion.
+                            className="h-5 w-5 border-2 border-slate-400 data-[state=checked]:bg-amber-500 data-[state=checked]:border-amber-600 data-[state=checked]:text-white shadow-sm transition-colors"
+                          />
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })
+                )}
+              </TableBody>
+            </Table>
+          </div>
+
+          {records.length > 0 && (
+            <div className="mt-4 flex items-center justify-between">
+              <p className="text-sm text-muted-foreground">{selectedCount} turno(s) seleccionado(s)</p>
+              <Button onClick={handleRegisterShifts} disabled={saving || selectedCount === 0}>
+                {saving ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Registrando...
+                  </>
+                ) : (
+                  <>
+                    <Save className="mr-2 h-4 w-4" />
+                    Registrar Cambios
+                  </>
+                )}
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  )
+}

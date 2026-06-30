@@ -1,0 +1,841 @@
+"use client"
+
+import React from "react"
+import { TopBar } from "@/components/top-bar"
+import { DailySummary } from "@/components/daily-summary"
+import { ModuleCards } from "@/components/module-cards"
+import { ModulesView } from "@/components/modules-view"
+import { OrderEntryForm } from "@/components/order-entry-form"
+import { ModulePlaceholder } from "@/components/module-placeholder"
+import { GenericCrudTable } from "@/components/configuration/generic-crud-table"
+import { configModules } from "@/lib/config-definitions"
+import { OrdersManagement } from "@/components/orders/orders-management"
+import { ComprehensiveOrdersManagement } from "@/components/orders/comprehensive-orders-management"
+import { DashboardPedidos } from "@/components/orders/dashboard-pedidos"
+import { DashboardRecepcion } from "@/components/dashboard-recepcion"
+import { OrderEditPage } from "@/components/orders/order-edit-page"
+import { ProductosWithCategories } from "@/components/configuration/productos-with-categories"
+import { VehicleAppointmentsForm } from "@/components/vehicle-appointments-form"
+import { BasculaForm } from "@/components/bascula-form"
+import { BasculaHistory } from "@/components/bascula-history"
+import { GenerateLoadOrders } from "@/components/generate-load-orders"
+import { GenerateUnloadOrders } from "@/components/generate-unload-orders"
+import { GenerateDistributionOrders } from "@/components/generate-distribution-orders"
+import { InventoryTransactionsForm } from "@/components/inventory-transactions-form"
+import { ProductionEntryForm } from "@/components/production-entry-form"
+import { InventoryBalanceDetails } from "@/components/inventory-balance-details"
+import { InventoryBalanceGlobal } from "@/components/inventory-balance-global"
+import { ReprocesosManagement } from "@/components/reprocesos-management"
+import { LoadOrdersManagement } from "@/components/load-orders-management"
+import { ProductionApproval } from "@/components/production-approval"
+import ControlPiso from "@/components/produccion/control-piso"
+import { InventoryTransactionsManagement } from "@/components/inventory-transactions-management"
+import { SanitaryRegistryForm } from "@/components/sanitary-registry-form"
+import { ProductTransferForm } from "@/components/product-transfer-form"
+import { TransferRequestsView } from "@/components/transfer-requests-view"
+import { BatchApproval } from "@/components/batch-approval"
+import { Picking } from "@/components/picking"
+import { Packing } from "@/components/packing"
+import DashboardOperacion from "@/components/dashboard-operacion"
+import { BatchHistory } from "@/components/batch-history"
+import { ProductionEntriesView } from "@/components/production-entries-view"
+import InventoryAudit from "@/components/inventory-audit"
+import { SanitaryInspectionHistory } from "@/components/sanitary-inspection-history"
+import { ApprovalHistory } from "@/components/approval-history"
+import { WarehouseCapacityComponent } from "@/components/warehouse-capacity"
+import QRPalletRegistration from "@/components/qr-pallet-registration"
+import QRPalletReading from "@/components/qr-pallet-reading"
+import { PalletInventoryView } from "@/components/pallet-inventory-view"
+import MaterialExplosion from "@/components/material-explosion"
+import MontacargasDia from "@/components/inventario/montacargas-dia" // CRUD diario de disponibilidad de montacargas y conteo de personal
+import Bitacora from "@/components/lip/bitacora" // CRUD de bitacora del dia (Operacion Lip)
+import { ArrowLeft } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { UserPermissionsManagement } from "@/components/configuration/user-permissions-management"
+import { PermissionGuard } from "@/components/permission-guard"
+import { UserAccessModule } from "@/components/user-access-module"
+import HeadcountManagement from "@/components/headcount-management" // Added Head Count component import
+import { Tolva } from "@/components/tolva"
+import VerTolva from "@/components/ver-tolva"
+import { Proyecciones } from "@/components/proyecciones"
+import AttendanceRegistration from "@/components/attendance-registration" // Added import for attendance registration
+import AttendanceTable from "@/components/attendance-table" // Added import for attendance table
+import { ExtraHoursAssignment } from "@/components/extra-hours-assignment" // Added import for extra hours assignment module
+import PersonnelNotices from "@/components/personnel-notices" // Added import for personnel notices module
+import GestionTurnos from "@/components/rrhh/gestion-turnos" // CRUD de turnos (tabla tarifasturnos)
+import ProgramacionTurnos from "@/components/rrhh/programacion-turnos" // Programación a futuro de personal en `registroasistencia`
+import { ViewPicking } from "@/components/view-picking" // Added import for ViewPicking component
+import { Tarifas } from "@/components/configuration/tarifas" // Added import for Tarifas component
+import { FacturacionProyectos } from "@/components/facturacion-proyectos" // Added import for Facturacion Proyectos component
+import { DashboardOperacionesLip } from "@/components/dashboard-operaciones-lip" // Dashboard Operaciones LIP
+import { RegistroPreoperacional } from "@/components/registro-preoperacional" // Registro Preoperacional
+import GestionContratos from "@/components/rrhh/gestion-contratos"
+import DotacionEPP from "@/components/rrhh/dotacion-epp"
+import Capacitaciones from "@/components/rrhh/capacitaciones"
+import CapacitacionesAsistencia from "@/components/rrhh/capacitaciones-asistencia"
+import SolicitudDePersonal from "@/components/rrhh/solicitud-de-personal"
+import EvaluacionesDashboard from "@/components/rrhh/evaluaciones-dashboard"
+import InduccionesEvidenciaDashboard from "@/components/rrhh/inducciones-evidencia-dashboard"
+import InduccionesManagement from "@/components/rrhh/inducciones-management"
+import IsoEvidenceDashboard from "@/components/iso9001/iso-evidence-dashboard"
+import GestionSolicitudes from "@/components/rrhh/gestion-solicitudes"
+import GestionSolicitudesPersonal from "@/components/rrhh/gestion-solicitudes-personal"
+import HojasDeVida from "@/components/rrhh/hojas-de-vida"
+import Antecedentes from "@/components/rrhh/antecedentes"
+import ExamenesMedicos from "@/components/rrhh/examenes-medicos"
+import Ausentismos from "@/components/rrhh/ausentismos"
+import RecobroIncapacidades from "@/components/rrhh/recobro-incapacidades"
+import { Auditoria0312 } from "@/components/sst/auditoria-0312"
+import { Matriz60Estandares } from "@/components/sst/matriz-60-estandares"
+import { RepositorioSoportes } from "@/components/sst/repositorio-soportes"
+import { RepositorioISO9001 } from "@/components/iso9001/repositorio-iso9001"
+import { InvestigacionAT } from "@/components/sst/investigacion-at"
+import { AlertasAT } from "@/components/sst/alertas-at"
+import { InvestigacionesRepositorio } from "@/components/sst/investigaciones-repositorio"
+import { MatrizIpevr } from "@/components/sst/ipevr"
+import { PlanMejoramiento } from "@/components/sst/plan-mejoramiento"
+import { IndicadoresSST } from "@/components/sst/indicadores"
+import { EntregaEpp } from "@/components/sst/entrega-epp"
+import { EquiposMantenimiento } from "@/components/sst/equipos-mantenimiento"
+import { ComunicacionSST } from "@/components/sst/comunicacion"
+import { GestionCambio } from "@/components/sst/gestion-cambio"
+import { ActividadesSST } from "@/components/sst/actividades"
+import { MatrizIntegradaSIG } from "@/components/sst/matriz-integrada-sig"
+import { RepositorioSIG } from "@/components/sst/repositorio-sig"
+import { DashboardSIG } from "@/components/sst/dashboard-sig"
+import { AspectosAmbientales } from "@/components/sst/aspectos-ambientales"
+import { ObjetivosSIG } from "@/components/sst/objetivos-sig"
+import { NoConformidadesSIG } from "@/components/sst/no-conformidades-sig"
+import { IndicadoresSIG } from "@/components/sst/indicadores-sig"
+import { PanelOperacionLIP } from "@/components/sst/panel-operacion-lip"
+import { MapaInteraccionProceso } from "@/components/sst/mapa-interaccion-proceso"
+import { PanelInventarioLIP } from "@/components/sst/panel-inventario-lip"
+import { CuadreInventario } from "@/components/sst/cuadre-inventario"
+import { PanelGestionHumanaLIP } from "@/components/sst/panel-gestion-humana-lip"
+import { SatisfaccionPQRSF } from "@/components/sst/satisfaccion-pqrsf"
+import { CalificacionConductor } from "@/components/sst/calificacion-conductor"
+import { FacturacionProyectosIndicador } from "@/components/sst/facturacion-proyectos-indicador"
+import { MatrizLegalAmbiental } from "@/components/sst/matriz-legal-ambiental"
+import { ContextoDofa } from "@/components/sst/contexto-dofa"
+import GestionColaboradores from "@/components/rrhh/gestion-colaboradores"
+import { CarpetasTrabajadores } from "@/components/rrhh/carpetas-trabajadores"
+import Entrevistas from "@/components/rrhh/entrevistas"
+import BienestarPrograma from "@/components/rrhh/bienestar-programa"
+import BienestarParticipacion from "@/components/rrhh/bienestar-participacion"
+import Nominapersonal from "@/components/nominapersonal" // Added import for Nominapersonal component
+import { SolicitudTurnos } from "@/components/solicitud-turnos" // Added import for Solicitud de Turnos
+import { AprobarTurnos } from "@/components/aprobar-turnos" // Added import for Aprobar Turnos
+import { AttendanceViewer } from "@/components/attendance-viewer" // Added import for AttendanceViewer component
+import GestionFacturas from "@/components/gestion-facturas" // Added import for Gestion de Facturas
+import AsistenteIA from "@/components/asistente-ia" // Added import for AI Assistant
+import FormularioRegistroGasto from "@/components/gastos/formulario-registro-gasto"
+import DashboardGastos from "@/components/gastos/dashboard-gastos"
+import EstadoResultados from "@/components/estado-resultados/estado-resultados"
+import { GroupKey } from "@/lib/dashboard-data"
+
+interface MainContentProps {
+  selectedGroup: GroupKey | null
+  selectedModule: string | null
+  onBack: () => void
+  onSelectGroup: (group: GroupKey) => void
+  onSelectModule: (moduleName: string) => void
+  sidebarCollapsed: boolean
+}
+
+export function MainContent({
+  selectedGroup,
+  selectedModule,
+  onBack,
+  onSelectGroup,
+  onSelectModule,
+  sidebarCollapsed,
+}: MainContentProps) {
+  const [editingOrderId, setEditingOrderId] = React.useState<number | null>(null)
+  const [basculaOrderId, setBasculaOrderId] = React.useState<number | null>(null) // Added state to store initial order ID for Báscula module
+  const [sanitaryRegistryVehicleId, setSanitaryRegistryVehicleId] = React.useState<number | null>(null) // Added state to store initial vehicle ID for Sanitary Registry module
+
+  // Helper to match module names to config keys more reliably
+  const getConfigModule = (moduleName: string | null) => {
+    if (!moduleName) return null
+
+    const map: Record<string, string> = {
+      Bodegas: "almacenes",
+      Categorías: "categorias",
+      "Sub Categorías": "subcategorias",
+      Clientes: "clientes",
+      "Condiciones Pago": "condicionespago",
+      Destinos: "destinos",
+      Grupos: "grupos",
+      Medios: "medios",
+      Productos: "productos",
+      Sucursales: "sucursales",
+      "Tipos Despacho": "tipodespacho",
+      Transportadoras: "transportes",
+      "Tipos de Vehiculos": "tiposvehiculos",
+      Vendedores: "vendedores",
+      Localizaciones: "localizaciones",
+      "Ver Citas": "citas_vehiculos",
+      "Citas de vehículos": "citas_vehiculos",
+      "Ingreso de Producción": "production_entry",
+      "Aprobación de ingreso de producción": "production_approval",
+      "Gestión de transacciones": "inventory_transactions",
+      "Registro sanitario": "sanitary_registry",
+      "Registrar Vehículos": "registrar_vehiculos",
+      "Ver Vehículos": "ver_vehiculos",
+      "Asignación de Lotes": "batch_approval",
+      Picking: "picking",
+      Packing: "packing",
+      "Dashboard Operacion": "dashboard_operacion",
+      "Historial de lotes": "batch_history",
+      "Auditoría de Inventario": "inventory_audit",
+      "Ver historial de Inspección": "sanitary_inspection_history",
+      "Historial Aprobaciones": "approval_history",
+      "Capacidad Bodega": "warehouse_capacity",
+      "Registro de QR estibas": "qr_pallet_registration",
+      "Lectura de QR estibas": "qr_pallet_reading",
+      "Gestión de proveedores": "proveedores",
+      "Creación de materiales": "materiales",
+      "Explosión de materiales": "material_explosion",
+      "Inventario por Estiba": "pallet_inventory_view",
+      "Gestión de Usuarios": "user_permissions",
+      "Head Count": "headcount",
+      "Registro de asistencia": "attendance_registration", // Added mapping for attendance module
+      "Tabla Asistencia": "attendance_table", // Added mapping for attendance table
+      "Asignación horas extra": "extra_hours_assignment", // Added mapping for extra hours assignment module
+      "Novedades de personal": "personnel_notices", // Added mapping for personnel notices module
+      "Ver Picking": "view_picking", // Added mapping for ViewPicking module
+      "Ver Picking/Packing": "view_picking", // Added mapping for renamed module Ver Picking/Packing
+      Tarifas: "tarifas", // Added mapping for Tarifas module
+      "Facturación Proyectos": "facturacion_proyectos", // Added mapping for Facturacion Proyectos module
+      "Gestión de Facturas": "gestionfacturas", // Added mapping for Gestión de Facturas module
+      "Dashboard Operaciones LIP": "dashboardop", // Dashboard Operaciones LIP
+      "Recepción de Traslado": "transfer_requests", // Added mapping for renamed module
+      Proyecciones: "proyecciones", // Added mapping for Proyecciones module
+      "Gestión de Contratos": "gestion_contratos",
+      "Gestión de Dotación EPP": "dotacion_epp",
+      "Gestión de Capacitaciones": "capacitaciones",
+      "Asistencia a Capacitaciones": "asistencia_capacitaciones",
+      "Solicitud de Personal": "solicitud_personal",
+      "Evaluaciones de Desempeño": "evaluacionpersonal",
+      "Gestión de Solicitudes": "gestionsolicitudes",
+      // Mismo permiso que Gestión de Solicitudes (peticion del cliente).
+      "Aprobación de Solicitudes de Personal": "gestionsolicitudes",
+      "Registro Preoperacional": "prechequeo",
+      "Servicios Adicionales": "solicitudturnos",
+      "Aprobar Turnos": "aprobacionturnos",
+    }
+
+    return configModules[map[moduleName]]
+  }
+
+  React.useEffect(() => {
+    const handleNavigateToBascula = (event: Event) => {
+      const customEvent = event as CustomEvent<{ orderId: number }>
+      setBasculaOrderId(customEvent.detail.orderId)
+      onSelectModule("Báscula")
+    }
+
+    const handleNavigateToSanitaryRegistry = (event: Event) => {
+      const customEvent = event as CustomEvent<{ vehicleId: number }>
+      setSanitaryRegistryVehicleId(customEvent.detail.vehicleId)
+      onSelectModule("Registro sanitario")
+    }
+
+    window.addEventListener("navigate-to-bascula", handleNavigateToBascula)
+    window.addEventListener("navigate-to-sanitary-registry", handleNavigateToSanitaryRegistry)
+
+    return () => {
+      window.removeEventListener("navigate-to-bascula", handleNavigateToBascula)
+      window.removeEventListener("navigate-to-sanitary-registry", handleNavigateToSanitaryRegistry)
+    }
+  }, [onSelectModule])
+
+  const configDef = getConfigModule(selectedModule)
+
+  return (
+    <div className="flex-1 flex flex-col h-screen overflow-hidden relative z-10">
+      <TopBar />
+
+      {(selectedModule || selectedGroup) && (
+        <div className="md:hidden px-4 py-2 border-b bg-background">
+          <Button variant="ghost" size="sm" onClick={onBack} className="flex items-center gap-2 text-sm">
+            <ArrowLeft className="h-4 w-4" />
+            Volver
+          </Button>
+        </div>
+      )}
+
+      <main className="flex-1 overflow-y-auto overflow-x-hidden pb-20 md:pb-0">
+        <div
+          className={
+            selectedModule === "Dashboard Operacion"
+              ? "w-full px-2 sm:px-4 py-2 sm:py-4"
+              : "w-full max-w-full px-2 sm:px-4 lg:px-8 xl:px-12 py-2 sm:py-4 lg:py-6"
+          }
+        >
+          {editingOrderId ? (
+            <OrderEditPage orderId={editingOrderId} onBack={() => setEditingOrderId(null)} />
+          ) : !selectedGroup ? (
+            <>
+              {/* Welcome Section */}
+              <div className="mb-4 sm:mb-8">
+                <h1 className="text-xl sm:text-4xl font-bold text-foreground mb-1 sm:mb-2">
+                  Bienvenido a <span className="text-foreground">LiP</span>
+                  <span className="text-primary">Go</span>
+                </h1>
+                <p className="text-xs sm:text-lg text-muted-foreground">Logística inteligente en tiempo real</p>
+              </div>
+
+              {/* Daily Summary */}
+              <DailySummary />
+
+              {/* Module Cards */}
+              <ModuleCards onSelectGroup={onSelectGroup} onSelectModule={onSelectModule} />
+            </>
+          ) : selectedModule === "Entrada de pedidos" ? (
+            <PermissionGuard moduleName="Entrada de pedidos">
+              <OrderEntryForm onNavigateToManageOrders={() => onSelectModule("Gestionar pedidos")} />
+            </PermissionGuard>
+          ) : selectedModule === "Gestionar pedidos" ? (
+            <PermissionGuard moduleName="Gestionar pedidos">
+              <OrdersManagement onEditOrder={(orderId) => setEditingOrderId(orderId)} />
+            </PermissionGuard>
+          ) : selectedModule === "Gestión integral de pedidos" ? (
+            <PermissionGuard moduleName="Gestión integral de pedidos">
+              <ComprehensiveOrdersManagement />
+            </PermissionGuard>
+          ) : selectedModule === "Dashboard Pedidos" ? (
+            <PermissionGuard moduleName="Dashboard Pedidos">
+              <DashboardPedidos />
+            </PermissionGuard>
+          ) : selectedModule === "Generar Órdenes de Cargue" ? (
+            <PermissionGuard moduleName="Generar Órdenes de Cargue">
+              <GenerateLoadOrders />
+            </PermissionGuard>
+          ) : selectedModule === "Generar Órdenes de Descargue" ? (
+            <PermissionGuard moduleName="Generar Órdenes de Descargue">
+              <GenerateUnloadOrders />
+            </PermissionGuard>
+          ) : selectedModule === "Generar Orden de Distribución" ? (
+            <PermissionGuard moduleName="Generar Orden de Distribución">
+              <GenerateDistributionOrders />
+            </PermissionGuard>
+          ) : selectedModule === "Gestión de Ordenes" ? (
+            <PermissionGuard moduleName="Gestión de Ordenes">
+              <LoadOrdersManagement />
+            </PermissionGuard>
+          ) : selectedModule === "Dashboard Despachos/Recepción" ? (
+            <PermissionGuard moduleName="Dashboard Despachos/Recepción">
+              <DashboardRecepcion />
+            </PermissionGuard>
+          ) : selectedModule === "Transacciones de Inventario" ? (
+            <PermissionGuard moduleName="Transacciones de Inventario">
+              <InventoryTransactionsForm />
+            </PermissionGuard>
+          ) : selectedModule === "Ingreso de Producción" ? (
+            <PermissionGuard moduleName="Ingreso de Producción">
+              <ProductionEntryForm />
+            </PermissionGuard>
+          ) : selectedModule === "Tolva" ? (
+            <PermissionGuard moduleName="Tolva">
+              <Tolva />
+            </PermissionGuard>
+          ) : selectedModule === "Ver Tolva" ? (
+            <PermissionGuard moduleName="Ver Tolva">
+              <VerTolva />
+            </PermissionGuard>
+          ) : selectedModule === "Proyecciones" ? (
+            <PermissionGuard moduleName="Proyecciones">
+              <Proyecciones />
+            </PermissionGuard>
+          ) : selectedModule === "Ver ingresos de producción" ? (
+            <PermissionGuard moduleName="Ver ingresos de producción">
+              <ProductionEntriesView />
+            </PermissionGuard>
+          ) : selectedModule === "Aprobación de ingreso de producción" ? (
+            <PermissionGuard moduleName="Aprobación de ingreso de producción">
+              <ProductionApproval />
+            </PermissionGuard>
+          ) : selectedModule === "Historial Aprobaciones" ? (
+            <PermissionGuard moduleName="Historial Aprobaciones">
+              <ApprovalHistory />
+            </PermissionGuard>
+          ) : selectedModule === "Dashboard de Producción" ? (
+            <PermissionGuard moduleName="Dashboard de Producción">
+              <ControlPiso />
+            </PermissionGuard>
+          ) : selectedModule === "Saldos de inventario" ? (
+            <PermissionGuard moduleName="Saldos de inventario">
+              <InventoryBalanceDetails />
+            </PermissionGuard>
+          ) : selectedModule === "Saldos por producto" ? (
+            <PermissionGuard moduleName="Saldos por producto">
+              <InventoryBalanceGlobal />
+            </PermissionGuard>
+          ) : selectedModule === "Capacidad Bodega" ? (
+            <PermissionGuard moduleName="Capacidad Bodega">
+              <WarehouseCapacityComponent />
+            </PermissionGuard>
+          ) : selectedModule === "Registro de QR estibas" ? (
+            <PermissionGuard moduleName="Registro de QR estibas">
+              <QRPalletRegistration />
+            </PermissionGuard>
+          ) : selectedModule === "Lectura de QR estibas" ? (
+            <PermissionGuard moduleName="Lectura de QR estibas">
+              <QRPalletReading />
+            </PermissionGuard>
+          ) : selectedModule === "Inventario por Estiba" ? (
+            <PermissionGuard moduleName="Inventario por Estiba">
+              <PalletInventoryView />
+            </PermissionGuard>
+          ) : selectedModule === "Montacargas y personal día" ? (
+            <PermissionGuard moduleName="Montacargas y personal día">
+              <MontacargasDia />
+            </PermissionGuard>
+          ) : selectedModule === "Reprocesos" ? (
+            <PermissionGuard moduleName="Reprocesos">
+              <ReprocesosManagement />
+            </PermissionGuard>
+          ) : selectedModule === "Gestión de transacciones" ? (
+            <PermissionGuard moduleName="Gestión de transacciones">
+              <InventoryTransactionsManagement />
+            </PermissionGuard>
+          ) : selectedModule === "Ver Solicitudes de traslado" ? (
+            <PermissionGuard moduleName="Ver Solicitudes de traslado">
+              <TransferRequestsView />
+            </PermissionGuard>
+          ) : selectedModule === "Recepción de Traslado" ? (
+            <PermissionGuard moduleName="Recepción de Traslado">
+              <TransferRequestsView />
+            </PermissionGuard>
+          ) : selectedModule === "Traslados de producto" ? (
+            <PermissionGuard moduleName="Traslados de producto">
+              <ProductTransferForm />
+            </PermissionGuard>
+          ) : selectedModule === "Asignación de Lotes" ? (
+            <PermissionGuard moduleName="Asignación de Lotes">
+              <BatchApproval />
+            </PermissionGuard>
+          ) : selectedModule === "Picking" ? (
+            <PermissionGuard moduleName="Picking">
+              <Picking />
+            </PermissionGuard>
+          ) : selectedModule === "Packing" ? (
+            <PermissionGuard moduleName="Packing">
+              <Packing />
+            </PermissionGuard>
+          ) : selectedModule === "Ver Picking" ? (
+            <PermissionGuard moduleName="Ver Picking">
+              <ViewPicking />
+            </PermissionGuard>
+          ) : selectedModule === "Ver Picking/Packing" ? (
+            <PermissionGuard moduleName="Ver Picking/Packing">
+              <ViewPicking />
+            </PermissionGuard>
+          ) : selectedModule === "Dashboard Operacion" ? (
+            <PermissionGuard moduleName="Dashboard Operacion">
+              <DashboardOperacion />
+            </PermissionGuard>
+          ) : selectedModule === "Gestión de Contratos" ? (
+            <PermissionGuard moduleName="Gestión de Contratos">
+              <GestionContratos />
+            </PermissionGuard>
+          ) : selectedModule === "Gestión de Dotación EPP" ? (
+            <PermissionGuard moduleName="Gestión de Dotación EPP">
+              <DotacionEPP />
+            </PermissionGuard>
+          ) : selectedModule === "Examenes Médicos" ? (
+            <PermissionGuard moduleName="Examenes Médicos">
+              <ExamenesMedicos />
+            </PermissionGuard>
+          ) : selectedModule === "Gestión de Capacitaciones" ? (
+            <PermissionGuard moduleName="Gestión de Capacitaciones">
+              <Capacitaciones />
+            </PermissionGuard>
+          ) : selectedModule === "Asistencia a Capacitaciones" ? (
+            <PermissionGuard moduleName="Asistencia a Capacitaciones">
+              <CapacitacionesAsistencia />
+            </PermissionGuard>
+) : selectedModule === "Solicitud de Personal" ? (
+<PermissionGuard moduleName="Solicitud de Personal">
+  <SolicitudDePersonal />
+  </PermissionGuard>
+) : selectedModule === "Evaluaciones de Desempeño" ? (
+  <PermissionGuard moduleName="Evaluaciones de Desempeño">
+    <EvaluacionesDashboard />
+  </PermissionGuard>
+) : selectedModule === "Evidencia de Inducciones" ? (
+  <PermissionGuard moduleName="Evidencia de Inducciones">
+    <InduccionesEvidenciaDashboard />
+  </PermissionGuard>
+) : selectedModule === "Inducciones" ? (
+  <PermissionGuard moduleName="Inducciones">
+    <InduccionesManagement />
+  </PermissionGuard>
+) : selectedModule === "Gestión de Solicitudes" ? (
+  <PermissionGuard moduleName="Gestión de Solicitudes">
+    <GestionSolicitudes />
+  </PermissionGuard>
+) : selectedModule === "Aprobación de Solicitudes de Personal" ? (
+  <PermissionGuard moduleName="Aprobación de Solicitudes de Personal">
+    <GestionSolicitudesPersonal />
+  </PermissionGuard>
+) : selectedModule === "Hojas de Vida" ? (
+  <PermissionGuard moduleName="Hojas de Vida">
+    <HojasDeVida />
+  </PermissionGuard>
+) : selectedModule === "Antecedentes" ? (
+  <PermissionGuard moduleName="Antecedentes">
+    <Antecedentes />
+  </PermissionGuard>
+) : selectedModule === "Gestión de Colaboradores" ? (
+  <PermissionGuard moduleName="Gestión de Colaboradores">
+    <GestionColaboradores />
+  </PermissionGuard>
+) : selectedModule === "Carpetas de Trabajadores" ? (
+  <PermissionGuard moduleName="Carpetas de Trabajadores">
+    <CarpetasTrabajadores />
+  </PermissionGuard>
+) : selectedModule === "Entrevistas" ? (
+  <PermissionGuard moduleName="Entrevistas">
+    <Entrevistas />
+  </PermissionGuard>
+) : selectedModule === "Programa de Bienestar" ? (
+  <PermissionGuard moduleName="Programa de Bienestar">
+    <BienestarPrograma />
+  </PermissionGuard>
+) : selectedModule === "Participación y Evidencias" ? (
+  <PermissionGuard moduleName="Participación y Evidencias">
+    <BienestarParticipacion />
+  </PermissionGuard>
+          ) : selectedModule === "Historial de lotes" ? (
+            <PermissionGuard moduleName="Historial de lotes">
+              <BatchHistory />
+            </PermissionGuard>
+          ) : selectedModule === "Auditoría de Inventario" ? (
+            <PermissionGuard moduleName="Auditoría de Inventario">
+              <InventoryAudit />
+            </PermissionGuard>
+          ) : selectedModule === "Registrar Vehículos" ? (
+            <PermissionGuard moduleName="Registrar Vehículos">
+              <VehicleAppointmentsForm />
+            </PermissionGuard>
+          ) : selectedModule === "Ver Vehículos" ? (
+            <PermissionGuard moduleName="Ver Vehículos">
+              <GenericCrudTable moduleDef={configModules["citas_vehiculos"]} hideNewButton={true} />
+            </PermissionGuard>
+          ) : selectedModule === "Ver historial de Inspección" ? (
+            <PermissionGuard moduleName="Ver historial de Inspección">
+              <SanitaryInspectionHistory />
+            </PermissionGuard>
+          ) : selectedModule === "Báscula" ? (
+            <PermissionGuard moduleName="Báscula">
+              <BasculaForm initialOrderId={basculaOrderId} onOrderLoaded={() => setBasculaOrderId(null)} />
+            </PermissionGuard>
+          ) : selectedModule === "Historial Báscula" ? (
+            <PermissionGuard moduleName="Historial Báscula">
+              <BasculaHistory />
+            </PermissionGuard>
+          ) : selectedModule === "Registro sanitario" ? (
+            <PermissionGuard moduleName="Registro sanitario">
+              <SanitaryRegistryForm
+                initialVehicleId={sanitaryRegistryVehicleId}
+                onVehicleLoaded={() => setSanitaryRegistryVehicleId(null)}
+              />
+            </PermissionGuard>
+          ) : selectedModule === "Productos" ? (
+            <PermissionGuard moduleName="Productos">
+              <ProductosWithCategories />
+            </PermissionGuard>
+          ) : selectedModule === "Sub Categorías" ? (
+            <PermissionGuard moduleName="Sub Categorías">
+              <GenericCrudTable moduleDef={configModules["subcategorias"]} />
+            </PermissionGuard>
+          ) : selectedModule === "Transportadoras" ? (
+            <PermissionGuard moduleName="Transportadoras">
+              <GenericCrudTable moduleDef={configModules["transportes"]} />
+            </PermissionGuard>
+          ) : selectedModule === "Tipos de Vehiculos" ? (
+            <PermissionGuard moduleName="Tipos de Vehiculos">
+              <GenericCrudTable moduleDef={configModules["tiposvehiculos"]} />
+            </PermissionGuard>
+          ) : selectedModule === "Localizaciones" ? (
+            <PermissionGuard moduleName="Localizaciones">
+              <GenericCrudTable moduleDef={configModules["localizaciones"]} />
+            </PermissionGuard>
+          ) : selectedModule === "Gestión de proveedores" ? (
+            <PermissionGuard moduleName="Gestión de proveedores">
+              <GenericCrudTable moduleDef={configModules["proveedores"]} />
+            </PermissionGuard>
+          ) : selectedModule === "Creación de materiales" ? (
+            <PermissionGuard moduleName="Creación de materiales">
+              <GenericCrudTable moduleDef={configModules["materiales"]} />
+            </PermissionGuard>
+          ) : selectedModule === "Explosión de materiales" ? (
+            <PermissionGuard moduleName="Explosión de materiales">
+              <MaterialExplosion />
+            </PermissionGuard>
+          ) : selectedModule === "Gestión de Usuarios" ? (
+            <PermissionGuard moduleName="Gestión de Usuarios">
+              <UserPermissionsManagement />
+            </PermissionGuard>
+          ) : selectedModule === "Accesos de Usuario" ? (
+            <PermissionGuard moduleName="Accesos de Usuario">
+              <UserAccessModule />
+            </PermissionGuard>
+          ) : selectedModule === "Head Count" ? (
+            <PermissionGuard moduleName="Head Count">
+              <HeadcountManagement />
+            </PermissionGuard>
+          ) : selectedModule === "Nominapersonal" ? (
+            <PermissionGuard moduleName="Nominapersonal">
+              <Nominapersonal />
+            </PermissionGuard>
+          ) : selectedModule === "Registro de asistencia" ? (
+            <PermissionGuard moduleName="Registro de asistencia">
+              <AttendanceRegistration />
+            </PermissionGuard>
+          ) : selectedModule === "Tabla Asistencia" ? (
+            <PermissionGuard moduleName="Tabla Asistencia">
+              <AttendanceTable />
+            </PermissionGuard>
+          ) : selectedModule === "Asignación horas extra" ? (
+            <PermissionGuard moduleName="Asignación horas extra">
+              <ExtraHoursAssignment
+                onNavigateToAprobarTurnosHistorial={() => {
+                  // Bandera leída por AprobarTurnos al montar para abrir
+                  // directamente la vista de historial.
+                  if (typeof window !== "undefined") {
+                    sessionStorage.setItem("aprobarTurnosInitialView", "historial")
+                  }
+                  onSelectModule("Aprobar Turnos")
+                }}
+              />
+            </PermissionGuard>
+          ) : selectedModule === "Novedades de personal" ? (
+            <PermissionGuard moduleName="Novedades de personal">
+              <PersonnelNotices />
+            </PermissionGuard>
+          ) : selectedModule === "Ausentismos" ? (
+            <PermissionGuard moduleName="Ausentismos">
+              <Ausentismos />
+            </PermissionGuard>
+          ) : selectedModule === "Recobro de Incapacidades" ? (
+            <PermissionGuard moduleName="Recobro de Incapacidades">
+              <RecobroIncapacidades />
+            </PermissionGuard>
+          ) : selectedModule === "Auditoría 0312" ? (
+            <PermissionGuard moduleName="Auditoría 0312">
+              <Auditoria0312 />
+            </PermissionGuard>
+          ) : selectedModule === "Matriz de Estándares" ? (
+            <PermissionGuard moduleName="Matriz de Estándares">
+              <Matriz60Estandares />
+            </PermissionGuard>
+          ) : selectedModule === "Repositorio de Soportes" ? (
+            <PermissionGuard moduleName="Repositorio de Soportes">
+              <RepositorioSoportes />
+            </PermissionGuard>
+          ) : selectedModule === "Investigación AT" ? (
+            <PermissionGuard moduleName="Investigación AT">
+              <InvestigacionAT />
+            </PermissionGuard>
+          ) : selectedModule === "Alertas de AT" ? (
+            <PermissionGuard moduleName="Alertas de AT">
+              <AlertasAT />
+            </PermissionGuard>
+          ) : selectedModule === "Investigaciones Realizadas" ? (
+            <PermissionGuard moduleName="Investigaciones Realizadas">
+              <InvestigacionesRepositorio />
+            </PermissionGuard>
+          ) : selectedModule === "IPEVR" ? (
+            <PermissionGuard moduleName="IPEVR">
+              <MatrizIpevr />
+            </PermissionGuard>
+          ) : selectedModule === "Plan de Mejoramiento" ? (
+            <PermissionGuard moduleName="Plan de Mejoramiento">
+              <PlanMejoramiento />
+            </PermissionGuard>
+          ) : selectedModule === "Indicadores SST" ? (
+            <PermissionGuard moduleName="Indicadores SST">
+              <IndicadoresSST />
+            </PermissionGuard>
+          ) : selectedModule === "Entrega de EPP" ? (
+            <PermissionGuard moduleName="Entrega de EPP">
+              <EntregaEpp />
+            </PermissionGuard>
+          ) : selectedModule === "Equipos y Mantenimiento" ? (
+            <PermissionGuard moduleName="Equipos y Mantenimiento">
+              <EquiposMantenimiento />
+            </PermissionGuard>
+          ) : selectedModule === "Comunicación SST" ? (
+            <PermissionGuard moduleName="Comunicación SST">
+              <ComunicacionSST />
+            </PermissionGuard>
+          ) : selectedModule === "Gestión del Cambio" ? (
+            <PermissionGuard moduleName="Gestión del Cambio">
+              <GestionCambio />
+            </PermissionGuard>
+          ) : selectedModule === "Actividades y Comités" ? (
+            <PermissionGuard moduleName="Actividades y Comités">
+              <ActividadesSST />
+            </PermissionGuard>
+          ) : selectedModule === "Dashboard SIG" ? (
+            <PermissionGuard moduleName="Dashboard SIG">
+              <DashboardSIG />
+            </PermissionGuard>
+          ) : selectedModule === "Análisis de Contexto DOFA" ? (
+            <PermissionGuard moduleName="Análisis de Contexto DOFA">
+              <ContextoDofa />
+            </PermissionGuard>
+          ) : selectedModule === "Matriz Integrada SIG" ? (
+            <PermissionGuard moduleName="Matriz Integrada SIG">
+              <MatrizIntegradaSIG />
+            </PermissionGuard>
+          ) : selectedModule === "Repositorio por Norma SIG" ? (
+            <PermissionGuard moduleName="Repositorio por Norma SIG">
+              <RepositorioSIG />
+            </PermissionGuard>
+          ) : selectedModule === "Aspectos e Impactos ISO 14001" ? (
+            <PermissionGuard moduleName="Aspectos e Impactos ISO 14001">
+              <AspectosAmbientales />
+            </PermissionGuard>
+          ) : selectedModule === "Objetivos y Metas SIG" ? (
+            <PermissionGuard moduleName="Objetivos y Metas SIG">
+              <ObjetivosSIG />
+            </PermissionGuard>
+          ) : selectedModule === "No Conformidades SIG" ? (
+            <PermissionGuard moduleName="No Conformidades SIG">
+              <NoConformidadesSIG />
+            </PermissionGuard>
+          ) : selectedModule === "Indicadores SIG" ? (
+            <PermissionGuard moduleName="Indicadores SIG">
+              <IndicadoresSIG />
+            </PermissionGuard>
+          ) : selectedModule === "Panel LIP Operación" ? (
+            <PermissionGuard moduleName="Panel LIP Operación">
+              <PanelOperacionLIP />
+            </PermissionGuard>
+          ) : selectedModule === "Mapa de Interacción del Proceso" ? (
+            <PermissionGuard moduleName="Mapa de Interacción del Proceso">
+              <MapaInteraccionProceso />
+            </PermissionGuard>
+          ) : selectedModule === "Panel LIP Inventario" ? (
+            <PermissionGuard moduleName="Panel LIP Inventario">
+              <PanelInventarioLIP />
+            </PermissionGuard>
+          ) : selectedModule === "Cuadre de Inventario" ? (
+            <PermissionGuard moduleName="Cuadre de Inventario">
+              <CuadreInventario />
+            </PermissionGuard>
+          ) : selectedModule === "Panel LIP Gestión Humana" ? (
+            <PermissionGuard moduleName="Panel LIP Gestión Humana">
+              <PanelGestionHumanaLIP />
+            </PermissionGuard>
+          ) : selectedModule === "Satisfacción y PQRSF" ? (
+            <PermissionGuard moduleName="Satisfacción y PQRSF">
+              <SatisfaccionPQRSF />
+            </PermissionGuard>
+          ) : selectedModule === "Calificación del Conductor" ? (
+            <PermissionGuard moduleName="Calificación del Conductor">
+              <CalificacionConductor />
+            </PermissionGuard>
+          ) : selectedModule === "Matriz Legal Ambiental" ? (
+            <PermissionGuard moduleName="Matriz Legal Ambiental">
+              <MatrizLegalAmbiental />
+            </PermissionGuard>
+          ) : selectedModule === "Turnos" ? (
+            <PermissionGuard moduleName="Turnos">
+              <GestionTurnos />
+            </PermissionGuard>
+          ) : selectedModule === "Programación de turnos" ? (
+            <PermissionGuard moduleName="Programación de turnos">
+              <ProgramacionTurnos />
+            </PermissionGuard>
+          ) : selectedModule === "Tarifas" ? (
+            <PermissionGuard moduleName="Tarifas">
+              <Tarifas />
+            </PermissionGuard>
+) : selectedModule === "Servicios Adicionales" ? (
+  <PermissionGuard moduleName="Servicios Adicionales">
+  <SolicitudTurnos />
+  </PermissionGuard>
+        ) : selectedModule === "Indicador de Facturación por Proyectos" ? (
+          <PermissionGuard moduleName="Indicador de Facturación por Proyectos">
+            <FacturacionProyectosIndicador />
+          </PermissionGuard>
+        ) : selectedModule === "Facturación Proyectos" ? (
+          <PermissionGuard moduleName="Facturación Proyectos">
+            <FacturacionProyectos />
+          </PermissionGuard>
+          ) : selectedModule === "Gestión de Facturas" ? (
+            <PermissionGuard moduleName="Gestión de Facturas">
+              <GestionFacturas onBack={onBack} />
+            </PermissionGuard>
+          ) : selectedModule === "Dashboard Operaciones LIP" ? (
+            <PermissionGuard moduleName="Dashboard Operaciones LIP">
+              <DashboardOperacionesLip />
+            </PermissionGuard>
+) : selectedModule === "Registro Preoperacional" ? (
+  <PermissionGuard moduleName="Registro Preoperacional">
+  <RegistroPreoperacional />
+  </PermissionGuard>
+  ) : selectedModule === "Aprobar Turnos" ? (
+  <PermissionGuard moduleName="Aprobar Turnos">
+  <AprobarTurnos />
+  </PermissionGuard>
+          ) : selectedModule === "Bitácora" ? (
+            <PermissionGuard moduleName="Bitácora">
+              <Bitacora />
+            </PermissionGuard>
+          ) : selectedModule === "Visor" ? (
+            <PermissionGuard moduleName="Visor">
+              <AttendanceViewer />
+            </PermissionGuard>
+          ) : selectedModule === "Registrar Gasto" ? (
+            <PermissionGuard moduleName="Registrar Gasto">
+              <FormularioRegistroGasto />
+            </PermissionGuard>
+          ) : selectedModule === "Dashboard Gastos" ? (
+            <PermissionGuard moduleName="Dashboard Gastos">
+              <DashboardGastos />
+            </PermissionGuard>
+          ) : selectedModule === "Estado de Resultados" ? (
+            <PermissionGuard moduleName="Estado de Resultados">
+              <EstadoResultados />
+            </PermissionGuard>
+          ) : selectedModule === "Centro de Evidencia ISO 9001" ? (
+            <PermissionGuard moduleName="Centro de Evidencia ISO 9001">
+              <IsoEvidenceDashboard />
+            </PermissionGuard>
+          ) : selectedModule === "Repositorio ISO 9001" ? (
+            <PermissionGuard moduleName="Repositorio ISO 9001">
+              <RepositorioISO9001 />
+            </PermissionGuard>
+          ) : selectedModule === "Asistente IA" ? (
+            <PermissionGuard moduleName="Asistente IA">
+              {/*
+                Caja con altura calculada para que el chat administre su
+                propio scroll interno (mensajes) sin generar doble scroll
+                con el `<main>` del shell. Restamos ~9rem por la TopBar
+                + paddings del wrapper. min-h asegura que en pantallas
+                pequenas siga siendo usable.
+              */}
+              <div className="h-[calc(100dvh-9rem)] min-h-[520px] w-full overflow-hidden rounded-lg border border-border/60">
+                <AsistenteIA />
+              </div>
+            </PermissionGuard>
+          ) : configDef ? (
+            <PermissionGuard moduleName={selectedModule || "Configuración"}>
+              <GenericCrudTable moduleDef={configDef} />
+            </PermissionGuard>
+          ) : selectedModule ? (
+            <ModulePlaceholder moduleName={selectedModule} onBack={onBack} />
+          ) : (
+            <ModulesView groupKey={selectedGroup} onBack={onBack} onSelectModule={onSelectModule} />
+          )}
+        </div>
+      </main>
+    </div>
+  )
+}

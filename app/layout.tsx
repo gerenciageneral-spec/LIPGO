@@ -1,0 +1,61 @@
+import type React from "react"
+import type { Metadata } from "next"
+import { Geist, Geist_Mono } from "next/font/google"
+import { Analytics } from "@vercel/analytics/next"
+import Script from "next/script"
+import { AuthProvider } from "@/components/auth-provider"
+import GlobalLocationScheduler from "@/components/global-location-scheduler"
+import { Toaster } from "@/components/ui/toaster"
+import "./globals.css"
+
+const _geist = Geist({ subsets: ["latin"] })
+const _geistMono = Geist_Mono({ subsets: ["latin"] })
+
+export const metadata: Metadata = {
+  title: "LiPGO - Centro de Operaciones",
+  description: "Aplicación web de logística y operaciones",
+  generator: "v0.app",
+  icons: {
+    icon: [
+      {
+        url: "/icon-light-32x32.png",
+        media: "(prefers-color-scheme: light)",
+      },
+      {
+        url: "/icon-dark-32x32.png",
+        media: "(prefers-color-scheme: dark)",
+      },
+      {
+        url: "/icon.svg",
+        type: "image/svg+xml",
+      },
+    ],
+    apple: "/apple-icon.png",
+  },
+}
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode
+}>) {
+  return (
+    <html lang="es">
+      <body className={`font-sans antialiased`}>
+        <AuthProvider>
+          {/* Scheduler invisible: captura ubicacion a las 08:00, 14:00 y 17:00
+              hora de Colombia (ver components/global-location-scheduler.tsx) */}
+          <GlobalLocationScheduler />
+          {children}
+          {/* Necesario para que useToast muestre feedback en toda la app. */}
+          <Toaster />
+        </AuthProvider>
+        <Analytics />
+        <Script
+          src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"
+          strategy="afterInteractive"
+        />
+      </body>
+    </html>
+  )
+}
