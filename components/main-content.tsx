@@ -93,6 +93,7 @@ import { InvestigacionAT } from "@/components/sst/investigacion-at"
 import { AlertasAT } from "@/components/sst/alertas-at"
 import { InvestigacionesRepositorio } from "@/components/sst/investigaciones-repositorio"
 import { MatrizIpevr } from "@/components/sst/ipevr"
+import { Medevac } from "@/components/sst/medevac"
 import { PlanMejoramiento } from "@/components/sst/plan-mejoramiento"
 import { IndicadoresSST } from "@/components/sst/indicadores"
 import { EntregaEpp } from "@/components/sst/entrega-epp"
@@ -651,6 +652,10 @@ export function MainContent({
           ) : selectedModule === "IPEVR" ? (
             <PermissionGuard moduleName="IPEVR">
               <MatrizIpevr />
+            </PermissionGuard>
+          ) : selectedModule === "MEDEVAC" ? (
+            <PermissionGuard moduleName="MEDEVAC">
+              <Medevac />
             </PermissionGuard>
           ) : selectedModule === "Plan de Mejoramiento" ? (
             <PermissionGuard moduleName="Plan de Mejoramiento">

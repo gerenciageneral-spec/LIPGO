@@ -369,6 +369,7 @@ export const groups: Group[] = [
           { name: "Comunicación SST", icon: NotebookPen, label: "Comunicación / Autorreporte / PQRSF" },
           { name: "Gestión del Cambio", icon: ArrowRightLeft, label: "Gestión del Cambio" },
           { name: "Actividades y Comités", icon: GraduationCap, label: "Actividades y Comités" },
+          { name: "MEDEVAC", icon: Stethoscope, label: "MEDEVAC (Plan de Emergencias Médicas)" },
         ],
       },
     ],

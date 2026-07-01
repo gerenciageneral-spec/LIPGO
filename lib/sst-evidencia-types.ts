@@ -33,6 +33,28 @@ export interface IndicadorRow {
   observacion: string | null
 }
 
+export interface MedevacRow {
+  id?: number
+  idempresa: number
+  centro_trabajo: string | null
+  nombres: string | null
+  documento_tipo: string | null
+  documento: string | null
+  cargo: string | null
+  celular: string | null
+  alergias: string | null
+  rh: string | null
+  arl: string | null
+  eps: string | null
+  contacto_nombre: string | null
+  contacto_telefono: string | null
+  contacto_parentesco: string | null
+  email: string | null
+  mes_cumple: string | null
+  marca_temporal: string | null
+  created_at?: string | null
+}
+
 export interface IpevrRow {
   id?: number
   idempresa: number
