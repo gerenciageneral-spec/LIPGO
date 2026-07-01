@@ -27,6 +27,11 @@ create table if not exists public.sst_medevac (
 );
 create index if not exists idx_sst_medevac_empresa on public.sst_medevac (idempresa);
 
+-- La app lee con la llave anon/auth (el control de acceso lo da permisos_usuarios +
+-- PermissionGuard, como en las demás tablas SST). Sin esto, RLS deja la tabla vacía
+-- para el cliente aunque tenga datos. Se iguala a sst_ipevr / sst_incidentes.
+alter table public.sst_medevac disable row level security;
+
 -- Permiso propio (patrón columna-por-permiso en permisos_usuarios)
 alter table public.permisos_usuarios add column if not exists sst_medevac boolean default false;
 -- Backfill: quien ya gestiona SST (incidentes) o el SIG lo ve
