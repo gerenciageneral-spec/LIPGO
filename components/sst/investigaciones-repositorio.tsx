@@ -6,14 +6,16 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { useAuth } from "@/components/auth-provider"
+import { useToast } from "@/hooks/use-toast"
 import { SST_TOKENS } from "@/components/sst/sst-utils"
 import { Kpi } from "@/components/sst/sst-form-ui"
 import { SoportesDocumentales } from "@/components/sst/soportes-documentales"
-import { listIncidentes } from "@/lib/sst-incidentes-actions"
+import { listIncidentes, updateIncidente, listAcciones, listTestigos } from "@/lib/sst-incidentes-actions"
+import { generarPdfInvestigacion } from "@/lib/investigacion-pdf"
 import type { IncidenteRow } from "@/lib/sst-evidencia-types"
-import { RefreshCw, Loader2, Search } from "lucide-react"
+import { RefreshCw, Loader2, Search, Eye, Upload, FileDown } from "lucide-react"
 
-type Filtro = "todas" | "abierta" | "en_proceso" | "cerrada"
+type Filtro = "todas" | "reportado" | "en_investigacion" | "cerrado"
 
 // Dias entre el evento y la investigacion (cumplimiento plazo Res. 1401/2007: 15 dias).
 function diasInvestigacion(r: IncidenteRow): number | null {
@@ -24,15 +26,63 @@ function diasInvestigacion(r: IncidenteRow): number | null {
 export function InvestigacionesRepositorio({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaId?: number | null }) {
   const { selectedEmpresaId: ctxEmpresaId } = useAuth()
   const empresaId = propEmpresaId ?? ctxEmpresaId ?? null
+  const { toast } = useToast()
   const [rows, setRows] = useState<IncidenteRow[]>([])
   const [loading, setLoading] = useState(true)
   const [q, setQ] = useState("")
   const [filtro, setFiltro] = useState<Filtro>("todas")
+  const [anio, setAnio] = useState<string>("todos")
+  const [subiendo, setSubiendo] = useState<number | null>(null)
+  const [pdfId, setPdfId] = useState<number | null>(null)
 
   async function cargar() {
     setLoading(true)
     setRows(await listIncidentes(empresaId))
     setLoading(false)
+  }
+
+  // Años disponibles (de la fecha del evento) para el filtro.
+  const anios = useMemo(() => {
+    const set = new Set<string>()
+    rows.forEach((r) => { const y = String(r.fecha_evento ?? "").slice(0, 4); if (y) set.add(y) })
+    return Array.from(set).sort().reverse()
+  }, [rows])
+
+  // Ver = PDF NO editable, generado desde los datos (SST-FOR-21). Evita alterar la investigación.
+  async function verPdf(r: IncidenteRow) {
+    if (!r.id) return
+    setPdfId(r.id)
+    try {
+      const [accs, tess] = await Promise.all([listAcciones(r.id), listTestigos(r.id)])
+      await generarPdfInvestigacion(r as any, accs, tess)
+    } catch (e: any) {
+      toast({ title: "No se pudo generar el PDF", description: e?.message })
+    } finally {
+      setPdfId(null)
+    }
+  }
+
+  // Sube el ORIGINAL editable (Excel/Word) al repositorio, por si hay que corregir.
+  async function subirDocumento(r: IncidenteRow, file: File) {
+    if (!r.id) return
+    setSubiendo(r.id)
+    try {
+      const fd = new FormData()
+      fd.append("file", file)
+      fd.append("empresaId", String(r.idempresa ?? empresaId ?? 0))
+      fd.append("incidenteId", String(r.id))
+      const up = await fetch("/api/investigacion/doc-upload", { method: "POST", body: fd })
+      const j = await up.json()
+      if (!j.success) throw new Error(j.error || "Error al subir")
+      const save = await updateIncidente(r.id, { documento_editable_url: j.url })
+      if (!save.success) throw new Error(save.message || "Error al guardar")
+      toast({ title: "Original editable adjuntado" })
+      await cargar()
+    } catch (e: any) {
+      toast({ title: "No se pudo subir", description: e?.message })
+    } finally {
+      setSubiendo(null)
+    }
   }
   useEffect(() => {
     cargar()
@@ -41,7 +91,7 @@ export function InvestigacionesRepositorio({ selectedEmpresaId: propEmpresaId }:
 
   const kpis = useMemo(() => {
     const total = rows.length
-    const cerradas = rows.filter((r) => r.estado === "cerrada").length
+    const cerradas = rows.filter((r) => r.estado === "cerrado").length
     const abiertas = total - cerradas
     const conInvestig = rows.filter((r) => r.fecha_investigacion).length
     const enPlazo = rows.filter((r) => {
@@ -56,18 +106,19 @@ export function InvestigacionesRepositorio({ selectedEmpresaId: propEmpresaId }:
     const t = q.trim().toLowerCase()
     return rows.filter((r) => {
       if (filtro !== "todas" && r.estado !== filtro) return false
+      if (anio !== "todos" && String(r.fecha_evento ?? "").slice(0, 4) !== anio) return false
       if (!t) return true
       return [r.trabajador, r.cargo, r.tipo, r.descripcion, r.area_ocurrencia].some((v) =>
         (v ?? "").toString().toLowerCase().includes(t),
       )
     })
-  }, [rows, q, filtro])
+  }, [rows, q, filtro, anio])
 
   const filtros: { k: Filtro; label: string }[] = [
     { k: "todas", label: "Todas" },
-    { k: "abierta", label: "Abiertas" },
-    { k: "en_proceso", label: "En proceso" },
-    { k: "cerrada", label: "Cerradas" },
+    { k: "reportado", label: "Reportadas" },
+    { k: "en_investigacion", label: "En investigación" },
+    { k: "cerrado", label: "Cerradas" },
   ]
 
   return (
@@ -110,6 +161,15 @@ export function InvestigacionesRepositorio({ selectedEmpresaId: propEmpresaId }:
             className="pl-8"
           />
         </div>
+        <select
+          value={anio}
+          onChange={(e) => setAnio(e.target.value)}
+          className="h-9 rounded-md border bg-background px-2 text-sm"
+          title="Filtrar por año del evento"
+        >
+          <option value="todos">Todos los años</option>
+          {anios.map((y) => (<option key={y} value={y}>{y}</option>))}
+        </select>
         <div className="flex flex-wrap gap-1">
           {filtros.map((f) => (
             <Button
@@ -135,6 +195,7 @@ export function InvestigacionesRepositorio({ selectedEmpresaId: propEmpresaId }:
               <th className="p-2 text-left">Gravedad</th>
               <th className="p-2 text-center">Días a investigar</th>
               <th className="p-2 text-left">Estado</th>
+              <th className="p-2 text-center">Documento</th>
               <th className="p-2 text-left w-64">Soportes</th>
             </tr>
           </thead>
@@ -181,12 +242,50 @@ export function InvestigacionesRepositorio({ selectedEmpresaId: propEmpresaId }:
                   <td className="p-2">
                     <Badge
                       style={{
-                        background: r.estado === "cerrada" ? SST_TOKENS.ok : SST_TOKENS.warn,
+                        background: r.estado === "cerrado" ? SST_TOKENS.ok : SST_TOKENS.warn,
                         color: "white",
                       }}
                     >
-                      {r.estado}
+                      {String(r.estado).replace("_", " ")}
                     </Badge>
+                  </td>
+                  <td className="p-2 text-center whitespace-nowrap">
+                    <div className="flex items-center justify-center gap-2">
+                      {/* Ver = PDF NO editable (generado del SST-FOR-21) */}
+                      <button
+                        type="button"
+                        title="Ver documento (PDF no editable)"
+                        onClick={() => verPdf(r)}
+                        disabled={pdfId === r.id}
+                        className="inline-flex items-center gap-1 text-[12px] hover:underline disabled:opacity-50"
+                        style={{ color: SST_TOKENS.navy }}
+                      >
+                        {pdfId === r.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />} Ver
+                      </button>
+                      {/* Original editable (Excel) — para corregir */}
+                      {r.documento_editable_url ? (
+                        <a
+                          href={r.documento_editable_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          title="Descargar original editable (Excel) para corregir"
+                          className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:underline"
+                        >
+                          <FileDown className="h-3.5 w-3.5" /> Editable
+                        </a>
+                      ) : (
+                        <label className="inline-flex cursor-pointer items-center gap-1 text-[11px] text-muted-foreground hover:underline" title="Subir original editable (Excel/Word)">
+                          {subiendo === r.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />} Subir
+                          <input
+                            type="file"
+                            className="hidden"
+                            accept=".xlsx,.xls,.doc,.docx,.pdf"
+                            disabled={subiendo === r.id}
+                            onChange={(e) => { const f = e.target.files?.[0]; if (f) subirDocumento(r, f); e.currentTarget.value = "" }}
+                          />
+                        </label>
+                      )}
+                    </div>
                   </td>
                   <td className="p-2 align-top">
                     <SoportesDocumentales
@@ -203,14 +302,14 @@ export function InvestigacionesRepositorio({ selectedEmpresaId: propEmpresaId }:
             })}
             {!loading && filtradas.length === 0 && (
               <tr>
-                <td colSpan={7} className="p-6 text-center text-muted-foreground">
+                <td colSpan={8} className="p-6 text-center text-muted-foreground">
                   No hay investigaciones registradas para estos filtros.
                 </td>
               </tr>
             )}
             {loading && (
               <tr>
-                <td colSpan={7} className="p-6 text-center text-muted-foreground">
+                <td colSpan={8} className="p-6 text-center text-muted-foreground">
                   <Loader2 className="mx-auto h-5 w-5 animate-spin" />
                 </td>
               </tr>

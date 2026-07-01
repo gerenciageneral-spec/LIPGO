@@ -182,6 +182,8 @@ export interface IncidenteRow {
   charla_seguridad?: string | null
   retroalimentacion?: string | null
   firmas?: any
+  documento_url?: string | null
+  documento_editable_url?: string | null
 }
 
 export interface IncidenteTestigoRow {

@@ -22,7 +22,7 @@ import { EspinaPescado, CuadrosCausas } from "@/components/sst/espina-pescado"
 import type { IshikawaData, CuadrosCausasData } from "@/components/sst/espina-pescado"
 import { listIncidentes, saveIncidente, updateIncidente, listAcciones, listTestigos } from "@/lib/sst-incidentes-actions"
 import type { IncidenteRow, IncidenteAccionRow, IncidenteTestigoRow } from "@/lib/sst-evidencia-types"
-import { FileText } from "lucide-react"
+import { FileText, Eye, Loader2 } from "lucide-react"
 
 // ---- Datos FIJOS del empleador LIP (encabezado del formato, no se digitan) ----
 const EMPLEADOR_LIP = {
@@ -828,10 +828,15 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
                       <td className="p-2">
                         <S v={r.estado} small on={async (v) => { await updateIncidente(r.id!, { estado: v }); cargar() }} o={ESTADOS} />
                       </td>
-                      <td className="p-2 text-center">
-                        <Button variant="outline" size="sm" className="h-7 gap-1 text-[11px]" disabled={pdfId === r.id} onClick={() => pdfDesdeHistorial(r)}>
-                          <FileText className="h-3.5 w-3.5" /> {pdfId === r.id ? "…" : "PDF"}
+                      <td className="p-2 text-center whitespace-nowrap">
+                        <Button variant="outline" size="sm" className="h-7 gap-1 text-[11px]" title="Ver documento (PDF no editable)" disabled={pdfId === r.id} onClick={() => pdfDesdeHistorial(r)}>
+                          {pdfId === r.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />} PDF
                         </Button>
+                        {r.documento_editable_url && (
+                          <a href={r.documento_editable_url} target="_blank" rel="noreferrer" title="Descargar original editable (Excel)" className="ml-1 inline-flex items-center text-[11px] text-muted-foreground hover:underline">
+                            <FileText className="h-3.5 w-3.5" /> Excel
+                          </a>
+                        )}
                       </td>
                       <td className="p-2 align-top">
                         <SoportesDocumentales

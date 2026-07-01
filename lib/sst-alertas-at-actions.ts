@@ -33,7 +33,7 @@ export interface AlertaAT {
 }
 
 export async function getAlertasAT(empresaIdFromClient?: number | null): Promise<AlertaAT[]> {
-  const supabase = await createClient()
+  const supabase: any = await createClient()
   const empresaId = await resolveEmpresaId(empresaIdFromClient)
   if (!empresaId) return []
 
@@ -48,25 +48,48 @@ export async function getAlertasAT(empresaIdFromClient?: number | null): Promise
       .order("fecha_inicial", { ascending: false }),
     supabase
       .from("sst_incidentes")
-      .select("id,ausentismo_id,estado")
-      .eq("idempresa", empresaId)
-      .not("ausentismo_id", "is", null),
+      .select("id,ausentismo_id,estado,documento_numero")
+      .eq("idempresa", empresaId),
   ])
 
-  // Mapa ausentismo_id -> investigacion vinculada.
+  const soloDigitos = (v: any) => String(v ?? "").replace(/[^0-9]/g, "")
+  // Investigación vinculada por ausentismo_id (flujo "Crear investigación")
+  // y por CÉDULA (investigaciones cargadas desde el formato SST-FOR-21).
   const porAusentismo = new Map<string, { id: number; estado: string }>()
+  const porCedula = new Map<string, { id: number; estado: string }>()
   for (const inc of incidentes ?? []) {
     if (inc.ausentismo_id) porAusentismo.set(inc.ausentismo_id as string, { id: inc.id, estado: inc.estado })
+    const ced = soloDigitos(inc.documento_numero)
+    if (ced && !porCedula.has(ced)) porCedula.set(ced, { id: inc.id, estado: inc.estado })
+  }
+
+  // Las prórrogas de un AT son el MISMO evento: se consolida un AT por trabajador
+  // (por cédula), sumando días y tomando la fecha inicial más antigua.
+  const grupos = new Map<string, any>()
+  for (const a of ausentismos ?? []) {
+    const key = soloDigitos(a.cedula) || `id:${a.id}`
+    const g = grupos.get(key)
+    if (!g) {
+      grupos.set(key, { ...a, _dias: Number(a.dias_incapacidad) || 0, _ids: [a.id] })
+    } else {
+      g._dias += Number(a.dias_incapacidad) || 0
+      g._ids.push(a.id)
+      // fecha inicial más antigua
+      if (a.fecha_inicial && (!g.fecha_inicial || a.fecha_inicial < g.fecha_inicial)) g.fecha_inicial = a.fecha_inicial
+      // completar campos faltantes
+      for (const k of ["nombre_colaborador", "cargo", "area", "centro_trabajo", "parte_cuerpo", "descripcion_diagnostico"]) {
+        if (!g[k] && a[k]) g[k] = a[k]
+      }
+    }
   }
 
   const hoy = Date.now()
-  return (ausentismos ?? []).map((a: any): AlertaAT => {
-    const inv = porAusentismo.get(a.id) ?? null
-    const dias = a.fecha_inicial
-      ? Math.floor((hoy - new Date(a.fecha_inicial).getTime()) / 86400000)
-      : null
+  return Array.from(grupos.values()).map((a: any): AlertaAT => {
+    const ced = soloDigitos(a.cedula)
+    const inv = a._ids.map((id: string) => porAusentismo.get(id)).find(Boolean) || (ced ? porCedula.get(ced) : null) || null
+    const dias = a.fecha_inicial ? Math.floor((hoy - new Date(a.fecha_inicial).getTime()) / 86400000) : null
     const estadoInv = inv?.estado ?? null
-    const cerrada = estadoInv === "cerrada"
+    const cerrada = estadoInv === "cerrado" || estadoInv === "cerrada"
     const estadoAlerta: AlertaAT["estadoAlerta"] = !inv ? "pendiente" : cerrada ? "cerrada" : "en_proceso"
     return {
       ausentismoId: a.id,
@@ -78,7 +101,7 @@ export async function getAlertasAT(empresaIdFromClient?: number | null): Promise
       fechaEvento: a.fecha_inicial ?? null,
       parteCuerpo: a.parte_cuerpo ?? null,
       diagnostico: a.descripcion_diagnostico ?? null,
-      diasIncapacidad: a.dias_incapacidad ?? null,
+      diasIncapacidad: a._dias || null,
       investigacionId: inv?.id ?? null,
       estadoInvestigacion: estadoInv,
       diasTranscurridos: dias,
@@ -94,7 +117,7 @@ export async function crearInvestigacionDesdeAusentismo(
   ausentismoId: string,
   empresaIdFromClient?: number | null,
 ): Promise<{ success: boolean; id?: number; yaExistia?: boolean; message?: string }> {
-  const supabase = await createClient()
+  const supabase: any = await createClient()
   const empresaId = await resolveEmpresaId(empresaIdFromClient)
   if (!empresaId) return { success: false, message: "Sin empresa seleccionada" }
 
@@ -132,7 +155,7 @@ export async function crearInvestigacionDesdeAusentismo(
     descripcion: a.descripcion_diagnostico
       ? `Generado desde ausentismo AT: ${a.descripcion_diagnostico}`
       : "Generado desde ausentismo AT (Gestión Humana)",
-    estado: "abierta",
+    estado: "reportado",
   }
 
   const { data: inserted, error } = await supabase
