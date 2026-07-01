@@ -328,6 +328,35 @@ export interface SigInventarioCuadreDetalle {
   observacion: string | null
 }
 
+// Cierre mensual de conciliación de inventario (acta + PDF por mes/proyecto).
+export interface SigInventarioCierreMes {
+  id: number
+  proyecto_id: number
+  mes: string // YYYY-MM
+  estado: string | null // pendiente | conciliado
+  saldo_inicial: number | null
+  ingresos: number | null
+  cargue: number | null
+  merma: number | null
+  salidas: number | null
+  saldo_final: number | null
+  faltante: number | null
+  ajuste: number | null
+  produccion: number | null
+  devolucion: number | null
+  documento_url: string | null
+  firmante: string | null
+  fecha_firma: string | null
+  observaciones: string | null
+  cerrado_por: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+// Plantas (producción PT) vs Cedis (descargue). Salidas = cargue + merma en ambos.
+export const SIG_PLANTAS_LIP = [1, 2] // Indupan, Avimol
+export const SIG_CEDIS_LIP = [3, 4] // Funza, Medellín
+
 export interface SigInventarioAjuste {
   id: number
   proyecto_id: number | null

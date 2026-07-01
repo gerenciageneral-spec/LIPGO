@@ -41,6 +41,7 @@ import type {
   SigInventarioCuadre,
   SigInventarioCuadreDetalle,
   SigInventarioAjuste,
+  SigInventarioCierreMes,
   SigSatisfaccion,
   SigPQRSF,
   SigTipoMovimiento,
@@ -3431,13 +3432,10 @@ export async function getFacturacionPorProyecto(
 
 /**
  * CONCILIACIÓN MENSUAL de inventario (depuración mes a mes).
- * Mes tomado del CÓDIGO de la orden (iniciales+AAAA+MM+DD+consecutivo; fallback
- * a `creado` en descargues numéricos). Modelo del cliente:
- *   INGRESOS = recepción/aprobación PT + descargue + devolución.
- *   SALIDAS  = orden de cargue + reproceso (avería).
- *   Traslados internos NO afectan stock. PROYECCIÓN y TOLVA se EXCLUYEN (nómina).
- * El "ajuste" = movimientos que no encajan en ingreso/salida legítimo = la
- * diferencia a depurar/documentar cada mes (NO es merma).
+ * Mes tomado del CÓDIGO de la orden. Modelo:
+ *   INGRESOS = producción/descargue + devolución.
+ *   SALIDAS  = cargue (601) + merma/reproceso (551).
+ * Cierres persistidos en sig_inventario_cierre_mes + PDF en Storage.
  */
 const RE_ORDEN = /^(?:dis-)?[a-z]+(\d{4})(\d{2})(\d{2})\d+[a-z]?$/i
 export async function getConciliacionMensualInventario(
@@ -3445,17 +3443,21 @@ export async function getConciliacionMensualInventario(
   anio?: string | null,
 ): Promise<{ success: boolean; data?: any; error?: string }> {
   try {
+    if (!empresaId) {
+      return { success: false, error: "Seleccione un cliente/sitio en el selector global (un proyecto a la vez)." }
+    }
     const supabase: any = await getSupabaseAdmin()
-    const clientes: number[] = empresaId ? [empresaId] : SIG_CLIENTES_LIP
+    const clientes: number[] = [empresaId]
     const has = (v: any, t: string) => String(v || "").toLowerCase().includes(t)
 
-    // Traer invtrans del/los proyecto(s) (paginado).
+    // Traer invtrans del/los proyecto(s) (paginado). El inventario y los despachos
+    // se llevan POR LOTE, así que traemos producto+lote para el cuadre físico.
     const inv: any[] = []
     let from = 0
     while (true) {
       const { data, error } = await supabase
         .from("invtrans")
-        .select("tipomov, origen, cantidad, creado, ocargue, ordentolva, cod_movimiento")
+        .select("idproducto, nombreproducto, codproducto, lote, tipomov, origen, cantidad, creado, ocargue, ordentolva, cod_movimiento")
         .in("idempresa", clientes)
         .range(from, from + 999)
       if (error) return { success: false, error: error.message }
@@ -3465,6 +3467,41 @@ export async function getConciliacionMensualInventario(
       if (from > 100000) break
     }
 
+    // Saldo VIVO por (producto, lote) — es la VERDAD física (lo confirma el conteo).
+    const saldosRows: any[] = []
+    {
+      let sf = 0
+      while (true) {
+        const { data } = await supabase.from("saldoinvdetalle").select("idproducto, nombreproducto, codproducto, categoria, subcategoria, lote, stock_actual").in("idempresa", clientes).range(sf, sf + 999)
+        saldosRows.push(...(data ?? []))
+        if (!data || data.length < 1000) break
+        sf += 1000
+        if (sf > 100000) break
+      }
+    }
+
+    // La conciliación es SOLO de Producto Terminado + Sub Producto (así lo maneja
+    // el cliente). El EMPAQUE y la MATERIA PRIMA NO entran (se concilian aparte).
+    const catDe: Record<string, string> = {}
+    const codDe: Record<string, string> = {}
+    for (const r of saldosRows) {
+      catDe[r.idproducto] = `${r.categoria || ""} / ${r.subcategoria || ""}`.toUpperCase()
+      codDe[r.idproducto] = String(r.codproducto || "").toUpperCase()
+    }
+    for (const r of inv) if (codDe[r.idproducto] === undefined) codDe[r.idproducto] = String(r.codproducto || "").toUpperCase()
+    const incluir = (idp: any): boolean => {
+      const cs = catDe[idp]
+      if (cs !== undefined) {
+        if (cs.includes("EMPAQUE") || cs.includes("MATERIA PRIMA")) return false
+        return cs.includes("PRODUCTO TERMINADO") || cs.includes("SUB PRODUCTO")
+      }
+      const p = codDe[idp] || "" // sin saldo/categoría → por prefijo del código
+      if (p.startsWith("EMP") || p.startsWith("MP")) return false
+      return p.startsWith("PT") || p.startsWith("SP")
+    }
+
+    const stockActual = saldosRows.reduce((s, r) => s + (incluir(r.idproducto) ? Number(r.stock_actual) || 0 : 0), 0)
+
     const mesDe = (oc: any, creado: any): string | null => {
       const m = RE_ORDEN.exec(String(oc || "").trim())
       if (m) return `${m[1]}-${m[2]}`
@@ -3472,86 +3509,229 @@ export async function getConciliacionMensualInventario(
       return c.length >= 7 ? c.slice(0, 7) : null
     }
 
+    // ============================================================
+    // A) ROLL MENSUAL OPERACIONAL
+    //    Apertura del periodo = Inventario Inicial (cód 561).
+    //    Cada mes: saldo inicial + ingresos − despachos = saldo final,
+    //    y ese saldo final es el inicial del mes siguiente.
+    //    Ingresos = producción/recepción + devoluciones.
+    //    SALIDAS = SOLO órdenes de cargue (601). Bodega/reproceso/ajustes
+    //    NO interfieren en el roll (se sacan al cuadre físico/lista a revisar).
+    //    Traslados internos, tolva y proyección se excluyen.
+    // ============================================================
     const aniosSet = new Set<string>()
-    const map: Record<string, any> = {} // "AAAA-MM" -> agregados
+    let invInicial = 0
+    const map: Record<string, any> = {}
     for (const r of inv) {
-      // Excluir tolva y proyección (no son inventario; tolva→producción, proyección→nómina).
+      if (!incluir(r.idproducto)) continue // solo Producto Terminado + Sub Producto
+      const c = Math.abs(Number(r.cantidad) || 0)
+      const esInicial = r.cod_movimiento === "561" || has(r.origen, "inventario inicial")
+      if (esInicial) { invInicial += c; continue } // apertura, no es flujo del mes
+      if (r.cod_movimiento === "311" || has(r.origen, "traslado entre localizaciones")) continue // neto 0
       if (r.ordentolva || has(r.ocargue, "tolva") || has(r.ocargue, "proyec") || has(r.origen, "tolva") || has(r.origen, "proyec")) continue
-      // Excluir traslados internos (no alteran stock).
-      if (r.cod_movimiento === "311" || has(r.origen, "traslado entre localizaciones")) continue
       const mk = mesDe(r.ocargue, r.creado)
       if (!mk) continue
       const yyyy = mk.slice(0, 4)
       aniosSet.add(yyyy)
       if (anio && yyyy !== anio) continue
-      if (!map[mk]) map[mk] = { mes: mk, recepcion: 0, devolucion: 0, cargue: 0, reproceso: 0, ajuste: 0 }
+      if (!map[mk]) map[mk] = { mes: mk, produccion: 0, devolucion: 0, cargue: 0, merma: 0, ajuste: 0 }
       const a = map[mk]
-      const c = Math.abs(Number(r.cantidad) || 0)
-      const esReproceso = r.tipomov === "Reproceso" || r.cod_movimiento === "551" || has(r.origen, "reproceso")
-      // SOLO órdenes de cargue cuentan como salida (601 / origen "orden de cargue").
-      // Bodega general / manual / 702 NO aplican como salida (no reducen para el cuadre).
       const esCargue = r.tipomov === "Salida" && (r.cod_movimiento === "601" || has(r.origen, "orden de cargue"))
-      const esRecepcion = r.cod_movimiento === "101" || (r.tipomov === "Entrada" && (has(r.origen, "producc") || has(r.origen, "aprob") || has(r.origen, "descarg") || has(r.origen, "logo") || has(r.origen, "inicial")))
-      const esDevolucion = has(r.origen, "devoluc") || (r.tipomov === "Entrada" && has(r.origen, "transaccion manual"))
-      if (esReproceso) a.reproceso += c
-      else if (esCargue) a.cargue += c
-      else if (esRecepcion) a.recepcion += c
-      else if (esDevolucion) a.devolucion += c
-      else a.ajuste += c // residual a depurar (701/702, salidas/entradas manuales sin respaldo)
+      const esMerma = r.cod_movimiento === "551" || r.tipomov === "Reproceso" || has(r.origen, "reproceso")
+      const esProd = r.cod_movimiento === "101" || (r.tipomov === "Entrada" && (has(r.origen, "producc") || has(r.origen, "aprob") || has(r.origen, "descarg") || has(r.origen, "logo")))
+      const esDev = has(r.origen, "devoluc") || (r.tipomov === "Entrada" && has(r.origen, "transaccion manual"))
+      const esAjuste = r.cod_movimiento === "701" || r.cod_movimiento === "702"
+      if (esCargue) a.cargue += c
+      else if (esMerma) a.merma += c
+      else if (esProd) a.produccion += c
+      else if (esDev) a.devolucion += c
+      else if (esAjuste) a.ajuste += c
     }
 
-    const base = Object.values(map)
-      .map((a: any) => {
-        const ingresos = a.recepcion + a.devolucion
-        const salidas = a.cargue // SOLO órdenes de cargue cuentan como salida
-        return {
-          mes: a.mes,
-          ingresos: Math.round(ingresos),
-          salidas: Math.round(salidas),
-          neto: Math.round(ingresos - salidas),
-          ajuste: Math.round(a.ajuste),
-          recepcion: Math.round(a.recepcion),
-          devolucion: Math.round(a.devolucion),
-          cargue: Math.round(a.cargue),
-          reproceso: Math.round(a.reproceso),
-        }
-      })
-      .sort((x: any, y: any) => x.mes.localeCompare(y.mes))
+    // ============================================================
+    // B) CUADRE FÍSICO LOTE POR LOTE (se calcula ANTES del roll para poder
+    //    atribuir la diferencia libro-vs-físico a su mes por la fecha del lote).
+    //    El inventario y los despachos se llevan POR LOTE (lote = AAAAMMDD).
+    //    diferencia > 0 = el kardex tiene MÁS que el físico. Según el proyecto
+    //    esa diferencia es MERMA DE PROCESO (p.ej. Avimol) o error a corregir.
+    // ============================================================
+    const book: Record<string, number> = {}
+    const nombre: Record<string, string> = {}
+    const loteDe: Record<string, string> = {}
+    for (const r of inv) {
+      if (!incluir(r.idproducto)) continue
+      const k = `${r.idproducto}|${r.lote}`
+      const c = Math.abs(Number(r.cantidad) || 0)
+      book[k] = (book[k] || 0) + (r.tipomov === "Entrada" ? c : -c)
+      if (r.nombreproducto) nombre[k] = r.nombreproducto
+      loteDe[k] = String(r.lote ?? "")
+    }
+    const saldoLote: Record<string, number> = {}
+    for (const r of saldosRows) {
+      if (!incluir(r.idproducto)) continue
+      const k = `${r.idproducto}|${r.lote}`
+      saldoLote[k] = (saldoLote[k] || 0) + (Number(r.stock_actual) || 0)
+      if (!nombre[k] && r.nombreproducto) nombre[k] = r.nombreproducto
+      if (loteDe[k] === undefined) loteDe[k] = String(r.lote ?? "")
+    }
+    const loteMes = (lote: string): string | null => {
+      const m = /^(\d{4})(\d{2})/.exec(String(lote || ""))
+      return m && m[2] >= "01" && m[2] <= "12" ? `${m[1]}-${m[2]}` : null
+    }
+    const keys = new Set([...Object.keys(book), ...Object.keys(saldoLote)])
+    let sobrante = 0
+    let faltante = 0
+    const difMes: Record<string, number> = {} // diferencia física atribuida por mes del lote
+    const revisar: any[] = []
+    for (const k of keys) {
+      const d = Math.round((book[k] || 0) - (saldoLote[k] || 0))
+      if (d > 0) sobrante += d
+      else faltante += d
+      const lm = loteMes(loteDe[k] || "")
+      if (lm) difMes[lm] = (difMes[lm] || 0) + d
+      if (Math.abs(d) > 100) revisar.push({ producto: nombre[k] || "?", lote: loteDe[k] || "", libro: Math.round(book[k] || 0), saldo: Math.round(saldoLote[k] || 0), diferencia: d })
+    }
+    revisar.sort((a, b) => Math.abs(b.diferencia) - Math.abs(a.diferencia))
 
-    // Stock ACTUAL real (saldoinvdetalle) — el inventario está organizado hoy.
-    // Anclamos el saldo para que el cierre acumulado termine en el stock real:
-    //   saldo_inicial_periodo = stock_actual − Σ(ingresos − salidas).
-    // Así el faltante solo aparece si un mes intermedio quedaría negativo (se
-    // despachó más de lo disponible) = producción no ingresada → ajuste.
-    let stockActual = 0
-    {
-      const saldos: any[] = []
-      let sf = 0
-      while (true) {
-        const { data } = await supabase.from("saldoinvdetalle").select("stock_actual").in("idempresa", clientes).range(sf, sf + 999)
-        saldos.push(...(data ?? []))
-        if (!data || data.length < 1000) break
-        sf += 1000
-        if (sf > 100000) break
+    // ============================================================
+    // A) ROLL MENSUAL — cierre de un mes = inicial del siguiente.
+    //    Apertura = Inventario Inicial (561). Reconoce la MERMA DE PROCESO
+    //    (diferencia libro-vs-físico por lote, mesProc) para que el saldo
+    //    conciliado cuadre EXACTO contra el stock vivo (la verdad física).
+    // ============================================================
+    const meses = Object.values(map).sort((x: any, y: any) => x.mes.localeCompare(y.mes))
+    let saldo = Math.round(invInicial)
+    const filas = meses.map((a: any) => {
+      const ingresos = a.produccion + a.devolucion
+      const mermaProceso = Math.round(difMes[a.mes] || 0) // cuadre físico del mes (por lote)
+      const reproceso = Math.round(a.merma)               // reproceso/avería registrado (551)
+      const merma = reproceso + mermaProceso              // merma total = reproceso + cuadre
+      const salidas = a.cargue + merma
+      const saldoInicial = saldo
+      const saldoFinal = saldoInicial + ingresos - salidas
+      saldo = saldoFinal
+      return {
+        mes: a.mes,
+        saldoInicial: Math.round(saldoInicial),
+        ingresos: Math.round(ingresos),
+        recepcion: Math.round(a.produccion),
+        produccion: Math.round(a.produccion),
+        devolucion: Math.round(a.devolucion),
+        cargue: Math.round(a.cargue),
+        reproceso,
+        mermaProceso,
+        merma: Math.round(merma),
+        salidas: Math.round(salidas),
+        saldoFinal: Math.round(saldoFinal),
+        faltante: 0,
+        ajuste: Math.round(a.ajuste),
+        documento_url: null as string | null,
+        cierre_id: null as number | null,
+        estadoCierre: null as string | null,
       }
-      stockActual = saldos.reduce((s, r) => s + (Number(r.stock_actual) || 0), 0)
-    }
-    const netTotal = base.reduce((s: number, f: any) => s + f.neto, 0)
-    // Opening anclado: el saldo acumulado REAL termina en el stock actual (correcto).
-    // No se resetea a 0; el faltante de un mes = si el acumulado de ese mes quedaría
-    // negativo (imposible) = producción que faltó por ingresar ese mes.
-    let saldoIni = Math.round(stockActual - netTotal)
-    const filas = base.map((f: any) => {
-      const saldoFinal = saldoIni + f.neto
-      const faltante = saldoFinal < 0 ? -saldoFinal : 0
-      const row = { ...f, saldoInicial: Math.round(saldoIni), faltante: Math.round(faltante), saldoFinal: Math.round(saldoFinal) }
-      saldoIni = saldoFinal
-      return row
     })
-    const totalFaltante = filas.reduce((s: number, f: any) => s + f.faltante, 0)
+    // Cuadre exacto contra el físico: el residual (lotes sin fecha, 702/otros,
+    // redondeos) se lleva al último mes como merma de proceso → saldo final = stock vivo.
+    if (filas.length) {
+      const last = filas[filas.length - 1]
+      const residual = Math.round(last.saldoFinal - stockActual)
+      if (residual !== 0) {
+        last.mermaProceso += residual
+        last.merma += residual
+        last.salidas += residual
+        last.saldoFinal -= residual
+      }
+    }
+    const saldoTeorico = filas.length ? filas[filas.length - 1].saldoFinal : Math.round(invInicial)
+    const mermaProcesoTotal = filas.reduce((s: number, f: any) => s + (f.mermaProceso || 0), 0)
+
+    const resumen = {
+      invInicial: Math.round(invInicial),
+      saldoTeorico,                                        // = stock vivo tras conciliar
+      saldoVivo: Math.round(stockActual),
+      diferencia: Math.round(saldoTeorico - stockActual),  // ~0 tras conciliar
+      mermaProceso: Math.round(mermaProcesoTotal),
+      sobranteKardex: Math.round(sobrante),
+      faltanteKardex: Math.round(Math.abs(faltante)),
+      lotesRevisar: revisar.length,
+    }
+
+    let cierres: SigInventarioCierreMes[] = []
+    try {
+      const { data: cData } = await supabase
+        .from("sig_inventario_cierre_mes")
+        .select("*")
+        .eq("proyecto_id", empresaId)
+        .order("mes")
+      cierres = (cData ?? []) as SigInventarioCierreMes[]
+    } catch { /* tabla aún no creada */ }
+
+    const cierrePorMes: Record<string, SigInventarioCierreMes> = {}
+    for (const c of cierres) cierrePorMes[c.mes] = c
+    for (const f of filas) {
+      const c = cierrePorMes[f.mes]
+      if (c) {
+        f.documento_url = c.documento_url
+        f.cierre_id = c.id
+        f.estadoCierre = c.estado
+      }
+    }
 
     const anios = Array.from(aniosSet).sort().reverse()
-    return { success: true, data: { filas, anios, anio: anio || anios[0] || null, totalFaltante, stockActual: Math.round(stockActual) } }
+    return { success: true, data: { filas, resumen, revisar: revisar.slice(0, 100), anios, anio: anio || anios[0] || null, stockActual: Math.round(stockActual), cierres } }
+  } catch (err: any) {
+    return { success: false, error: err?.message || "Error desconocido" }
+  }
+}
+
+/** Persiste el cierre mensual tras generar/subir el acta PDF. */
+export async function guardarCierreMesInventario(payload: {
+  proyecto_id: number
+  mes: string
+  saldo_inicial: number
+  ingresos: number
+  cargue: number
+  merma: number
+  salidas: number
+  saldo_final: number
+  faltante: number
+  ajuste: number
+  produccion: number
+  devolucion: number
+  documento_url: string
+  cerrado_por?: string | null
+  observaciones?: string | null
+}): Promise<{ success: boolean; data?: SigInventarioCierreMes; error?: string }> {
+  try {
+    const supabase: any = await getSupabaseAdmin()
+    const mesActual = new Date().toISOString().slice(0, 7)
+    const estado = payload.mes < mesActual ? "conciliado" : "pendiente"
+    const fila = {
+      proyecto_id: payload.proyecto_id,
+      mes: payload.mes,
+      estado,
+      saldo_inicial: payload.saldo_inicial,
+      ingresos: payload.ingresos,
+      cargue: payload.cargue,
+      merma: payload.merma,
+      salidas: payload.salidas,
+      saldo_final: payload.saldo_final,
+      faltante: payload.faltante,
+      ajuste: payload.ajuste,
+      produccion: payload.produccion,
+      devolucion: payload.devolucion,
+      documento_url: payload.documento_url,
+      cerrado_por: payload.cerrado_por ?? null,
+      observaciones: payload.observaciones ?? null,
+      updated_at: new Date().toISOString(),
+    }
+    const { data, error } = await supabase
+      .from("sig_inventario_cierre_mes")
+      .upsert(fila, { onConflict: "proyecto_id,mes" })
+      .select("*")
+      .single()
+    if (error) return { success: false, error: error.message }
+    return { success: true, data: data as SigInventarioCierreMes }
   } catch (err: any) {
     return { success: false, error: err?.message || "Error desconocido" }
   }

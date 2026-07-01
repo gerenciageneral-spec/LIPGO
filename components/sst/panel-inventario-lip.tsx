@@ -15,8 +15,8 @@ import { useToast } from "@/hooks/use-toast"
 import { SST_TOKENS } from "@/components/sst/sst-utils"
 import { SigHeader, SigFilterBar, SigField, SigKpi, sigControl } from "@/components/sst/sig-ui"
 import { useAuth } from "@/components/auth-provider"
-import { getPanelInventarioLIP, getKardexInventario, getMovimientosProducto, getTiposMovimiento, getCuadreDiario, getPreservacionInventario, getConciliacionMensualInventario } from "@/lib/sig-actions"
-import { Loader2, Boxes, TrendingDown, ArrowDownToLine, AlertTriangle, RefreshCw, CalendarClock, Layers, FileText, BookOpen, ZoomIn, ClipboardList, ShieldAlert } from "lucide-react"
+import { getPanelInventarioLIP, getKardexInventario, getMovimientosProducto, getTiposMovimiento, getCuadreDiario, getPreservacionInventario, getConciliacionMensualInventario, guardarCierreMesInventario } from "@/lib/sig-actions"
+import { Loader2, Boxes, TrendingDown, ArrowDownToLine, AlertTriangle, RefreshCw, CalendarClock, Layers, FileText, BookOpen, ZoomIn, ClipboardList, ShieldAlert, FolderOpen, ExternalLink } from "lucide-react"
 import { ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts"
 
 const DONUT_COLORS = ["#1E8449", "#0D3B6E", "#00B4CC", "#E0A800", "#7e57c2", "#C0392B"]
@@ -27,7 +27,8 @@ function KPI({ label, valor, unidad, Icon, color, sub }: { label: string; valor:
 
 export function PanelInventarioLIP() {
   const { toast } = useToast()
-  const { selectedEmpresaId, selectedEmpresaNombre } = useAuth()
+  const { selectedEmpresaId, selectedEmpresaNombre, user, profile } = useAuth()
+  const actor = (profile as any)?.nombre || (profile as any)?.usuario || user?.email || "usuario LIPgo"
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [anio, setAnio] = useState<string>("")
@@ -43,14 +44,10 @@ export function PanelInventarioLIP() {
   const [loadingCD, setLoadingCD] = useState(false)
   const [pres, setPres] = useState<any>(null)
   const [loadingPres, setLoadingPres] = useState(false)
-  const [conc, setConc] = useState<any[]>([])
+  const [conc, setConc] = useState<{ filas: any[]; cierres: any[]; resumen?: any } | null>(null)
   const [loadingConc, setLoadingConc] = useState(false)
+  const [generandoActa, setGenerandoActa] = useState<string | null>(null)
   const [tab, setTab] = useState("dashboard")
-  const [acta, setActa] = useState<any>(null)
-
-  function abrirActaConciliacion(f: any) {
-    setActa(f)
-  }
 
   const MESES = [
     { v: "", l: "Todo el año" }, { v: "01", l: "Enero" }, { v: "02", l: "Febrero" }, { v: "03", l: "Marzo" },
@@ -124,13 +121,103 @@ export function PanelInventarioLIP() {
     setLoadingPres(false)
   }
   async function cargarConciliacion() {
+    if (!selectedEmpresaId) {
+      setConc(null)
+      return
+    }
     setLoadingConc(true)
-    const r = await getConciliacionMensualInventario(selectedEmpresaId ?? null, anio || null)
-    if (r.success) setConc(r.data.filas)
-    else toast({ title: "No se pudo cargar la conciliación", description: r.error })
+    const r = await getConciliacionMensualInventario(selectedEmpresaId, anio || null)
+    if (r.success) {
+      setConc({ filas: r.data?.filas ?? [], cierres: r.data?.cierres ?? [], resumen: r.data?.resumen })
+      if (!anio && r.data?.anio) setAnio(r.data.anio)
+    } else {
+      setConc(null)
+      toast({ title: "No se pudo cargar la conciliación", description: r.error })
+    }
     setLoadingConc(false)
   }
 
+  async function generarYGuardarActa(f: any) {
+    if (!selectedEmpresaId) return
+    setGenerandoActa(f.mes)
+    try {
+      const { default: jsPDF } = await import("jspdf")
+      const autoTable = (await import("jspdf-autotable")).default
+      const doc = new jsPDF()
+      const fmtN = (n: number) => (n ?? 0).toLocaleString("es-CO")
+      doc.setFontSize(14)
+      doc.text("ACTA DE CIERRE MENSUAL DE INVENTARIO", 14, 18)
+      doc.setFontSize(10)
+      doc.text(`Cliente / sitio: ${selectedEmpresaNombre || "—"}`, 14, 27)
+      doc.text(`Periodo: ${f.mes}`, 14, 33)
+      doc.text(`Generado: ${new Date().toLocaleDateString("es-CO")} · ${actor}`, 14, 39)
+      autoTable(doc, {
+        startY: 46,
+        head: [["Concepto", "Unidades"]],
+        body: [
+          ["Saldo inicial (inventario inicial / cierre mes anterior)", fmtN(f.saldoInicial)],
+          ["(+) Ingresos (producción / descargue + devoluciones)", fmtN(f.ingresos)],
+          ["      Producción / recepción", fmtN(f.recepcion ?? f.produccion ?? 0)],
+          ["      Devoluciones", fmtN(f.devolucion ?? 0)],
+          ["(−) Órdenes de cargue (601)", fmtN(f.cargue)],
+          ["(−) Reproceso / avería registrado (551)", fmtN(f.reproceso ?? 0)],
+          ["(−) Merma de proceso (cuadre físico por lote)", fmtN(f.mermaProceso ?? 0)],
+          ["(=) Saldo final conciliado (= stock físico)", fmtN(f.saldoFinal)],
+        ],
+        styles: { fontSize: 9 },
+        headStyles: { fillColor: [13, 59, 110] },
+      })
+      let y = (doc as any).lastAutoTable.finalY + 8
+      doc.setFontSize(9)
+      doc.text("El inventario y los despachos se llevan por lote. La merma de proceso (reproceso +", 14, y)
+      doc.text("cuadre físico por lote) se documenta en el cierre; NO se cobra a LIP. El saldo final", 14, y + 5)
+      doc.text("conciliado coincide con el stock físico del sistema (saldoinvdetalle).", 14, y + 10)
+      y += 10
+      y += 10
+      doc.line(20, y + 20, 90, y + 20)
+      doc.line(120, y + 20, 190, y + 20)
+      doc.text("Firma Cliente", 35, y + 25)
+      doc.text("Firma LIP", 145, y + 25)
+
+      const blob = doc.output("blob")
+      const fd = new FormData()
+      fd.append("file", blob, `acta-conciliacion-${f.mes}.pdf`)
+      fd.append("proyectoId", String(selectedEmpresaId))
+      fd.append("mes", f.mes)
+      const up = await fetch("/api/inventario/cierre-upload", { method: "POST", body: fd })
+      const upJson = await up.json()
+      if (!upJson.success) throw new Error(upJson.error || "Error al subir PDF")
+
+      const save = await guardarCierreMesInventario({
+        proyecto_id: selectedEmpresaId,
+        mes: f.mes,
+        saldo_inicial: f.saldoInicial,
+        ingresos: f.ingresos,
+        cargue: f.cargue,
+        merma: f.merma,
+        salidas: f.salidas,
+        saldo_final: f.saldoFinal,
+        faltante: f.faltante,
+        ajuste: f.ajuste,
+        produccion: f.recepcion ?? f.produccion ?? 0,
+        devolucion: f.devolucion ?? 0,
+        documento_url: upJson.url,
+        cerrado_por: actor,
+        observaciones: `Merma de proceso: reproceso 551 = ${fmt(f.reproceso ?? 0)}, cuadre físico por lote = ${fmt(f.mermaProceso ?? 0)}. Saldo final conciliado = stock físico.`,
+      })
+      if (!save.success) throw new Error(save.error || "Error al guardar cierre")
+
+      toast({ title: "Acta generada y guardada", description: `Cierre ${f.mes} · carpeta inventario/cierres/${selectedEmpresaId}/${f.mes}/` })
+      await cargarConciliacion()
+    } catch (e: any) {
+      toast({ title: "No se pudo generar el acta", description: e?.message || "Error desconocido" })
+    } finally {
+      setGenerandoActa(null)
+    }
+  }
+
+  const concFilas = conc?.filas ?? []
+  const concCierres = conc?.cierres ?? []
   const k = data?.kpis
   const colorExact = (v: number) => (v >= 98 ? SST_TOKENS.ok : v >= 95 ? SST_TOKENS.warn : SST_TOKENS.bad)
   const fmt = (n: number) => (n ?? 0).toLocaleString("es-CO")
@@ -268,65 +355,110 @@ export function PanelInventarioLIP() {
 
         {/* CONCILIACIÓN MENSUAL — depuración mes a mes (mes del código de orden) */}
         <TabsContent value="conciliacion" className="space-y-3 pt-3">
-          <p className="text-xs text-muted-foreground">
-            <ClipboardList className="mr-1 inline h-3.5 w-3.5" />
-            Mes a mes (mes tomado del <b>código de la orden</b>). <b>Ingresos</b> = recepción/aprobación PT + descargue + devolución · <b>Salidas</b> = orden de cargue + reproceso. Traslados internos, proyección y tolva NO se cuentan. <b>Mayo y anteriores quedan conciliados; solo el mes actual (junio) queda pendiente</b> — se ajusta con el inventario físico. El stock vivo del software ya está correcto.
-          </p>
-          {loadingConc ? (
-            <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin" style={{ color: SST_TOKENS.navy }} /></div>
-          ) : conc.length === 0 ? (
-            <Card className="p-8 text-center text-sm text-muted-foreground">Sin movimientos para el año seleccionado.</Card>
-          ) : (
-            <Card className="overflow-hidden">
-              <div className="max-h-[60vh] overflow-auto">
-                <table className="w-full text-sm">
-                  <thead className="sticky top-0 bg-background">
-                    <tr className="border-b text-left text-[11px] uppercase text-muted-foreground">
-                      <th className="px-3 py-2">Mes</th>
-                      <th className="px-3 py-2">Estado</th>
-                      <th className="px-3 py-2 text-right">Saldo inicial</th>
-                      <th className="px-3 py-2 text-right">Ingresos</th>
-                      <th className="px-3 py-2 text-right">Salidas</th>
-                      <th className="px-3 py-2 text-right">Saldo final</th>
-                      <th className="px-3 py-2 text-right">Faltante (a ingresar)</th>
-                      <th className="px-3 py-2 text-right">Ajuste 701/702</th>
-                      <th className="px-3 py-2 text-center">Doc.</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {conc.map((f) => (
-                      <tr key={f.mes} className="border-b last:border-0">
-                        <td className="px-3 py-1.5 font-medium">{f.mes}</td>
-                        <td className="px-3 py-1.5">
-                          {f.mes >= mesActual ? (
-                            <Badge style={{ background: SST_TOKENS.warn, color: "white" }}>Pendiente</Badge>
-                          ) : (
-                            <Badge style={{ background: SST_TOKENS.ok, color: "white" }}>Conciliado</Badge>
-                          )}
-                        </td>
-                        <td className="px-3 py-1.5 text-right text-muted-foreground">{fmt(f.saldoInicial)}</td>
-                        <td className="px-3 py-1.5 text-right" style={{ color: SST_TOKENS.ok }} title={`Recepción ${fmt(f.recepcion)} · Devolución ${fmt(f.devolucion)}`}>{fmt(f.ingresos)}</td>
-                        <td className="px-3 py-1.5 text-right" style={{ color: SST_TOKENS.navy }} title={`Cargue ${fmt(f.cargue)} · Reproceso ${fmt(f.reproceso)}`}>{fmt(f.salidas)}</td>
-                        <td className="px-3 py-1.5 text-right font-semibold">{fmt(f.saldoFinal)}</td>
-                        <td className="px-3 py-1.5 text-right font-bold" style={{ color: f.faltante ? SST_TOKENS.bad : SST_TOKENS.ok }}>{fmt(f.faltante)}</td>
-                        <td className="px-3 py-1.5 text-right" style={{ color: f.ajuste ? SST_TOKENS.warn : "inherit" }}>{fmt(f.ajuste)}</td>
-                        <td className="px-3 py-1.5 text-center">
-                          {f.faltante > 0 ? (
-                            <Button size="sm" variant="outline" className="h-7 gap-1 text-[11px]" onClick={() => abrirActaConciliacion(f)}>
-                              <FileText className="h-3.5 w-3.5" /> Generar
-                            </Button>
-                          ) : (
-                            <span className="text-[11px]" style={{ color: SST_TOKENS.ok }}>✓ OK</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+          {!selectedEmpresaId ? (
+            <Card className="p-8 text-center text-sm text-muted-foreground">
+              Seleccione un <b>cliente/sitio</b> en el selector global (ej. Avimol) para conciliar mes a mes y generar los soportes de cierre.
             </Card>
+          ) : (
+            <>
+              <p className="text-xs text-muted-foreground">
+                <ClipboardList className="mr-1 inline h-3.5 w-3.5" />
+                <b>{selectedEmpresaNombre}</b> · solo <b>Producto Terminado + Sub Producto</b> (el empaque y la materia prima se concilian aparte). El inventario y los despachos se llevan <b>por lote</b>. Apertura = <b>inventario inicial (561)</b>; el cierre de cada mes es el inicial del siguiente. <b>Ingresos</b> = producción/descargue + devoluciones · <b>Salidas</b> = cargue (601) + <b>merma de proceso</b> (reproceso 551 + cuadre físico por lote). Traslados, proyección y tolva NO se cuentan. El <b>saldo final conciliado coincide con el stock físico</b>. Cada mes genera un acta PDF en <code>inventario/cierres/{selectedEmpresaId}/AAAA-MM/</code>.
+              </p>
+              {loadingConc ? (
+                <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin" style={{ color: SST_TOKENS.navy }} /></div>
+              ) : concFilas.length === 0 ? (
+                <Card className="p-8 text-center text-sm text-muted-foreground">Sin movimientos para el año seleccionado.</Card>
+              ) : (
+                <>
+                {conc?.resumen && (
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                    <KPI label="Inventario inicial (561)" valor={fmt(conc.resumen.invInicial)} unidad="und" Icon={ArrowDownToLine} color={SST_TOKENS.navy} sub="apertura del periodo" />
+                    <KPI label="Merma de proceso" valor={fmt(conc.resumen.mermaProceso)} unidad="und" Icon={AlertTriangle} color={SST_TOKENS.warn} sub="reproceso + cuadre por lote" />
+                    <KPI label="Saldo conciliado" valor={fmt(conc.resumen.saldoTeorico)} unidad="und" Icon={Boxes} color={SST_TOKENS.navy} sub="cierre del roll" />
+                    <KPI label="Stock físico (sistema)" valor={fmt(conc.resumen.saldoVivo)} unidad="und" Icon={Boxes} color={SST_TOKENS.ok} sub="saldoinvdetalle" />
+                    <KPI label="Diferencia" valor={fmt(conc.resumen.diferencia)} unidad="und" Icon={TrendingDown} color={Math.abs(conc.resumen.diferencia) < 5 ? SST_TOKENS.ok : SST_TOKENS.bad} sub={Math.abs(conc.resumen.diferencia) < 5 ? "✓ cuadra" : "revisar"} />
+                  </div>
+                )}
+                <Card className="overflow-hidden">
+                  <div className="max-h-[60vh] overflow-auto">
+                    <table className="w-full text-sm">
+                      <thead className="sticky top-0 bg-background">
+                        <tr className="border-b text-left text-[11px] uppercase text-muted-foreground">
+                          <th className="px-3 py-2">Mes</th>
+                          <th className="px-3 py-2">Estado</th>
+                          <th className="px-3 py-2 text-right">Saldo inicial</th>
+                          <th className="px-3 py-2 text-right">Ingresos</th>
+                          <th className="px-3 py-2 text-right">Cargue (601)</th>
+                          <th className="px-3 py-2 text-right">Reproceso (551)</th>
+                          <th className="px-3 py-2 text-right">Merma proceso</th>
+                          <th className="px-3 py-2 text-right">Saldo final (físico)</th>
+                          <th className="px-3 py-2 text-center">Soporte</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {concFilas.map((f) => (
+                          <tr key={f.mes} className="border-b last:border-0">
+                            <td className="px-3 py-1.5 font-medium">{f.mes}</td>
+                            <td className="px-3 py-1.5">
+                              {f.documento_url ? (
+                                <Badge style={{ background: SST_TOKENS.ok, color: "white" }}>Conciliado</Badge>
+                              ) : f.mes >= mesActual ? (
+                                <Badge style={{ background: SST_TOKENS.warn, color: "white" }}>Pendiente</Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-[10px]">Sin acta</Badge>
+                              )}
+                            </td>
+                            <td className="px-3 py-1.5 text-right text-muted-foreground">{fmt(f.saldoInicial)}</td>
+                            <td className="px-3 py-1.5 text-right" style={{ color: SST_TOKENS.ok }} title={`Prod. ${fmt(f.recepcion ?? 0)} · Dev. ${fmt(f.devolucion ?? 0)}`}>{fmt(f.ingresos)}</td>
+                            <td className="px-3 py-1.5 text-right" style={{ color: SST_TOKENS.navy }}>{fmt(f.cargue)}</td>
+                            <td className="px-3 py-1.5 text-right text-muted-foreground">{fmt(f.reproceso)}</td>
+                            <td className="px-3 py-1.5 text-right" style={{ color: (f.mermaProceso ?? 0) ? SST_TOKENS.warn : "inherit" }} title="Diferencia libro vs físico por lote (merma de proceso)">{fmt(f.mermaProceso)}</td>
+                            <td className="px-3 py-1.5 text-right font-semibold">{fmt(f.saldoFinal)}</td>
+                            <td className="px-3 py-1.5 text-center">
+                              {f.documento_url ? (
+                                <a href={f.documento_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11px] hover:underline" style={{ color: SST_TOKENS.navy }}>
+                                  <ExternalLink className="h-3.5 w-3.5" /> Ver PDF
+                                </a>
+                              ) : (
+                                <Button size="sm" variant="outline" className="h-7 gap-1 text-[11px]" disabled={generandoActa === f.mes} onClick={() => generarYGuardarActa(f)}>
+                                  {generandoActa === f.mes ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
+                                  Generar
+                                </Button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card>
+                </>
+              )}
+
+              {concCierres.length > 0 && (
+                <Card className="p-3">
+                  <div className="mb-2 flex items-center gap-2 text-sm font-semibold" style={{ color: SST_TOKENS.ink }}>
+                    <FolderOpen className="h-4 w-4" style={{ color: SST_TOKENS.navy }} />
+                    Carpeta de cierres de mes · {selectedEmpresaNombre}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {concCierres.map((c: any) => (
+                      c.documento_url ? (
+                        <a key={c.mes} href={c.documento_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs hover:bg-muted/50" style={{ color: SST_TOKENS.navy }}>
+                          <FileText className="h-3 w-3" /> {c.mes}
+                        </a>
+                      ) : null
+                    ))}
+                  </div>
+                </Card>
+              )}
+
+              <p className="text-[11px] text-muted-foreground">
+                La <b>merma de proceso</b> (reproceso 551 + cuadre físico por lote) se documenta en el cierre y NO se cobra a LIP. El saldo final conciliado <b>coincide con el stock físico</b> del sistema. Regenerar el acta sobrescribe el PDF en la carpeta del mes.
+              </p>
+            </>
           )}
-          <p className="text-[11px] text-muted-foreground">El <b>Ajuste a depurar</b> &gt; 0 indica movimientos manuales/ajustes (701/702) o salidas sin orden de cargue que deben investigarse y documentarse mes a mes — antes de cerrar el periodo. No se asume como merma.</p>
         </TabsContent>
 
         {/* INVENTARIO DETALLE — Kardex por producto (movimiento total ingreso→salida) */}
@@ -553,45 +685,6 @@ export function PanelInventarioLIP() {
         </DialogContent>
       </Dialog>
 
-      {/* DOCUMENTO: Acta de ajuste / conciliación mensual de inventario */}
-      <Dialog open={!!acta} onOpenChange={(o) => !o && setActa(null)}>
-        <DialogContent className="max-w-lg">
-          {acta && (
-            <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2 text-base">
-                  <FileText className="h-5 w-5" style={{ color: SST_TOKENS.navy }} /> Acta de ajuste de inventario
-                </DialogTitle>
-              </DialogHeader>
-              <div className="space-y-3 text-sm">
-                <div className="rounded-lg border bg-muted/40 p-3">
-                  <div className="font-semibold" style={{ color: SST_TOKENS.ink }}>{selectedEmpresaNombre || "Todos los clientes"} · {acta.mes}</div>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Conciliación de movimientos del mes (inventario no puede quedar negativo). El faltante corresponde a <b>producción no ingresada</b> que debe regularizarse con un ingreso de ajuste.
-                  </p>
-                </div>
-                <table className="w-full">
-                  <tbody>
-                    <tr className="border-b"><td className="py-1.5 text-muted-foreground">Saldo inicial</td><td className="py-1.5 text-right font-medium">{fmt(acta.saldoInicial)}</td></tr>
-                    <tr className="border-b"><td className="py-1.5 text-muted-foreground">(+) Ingresos (producción / descargue / devolución)</td><td className="py-1.5 text-right" style={{ color: SST_TOKENS.ok }}>{fmt(acta.ingresos)}</td></tr>
-                    <tr className="border-b"><td className="py-1.5 text-muted-foreground">(−) Salidas (cargue + reproceso)</td><td className="py-1.5 text-right" style={{ color: SST_TOKENS.navy }}>{fmt(acta.salidas)}</td></tr>
-                    <tr className="border-b"><td className="py-1.5 font-semibold">Saldo final teórico</td><td className="py-1.5 text-right font-semibold">{fmt(acta.saldoFinal)}</td></tr>
-                    <tr className="border-b" style={{ background: `${SST_TOKENS.bad}10` }}><td className="py-1.5 font-bold" style={{ color: SST_TOKENS.bad }}>Faltante = producción a ingresar (ajuste)</td><td className="py-1.5 text-right font-bold" style={{ color: SST_TOKENS.bad }}>{fmt(acta.faltante)}</td></tr>
-                    <tr><td className="py-1.5 text-muted-foreground">Ajustes manuales del mes (701/702)</td><td className="py-1.5 text-right">{fmt(acta.ajuste)}</td></tr>
-                  </tbody>
-                </table>
-                <p className="text-[11px] text-muted-foreground">
-                  Acción: registrar un <b>ingreso de ajuste de {fmt(acta.faltante)} und</b> (cod 701) por producción no ingresada, en Transacciones de Inventario, para cerrar el mes sin negativo. Este documento es el soporte del cruce.
-                </p>
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setActa(null)}>Cerrar</Button>
-                <Button onClick={() => { if (typeof window !== "undefined") window.print() }}>Imprimir / PDF</Button>
-              </DialogFooter>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }

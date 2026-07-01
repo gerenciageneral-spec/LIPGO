@@ -59,6 +59,20 @@ export interface IpevrRow {
   peor_consecuencia: string | null
   medidas_intervencion: string | null
   fecha?: string | null
+  // --- Columnas ricas del formato LIP (SST-MA-002) ---
+  tarea?: string | null
+  especificacion?: string | null
+  medida_eliminacion?: string | null
+  medida_sustitucion?: string | null
+  control_ingenieria?: string | null
+  control_administrativo?: string | null
+  medida_epp?: string | null
+  gc_plan_accion?: string | null
+  gc_fecha_implementacion?: string | null
+  gc_tipo_plan?: string | null
+  gc_controles_propuestos?: string | null
+  gc_controles_implementados?: string | null
+  gc_pct_cumplimiento?: number | null
 }
 
 export interface IncidenteRow {
@@ -119,6 +133,43 @@ export interface IncidenteRow {
   causa_condiciones_inseguras?: string | null
   causa_factores_personales?: string | null
   causa_factores_trabajo?: string | null
+  // --- SST-FOR-21 (formato original LIP) ---
+  documento_tipo?: string | null
+  documento_numero?: string | null
+  fecha_nacimiento?: string | null
+  sexo?: string | null
+  eps?: string | null
+  arl?: string | null
+  afp?: string | null
+  salario?: number | null
+  codigo_ocupacion?: string | null
+  fecha_ingreso?: string | null
+  jornada_habitual?: string | null
+  centro_trabajo?: string | null
+  centro_direccion?: string | null
+  centro_municipio?: string | null
+  codigo_actividad?: string | null
+  fecha_reporte?: string | null
+  tiempo_laborado_previo?: string | null
+  dentro_fuera_empresa?: string | null
+  requirio_transporte?: boolean | null
+  ausentismo_tipo?: string | null
+  ausentismo_fecha_inicial?: string | null
+  ausentismo_fecha_final?: string | null
+  divulgacion_leccion?: string | null
+  charla_seguridad?: string | null
+  retroalimentacion?: string | null
+  firmas?: any
+}
+
+export interface IncidenteTestigoRow {
+  id?: number
+  incidente_id: number
+  idempresa?: number | null
+  nombre: string | null
+  documento: string | null
+  version: string | null
+  cargo?: string | null
 }
 
 export interface IncidenteAccionRow {
