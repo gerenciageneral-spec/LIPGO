@@ -42,3 +42,38 @@ export async function deleteMedevac(id: number): Promise<{ success: boolean; mes
   const { error } = await supabase.from("sst_medevac").delete().eq("id", id)
   return error ? { success: false, message: error.message } : { success: true }
 }
+
+// Autorrelleno: busca al colaborador en el head count / carpeta de Trabajadores
+// (tabla headcount) por N° de documento. Valida contra el proyecto del selector:
+// si se pasa empresaId, solo lo encuentra si pertenece a ese proyecto.
+export async function buscarColaboradorMedevac(
+  documento: string,
+  empresaId?: number | null,
+): Promise<{ found: boolean; data?: any; message?: string }> {
+  const doc = String(documento || "").trim()
+  if (!doc) return { found: false }
+  const supabase: any = await getSupabaseAdmin()
+  let q = supabase
+    .from("headcount")
+    .select("identificacion, nombre, cargo, celular, afiliacion_eps, afiliacion_arl, idempresa, estado")
+    .eq("identificacion", doc)
+  if (empresaId) q = q.eq("idempresa", empresaId)
+  const { data, error } = await q.limit(1)
+  if (error) return { found: false, message: error.message }
+  if (!data || !data.length) {
+    return { found: false, message: empresaId ? "No está en el head count de este proyecto" : "No se encontró en el head count" }
+  }
+  const p = data[0]
+  return {
+    found: true,
+    data: {
+      nombres: p.nombre ?? "",
+      cargo: p.cargo ?? "",
+      celular: p.celular ?? "",
+      eps: p.afiliacion_eps ?? "",
+      arl: p.afiliacion_arl ?? "",
+      idempresa: p.idempresa,
+      estado: p.estado ?? "",
+    },
+  }
+}

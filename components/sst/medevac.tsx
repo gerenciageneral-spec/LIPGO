@@ -15,7 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { useToast } from "@/hooks/use-toast"
 import { SST_TOKENS } from "@/components/sst/sst-utils"
 import { Kpi, Sec, Row3, Field, Sel } from "@/components/sst/sst-form-ui"
-import { listMedevac, saveMedevac, deleteMedevac } from "@/lib/sst-medevac-actions"
+import { listMedevac, saveMedevac, deleteMedevac, buscarColaboradorMedevac } from "@/lib/sst-medevac-actions"
 import type { MedevacRow } from "@/lib/sst-evidencia-types"
 import { HeartPulse, FileText, Trash2, Search, FileDown } from "lucide-react"
 
@@ -80,7 +80,35 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
   const [form, setForm] = useState<Record<string, any>>(() => vacio(empresaId))
   const [saving, setSaving] = useState(false)
   const [card, setCard] = useState<MedevacRow | null>(null)
+  const [buscando, setBuscando] = useState(false)
   const set = (k: string, v: any) => setForm((f) => ({ ...f, [k]: v }))
+
+  // Autorrelleno por N° de documento desde head count / Trabajadores (valida el proyecto del selector)
+  async function autofillPorDocumento() {
+    const doc = String(form.documento || "").trim()
+    if (!doc) return
+    setBuscando(true)
+    const r = await buscarColaboradorMedevac(doc, empresaId)
+    setBuscando(false)
+    if (r.found && r.data) {
+      const centro = CENTRO_POR_EMPRESA[r.data.idempresa] ?? (empresaId ? CENTRO_POR_EMPRESA[empresaId] : "") ?? ""
+      // headcount guarda EPS/ARL como PDF de afiliación (URL), no como nombre:
+      // solo tomamos texto útil (nombre/cargo/celular). EPS se confirma manual; ARL queda en el default.
+      const esUrl = (v: string) => /^https?:\/\//i.test(String(v || ""))
+      setForm((f) => ({
+        ...f,
+        nombres: r.data.nombres || f.nombres,
+        cargo: r.data.cargo || f.cargo,
+        celular: r.data.celular || f.celular,
+        eps: !esUrl(r.data.eps) && r.data.eps ? r.data.eps : f.eps,
+        arl: !esUrl(r.data.arl) && r.data.arl ? r.data.arl : f.arl,
+        centro_trabajo: centro || f.centro_trabajo,
+      }))
+      toast({ title: "Datos autocompletados", description: `${r.data.nombres} — verifica EPS y ARL` })
+    } else {
+      toast({ title: "No encontrado", description: r.message || "El documento no está en el head count del proyecto" })
+    }
+  }
 
   async function cargar() {
     setRows(await listMedevac(empresaId))
@@ -279,10 +307,26 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
         <TabsContent value="registrar">
           <Card className="p-4 space-y-6">
             <Sec n="Colaborador">
+              <p className="text-[11px] text-muted-foreground -mt-1">
+                Digita el <b>N° de documento</b> y sal del campo (o pulsa Buscar): se autocompletan <b>nombre, cargo, centro y celular</b> desde el <b>head count / Trabajadores</b> del proyecto seleccionado. <b>EPS y ARL</b> confírmalas manual (en el head count están como PDF de afiliación, no como nombre).
+              </p>
               <Row3>
-                <Field l="Apellidos y nombres"><Input value={form.nombres} onChange={(e) => set("nombres", e.target.value)} /></Field>
+                <Field l="N° de documento">
+                  <div className="flex gap-1">
+                    <Input
+                      value={form.documento}
+                      onChange={(e) => set("documento", e.target.value)}
+                      onBlur={autofillPorDocumento}
+                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); autofillPorDocumento() } }}
+                      placeholder="Cédula…"
+                    />
+                    <Button type="button" variant="outline" size="sm" className="shrink-0" disabled={buscando} onClick={autofillPorDocumento}>
+                      {buscando ? "…" : <Search className="h-4 w-4" />}
+                    </Button>
+                  </div>
+                </Field>
                 <Field l="Tipo de documento"><Sel v={form.documento_tipo} on={(v) => set("documento_tipo", v)} o={DOC} /></Field>
-                <Field l="N° de documento"><Input value={form.documento} onChange={(e) => set("documento", e.target.value)} /></Field>
+                <Field l="Apellidos y nombres"><Input value={form.nombres} onChange={(e) => set("nombres", e.target.value)} /></Field>
                 <Field l="Cargo"><Input value={form.cargo} onChange={(e) => set("cargo", e.target.value)} /></Field>
                 <Field l="Centro de trabajo"><Input value={form.centro_trabajo} onChange={(e) => set("centro_trabajo", e.target.value)} /></Field>
                 <Field l="Teléfono celular"><Input value={form.celular} onChange={(e) => set("celular", e.target.value)} /></Field>
