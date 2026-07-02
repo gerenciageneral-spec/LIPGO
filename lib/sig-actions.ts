@@ -3668,13 +3668,18 @@ export async function getConciliacionMensualInventario(
     }
     const saldoTeorico = filas.length ? filas[filas.length - 1].saldoFinal : Math.round(invInicial)
     const mermaProcesoTotal = filas.reduce((s: number, f: any) => s + (f.mermaProceso || 0), 0)
+    // Reproceso/avería REAL = transacciones 551 registradas en el módulo de
+    // inventario. Es la "merma de proceso" verdadera. El cuadre libro-vs-físico
+    // (mermaProceso) es depuración/ajuste, hoy ~0 tras depurar la base.
+    const reprocesoTotal = filas.reduce((s: number, f: any) => s + (f.reproceso || 0), 0)
 
     const resumen = {
       invInicial: Math.round(invInicial),
       saldoTeorico,                                        // = stock vivo tras conciliar
       saldoVivo: Math.round(stockActual),
       diferencia: Math.round(saldoTeorico - stockActual),  // ~0 tras conciliar
-      mermaProceso: Math.round(mermaProcesoTotal),
+      reproceso: Math.round(reprocesoTotal),               // avería/reproceso 551 (merma real)
+      mermaProceso: Math.round(mermaProcesoTotal),         // cuadre físico por lote / depuración
       sobranteKardex: Math.round(sobrante),
       faltanteKardex: Math.round(Math.abs(faltante)),
       lotesRevisar: revisar.length,

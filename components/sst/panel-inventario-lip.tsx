@@ -259,8 +259,8 @@ export function PanelInventarioLIP() {
           ["      Producción / recepción", fmtN(f.recepcion ?? f.produccion ?? 0)],
           ["      Devoluciones", fmtN(f.devolucion ?? 0)],
           ["(−) Órdenes de cargue (601)", fmtN(f.cargue)],
-          ["(−) Reproceso / avería registrado (551)", fmtN(f.reproceso ?? 0)],
-          ["(−) Merma de proceso (cuadre físico por lote)", fmtN(f.mermaProceso ?? 0)],
+          ["(−) Merma de proceso — reproceso / avería (551)", fmtN(f.reproceso ?? 0)],
+          ["(−) Ajuste / depuración (cuadre físico por lote)", fmtN(f.mermaProceso ?? 0)],
           ["(=) Saldo final conciliado (= stock físico)", fmtN(f.saldoFinal)],
         ],
         styles: { fontSize: 9 },
@@ -482,9 +482,10 @@ export function PanelInventarioLIP() {
               ) : (
                 <>
                 {conc?.resumen && (
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
                     <KPI label="Inventario inicial (561)" valor={fmt(conc.resumen.invInicial)} unidad="und" Icon={ArrowDownToLine} color={SST_TOKENS.navy} sub="apertura del periodo" />
-                    <KPI label="Merma de proceso" valor={fmt(conc.resumen.mermaProceso)} unidad="und" Icon={AlertTriangle} color={SST_TOKENS.warn} sub="reproceso + cuadre por lote" />
+                    <KPI label="Merma de proceso" valor={fmt(conc.resumen.reproceso ?? 0)} unidad="und" Icon={AlertTriangle} color={SST_TOKENS.warn} sub="reproceso / avería (551)" />
+                    <KPI label="Ajuste / depuración" valor={fmt(conc.resumen.mermaProceso)} unidad="und" Icon={RefreshCw} color={Math.abs(conc.resumen.mermaProceso) < 50 ? SST_TOKENS.ok : SST_TOKENS.warn} sub="cuadre físico por lote (~0)" />
                     <KPI label="Saldo conciliado" valor={fmt(conc.resumen.saldoTeorico)} unidad="und" Icon={Boxes} color={SST_TOKENS.navy} sub="cierre del roll" />
                     <KPI label="Stock físico (sistema)" valor={fmt(conc.resumen.saldoVivo)} unidad="und" Icon={Boxes} color={SST_TOKENS.ok} sub="saldoinvdetalle" />
                     <KPI label="Diferencia" valor={fmt(conc.resumen.diferencia)} unidad="und" Icon={TrendingDown} color={Math.abs(conc.resumen.diferencia) < 5 ? SST_TOKENS.ok : SST_TOKENS.bad} sub={Math.abs(conc.resumen.diferencia) < 5 ? "✓ cuadra" : "revisar"} />
@@ -500,8 +501,8 @@ export function PanelInventarioLIP() {
                           <th className="px-3 py-2 text-right">Saldo inicial</th>
                           <th className="px-3 py-2 text-right">Ingresos</th>
                           <th className="px-3 py-2 text-right">Cargue (601)</th>
-                          <th className="px-3 py-2 text-right">Reproceso (551)</th>
-                          <th className="px-3 py-2 text-right">Merma proceso</th>
+                          <th className="px-3 py-2 text-right">Merma proceso (551)</th>
+                          <th className="px-3 py-2 text-right">Ajuste / depuración</th>
                           <th className="px-3 py-2 text-right">Saldo final (físico)</th>
                           <th className="px-3 py-2 text-center">Soporte</th>
                         </tr>
@@ -522,8 +523,8 @@ export function PanelInventarioLIP() {
                             <td className="px-3 py-1.5 text-right text-muted-foreground">{fmt(f.saldoInicial)}</td>
                             <td className="px-3 py-1.5 text-right" style={{ color: SST_TOKENS.ok }} title={`Prod. ${fmt(f.recepcion ?? 0)} · Dev. ${fmt(f.devolucion ?? 0)}`}>{fmt(f.ingresos)}</td>
                             <td className="px-3 py-1.5 text-right" style={{ color: SST_TOKENS.navy }}>{fmt(f.cargue)}</td>
-                            <td className="px-3 py-1.5 text-right text-muted-foreground">{fmt(f.reproceso)}</td>
-                            <td className="px-3 py-1.5 text-right" style={{ color: (f.mermaProceso ?? 0) ? SST_TOKENS.warn : "inherit" }} title="Diferencia libro vs físico por lote (merma de proceso)">{fmt(f.mermaProceso)}</td>
+                            <td className="px-3 py-1.5 text-right" style={{ color: (f.reproceso ?? 0) ? SST_TOKENS.warn : "inherit" }} title="Reproceso / avería registrada (mov 551) — merma real de proceso">{fmt(f.reproceso)}</td>
+                            <td className="px-3 py-1.5 text-right text-muted-foreground" title="Cuadre libro vs físico por lote (ajustes 702, lotes sin fecha, redondeos). ~0 tras depurar la base.">{fmt(f.mermaProceso)}</td>
                             <td className="px-3 py-1.5 text-right font-semibold">{fmt(f.saldoFinal)}</td>
                             <td className="px-3 py-1.5 text-center">
                               {f.documento_url ? (
