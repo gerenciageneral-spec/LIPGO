@@ -54,7 +54,7 @@ export function PanelInventarioLIP() {
   const [auditoria, setAuditoria] = useState<{ ocargue: string; producto?: string; data: any } | null>(null)
   const [loadingAud, setLoadingAud] = useState(false)
   const [modoEdicion, setModoEdicion] = useState(false)
-  const [edits, setEdits] = useState<{ ped: Record<number, string>; pedU: Record<number, string>; sal: Record<number, string> }>({ ped: {}, pedU: {}, sal: {} })
+  const [edits, setEdits] = useState<{ ped: Record<number, string>; pedU: Record<number, string> }>({ ped: {}, pedU: {} })
   const [savingCuadre, setSavingCuadre] = useState(false)
   const [tab, setTab] = useState("dashboard")
 
@@ -162,7 +162,7 @@ export function PanelInventarioLIP() {
   }
   async function abrirAuditoria(f: any) {
     setModoEdicion(false)
-    setEdits({ ped: {}, pedU: {}, sal: {} })
+    setEdits({ ped: {}, pedU: {} })
     setAuditoria({ ocargue: f.ocargue, producto: f.producto, data: null })
     setLoadingAud(true)
     const r = await getAuditoriaOrdenPedidoSalida(f.ocargue)
@@ -184,24 +184,19 @@ export function PanelInventarioLIP() {
         return changed ? out : null
       })
       .filter(Boolean)
-    const sals = (auditoria.data.salidas ?? [])
-      .filter((r: any) => edits.sal[r.id] !== undefined && edits.sal[r.id] !== "" && Number(edits.sal[r.id]) !== Math.abs(Number(r.cantidad) || 0))
-      .map((r: any) => ({ id: r.id, cantidad: Number(edits.sal[r.id]) }))
-    if (peds.length === 0 && sals.length === 0) {
-      toast({ title: "Sin cambios", description: "No hay cantidades modificadas." })
+    if (peds.length === 0) {
+      toast({ title: "Sin cambios", description: "No hay cantidades de pedido modificadas." })
       return
     }
-    const msg = `Vas a guardar en Supabase: ${peds.length} pedido(s) y ${sals.length} salida(s).` +
-      (sals.length ? "\n\n⚠️ Editar salidas RECALCULA el físico (saldoinvdetalle es una vista sobre invtrans)." : "") +
-      "\n\n¿Confirmar el cuadre manual?"
+    const msg = `Vas a guardar en Supabase ${peds.length} línea(s) de pedido (unidades/cargadas).\nEsto NO modifica el inventario.\n\n¿Confirmar el cuadre manual?`
     if (!window.confirm(msg)) return
     setSavingCuadre(true)
-    const r = await guardarCuadreManualPedidoSalida({ pedidos: peds, salidas: sals, actor })
+    const r = await guardarCuadreManualPedidoSalida({ pedidos: peds, actor })
     setSavingCuadre(false)
     if (r.success) {
-      toast({ title: "Cuadre manual guardado", description: `${r.data?.pedidos ?? 0} pedido(s), ${r.data?.salidas ?? 0} salida(s).` })
+      toast({ title: "Cuadre manual guardado", description: `${r.data?.pedidos ?? 0} línea(s) de pedido actualizada(s).` })
       setModoEdicion(false)
-      setEdits({ ped: {}, pedU: {}, sal: {} })
+      setEdits({ ped: {}, pedU: {} })
       await abrirAuditoria({ ocargue: auditoria.ocargue, producto: auditoria.producto })
       cargarPedidosSalidas()
     } else {
@@ -719,11 +714,12 @@ export function PanelInventarioLIP() {
               )}
 
               {/* KPIs */}
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">
                 <KPI label="OK (cuadran)" valor={pedSal.resumen.ok} Icon={CheckCircle2} color="#1E8449" />
                 <KPI label="Cantidad diferente" valor={pedSal.resumen.cantidadDiferente} Icon={AlertTriangle} color="#E0A800" />
                 <KPI label="Pedido sin salida" valor={pedSal.resumen.pedidoSinSalida} Icon={PackageX} color="#C0392B" />
                 <KPI label="Salida sin pedido" valor={pedSal.resumen.salidaSinPedido} Icon={Truck} color="#7e57c2" />
+                <KPI label="Pendiente despacho" valor={pedSal.resumen.pendienteDespacho ?? 0} Icon={CalendarClock} color="#0284c7" />
                 <KPI label="Total cargadas" valor={(pedSal.resumen.totalCargadas || 0).toLocaleString("es-CO")} Icon={ClipboardList} color="#0D3B6E" />
                 <KPI label="Total salidas" valor={(pedSal.resumen.totalSalidas || 0).toLocaleString("es-CO")} Icon={ArrowDownToLine} color="#00B4CC" />
               </div>
@@ -737,6 +733,7 @@ export function PanelInventarioLIP() {
                     <option value="CANTIDAD_DIFERENTE">Cantidad diferente</option>
                     <option value="PEDIDO_SIN_SALIDA">Pedido sin salida</option>
                     <option value="SALIDA_SIN_PEDIDO">Salida sin pedido</option>
+                    <option value="PENDIENTE_DESPACHO">Pendiente de despacho</option>
                   </select>
                 </SigField>
                 <SigField label="Orden de cargue">
@@ -751,7 +748,7 @@ export function PanelInventarioLIP() {
               {(() => {
                 const q = filtroOrden.trim().toLowerCase()
                 const base = pedSal.filas.filter((f) => {
-                  if (filtroAlerta === "DISC") { if (f.estado_alerta === "OK") return false }
+                  if (filtroAlerta === "DISC") { if (f.estado_alerta === "OK" || f.estado_alerta === "PENDIENTE_DESPACHO") return false }
                   else if (filtroAlerta && f.estado_alerta !== filtroAlerta) return false
                   if (q && !String(f.ocargue || "").toLowerCase().includes(q)) return false
                   return true
@@ -760,6 +757,7 @@ export function PanelInventarioLIP() {
                 const vista = base.slice(0, CAP)
                 const badge = (e: string) => {
                   if (e === "OK") return <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100 text-[10px]">OK</Badge>
+                  if (e === "PENDIENTE_DESPACHO") return <Badge className="bg-sky-100 text-sky-800 hover:bg-sky-100 text-[10px]">Pendiente despacho</Badge>
                   if (e === "CANTIDAD_DIFERENTE") return <Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100 text-[10px]">Cantidad diferente</Badge>
                   if (e === "PEDIDO_SIN_SALIDA") return <Badge className="bg-red-100 text-red-800 hover:bg-red-100 text-[10px]">Pedido sin salida</Badge>
                   return <Badge className="bg-purple-100 text-purple-800 hover:bg-purple-100 text-[10px]">Salida sin pedido</Badge>
@@ -897,14 +895,14 @@ export function PanelInventarioLIP() {
                     <Button size="sm" onClick={guardarCuadre} disabled={savingCuadre}>
                       {savingCuadre ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null} Guardar cuadre en Supabase
                     </Button>
-                    <Button size="sm" variant="ghost" onClick={() => { setModoEdicion(false); setEdits({ ped: {}, pedU: {}, sal: {} }) }}>Cancelar</Button>
+                    <Button size="sm" variant="ghost" onClick={() => { setModoEdicion(false); setEdits({ ped: {}, pedU: {} }) }}>Cancelar</Button>
                   </>
                 )}
               </div>
               {modoEdicion && (
-                <div className="flex items-start gap-2 rounded-md border-l-4 bg-amber-50 p-2" style={{ borderLeftColor: "#C0392B" }}>
-                  <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "#C0392B" }} />
-                  <p className="text-[11px] text-amber-900">Editas la <b>fuente</b>. <b>Pedidos</b> (unidades pedidas y cargadas) no afecta el físico. <b>Salidas</b> (invtrans): al cambiar la cantidad se <b>recalcula el físico</b> (saldoinvdetalle es una vista). Queda traza en <code>observaciones</code>. Solo personal autorizado.</p>
+                <div className="flex items-start gap-2 rounded-md border-l-4 bg-sky-50 p-2" style={{ borderLeftColor: "#0284c7" }}>
+                  <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "#0284c7" }} />
+                  <p className="text-[11px] text-sky-900">Corrección manual de <b>pedidos</b> (unidades pedidas y cargadas en <code>pedidosdetalle</code>). <b>NO modifica el inventario</b> de ningún proyecto — las salidas de <code>invtrans</code> son de solo lectura. Solo personal autorizado.</p>
                 </div>
               )}
               {(() => {
@@ -981,16 +979,7 @@ export function PanelInventarioLIP() {
                               <tr key={i} className={"border-t " + (esFoco(r.nombreproducto) ? "bg-amber-50" : "")}>
                                 <td className="px-2 py-1">{r.idempresa}</td><td className="px-2 py-1">{String(r.creado || "").slice(0, 10)}</td>
                                 <td className="px-2 py-1">{r.nombreproducto}</td><td className="px-2 py-1 text-muted-foreground">{r.lote}</td>
-                                <td className="px-2 py-1 text-right font-medium">
-                                  {modoEdicion ? (
-                                    <Input
-                                      type="number"
-                                      value={edits.sal[r.id] ?? String(Math.abs(Number(r.cantidad) || 0))}
-                                      onChange={(e) => setEdits((prev) => ({ ...prev, sal: { ...prev.sal, [r.id]: e.target.value } }))}
-                                      className="h-7 w-24 text-right text-xs"
-                                    />
-                                  ) : fmt(Math.abs(Number(r.cantidad) || 0))}
-                                </td>
+                                <td className="px-2 py-1 text-right font-medium">{fmt(Math.abs(Number(r.cantidad) || 0))}</td>
                                 <td className="px-2 py-1">{r.status}</td><td className="px-2 py-1">{r.cod_movimiento}</td><td className="px-2 py-1">{r.location}</td>
                               </tr>
                             ))}

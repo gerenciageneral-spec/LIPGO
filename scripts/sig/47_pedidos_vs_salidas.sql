@@ -28,7 +28,11 @@
 -- NO toca invtrans ni el físico. Aditivo/idempotente (create or replace view).
 -- =====================================================================
 
-create or replace view public.v_pedidos_vs_salidas as
+-- Se elimina primero porque cambian columnas/orden (CREATE OR REPLACE no permite
+-- reordenar). Es una VISTA (no tiene datos) → borrarla no afecta el inventario.
+drop view if exists public.v_pedidos_vs_salidas;
+
+create view public.v_pedidos_vs_salidas as
 with ped as (
   select
     pd.ocargue                                      as ocargue,
@@ -36,7 +40,10 @@ with ped as (
     max(pd.id_empresa)                              as idempresa_pedido,
     max(pd.producto)                                as producto,
     sum(coalesce(pd.unidadescargadas, pd.unidades_cargadas, 0)) as ped_cargadas,
-    sum(coalesce(pd.unidades, 0))                   as ped_unidades
+    sum(coalesce(pd.unidades, 0))                   as ped_unidades,
+    -- El pedido/línea se considera CERRADO si todas las líneas están cerrado/entregado.
+    bool_and(lower(coalesce(pd.estado, '')) in ('cerrado', 'entregado')) as pedido_cerrado,
+    max(pd.estado)                                  as estado_pedido
   from public.pedidosdetalle pd
   left join public.pedidoscabecera pc on pc.idpedido = pd.idpedido
   where pd.ocargue is not null and btrim(pd.ocargue) <> ''
@@ -68,13 +75,22 @@ select
   coalesce(p.ped_cargadas, 0)                       as ped_cargadas,
   coalesce(s.salida_qty, 0)                         as salida_qty,
   round(coalesce(p.ped_cargadas, 0) - coalesce(s.salida_qty, 0)) as diferencia,
+  greatest(round(coalesce(p.ped_unidades, 0) - coalesce(p.ped_cargadas, 0)), 0) as pendiente_despacho,
+  coalesce(p.pedido_cerrado, false)                 as pedido_cerrado,
+  p.estado_pedido                                   as estado_pedido,
   (p.idempresa_pedido is not null and s.idempresa_salida is not null
     and p.idempresa_pedido <> s.idempresa_salida)   as empresa_distinta,
   case
     when coalesce(p.ped_cargadas, 0) = 0 and coalesce(s.salida_qty, 0) = 0 then 'OK'
     when p.prod_key is null then 'SALIDA_SIN_PEDIDO'
     when s.prod_key is null then 'PEDIDO_SIN_SALIDA'
+    -- Integridad: lo cargado debe = lo que salió del inventario.
     when round(coalesce(p.ped_cargadas, 0) - coalesce(s.salida_qty, 0)) <> 0 then 'CANTIDAD_DIFERENTE'
+    -- Aquí cargadas = salida (integridad OK). Si se pidió más de lo cargado:
+    --   pedido cerrado  -> el cliente aceptó el parcial y cerró -> OK (no es diferencia)
+    --   pedido abierto  -> falta despachar -> PENDIENTE_DESPACHO (tampoco es diferencia)
+    when round(coalesce(p.ped_unidades, 0) - coalesce(p.ped_cargadas, 0)) > 0
+      then case when coalesce(p.pedido_cerrado, false) then 'OK' else 'PENDIENTE_DESPACHO' end
     else 'OK'
   end                                               as estado_alerta
 from ped p

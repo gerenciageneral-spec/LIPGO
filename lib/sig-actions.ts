@@ -3781,7 +3781,7 @@ export async function getConciliacionPedidosVsSalidas(
     while (true) {
       const { data, error } = await supabase
         .from("v_pedidos_vs_salidas")
-        .select("idempresa, idempresa_pedido, idempresa_salida, empresa_distinta, ocargue, producto, ped_unidades, ped_cargadas, salida_qty, diferencia, estado_alerta")
+        .select("idempresa, idempresa_pedido, idempresa_salida, empresa_distinta, ocargue, producto, ped_unidades, ped_cargadas, salida_qty, diferencia, pendiente_despacho, pedido_cerrado, estado_pedido, estado_alerta")
         .eq("idempresa", empresaId)
         .range(from, from + 999)
       if (error) return { success: false, error: error.message }
@@ -3797,6 +3797,7 @@ export async function getConciliacionPedidosVsSalidas(
       cantidadDiferente: 0,
       pedidoSinSalida: 0,
       salidaSinPedido: 0,
+      pendienteDespacho: 0,
       totalCargadas: 0,
       totalSalidas: 0,
       diferenciaNeta: 0,
@@ -3813,15 +3814,17 @@ export async function getConciliacionPedidosVsSalidas(
         case "CANTIDAD_DIFERENTE": resumen.cantidadDiferente++; break
         case "PEDIDO_SIN_SALIDA": resumen.pedidoSinSalida++; break
         case "SALIDA_SIN_PEDIDO": resumen.salidaSinPedido++; break
+        case "PENDIENTE_DESPACHO": resumen.pendienteDespacho++; break
       }
     }
-    resumen.conAlerta = resumen.total - resumen.ok
+    // Discrepancias reales = todo menos OK y PENDIENTE_DESPACHO (este último es informativo).
+    resumen.conAlerta = resumen.cantidadDiferente + resumen.pedidoSinSalida + resumen.salidaSinPedido
     resumen.totalCargadas = Math.round(resumen.totalCargadas)
     resumen.totalSalidas = Math.round(resumen.totalSalidas)
     resumen.diferenciaNeta = Math.round(resumen.diferenciaNeta)
 
     // Discrepancias primero; dentro, por magnitud de diferencia.
-    const orden: Record<string, number> = { SALIDA_SIN_PEDIDO: 0, PEDIDO_SIN_SALIDA: 1, CANTIDAD_DIFERENTE: 2, OK: 3 }
+    const orden: Record<string, number> = { SALIDA_SIN_PEDIDO: 0, PEDIDO_SIN_SALIDA: 1, CANTIDAD_DIFERENTE: 2, PENDIENTE_DESPACHO: 3, OK: 4 }
     filas.sort((a, b) => {
       const oa = orden[a.estado_alerta] ?? 9
       const ob = orden[b.estado_alerta] ?? 9
@@ -3887,23 +3890,20 @@ export async function getAuditoriaOrdenPedidoSalida(
 }
 
 /**
- * Cuadre manual: actualiza cantidades en la FUENTE para conciliar una orden.
- *  - pedidos: setea pedidosdetalle.unidadescargadas por transid (no toca físico).
- *  - salidas: setea invtrans.cantidad por id y deja traza en observaciones.
- *    OJO: invtrans alimenta la vista saldoinvdetalle → editar una salida
- *    RECALCULA el físico. Es intencional (cuadre manual autorizado).
+ * Cuadre manual: actualiza cantidades del PEDIDO en la fuente (pedidosdetalle)
+ * para conciliar una orden. SOLO toca pedidosdetalle (unidades / unidadescargadas),
+ * que es dato comercial y NO afecta el físico (saldoinvdetalle).
+ *
+ * IMPORTANTE: por decisión del negocio, este módulo NO modifica invtrans ni el
+ * inventario de ningún proyecto. Las salidas son de solo lectura.
  */
 export async function guardarCuadreManualPedidoSalida(payload: {
   pedidos?: { transid: number; cargadas?: number; unidades?: number }[]
-  salidas?: { id: number; cantidad: number }[]
   actor?: string | null
-}): Promise<{ success: boolean; error?: string; data?: { pedidos: number; salidas: number } }> {
+}): Promise<{ success: boolean; error?: string; data?: { pedidos: number } }> {
   try {
     const supabase: any = await getSupabaseAdmin()
-    const actor = payload.actor || "usuario LIPgo"
-    const fecha = new Date().toISOString().slice(0, 10)
     let pOk = 0
-    let sOk = 0
 
     for (const p of payload.pedidos ?? []) {
       if (p == null || p.transid == null) continue
@@ -3919,18 +3919,7 @@ export async function guardarCuadreManualPedidoSalida(payload: {
       pOk++
     }
 
-    for (const s of payload.salidas ?? []) {
-      if (s == null || s.id == null || !Number.isFinite(s.cantidad) || s.cantidad < 0) continue
-      const nota = `Cuadre manual SIG: cantidad ajustada a ${Math.round(s.cantidad)} por ${actor} el ${fecha}.`
-      const { error } = await supabase
-        .from("invtrans")
-        .update({ cantidad: Math.round(s.cantidad), observaciones: nota })
-        .eq("id", s.id)
-      if (error) return { success: false, error: `Salida id ${s.id}: ${error.message}` }
-      sOk++
-    }
-
-    return { success: true, data: { pedidos: pOk, salidas: sOk } }
+    return { success: true, data: { pedidos: pOk } }
   } catch (err: any) {
     return { success: false, error: err?.message || "Error desconocido" }
   }
