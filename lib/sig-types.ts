@@ -351,6 +351,8 @@ export interface SigInventarioCierreMes {
   cerrado_por: string | null
   created_at: string | null
   updated_at: string | null
+  fisico_congelado: number | null // stock físico total (PT+SubProd) congelado al cierre
+  fisico_snapshot: Record<string, number> | null // físico por lote (`idproducto|lote`) al cierre
 }
 
 // Plantas (producción PT) vs Cedis (descargue). Salidas = cargue + merma en ambos.

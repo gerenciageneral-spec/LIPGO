@@ -15,8 +15,8 @@ import { useToast } from "@/hooks/use-toast"
 import { SST_TOKENS } from "@/components/sst/sst-utils"
 import { SigHeader, SigFilterBar, SigField, SigKpi, sigControl } from "@/components/sst/sig-ui"
 import { useAuth } from "@/components/auth-provider"
-import { getPanelInventarioLIP, getKardexInventario, getMovimientosProducto, getTiposMovimiento, getCuadreDiario, getPreservacionInventario, getConciliacionMensualInventario, guardarCierreMesInventario } from "@/lib/sig-actions"
-import { Loader2, Boxes, TrendingDown, ArrowDownToLine, AlertTriangle, RefreshCw, CalendarClock, Layers, FileText, BookOpen, ZoomIn, ClipboardList, ShieldAlert, FolderOpen, ExternalLink } from "lucide-react"
+import { getPanelInventarioLIP, getKardexInventario, getMovimientosProducto, getTiposMovimiento, getCuadreDiario, getPreservacionInventario, getConciliacionMensualInventario, guardarCierreMesInventario, getConciliacionPedidosVsSalidas, getAuditoriaOrdenPedidoSalida, guardarCuadreManualPedidoSalida } from "@/lib/sig-actions"
+import { Loader2, Boxes, TrendingDown, ArrowDownToLine, AlertTriangle, RefreshCw, CalendarClock, Layers, FileText, BookOpen, ZoomIn, ClipboardList, ShieldAlert, FolderOpen, ExternalLink, CheckCircle2, PackageX, Truck } from "lucide-react"
 import { ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts"
 
 const DONUT_COLORS = ["#1E8449", "#0D3B6E", "#00B4CC", "#E0A800", "#7e57c2", "#C0392B"]
@@ -47,6 +47,15 @@ export function PanelInventarioLIP() {
   const [conc, setConc] = useState<{ filas: any[]; cierres: any[]; resumen?: any } | null>(null)
   const [loadingConc, setLoadingConc] = useState(false)
   const [generandoActa, setGenerandoActa] = useState<string | null>(null)
+  const [pedSal, setPedSal] = useState<{ filas: any[]; resumen: any } | null>(null)
+  const [loadingPedSal, setLoadingPedSal] = useState(false)
+  const [filtroAlerta, setFiltroAlerta] = useState("DISC") // DISC | "" (todas) | OK | CANTIDAD_DIFERENTE | PEDIDO_SIN_SALIDA | SALIDA_SIN_PEDIDO
+  const [filtroOrden, setFiltroOrden] = useState("")
+  const [auditoria, setAuditoria] = useState<{ ocargue: string; producto?: string; data: any } | null>(null)
+  const [loadingAud, setLoadingAud] = useState(false)
+  const [modoEdicion, setModoEdicion] = useState(false)
+  const [edits, setEdits] = useState<{ ped: Record<number, string>; pedU: Record<number, string>; sal: Record<number, string> }>({ ped: {}, pedU: {}, sal: {} })
+  const [savingCuadre, setSavingCuadre] = useState(false)
   const [tab, setTab] = useState("dashboard")
 
   const MESES = [
@@ -78,6 +87,7 @@ export function PanelInventarioLIP() {
     else if (tab === "diario") cargarCuadreDiario()
     else if (tab === "preservacion") cargarPreservacion()
     else if (tab === "conciliacion") cargarConciliacion()
+    else if (tab === "pedidos_salidas") cargarPedidosSalidas()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, selectedEmpresaId, anio, mes])
 
@@ -135,6 +145,68 @@ export function PanelInventarioLIP() {
       toast({ title: "No se pudo cargar la conciliación", description: r.error })
     }
     setLoadingConc(false)
+  }
+  async function cargarPedidosSalidas() {
+    if (!selectedEmpresaId) {
+      setPedSal(null)
+      return
+    }
+    setLoadingPedSal(true)
+    const r = await getConciliacionPedidosVsSalidas(selectedEmpresaId)
+    if (r.success) setPedSal({ filas: r.data?.filas ?? [], resumen: r.data?.resumen ?? {} })
+    else {
+      setPedSal(null)
+      toast({ title: "No se pudo cargar pedidos vs salidas", description: r.error })
+    }
+    setLoadingPedSal(false)
+  }
+  async function abrirAuditoria(f: any) {
+    setModoEdicion(false)
+    setEdits({ ped: {}, pedU: {}, sal: {} })
+    setAuditoria({ ocargue: f.ocargue, producto: f.producto, data: null })
+    setLoadingAud(true)
+    const r = await getAuditoriaOrdenPedidoSalida(f.ocargue)
+    setLoadingAud(false)
+    if (r.success) setAuditoria({ ocargue: f.ocargue, producto: f.producto, data: r.data })
+    else {
+      setAuditoria(null)
+      toast({ title: "No se pudo cargar la auditoría", description: r.error })
+    }
+  }
+  async function guardarCuadre() {
+    if (!auditoria?.data) return
+    const peds = (auditoria.data.pedidos ?? [])
+      .map((r: any) => {
+        const out: any = { transid: r.transid }
+        let changed = false
+        if (edits.ped[r.transid] !== undefined && edits.ped[r.transid] !== "" && Number(edits.ped[r.transid]) !== Number(r.cargadas)) { out.cargadas = Number(edits.ped[r.transid]); changed = true }
+        if (edits.pedU[r.transid] !== undefined && edits.pedU[r.transid] !== "" && Number(edits.pedU[r.transid]) !== Number(r.unidades)) { out.unidades = Number(edits.pedU[r.transid]); changed = true }
+        return changed ? out : null
+      })
+      .filter(Boolean)
+    const sals = (auditoria.data.salidas ?? [])
+      .filter((r: any) => edits.sal[r.id] !== undefined && edits.sal[r.id] !== "" && Number(edits.sal[r.id]) !== Math.abs(Number(r.cantidad) || 0))
+      .map((r: any) => ({ id: r.id, cantidad: Number(edits.sal[r.id]) }))
+    if (peds.length === 0 && sals.length === 0) {
+      toast({ title: "Sin cambios", description: "No hay cantidades modificadas." })
+      return
+    }
+    const msg = `Vas a guardar en Supabase: ${peds.length} pedido(s) y ${sals.length} salida(s).` +
+      (sals.length ? "\n\n⚠️ Editar salidas RECALCULA el físico (saldoinvdetalle es una vista sobre invtrans)." : "") +
+      "\n\n¿Confirmar el cuadre manual?"
+    if (!window.confirm(msg)) return
+    setSavingCuadre(true)
+    const r = await guardarCuadreManualPedidoSalida({ pedidos: peds, salidas: sals, actor })
+    setSavingCuadre(false)
+    if (r.success) {
+      toast({ title: "Cuadre manual guardado", description: `${r.data?.pedidos ?? 0} pedido(s), ${r.data?.salidas ?? 0} salida(s).` })
+      setModoEdicion(false)
+      setEdits({ ped: {}, pedU: {}, sal: {} })
+      await abrirAuditoria({ ocargue: auditoria.ocargue, producto: auditoria.producto })
+      cargarPedidosSalidas()
+    } else {
+      toast({ title: "No se pudo guardar el cuadre", description: r.error })
+    }
   }
 
   async function generarYGuardarActa(f: any) {
@@ -252,6 +324,7 @@ export function PanelInventarioLIP() {
           <TabsTrigger value="kardex">Inventario detalle (Kardex)</TabsTrigger>
           <TabsTrigger value="diario">Cuadre diario</TabsTrigger>
           <TabsTrigger value="preservacion">Preservación / FIFO</TabsTrigger>
+          <TabsTrigger value="pedidos_salidas">Conciliación pedidos vs salidas</TabsTrigger>
         </TabsList>
 
         <TabsContent value="dashboard" className="space-y-5 pt-3">
@@ -607,6 +680,149 @@ export function PanelInventarioLIP() {
             </>
           )}
         </TabsContent>
+
+        <TabsContent value="pedidos_salidas" className="space-y-3 pt-3">
+          {!selectedEmpresaId ? (
+            <Card className="p-8 text-center text-sm text-muted-foreground">Seleccione un cliente/sitio en el selector global para ver la conciliación.</Card>
+          ) : loadingPedSal ? (
+            <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin" style={{ color: SST_TOKENS.navy }} /></div>
+          ) : !pedSal ? (
+            <Card className="p-8 text-center text-sm text-muted-foreground">Sin datos.</Card>
+          ) : (
+            <>
+              <p className="text-[11px] text-muted-foreground">
+                Cruce por <b>orden de cargue + producto</b>: unidades <b>cargadas</b> en pedidos (<code>pedidosdetalle</code>) vs <b>salidas aprobadas</b> del inventario (<code>invtrans</code>, tipomov=Salida). Todo el histórico del proyecto. Detecta pedidos sin salida, salidas sin pedido y cantidades distintas.
+              </p>
+
+              {/* Banda de alerta */}
+              {pedSal.resumen.conAlerta > 0 ? (
+                <Card className="flex items-center gap-3 border-l-4 p-3" style={{ borderLeftColor: "#C0392B" }}>
+                  <AlertTriangle className="h-5 w-5 shrink-0" style={{ color: "#C0392B" }} />
+                  <div className="text-sm">
+                    <b>{pedSal.resumen.conAlerta.toLocaleString("es-CO")}</b> combinaciones con discrepancia:{" "}
+                    {pedSal.resumen.cantidadDiferente > 0 && <span>{pedSal.resumen.cantidadDiferente} con cantidad diferente · </span>}
+                    {pedSal.resumen.pedidoSinSalida > 0 && <span>{pedSal.resumen.pedidoSinSalida} pedido sin salida · </span>}
+                    {pedSal.resumen.salidaSinPedido > 0 && <span>{pedSal.resumen.salidaSinPedido} salida sin pedido</span>}
+                  </div>
+                </Card>
+              ) : (
+                <Card className="flex items-center gap-3 border-l-4 p-3" style={{ borderLeftColor: "#1E8449" }}>
+                  <CheckCircle2 className="h-5 w-5 shrink-0" style={{ color: "#1E8449" }} />
+                  <div className="text-sm">Todo cuadra: pedidos cargados = salidas de inventario. Sin discrepancias.</div>
+                </Card>
+              )}
+
+              {pedSal.resumen.empresaDistinta > 0 && (
+                <p className="text-[11px] text-muted-foreground">
+                  <b>{pedSal.resumen.empresaDistinta.toLocaleString("es-CO")}</b> coincidencias cruzaron de empresa (el pedido estaba en otro <code>id_empresa</code> pero el <code>ocargue</code> y el producto coinciden). Se conservó el <code>idempresa</code> de invtrans y se marcaron como coincidencia.
+                </p>
+              )}
+
+              {/* KPIs */}
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
+                <KPI label="OK (cuadran)" valor={pedSal.resumen.ok} Icon={CheckCircle2} color="#1E8449" />
+                <KPI label="Cantidad diferente" valor={pedSal.resumen.cantidadDiferente} Icon={AlertTriangle} color="#E0A800" />
+                <KPI label="Pedido sin salida" valor={pedSal.resumen.pedidoSinSalida} Icon={PackageX} color="#C0392B" />
+                <KPI label="Salida sin pedido" valor={pedSal.resumen.salidaSinPedido} Icon={Truck} color="#7e57c2" />
+                <KPI label="Total cargadas" valor={(pedSal.resumen.totalCargadas || 0).toLocaleString("es-CO")} Icon={ClipboardList} color="#0D3B6E" />
+                <KPI label="Total salidas" valor={(pedSal.resumen.totalSalidas || 0).toLocaleString("es-CO")} Icon={ArrowDownToLine} color="#00B4CC" />
+              </div>
+
+              <div className="flex flex-wrap items-end gap-3">
+                <SigField label="Alerta">
+                  <select value={filtroAlerta} onChange={(e) => setFiltroAlerta(e.target.value)} className={sigControl}>
+                    <option value="DISC">Con discrepancia</option>
+                    <option value="">Todas (incluye OK)</option>
+                    <option value="OK">Solo OK (cuadran)</option>
+                    <option value="CANTIDAD_DIFERENTE">Cantidad diferente</option>
+                    <option value="PEDIDO_SIN_SALIDA">Pedido sin salida</option>
+                    <option value="SALIDA_SIN_PEDIDO">Salida sin pedido</option>
+                  </select>
+                </SigField>
+                <SigField label="Orden de cargue">
+                  <Input value={filtroOrden} onChange={(e) => setFiltroOrden(e.target.value)} placeholder="Buscar ocargue…" className="h-9 w-48" />
+                </SigField>
+                {(filtroAlerta !== "DISC" || filtroOrden) && (
+                  <Button variant="outline" size="sm" onClick={() => { setFiltroAlerta("DISC"); setFiltroOrden("") }}>Limpiar</Button>
+                )}
+                <span className="ml-auto text-[11px] text-muted-foreground">{pedSal.resumen.total.toLocaleString("es-CO")} combinaciones (ocargue × producto)</span>
+              </div>
+
+              {(() => {
+                const q = filtroOrden.trim().toLowerCase()
+                const base = pedSal.filas.filter((f) => {
+                  if (filtroAlerta === "DISC") { if (f.estado_alerta === "OK") return false }
+                  else if (filtroAlerta && f.estado_alerta !== filtroAlerta) return false
+                  if (q && !String(f.ocargue || "").toLowerCase().includes(q)) return false
+                  return true
+                })
+                const CAP = 5000
+                const vista = base.slice(0, CAP)
+                const badge = (e: string) => {
+                  if (e === "OK") return <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100 text-[10px]">OK</Badge>
+                  if (e === "CANTIDAD_DIFERENTE") return <Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100 text-[10px]">Cantidad diferente</Badge>
+                  if (e === "PEDIDO_SIN_SALIDA") return <Badge className="bg-red-100 text-red-800 hover:bg-red-100 text-[10px]">Pedido sin salida</Badge>
+                  return <Badge className="bg-purple-100 text-purple-800 hover:bg-purple-100 text-[10px]">Salida sin pedido</Badge>
+                }
+                if (vista.length === 0) return <Card className="p-8 text-center text-sm text-muted-foreground">No hay registros para el filtro seleccionado.</Card>
+                return (
+                  <Card className="overflow-hidden">
+                    <div className="max-h-[60vh] overflow-auto">
+                      <table className="w-full text-sm">
+                        <thead className="sticky top-0 bg-background">
+                          <tr className="border-b text-left text-[11px] uppercase text-muted-foreground">
+                            <th className="px-2 py-2">Orden de cargue</th>
+                            <th className="px-2 py-2">Producto</th>
+                            <th className="px-2 py-2 text-right">Pedidas</th>
+                            <th className="px-2 py-2 text-right">Cargadas</th>
+                            <th className="px-2 py-2 text-right">Salida invtrans</th>
+                            <th className="px-2 py-2 text-right">Diferencia</th>
+                            <th className="px-2 py-2 text-center">Emp. pedido</th>
+                            <th className="px-2 py-2 text-center">Emp. salida</th>
+                            <th className="px-2 py-2">Alerta</th>
+                            <th className="px-2 py-2 text-center">Auditar</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {vista.map((f, i) => (
+                            <tr key={i} className="border-b last:border-0">
+                              <td className="px-2 py-1.5 font-mono text-xs">{f.ocargue}</td>
+                              <td className="px-2 py-1.5">
+                                {f.producto}
+                                {f.empresa_distinta && (
+                                  <Badge className="ml-1 bg-sky-100 text-sky-800 hover:bg-sky-100 text-[9px]" title="Coincide con pedido en otra empresa">
+                                    emp {f.idempresa_pedido}→{f.idempresa_salida}
+                                  </Badge>
+                                )}
+                              </td>
+                              <td className="px-2 py-1.5 text-right text-muted-foreground">{Number(f.ped_unidades || 0).toLocaleString("es-CO")}</td>
+                              <td className="px-2 py-1.5 text-right">{Number(f.ped_cargadas || 0).toLocaleString("es-CO")}</td>
+                              <td className="px-2 py-1.5 text-right">{Number(f.salida_qty || 0).toLocaleString("es-CO")}</td>
+                              <td className="px-2 py-1.5 text-right font-medium" style={{ color: Number(f.diferencia) !== 0 ? "#C0392B" : "#1E8449" }}>{Number(f.diferencia || 0).toLocaleString("es-CO")}</td>
+                              <td className="px-2 py-1.5 text-center text-xs">{f.idempresa_pedido ?? "—"}</td>
+                              <td className="px-2 py-1.5 text-center text-xs" style={{ color: f.empresa_distinta ? "#0369a1" : undefined, fontWeight: f.empresa_distinta ? 600 : undefined }}>{f.idempresa_salida ?? "—"}</td>
+                              <td className="px-2 py-1.5">{badge(f.estado_alerta)}</td>
+                              <td className="px-2 py-1.5 text-center">
+                                <Button variant="ghost" size="icon" className="h-7 w-7" title="Auditar orden (pedido detalle + invtrans)" onClick={() => abrirAuditoria(f)}>
+                                  <ZoomIn className="h-4 w-4" style={{ color: SST_TOKENS.navy }} />
+                                </Button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <p className="p-2 text-[11px] text-muted-foreground">
+                      {base.length > vista.length
+                        ? `Mostrando ${vista.length.toLocaleString("es-CO")} de ${base.length.toLocaleString("es-CO")} filas. Afina con el filtro de Alerta u Orden.`
+                        : `${base.length.toLocaleString("es-CO")} filas.`}
+                    </p>
+                  </Card>
+                )
+              })()}
+            </>
+          )}
+        </TabsContent>
       </Tabs>
 
       {/* DRILL-DOWN: movimientos de un producto con soportes PDF */}
@@ -657,6 +873,138 @@ export function PanelInventarioLIP() {
                 </div>
               )}
             </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* AUDITORÍA directa: pedidosdetalle + invtrans crudos de una orden */}
+      <Dialog open={!!auditoria} onOpenChange={(o) => !o && setAuditoria(null)}>
+        <DialogContent className="max-h-[92vh] max-w-5xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-base">Auditoría · orden <span className="font-mono">{auditoria?.ocargue}</span></DialogTitle>
+          </DialogHeader>
+          {loadingAud || !auditoria?.data ? (
+            <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin" style={{ color: SST_TOKENS.navy }} /></div>
+          ) : (
+            <div className="space-y-4">
+              <p className="text-[11px] text-muted-foreground">Filas crudas de <code>pedidosdetalle</code> e <code>invtrans</code> para este ocargue (todas las empresas). El producto en foco: <b>{auditoria.producto}</b>.</p>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {!modoEdicion ? (
+                  <Button size="sm" variant="outline" onClick={() => setModoEdicion(true)}>Editar cantidades (cuadre manual)</Button>
+                ) : (
+                  <>
+                    <Button size="sm" onClick={guardarCuadre} disabled={savingCuadre}>
+                      {savingCuadre ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null} Guardar cuadre en Supabase
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => { setModoEdicion(false); setEdits({ ped: {}, pedU: {}, sal: {} }) }}>Cancelar</Button>
+                  </>
+                )}
+              </div>
+              {modoEdicion && (
+                <div className="flex items-start gap-2 rounded-md border-l-4 bg-amber-50 p-2" style={{ borderLeftColor: "#C0392B" }}>
+                  <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "#C0392B" }} />
+                  <p className="text-[11px] text-amber-900">Editas la <b>fuente</b>. <b>Pedidos</b> (unidades pedidas y cargadas) no afecta el físico. <b>Salidas</b> (invtrans): al cambiar la cantidad se <b>recalcula el físico</b> (saldoinvdetalle es una vista). Queda traza en <code>observaciones</code>. Solo personal autorizado.</p>
+                </div>
+              )}
+              {(() => {
+                const focus = String(auditoria.producto || "").trim().toUpperCase()
+                const esFoco = (nombre: any) => focus && String(nombre || "").trim().toUpperCase() === focus
+                const peds: any[] = auditoria.data.pedidos ?? []
+                const sals: any[] = auditoria.data.salidas ?? []
+                const otras: any[] = auditoria.data.otras ?? []
+                const totPedCarg = peds.reduce((s, r) => s + (Number(r.cargadas) || 0), 0)
+                const totSal = sals.reduce((s, r) => s + (Math.abs(Number(r.cantidad)) || 0), 0)
+                return (
+                  <>
+                    {/* PEDIDOS */}
+                    <div>
+                      <div className="mb-1 flex items-center gap-2 text-sm font-semibold" style={{ color: SST_TOKENS.navy }}>
+                        <ClipboardList className="h-4 w-4" /> Pedido detalle ({peds.length}) · cargadas: {fmt(totPedCarg)}
+                      </div>
+                      <div className="max-h-[28vh] overflow-auto rounded-md border">
+                        <table className="w-full text-xs">
+                          <thead className="sticky top-0 bg-muted/60">
+                            <tr className="text-left text-[10px] uppercase text-muted-foreground">
+                              <th className="px-2 py-1.5">Emp</th><th className="px-2 py-1.5">idpedido</th><th className="px-2 py-1.5">transid</th>
+                              <th className="px-2 py-1.5">Producto</th><th className="px-2 py-1.5 text-right">Pedidas</th><th className="px-2 py-1.5 text-right">Cargadas</th>
+                              <th className="px-2 py-1.5">Estado línea</th><th className="px-2 py-1.5">Estado cab.</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {peds.length === 0 ? (<tr><td colSpan={8} className="px-2 py-3 text-center text-muted-foreground">Sin filas de pedido para este ocargue.</td></tr>) : peds.map((r, i) => (
+                              <tr key={i} className={"border-t " + (esFoco(r.producto) ? "bg-amber-50" : "")}>
+                                <td className="px-2 py-1">{r.id_empresa}</td><td className="px-2 py-1">{r.idpedido}</td><td className="px-2 py-1">{r.transid}</td>
+                                <td className="px-2 py-1">{r.producto}</td>
+                                <td className="px-2 py-1 text-right text-muted-foreground">
+                                  {modoEdicion ? (
+                                    <Input
+                                      type="number"
+                                      value={edits.pedU[r.transid] ?? String(r.unidades ?? 0)}
+                                      onChange={(e) => setEdits((prev) => ({ ...prev, pedU: { ...prev.pedU, [r.transid]: e.target.value } }))}
+                                      className="h-7 w-24 text-right text-xs"
+                                    />
+                                  ) : fmt(r.unidades)}
+                                </td>
+                                <td className="px-2 py-1 text-right font-medium">
+                                  {modoEdicion ? (
+                                    <Input
+                                      type="number"
+                                      value={edits.ped[r.transid] ?? String(r.cargadas ?? 0)}
+                                      onChange={(e) => setEdits((prev) => ({ ...prev, ped: { ...prev.ped, [r.transid]: e.target.value } }))}
+                                      className="h-7 w-24 text-right text-xs"
+                                    />
+                                  ) : fmt(r.cargadas)}
+                                </td>
+                                <td className="px-2 py-1">{r.estado || "—"}</td><td className="px-2 py-1">{r.estado_cabecera || "—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                    {/* SALIDAS */}
+                    <div>
+                      <div className="mb-1 flex items-center gap-2 text-sm font-semibold" style={{ color: SST_TOKENS.navy }}>
+                        <ArrowDownToLine className="h-4 w-4" /> invtrans · Salidas ({sals.length}) · total: {fmt(totSal)}
+                      </div>
+                      <div className="max-h-[28vh] overflow-auto rounded-md border">
+                        <table className="w-full text-xs">
+                          <thead className="sticky top-0 bg-muted/60">
+                            <tr className="text-left text-[10px] uppercase text-muted-foreground">
+                              <th className="px-2 py-1.5">Emp</th><th className="px-2 py-1.5">Fecha</th><th className="px-2 py-1.5">Producto</th>
+                              <th className="px-2 py-1.5">Lote</th><th className="px-2 py-1.5 text-right">Cantidad</th><th className="px-2 py-1.5">Status</th><th className="px-2 py-1.5">Mov</th><th className="px-2 py-1.5">Ubic.</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {sals.length === 0 ? (<tr><td colSpan={8} className="px-2 py-3 text-center text-muted-foreground">Sin salidas en invtrans para este ocargue.</td></tr>) : sals.map((r, i) => (
+                              <tr key={i} className={"border-t " + (esFoco(r.nombreproducto) ? "bg-amber-50" : "")}>
+                                <td className="px-2 py-1">{r.idempresa}</td><td className="px-2 py-1">{String(r.creado || "").slice(0, 10)}</td>
+                                <td className="px-2 py-1">{r.nombreproducto}</td><td className="px-2 py-1 text-muted-foreground">{r.lote}</td>
+                                <td className="px-2 py-1 text-right font-medium">
+                                  {modoEdicion ? (
+                                    <Input
+                                      type="number"
+                                      value={edits.sal[r.id] ?? String(Math.abs(Number(r.cantidad) || 0))}
+                                      onChange={(e) => setEdits((prev) => ({ ...prev, sal: { ...prev.sal, [r.id]: e.target.value } }))}
+                                      className="h-7 w-24 text-right text-xs"
+                                    />
+                                  ) : fmt(Math.abs(Number(r.cantidad) || 0))}
+                                </td>
+                                <td className="px-2 py-1">{r.status}</td><td className="px-2 py-1">{r.cod_movimiento}</td><td className="px-2 py-1">{r.location}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                    {otras.length > 0 && (
+                      <p className="text-[11px] text-muted-foreground">Además hay <b>{otras.length}</b> movimiento(s) de invtrans en este ocargue que no son Salida (entradas/reprocesos/traslados/ajustes) — no cuentan como despacho.</p>
+                    )}
+                  </>
+                )
+              })()}
+            </div>
           )}
         </DialogContent>
       </Dialog>

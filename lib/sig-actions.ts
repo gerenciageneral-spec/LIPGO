@@ -3760,3 +3760,178 @@ export async function guardarCierreMesInventario(payload: {
     return { success: false, error: err?.message || "Error desconocido" }
   }
 }
+
+/**
+ * Conciliación PEDIDOS (cargados) vs SALIDAS (invtrans) — lee la vista
+ * v_pedidos_vs_salidas (script 47) y arma resumen + filas ordenadas
+ * (discrepancias primero). Detecta pedidos sin salida, salidas sin pedido
+ * y cantidades distintas. Todo el histórico del proyecto (sin filtro de mes).
+ */
+export async function getConciliacionPedidosVsSalidas(
+  empresaId?: number | null,
+): Promise<{ success: boolean; data?: any; error?: string }> {
+  try {
+    if (!empresaId) {
+      return { success: false, error: "Seleccione un cliente/sitio en el selector global (un proyecto a la vez)." }
+    }
+    const supabase: any = await getSupabaseAdmin()
+
+    const filas: any[] = []
+    let from = 0
+    while (true) {
+      const { data, error } = await supabase
+        .from("v_pedidos_vs_salidas")
+        .select("idempresa, idempresa_pedido, idempresa_salida, empresa_distinta, ocargue, producto, ped_unidades, ped_cargadas, salida_qty, diferencia, estado_alerta")
+        .eq("idempresa", empresaId)
+        .range(from, from + 999)
+      if (error) return { success: false, error: error.message }
+      filas.push(...(data ?? []))
+      if (!data || data.length < 1000) break
+      from += 1000
+      if (from > 100000) break
+    }
+
+    const resumen = {
+      total: filas.length,
+      ok: 0,
+      cantidadDiferente: 0,
+      pedidoSinSalida: 0,
+      salidaSinPedido: 0,
+      totalCargadas: 0,
+      totalSalidas: 0,
+      diferenciaNeta: 0,
+      conAlerta: 0,
+      empresaDistinta: 0,
+    }
+    for (const f of filas) {
+      resumen.totalCargadas += Number(f.ped_cargadas) || 0
+      resumen.totalSalidas += Number(f.salida_qty) || 0
+      resumen.diferenciaNeta += Number(f.diferencia) || 0
+      if (f.empresa_distinta) resumen.empresaDistinta++
+      switch (f.estado_alerta) {
+        case "OK": resumen.ok++; break
+        case "CANTIDAD_DIFERENTE": resumen.cantidadDiferente++; break
+        case "PEDIDO_SIN_SALIDA": resumen.pedidoSinSalida++; break
+        case "SALIDA_SIN_PEDIDO": resumen.salidaSinPedido++; break
+      }
+    }
+    resumen.conAlerta = resumen.total - resumen.ok
+    resumen.totalCargadas = Math.round(resumen.totalCargadas)
+    resumen.totalSalidas = Math.round(resumen.totalSalidas)
+    resumen.diferenciaNeta = Math.round(resumen.diferenciaNeta)
+
+    // Discrepancias primero; dentro, por magnitud de diferencia.
+    const orden: Record<string, number> = { SALIDA_SIN_PEDIDO: 0, PEDIDO_SIN_SALIDA: 1, CANTIDAD_DIFERENTE: 2, OK: 3 }
+    filas.sort((a, b) => {
+      const oa = orden[a.estado_alerta] ?? 9
+      const ob = orden[b.estado_alerta] ?? 9
+      if (oa !== ob) return oa - ob
+      return Math.abs(Number(b.diferencia) || 0) - Math.abs(Number(a.diferencia) || 0)
+    })
+
+    return { success: true, data: { filas, resumen } }
+  } catch (err: any) {
+    return { success: false, error: err?.message || "Error desconocido" }
+  }
+}
+
+/**
+ * Auditoría directa de una orden de cargue: trae las filas CRUDAS de
+ * pedidosdetalle (con estado de cabecera) e invtrans para ese ocargue,
+ * en TODAS las empresas (el cruce ignora empresa). Sirve para investigar
+ * una discrepancia lote/línea por lote/línea.
+ */
+export async function getAuditoriaOrdenPedidoSalida(
+  ocargue?: string | null,
+): Promise<{ success: boolean; data?: any; error?: string }> {
+  try {
+    const oc = String(ocargue || "").trim()
+    if (!oc) return { success: false, error: "Falta la orden de cargue." }
+    const supabase: any = await getSupabaseAdmin()
+
+    const [pedRes, itRes] = await Promise.all([
+      supabase
+        .from("pedidosdetalle")
+        .select("idpedido, transid, id_empresa, producto, unidades, unidadescargadas, unidades_cargadas, estado, ocargue")
+        .eq("ocargue", oc),
+      supabase
+        .from("invtrans")
+        .select("id, idempresa, nombreproducto, codproducto, lote, cantidad, tipomov, status, origen, location, cod_movimiento, creado")
+        .eq("ocargue", oc)
+        .order("creado", { ascending: true }),
+    ])
+    if (pedRes.error) return { success: false, error: pedRes.error.message }
+    if (itRes.error) return { success: false, error: itRes.error.message }
+
+    const pedidos = (pedRes.data ?? []).map((r: any) => ({
+      ...r,
+      cargadas: Number(r.unidadescargadas ?? r.unidades_cargadas ?? 0) || 0,
+    }))
+
+    // Estado de cabecera para cada pedido (para ver anulados/estado global).
+    const idped = Array.from(new Set(pedidos.map((p: any) => p.idpedido).filter((x: any) => x != null)))
+    const cabEstado: Record<number, string> = {}
+    if (idped.length) {
+      const { data: cab } = await supabase.from("pedidoscabecera").select("idpedido, estado, cliente").in("idpedido", idped)
+      for (const c of cab ?? []) cabEstado[c.idpedido] = c.estado
+    }
+    for (const p of pedidos) (p as any).estado_cabecera = cabEstado[p.idpedido] ?? null
+
+    const salidas = (itRes.data ?? []).filter((r: any) => r.tipomov === "Salida")
+    const otras = (itRes.data ?? []).filter((r: any) => r.tipomov !== "Salida")
+
+    return { success: true, data: { ocargue: oc, pedidos, salidas, otras } }
+  } catch (err: any) {
+    return { success: false, error: err?.message || "Error desconocido" }
+  }
+}
+
+/**
+ * Cuadre manual: actualiza cantidades en la FUENTE para conciliar una orden.
+ *  - pedidos: setea pedidosdetalle.unidadescargadas por transid (no toca físico).
+ *  - salidas: setea invtrans.cantidad por id y deja traza en observaciones.
+ *    OJO: invtrans alimenta la vista saldoinvdetalle → editar una salida
+ *    RECALCULA el físico. Es intencional (cuadre manual autorizado).
+ */
+export async function guardarCuadreManualPedidoSalida(payload: {
+  pedidos?: { transid: number; cargadas?: number; unidades?: number }[]
+  salidas?: { id: number; cantidad: number }[]
+  actor?: string | null
+}): Promise<{ success: boolean; error?: string; data?: { pedidos: number; salidas: number } }> {
+  try {
+    const supabase: any = await getSupabaseAdmin()
+    const actor = payload.actor || "usuario LIPgo"
+    const fecha = new Date().toISOString().slice(0, 10)
+    let pOk = 0
+    let sOk = 0
+
+    for (const p of payload.pedidos ?? []) {
+      if (p == null || p.transid == null) continue
+      const upd: any = {}
+      if (Number.isFinite(p.cargadas as any) && (p.cargadas as number) >= 0) upd.unidadescargadas = Math.round(p.cargadas as number)
+      if (Number.isFinite(p.unidades as any) && (p.unidades as number) >= 0) upd.unidades = Math.round(p.unidades as number)
+      if (Object.keys(upd).length === 0) continue
+      const { error } = await supabase
+        .from("pedidosdetalle")
+        .update(upd)
+        .eq("transid", p.transid)
+      if (error) return { success: false, error: `Pedido transid ${p.transid}: ${error.message}` }
+      pOk++
+    }
+
+    for (const s of payload.salidas ?? []) {
+      if (s == null || s.id == null || !Number.isFinite(s.cantidad) || s.cantidad < 0) continue
+      const nota = `Cuadre manual SIG: cantidad ajustada a ${Math.round(s.cantidad)} por ${actor} el ${fecha}.`
+      const { error } = await supabase
+        .from("invtrans")
+        .update({ cantidad: Math.round(s.cantidad), observaciones: nota })
+        .eq("id", s.id)
+      if (error) return { success: false, error: `Salida id ${s.id}: ${error.message}` }
+      sOk++
+    }
+
+    return { success: true, data: { pedidos: pOk, salidas: sOk } }
+  } catch (err: any) {
+    return { success: false, error: err?.message || "Error desconocido" }
+  }
+}
