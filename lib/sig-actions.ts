@@ -3484,12 +3484,21 @@ export async function getConciliacionMensualInventario(
     // el cliente). El EMPAQUE y la MATERIA PRIMA NO entran (se concilian aparte).
     const catDe: Record<string, string> = {}
     const codDe: Record<string, string> = {}
+    const nomDe: Record<string, string> = {}
     for (const r of saldosRows) {
       catDe[r.idproducto] = `${r.categoria || ""} / ${r.subcategoria || ""}`.toUpperCase()
       codDe[r.idproducto] = String(r.codproducto || "").toUpperCase()
+      if (r.nombreproducto) nomDe[r.idproducto] = String(r.nombreproducto).toUpperCase()
     }
-    for (const r of inv) if (codDe[r.idproducto] === undefined) codDe[r.idproducto] = String(r.codproducto || "").toUpperCase()
+    for (const r of inv) {
+      if (codDe[r.idproducto] === undefined) codDe[r.idproducto] = String(r.codproducto || "").toUpperCase()
+      if (nomDe[r.idproducto] === undefined && r.nombreproducto) nomDe[r.idproducto] = String(r.nombreproducto).toUpperCase()
+    }
     const incluir = (idp: any): boolean => {
+      // Regla del cliente: los productos que DICEN "EMP" (empaque) NO entran al cruce,
+      // aunque estén mal categorizados como PT. Prevalece el nombre/código.
+      const nm = nomDe[idp] || ""
+      if (nm.startsWith("EMP") || nm.startsWith("MP ")) return false
       const cs = catDe[idp]
       if (cs !== undefined) {
         if (cs.includes("EMPAQUE") || cs.includes("MATERIA PRIMA")) return false
@@ -3596,12 +3605,15 @@ export async function getConciliacionMensualInventario(
     const difMes: Record<string, number> = {} // diferencia física atribuida por mes del lote
     const revisar: any[] = []
     for (const k of keys) {
-      const d = Math.round((book[k] || 0) - (saldoLote[k] || 0))
+      // El stock físico no puede ser negativo: un libro negativo (p.ej. reproceso
+      // registrado sobre un lote ya en 0) es un artefacto → se pisa en 0, igual que la vista.
+      const libroLote = Math.max(0, Math.round(book[k] || 0))
+      const d = libroLote - Math.round(saldoLote[k] || 0)
       if (d > 0) sobrante += d
       else faltante += d
       const lm = loteMes(loteDe[k] || "")
       if (lm) difMes[lm] = (difMes[lm] || 0) + d
-      if (Math.abs(d) > 100) revisar.push({ producto: nombre[k] || "?", lote: loteDe[k] || "", libro: Math.round(book[k] || 0), saldo: Math.round(saldoLote[k] || 0), diferencia: d })
+      if (Math.abs(d) > 100) revisar.push({ producto: nombre[k] || "?", lote: loteDe[k] || "", libro: libroLote, saldo: Math.round(saldoLote[k] || 0), diferencia: d })
     }
     revisar.sort((a, b) => Math.abs(b.diferencia) - Math.abs(a.diferencia))
 
