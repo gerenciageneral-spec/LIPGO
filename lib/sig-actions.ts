@@ -3725,12 +3725,15 @@ export async function guardarCierreMesInventario(payload: {
   documento_url: string
   cerrado_por?: string | null
   observaciones?: string | null
+  firmante?: string | null
+  firmante_cargo?: string | null
+  firma_url?: string | null
 }): Promise<{ success: boolean; data?: SigInventarioCierreMes; error?: string }> {
   try {
     const supabase: any = await getSupabaseAdmin()
     const mesActual = new Date().toISOString().slice(0, 7)
     const estado = payload.mes < mesActual ? "conciliado" : "pendiente"
-    const fila = {
+    const fila: any = {
       proyecto_id: payload.proyecto_id,
       mes: payload.mes,
       estado,
@@ -3748,6 +3751,13 @@ export async function guardarCierreMesInventario(payload: {
       cerrado_por: payload.cerrado_por ?? null,
       observaciones: payload.observaciones ?? null,
       updated_at: new Date().toISOString(),
+    }
+    // Firma digital (opcional): nombre, cargo, imagen y fecha de firma.
+    if (payload.firmante != null) fila.firmante = payload.firmante
+    if (payload.firmante_cargo != null) fila.firmante_cargo = payload.firmante_cargo
+    if (payload.firma_url != null) {
+      fila.firma_url = payload.firma_url
+      fila.fecha_firma = new Date().toISOString().slice(0, 10)
     }
     const { data, error } = await supabase
       .from("sig_inventario_cierre_mes")

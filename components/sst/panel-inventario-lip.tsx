@@ -4,7 +4,8 @@
 // entradas/salidas + eventos de pérdida (lo que se cobra a LIP), por año y mes
 // a mes, por cliente/sitio. Fuente real: invtrans + reprocesos.
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
+import { SignaturePad, type SignaturePadHandle } from "@/components/rrhh/signature-pad"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -47,6 +48,10 @@ export function PanelInventarioLIP() {
   const [conc, setConc] = useState<{ filas: any[]; cierres: any[]; resumen?: any } | null>(null)
   const [loadingConc, setLoadingConc] = useState(false)
   const [generandoActa, setGenerandoActa] = useState<string | null>(null)
+  const [actaSign, setActaSign] = useState<any | null>(null) // fila del mes a cerrar/firmar
+  const [firmanteNom, setFirmanteNom] = useState("")
+  const [firmanteCargo, setFirmanteCargo] = useState("")
+  const firmaActaRef = useRef<SignaturePadHandle | null>(null)
   const [pedSal, setPedSal] = useState<{ filas: any[]; resumen: any } | null>(null)
   const [loadingPedSal, setLoadingPedSal] = useState(false)
   const [filtroAlerta, setFiltroAlerta] = useState("DISC") // DISC | "" (todas) | OK | CANTIDAD_DIFERENTE | PEDIDO_SIN_SALIDA | SALIDA_SIN_PEDIDO
@@ -206,8 +211,35 @@ export function PanelInventarioLIP() {
 
   async function generarYGuardarActa(f: any) {
     if (!selectedEmpresaId) return
+    // Requiere firma digital dibujada.
+    if (!firmaActaRef.current || firmaActaRef.current.isEmpty()) {
+      toast({ title: "Falta la firma", description: "Dibuje la firma para cerrar el acta." })
+      return
+    }
+    if (!firmanteNom.trim()) {
+      toast({ title: "Falta el firmante", description: "Escriba el nombre de quien firma." })
+      return
+    }
     setGenerandoActa(f.mes)
     try {
+      // 1) Firma: subir PNG (archivos/firmas/) + dataURL para embeber en el PDF.
+      const firmaBlob = await firmaActaRef.current.toBlob()
+      let firmaUrl: string | null = null
+      let firmaDataUrl: string | null = null
+      if (firmaBlob) {
+        const fdF = new FormData()
+        fdF.append("file", firmaBlob, `firma-cierre-${f.mes}.png`)
+        const upF = await fetch("/api/capacitaciones/upload-firma", { method: "POST", body: fdF })
+        const upFJson = await upF.json()
+        if (!upFJson?.url) throw new Error(upFJson?.error || "No se pudo subir la firma")
+        firmaUrl = upFJson.url
+        firmaDataUrl = await new Promise<string>((resolve) => {
+          const r = new FileReader()
+          r.onloadend = () => resolve(String(r.result || ""))
+          r.readAsDataURL(firmaBlob)
+        })
+      }
+
       const { default: jsPDF } = await import("jspdf")
       const autoTable = (await import("jspdf-autotable")).default
       const doc = new jsPDF()
@@ -239,12 +271,18 @@ export function PanelInventarioLIP() {
       doc.text("El inventario y los despachos se llevan por lote. La merma de proceso (reproceso +", 14, y)
       doc.text("cuadre físico por lote) se documenta en el cierre; NO se cobra a LIP. El saldo final", 14, y + 5)
       doc.text("conciliado coincide con el stock físico del sistema (saldoinvdetalle).", 14, y + 10)
-      y += 10
-      y += 10
-      doc.line(20, y + 20, 90, y + 20)
-      doc.line(120, y + 20, 190, y + 20)
-      doc.text("Firma Cliente", 35, y + 25)
-      doc.text("Firma LIP", 145, y + 25)
+      y += 14
+      // Firma digital LIP (izquierda) + espacio para firma del cliente (derecha).
+      if (firmaDataUrl) {
+        try { doc.addImage(firmaDataUrl, "PNG", 22, y, 55, 22) } catch { /* ignora si el formato falla */ }
+      }
+      doc.line(20, y + 24, 90, y + 24)
+      doc.line(120, y + 24, 190, y + 24)
+      doc.setFontSize(9)
+      doc.text(`Firma LIP — ${firmanteNom}`, 20, y + 29)
+      if (firmanteCargo.trim()) doc.text(firmanteCargo, 20, y + 33)
+      doc.text(`Firmado digitalmente · ${new Date().toLocaleString("es-CO")}`, 20, y + (firmanteCargo.trim() ? 37 : 33))
+      doc.text("Firma Cliente", 145, y + 29)
 
       const blob = doc.output("blob")
       const fd = new FormData()
@@ -270,11 +308,15 @@ export function PanelInventarioLIP() {
         devolucion: f.devolucion ?? 0,
         documento_url: upJson.url,
         cerrado_por: actor,
-        observaciones: `Merma de proceso: reproceso 551 = ${fmt(f.reproceso ?? 0)}, cuadre físico por lote = ${fmt(f.mermaProceso ?? 0)}. Saldo final conciliado = stock físico.`,
+        firmante: firmanteNom.trim(),
+        firmante_cargo: firmanteCargo.trim() || null,
+        firma_url: firmaUrl,
+        observaciones: `Merma de proceso: reproceso 551 = ${fmt(f.reproceso ?? 0)}, cuadre físico por lote = ${fmt(f.mermaProceso ?? 0)}. Saldo final conciliado = stock físico. Firmado por ${firmanteNom.trim()}${firmanteCargo.trim() ? " (" + firmanteCargo.trim() + ")" : ""}.`,
       })
       if (!save.success) throw new Error(save.error || "Error al guardar cierre")
 
-      toast({ title: "Acta generada y guardada", description: `Cierre ${f.mes} · carpeta inventario/cierres/${selectedEmpresaId}/${f.mes}/` })
+      toast({ title: "Acta firmada y guardada", description: `Cierre ${f.mes} · firmado por ${firmanteNom.trim()}` })
+      setActaSign(null)
       await cargarConciliacion()
     } catch (e: any) {
       toast({ title: "No se pudo generar el acta", description: e?.message || "Error desconocido" })
@@ -489,9 +531,8 @@ export function PanelInventarioLIP() {
                                   <ExternalLink className="h-3.5 w-3.5" /> Ver PDF
                                 </a>
                               ) : (
-                                <Button size="sm" variant="outline" className="h-7 gap-1 text-[11px]" disabled={generandoActa === f.mes} onClick={() => generarYGuardarActa(f)}>
-                                  {generandoActa === f.mes ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
-                                  Generar
+                                <Button size="sm" variant="outline" className="h-7 gap-1 text-[11px]" onClick={() => { setActaSign(f); setFirmanteNom(actor); setFirmanteCargo("") }}>
+                                  <FileText className="h-3.5 w-3.5" /> Firmar y cerrar
                                 </Button>
                               )}
                             </td>
@@ -1003,6 +1044,50 @@ export function PanelInventarioLIP() {
               })()}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* FIRMA DIGITAL del acta de cierre mensual */}
+      <Dialog open={!!actaSign} onOpenChange={(o) => { if (!o && !generandoActa) setActaSign(null) }}>
+        <DialogContent className="max-h-[92vh] max-w-lg overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-base">Firmar y cerrar · {actaSign?.mes}</DialogTitle>
+          </DialogHeader>
+          {actaSign && (
+            <div className="space-y-3">
+              <div className="rounded-md border p-3 text-sm">
+                <div className="mb-1 font-medium" style={{ color: SST_TOKENS.navy }}>{selectedEmpresaNombre || "—"} · Periodo {actaSign.mes}</div>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                  <span className="text-muted-foreground">Saldo inicial</span><span className="text-right">{fmt(actaSign.saldoInicial)}</span>
+                  <span className="text-muted-foreground">(+) Ingresos</span><span className="text-right">{fmt(actaSign.ingresos)}</span>
+                  <span className="text-muted-foreground">(−) Órdenes de cargue</span><span className="text-right">{fmt(actaSign.cargue)}</span>
+                  <span className="text-muted-foreground">(−) Merma</span><span className="text-right">{fmt(actaSign.merma)}</span>
+                  <span className="font-semibold">(=) Saldo final conciliado</span><span className="text-right font-semibold">{fmt(actaSign.saldoFinal)}</span>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[11px] text-muted-foreground">Firmante (nombre)</label>
+                  <Input value={firmanteNom} onChange={(e) => setFirmanteNom(e.target.value)} placeholder="Nombre de quien firma" className="h-9" />
+                </div>
+                <div>
+                  <label className="text-[11px] text-muted-foreground">Cargo (opcional)</label>
+                  <Input value={firmanteCargo} onChange={(e) => setFirmanteCargo(e.target.value)} placeholder="Ej. Coordinador SST" className="h-9" />
+                </div>
+              </div>
+              <div>
+                <label className="text-[11px] text-muted-foreground">Firma digital</label>
+                <SignaturePad ref={firmaActaRef} height={160} />
+              </div>
+              <p className="text-[11px] text-muted-foreground">El acta se genera en PDF con la firma embebida y se guarda en la carpeta de cierres. Queda como soporte de auditoría (ISO 9001 8.5.1).</p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setActaSign(null)} disabled={!!generandoActa}>Cancelar</Button>
+            <Button onClick={() => generarYGuardarActa(actaSign)} disabled={!!generandoActa}>
+              {generandoActa ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null} Firmar y generar acta
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

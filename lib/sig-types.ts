@@ -353,6 +353,8 @@ export interface SigInventarioCierreMes {
   updated_at: string | null
   fisico_congelado: number | null // stock físico total (PT+SubProd) congelado al cierre
   fisico_snapshot: Record<string, number> | null // físico por lote (`idproducto|lote`) al cierre
+  firma_url: string | null // PNG de la firma digital (archivos/firmas/)
+  firmante_cargo: string | null // cargo de quien firma el acta
 }
 
 // Plantas (producción PT) vs Cedis (descargue). Salidas = cargue + merma en ambos.
