@@ -3457,7 +3457,7 @@ export async function getConciliacionMensualInventario(
     while (true) {
       const { data, error } = await supabase
         .from("invtrans")
-        .select("idproducto, nombreproducto, codproducto, lote, tipomov, origen, cantidad, creado, ocargue, ordentolva, cod_movimiento")
+        .select("idproducto, nombreproducto, codproducto, lote, tipomov, origen, cantidad, creado, ocargue, ordentolva, cod_movimiento, status, location")
         .in("idempresa", clientes)
         .range(from, from + 999)
       if (error) return { success: false, error: error.message }
@@ -3524,6 +3524,12 @@ export async function getConciliacionMensualInventario(
     const map: Record<string, any> = {}
     for (const r of inv) {
       if (!incluir(r.idproducto)) continue // solo Producto Terminado + Sub Producto
+      const st = String(r.status || "").toLowerCase()
+      if (!st.startsWith("aprob")) continue // SOLO lo aprobado (fuera: rechazado, por descontar, lote alterno)
+      if (String(r.location || "") === "AJUSTE-SIG") continue // remanente de ajustes (obsoleto)
+      const tieneOC = !!(r.ocargue && String(r.ocargue).trim())
+      // lote paralelo/alterno SIN orden de cargue: no es una salida real
+      if ((st.includes("altern") || st.includes("paralel") || has(r.origen, "altern") || has(r.origen, "paralel")) && !tieneOC) continue
       const c = Math.abs(Number(r.cantidad) || 0)
       const esInicial = r.cod_movimiento === "561" || has(r.origen, "inventario inicial")
       if (esInicial) { invInicial += c; continue } // apertura, no es flujo del mes
@@ -3560,6 +3566,12 @@ export async function getConciliacionMensualInventario(
     const loteDe: Record<string, string> = {}
     for (const r of inv) {
       if (!incluir(r.idproducto)) continue
+      const st = String(r.status || "").toLowerCase()
+      if (!st.startsWith("aprob")) continue // SOLO lo aprobado (fuera: rechazado, por descontar, lote alterno)
+      if (String(r.location || "") === "AJUSTE-SIG") continue // remanente de ajustes (obsoleto)
+      const tieneOC = !!(r.ocargue && String(r.ocargue).trim())
+      // lote paralelo/alterno SIN orden de cargue: no es una salida real
+      if (r.tipomov !== "Entrada" && (st.includes("altern") || st.includes("paralel") || has(r.origen, "altern") || has(r.origen, "paralel")) && !tieneOC) continue
       const k = `${r.idproducto}|${r.lote}`
       const c = Math.abs(Number(r.cantidad) || 0)
       book[k] = (book[k] || 0) + (r.tipomov === "Entrada" ? c : -c)
