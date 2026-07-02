@@ -14,7 +14,9 @@
 --   OK                -> cargado = salida (incluye ambos = 0, y coincidencias cruzadas de empresa)
 --   CANTIDAD_DIFERENTE-> ambos existen pero difieren
 --   PEDIDO_SIN_SALIDA -> hay pedido cargado sin salida en invtrans
---   SALIDA_SIN_PEDIDO -> hay salida en invtrans sin pedido que la respalde
+--   SALIDA_SIN_PEDIDO -> hay salida en invtrans sin pedido (INFORMATIVA, no es
+--                        diferencia: salió con orden de cargue+lote+aprobada, el
+--                        producto salió; el pedido probablemente fue borrado)
 --
 -- Reglas (confirmadas con el negocio):
 --   * Cantidad de pedido = unidadescargadas (la poblada; unidades_cargadas es
@@ -57,7 +59,9 @@ sal as (
     upper(trim(it.nombreproducto))                  as prod_key,
     max(it.idempresa)                               as idempresa_salida,
     max(it.nombreproducto)                          as nombreproducto,
-    sum(coalesce(it.cantidad, 0))                   as salida_qty
+    sum(coalesce(it.cantidad, 0))                   as salida_qty,
+    -- ¿la salida tiene lote asignado? confirma que el proceso (cargue+lote) se completó.
+    bool_or(btrim(coalesce(it.lote, '')) <> '')     as salida_con_lote
   from public.invtrans it
   where it.tipomov = 'Salida'
     and lower(coalesce(it.status, '')) like 'aprob%'
@@ -78,6 +82,7 @@ select
   greatest(round(coalesce(p.ped_unidades, 0) - coalesce(p.ped_cargadas, 0)), 0) as pendiente_despacho,
   coalesce(p.pedido_cerrado, false)                 as pedido_cerrado,
   p.estado_pedido                                   as estado_pedido,
+  coalesce(s.salida_con_lote, false)                as salida_con_lote,
   (p.idempresa_pedido is not null and s.idempresa_salida is not null
     and p.idempresa_pedido <> s.idempresa_salida)   as empresa_distinta,
   case

@@ -3781,7 +3781,7 @@ export async function getConciliacionPedidosVsSalidas(
     while (true) {
       const { data, error } = await supabase
         .from("v_pedidos_vs_salidas")
-        .select("idempresa, idempresa_pedido, idempresa_salida, empresa_distinta, ocargue, producto, ped_unidades, ped_cargadas, salida_qty, diferencia, pendiente_despacho, pedido_cerrado, estado_pedido, estado_alerta")
+        .select("idempresa, idempresa_pedido, idempresa_salida, empresa_distinta, ocargue, producto, ped_unidades, ped_cargadas, salida_qty, diferencia, pendiente_despacho, pedido_cerrado, estado_pedido, salida_con_lote, estado_alerta")
         .eq("idempresa", empresaId)
         .range(from, from + 999)
       if (error) return { success: false, error: error.message }
@@ -3817,8 +3817,10 @@ export async function getConciliacionPedidosVsSalidas(
         case "PENDIENTE_DESPACHO": resumen.pendienteDespacho++; break
       }
     }
-    // Discrepancias reales = todo menos OK y PENDIENTE_DESPACHO (este último es informativo).
-    resumen.conAlerta = resumen.cantidadDiferente + resumen.pedidoSinSalida + resumen.salidaSinPedido
+    // Discrepancias reales = solo cantidad diferente y pedido sin salida.
+    // PENDIENTE_DESPACHO y SALIDA_SIN_PEDIDO son INFORMATIVOS (el producto salió
+    // con su proceso completo; salida sin pedido = pedido borrado, no es diferencia).
+    resumen.conAlerta = resumen.cantidadDiferente + resumen.pedidoSinSalida
     resumen.totalCargadas = Math.round(resumen.totalCargadas)
     resumen.totalSalidas = Math.round(resumen.totalSalidas)
     resumen.diferenciaNeta = Math.round(resumen.diferenciaNeta)
