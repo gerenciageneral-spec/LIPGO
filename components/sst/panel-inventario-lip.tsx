@@ -694,10 +694,7 @@ export function PanelInventarioLIP() {
                 <Card className="flex items-center gap-3 border-l-4 p-3" style={{ borderLeftColor: "#C0392B" }}>
                   <AlertTriangle className="h-5 w-5 shrink-0" style={{ color: "#C0392B" }} />
                   <div className="text-sm">
-                    <b>{pedSal.resumen.conAlerta.toLocaleString("es-CO")}</b> combinaciones con discrepancia real:{" "}
-                    {pedSal.resumen.cantidadDiferente > 0 && <span>{pedSal.resumen.cantidadDiferente} con cantidad diferente</span>}
-                    {pedSal.resumen.cantidadDiferente > 0 && pedSal.resumen.pedidoSinSalida > 0 && <span> · </span>}
-                    {pedSal.resumen.pedidoSinSalida > 0 && <span>{pedSal.resumen.pedidoSinSalida} pedido sin salida</span>}
+                    <b>{pedSal.resumen.cantidadDiferente.toLocaleString("es-CO")}</b> combinaciones con <b>cantidad diferente</b> (lo cargado ≠ lo que salió del inventario) — única discrepancia real.
                   </div>
                 </Card>
               ) : (
@@ -707,10 +704,12 @@ export function PanelInventarioLIP() {
                 </Card>
               )}
 
-              {(pedSal.resumen.salidaSinPedido > 0 || pedSal.resumen.pendienteDespacho > 0) && (
+              {(pedSal.resumen.pedidoSinSalida > 0 || pedSal.resumen.salidaSinPedido > 0 || pedSal.resumen.pendienteDespacho > 0) && (
                 <p className="text-[11px] text-muted-foreground">
                   Informativos (no son diferencia de inventario):{" "}
-                  {pedSal.resumen.salidaSinPedido > 0 && <span><b>{pedSal.resumen.salidaSinPedido}</b> salida sin pedido (salió con cargue/lote/aprobada; pedido borrado)</span>}
+                  {pedSal.resumen.pedidoSinSalida > 0 && <span><b>{pedSal.resumen.pedidoSinSalida}</b> por ejecutar (pedido con cargue, sin salida aún)</span>}
+                  {pedSal.resumen.pedidoSinSalida > 0 && (pedSal.resumen.salidaSinPedido > 0 || pedSal.resumen.pendienteDespacho > 0) && <span> · </span>}
+                  {pedSal.resumen.salidaSinPedido > 0 && <span><b>{pedSal.resumen.salidaSinPedido}</b> salida sin pedido (proceso completo; pedido borrado)</span>}
                   {pedSal.resumen.salidaSinPedido > 0 && pedSal.resumen.pendienteDespacho > 0 && <span> · </span>}
                   {pedSal.resumen.pendienteDespacho > 0 && <span><b>{pedSal.resumen.pendienteDespacho}</b> pendiente de despacho</span>}.
                 </p>
@@ -726,7 +725,7 @@ export function PanelInventarioLIP() {
               <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">
                 <KPI label="OK (cuadran)" valor={pedSal.resumen.ok} Icon={CheckCircle2} color="#1E8449" />
                 <KPI label="Cantidad diferente" valor={pedSal.resumen.cantidadDiferente} Icon={AlertTriangle} color="#E0A800" />
-                <KPI label="Pedido sin salida" valor={pedSal.resumen.pedidoSinSalida} Icon={PackageX} color="#C0392B" />
+                <KPI label="Por ejecutar" valor={pedSal.resumen.pedidoSinSalida} Icon={PackageX} color="#4f46e5" />
                 <KPI label="Salida sin pedido" valor={pedSal.resumen.salidaSinPedido} Icon={Truck} color="#7e57c2" />
                 <KPI label="Pendiente despacho" valor={pedSal.resumen.pendienteDespacho ?? 0} Icon={CalendarClock} color="#0284c7" />
                 <KPI label="Total cargadas" valor={(pedSal.resumen.totalCargadas || 0).toLocaleString("es-CO")} Icon={ClipboardList} color="#0D3B6E" />
@@ -757,7 +756,7 @@ export function PanelInventarioLIP() {
               {(() => {
                 const q = filtroOrden.trim().toLowerCase()
                 const base = pedSal.filas.filter((f) => {
-                  if (filtroAlerta === "DISC") { if (f.estado_alerta === "OK" || f.estado_alerta === "PENDIENTE_DESPACHO" || f.estado_alerta === "SALIDA_SIN_PEDIDO") return false }
+                  if (filtroAlerta === "DISC") { if (f.estado_alerta !== "CANTIDAD_DIFERENTE") return false }
                   else if (filtroAlerta && f.estado_alerta !== filtroAlerta) return false
                   if (q && !String(f.ocargue || "").toLowerCase().includes(q)) return false
                   return true
@@ -768,7 +767,7 @@ export function PanelInventarioLIP() {
                   if (e === "OK") return <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100 text-[10px]">OK</Badge>
                   if (e === "PENDIENTE_DESPACHO") return <Badge className="bg-sky-100 text-sky-800 hover:bg-sky-100 text-[10px]">Pendiente despacho</Badge>
                   if (e === "CANTIDAD_DIFERENTE") return <Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100 text-[10px]">Cantidad diferente</Badge>
-                  if (e === "PEDIDO_SIN_SALIDA") return <Badge className="bg-red-100 text-red-800 hover:bg-red-100 text-[10px]">Pedido sin salida</Badge>
+                  if (e === "PEDIDO_SIN_SALIDA") return <Badge className="bg-indigo-100 text-indigo-800 hover:bg-indigo-100 text-[10px]" title="Pedido con orden de cargue pero sin salida aprobada: el producto NO ha salido, inventario intacto. Por ejecutar/despachar.">Por ejecutar</Badge>
                   return <Badge className="bg-slate-100 text-slate-700 hover:bg-slate-100 text-[10px]" title="Salió con orden de cargue/lote/aprobada; el pedido no existe (borrado). Informativa, no es diferencia.">Salida sin pedido (info)</Badge>
                 }
                 if (vista.length === 0) return <Card className="p-8 text-center text-sm text-muted-foreground">No hay registros para el filtro seleccionado.</Card>

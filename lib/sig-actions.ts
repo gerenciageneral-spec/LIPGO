@@ -3817,10 +3817,13 @@ export async function getConciliacionPedidosVsSalidas(
         case "PENDIENTE_DESPACHO": resumen.pendienteDespacho++; break
       }
     }
-    // Discrepancias reales = solo cantidad diferente y pedido sin salida.
-    // PENDIENTE_DESPACHO y SALIDA_SIN_PEDIDO son INFORMATIVOS (el producto salió
-    // con su proceso completo; salida sin pedido = pedido borrado, no es diferencia).
-    resumen.conAlerta = resumen.cantidadDiferente + resumen.pedidoSinSalida
+    // ÚNICA discrepancia real de inventario = CANTIDAD_DIFERENTE (lo cargado ≠ lo
+    // que salió del inventario). Lo demás es informativo:
+    //   - PEDIDO_SIN_SALIDA  = pedido con cargue pero sin salida aprobada → el
+    //     producto NO ha salido, el inventario está intacto → por ejecutar/despachar.
+    //   - SALIDA_SIN_PEDIDO  = salió con proceso completo; el pedido fue borrado.
+    //   - PENDIENTE_DESPACHO = parcial aún por despachar.
+    resumen.conAlerta = resumen.cantidadDiferente
     resumen.totalCargadas = Math.round(resumen.totalCargadas)
     resumen.totalSalidas = Math.round(resumen.totalSalidas)
     resumen.diferenciaNeta = Math.round(resumen.diferenciaNeta)
