@@ -94,6 +94,7 @@ import { AlertasAT } from "@/components/sst/alertas-at"
 import { InvestigacionesRepositorio } from "@/components/sst/investigaciones-repositorio"
 import { MatrizIpevr } from "@/components/sst/ipevr"
 import { Medevac } from "@/components/sst/medevac"
+import { PerfilSociodemografico } from "@/components/sst/perfil-sociodemografico"
 import { PlanMejoramiento } from "@/components/sst/plan-mejoramiento"
 import { IndicadoresSST } from "@/components/sst/indicadores"
 import { EntregaEpp } from "@/components/sst/entrega-epp"
@@ -656,6 +657,10 @@ export function MainContent({
           ) : selectedModule === "MEDEVAC" ? (
             <PermissionGuard moduleName="MEDEVAC">
               <Medevac />
+            </PermissionGuard>
+          ) : selectedModule === "Perfil Sociodemográfico" ? (
+            <PermissionGuard moduleName="Perfil Sociodemográfico">
+              <PerfilSociodemografico />
             </PermissionGuard>
           ) : selectedModule === "Plan de Mejoramiento" ? (
             <PermissionGuard moduleName="Plan de Mejoramiento">

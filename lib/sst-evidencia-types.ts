@@ -55,6 +55,47 @@ export interface MedevacRow {
   created_at?: string | null
 }
 
+export interface PerfilSociodemograficoRow {
+  id?: number
+  idempresa: number
+  estado: string | null // activo | retirado
+  documento_tipo: string | null
+  documento: string | null
+  nombres: string | null
+  apellidos: string | null
+  fecha_nacimiento: string | null
+  edad: number | null
+  sexo: string | null
+  eps: string | null
+  afp: string | null
+  arl: string | null
+  centro_trabajo: string | null
+  turno: string | null
+  cargo: string | null
+  fecha_ingreso: string | null
+  fecha_retiro: string | null
+  pais_nacimiento: string | null
+  depto_nacimiento: string | null
+  municipio_residencia: string | null
+  grupo_etnico: string | null
+  nivel_escolaridad: string | null
+  estado_civil: string | null
+  cabeza_familia: string | null
+  num_hijos: number | null
+  personas_hogar: number | null
+  ingresos_familiares: string | null
+  tipo_vivienda: string | null
+  caracteristicas_vivienda: string | null
+  zona: string | null
+  direccion: string | null
+  transporte: string | null
+  estrato: string | null
+  consume_alcohol: string | null
+  actividad_fisica: string | null
+  fumador: string | null
+  marca_temporal: string | null
+}
+
 export interface IpevrRow {
   id?: number
   idempresa: number

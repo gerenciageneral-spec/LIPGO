@@ -178,6 +178,7 @@ export interface UserPermissions {
   sst_alertas_at: boolean
   sst_investigaciones: boolean
   sst_medevac: boolean
+  sst_perfil: boolean
   // Certificaciones LIP · ISO 9001 (Centro de Evidencia usa `evidenciasido`)
   iso_repositorio: boolean
   // ---------------------------------------------------------------------------
@@ -331,6 +332,7 @@ export const MODULE_PERMISSION_MAP: Record<string, keyof UserPermissions> = {
   "Alertas de AT": "sst_alertas_at",
   "Investigaciones Realizadas": "sst_investigaciones",
   MEDEVAC: "sst_medevac",
+  "Perfil Sociodemográfico": "sst_perfil",
   IPEVR: "sst_ipevr",
   "Plan de Mejoramiento": "sst_plan_mejora",
   "Indicadores SST": "sst_indicadores",

@@ -370,6 +370,7 @@ export const groups: Group[] = [
           { name: "Gestión del Cambio", icon: ArrowRightLeft, label: "Gestión del Cambio" },
           { name: "Actividades y Comités", icon: GraduationCap, label: "Actividades y Comités" },
           { name: "MEDEVAC", icon: Stethoscope, label: "MEDEVAC (Plan de Emergencias Médicas)" },
+          { name: "Perfil Sociodemográfico", icon: Users, label: "Perfil Sociodemográfico (SST-FOR-32)" },
         ],
       },
     ],
