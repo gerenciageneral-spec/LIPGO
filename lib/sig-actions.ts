@@ -3552,9 +3552,12 @@ export async function getConciliacionMensualInventario(
       if (!map[mk]) map[mk] = { mes: mk, produccion: 0, devolucion: 0, cargue: 0, merma: 0, ajuste: 0 }
       const a = map[mk]
       const esCargue = r.tipomov === "Salida" && (r.cod_movimiento === "601" || has(r.origen, "orden de cargue"))
-      const esMerma = r.cod_movimiento === "551" || r.tipomov === "Reproceso" || has(r.origen, "reproceso")
+      // MERMA = lo ENVIADO a reproceso / avería (tipomov 'Reproceso', mov 551 salida).
+      // El "ingreso por reproceso" (tipomov Entrada) NO es merma: es el retorno → ingreso.
+      const esMerma = r.tipomov === "Reproceso"
+      const esIngRepro = r.tipomov === "Entrada" && has(r.origen, "reproceso") // retorno de reproceso
       const esProd = r.cod_movimiento === "101" || (r.tipomov === "Entrada" && (has(r.origen, "producc") || has(r.origen, "aprob") || has(r.origen, "descarg") || has(r.origen, "logo")))
-      const esDev = has(r.origen, "devoluc") || (r.tipomov === "Entrada" && has(r.origen, "transaccion manual"))
+      const esDev = esIngRepro || has(r.origen, "devoluc") || (r.tipomov === "Entrada" && has(r.origen, "transaccion manual"))
       const esAjuste = r.cod_movimiento === "701" || r.cod_movimiento === "702"
       if (esCargue) a.cargue += c
       else if (esMerma) a.merma += c
@@ -3668,17 +3671,21 @@ export async function getConciliacionMensualInventario(
     }
     const saldoTeorico = filas.length ? filas[filas.length - 1].saldoFinal : Math.round(invInicial)
     const mermaProcesoTotal = filas.reduce((s: number, f: any) => s + (f.mermaProceso || 0), 0)
-    // Reproceso/avería REAL = transacciones 551 registradas en el módulo de
-    // inventario. Es la "merma de proceso" verdadera. El cuadre libro-vs-físico
-    // (mermaProceso) es depuración/ajuste, hoy ~0 tras depurar la base.
+    // MERMA = lo enviado a reproceso / avería (tipomov 'Reproceso'). El cuadre
+    // libro-vs-físico (mermaProceso) es depuración/ajuste, hoy ~0.
     const reprocesoTotal = filas.reduce((s: number, f: any) => s + (f.reproceso || 0), 0)
+    // La tarjeta muestra la ACUMULACIÓN del MES EN CURSO (se cierra mes a mes).
+    const mesEnCurso = new Date().toISOString().slice(0, 7)
+    const filaMesEnCurso = filas.find((f: any) => f.mes === mesEnCurso) || (filas.length ? filas[filas.length - 1] : null)
 
     const resumen = {
       invInicial: Math.round(invInicial),
       saldoTeorico,                                        // = stock vivo tras conciliar
       saldoVivo: Math.round(stockActual),
       diferencia: Math.round(saldoTeorico - stockActual),  // ~0 tras conciliar
-      reproceso: Math.round(reprocesoTotal),               // avería/reproceso 551 (merma real)
+      reproceso: Math.round(reprocesoTotal),               // reproceso/avería acumulado del año (referencia)
+      mermaMesEnCurso: Math.round(filaMesEnCurso?.reproceso || 0), // merma del mes en curso (tarjeta)
+      mesMerma: filaMesEnCurso?.mes || null,
       mermaProceso: Math.round(mermaProcesoTotal),         // cuadre físico por lote / depuración
       sobranteKardex: Math.round(sobrante),
       faltanteKardex: Math.round(Math.abs(faltante)),
