@@ -1,8 +1,5 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { useAuth } from "@/components/auth-provider"
-import { getIndicadoresValores } from "@/lib/sig-actions"
 import { AREA_KPIS, KPI_DEFS, formatKpi, kpiSev, type KpiSev } from "@/lib/kpis-area"
 import type { GroupKey } from "@/lib/dashboard-data"
 
@@ -13,56 +10,29 @@ const SEV_COLOR: Record<KpiSev, string> = {
   none: "#00b4cc",
 }
 
-interface ValorBsc {
+export interface ValorBsc {
   valor: number
   base?: string
 }
 
-function monthRange() {
-  const d = new Date()
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, "0")
-  const day = String(d.getDate()).padStart(2, "0")
-  return { desde: `${y}-${m}-01`, hasta: `${y}-${m}-${day}` }
-}
-
 /**
- * KPIs del ÁREA leídos del BSC (getIndicadoresValores), por empresa y EN VIVO:
- * refresca al cambiar el selector de empresa/grupo y cada 3 min, para reflejar
- * cambios del Tablero BSC en cada submenú. Si el grupo no tiene indicadores
- * mapeados, no muestra nada.
+ * KPIs del ÁREA leídos del BSC, POR SUBMÓDULO. Ya NO consulta datos: recibe
+ * `valores` y `loading` del padre (modules-view), que hace UNA sola lectura de
+ * `getIndicadoresValores` por empresa/grupo. Así los KPIs mostrados y las
+ * "tareas del día" de la IA salen de la MISMA fuente y siempre coinciden.
+ * Cada grupo muestra su propio set (AREA_KPIS[groupKey]); si no tiene mapeo,
+ * no renderiza nada.
  */
-export function AreaKpis({ groupKey }: { groupKey: GroupKey }) {
-  const { selectedEmpresaId } = useAuth()
-  const [valores, setValores] = useState<Record<string, ValorBsc>>({})
-  const [loading, setLoading] = useState(true)
-
+export function AreaKpis({
+  groupKey,
+  valores,
+  loading,
+}: {
+  groupKey: GroupKey
+  valores: Record<string, ValorBsc>
+  loading: boolean
+}) {
   const keys = AREA_KPIS[groupKey] ?? []
-
-  useEffect(() => {
-    if (keys.length === 0 || !selectedEmpresaId) return
-    let cancel = false
-    const load = async () => {
-      try {
-        const { desde, hasta } = monthRange()
-        const r = await getIndicadoresValores(selectedEmpresaId, desde, hasta)
-        if (!cancel && r.success) setValores(r.valores as Record<string, ValorBsc>)
-      } catch {
-        // silencioso: si falla, no muestra KPIs
-      } finally {
-        if (!cancel) setLoading(false)
-      }
-    }
-    setLoading(true)
-    load()
-    const interval = setInterval(load, 180000) // 3 min — refresco en vivo del BSC
-    return () => {
-      cancel = true
-      clearInterval(interval)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groupKey, selectedEmpresaId])
-
   if (keys.length === 0) return null
 
   return (

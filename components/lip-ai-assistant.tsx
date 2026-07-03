@@ -1,7 +1,10 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
-import { Sparkles, Mic, Lightbulb } from "lucide-react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { Sparkles, Mic, Lightbulb, ArrowUp, Square, Maximize2, Bot } from "lucide-react"
+import { useChat } from "@ai-sdk/react"
+import { DefaultChatTransport, type UIMessage } from "ai"
+import { useAuth } from "@/components/auth-provider"
 
 export interface AtencionItem {
   label: string
@@ -9,75 +12,106 @@ export interface AtencionItem {
 }
 
 interface LipAiAssistantProps {
-  /** Contexto (ej. el área/grupo) para personalizar las preguntas. */
+  /** Contexto (ej. el área/grupo) para personalizar las preguntas sugeridas. */
   contextLabel?: string
   /** Etiqueta de empresa para el subtítulo "lee tu operación en vivo · X". */
   empresaLabel?: string | null
-  /** Se llama al pedir algo (abre el Asistente IA existente). */
-  onOpen: () => void
-  /** Alertas REALES (por empresa) que la IA prioriza. Si viene vacío se oculta. */
+  /** Opcional: abrir el Asistente a pantalla completa (botón "Ampliar"). */
+  onOpen?: () => void
+  /** Alertas REALES (por empresa/área) que la IA prioriza. Si viene vacío se oculta. */
   alertas?: AtencionItem[]
   /** Acción al tocar una alerta (ej. abrir el módulo relacionado). */
   onAlerta?: (a: AtencionItem) => void
 }
 
 /**
- * Asistente LIP — superficie de IA premium (el "sello" de la app).
- * Borde de gradiente animado, orbe que respira, placeholder autoescrito y
- * sugerencias contextuales. Reutilizable en Inicio y en cada submenú.
- * No inventa datos: al pedir algo abre el Asistente (Gemini) ya integrado.
+ * Asistente LIP — superficie de IA premium con CHAT INLINE (el "sello" de la app).
+ * Se pregunta DENTRO de la tarjeta (sin cambiar de ventana): campo de texto,
+ * botón "Preguntar" y micrófono (dictado por voz). Responde en vivo por streaming
+ * usando el mismo backend Claude (/api/chat), gobernado por los permisos del
+ * usuario. Reutilizable en Inicio y en cada submenú.
  */
 export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, onAlerta }: LipAiAssistantProps) {
+  const { selectedEmpresaId } = useAuth()
   const area = contextLabel?.trim()
-  const phrases = area
-    ? [
-        `Pregúntale a LIP sobre ${area}…`,
-        `¿Cómo va ${area} hoy en este proyecto?`,
-        `Resúmeme los indicadores de ${area}`,
-        `¿Dónde tengo riesgo en ${area}?`,
-      ]
-    : [
-        "Pregúntale a LIP: ¿cómo va la operación hoy?",
-        "¿Qué proyecto está por debajo de su meta?",
-        "Resúmeme el SLA de tiempos de la semana",
-        "¿Qué facturas debo solicitar antes del viernes?",
-      ]
+
+  // idEmpresa siempre fresco para inyectarlo en cada request (el transport se
+  // captura una sola vez, así que leemos de un ref y no del closure).
+  const idEmpresaRef = useRef<number | null>(selectedEmpresaId ?? null)
+  useEffect(() => {
+    idEmpresaRef.current = selectedEmpresaId ?? null
+  }, [selectedEmpresaId])
+
+  const transport = useMemo(
+    () =>
+      new DefaultChatTransport({
+        api: "/api/chat",
+        prepareSendMessagesRequest: ({ messages, id }) => ({
+          body: { id, messages, idEmpresa: idEmpresaRef.current },
+        }),
+      }),
+    [],
+  )
+
+  const { messages, sendMessage, status, stop, error } = useChat({ transport })
+  const isThinking = status === "submitted" || status === "streaming"
+
+  const [input, setInput] = useState("")
+  const [listening, setListening] = useState(false)
+  const recognitionRef = useRef<any>(null)
+  const scrollRef = useRef<HTMLDivElement | null>(null)
 
   const sugs = area
-    ? [`📊 Indicadores de ${area}`, "⏱️ ¿Dónde pierdo SLA?", "🧾 Pendientes por gestionar"]
-    : ["📦 Órdenes por despachar", "⏱️ SLA de tiempos", "🧾 Facturas por vencer"]
+    ? [`¿Cómo va ${area} hoy?`, "¿Dónde pierdo SLA?", "Pendientes por gestionar"]
+    : ["Órdenes por despachar hoy", "Pedidos de este mes", "Stock disponible"]
 
-  const [typed, setTyped] = useState("")
-  const stateRef = useRef({ pi: 0, ci: 0, deleting: false })
+  const placeholder = area ? `Pregúntale a LIP sobre ${area}…` : "Pregúntale a LIP: ¿cómo va la operación hoy?"
 
+  // Auto-scroll del hilo inline al llegar nuevos chunks.
   useEffect(() => {
-    stateRef.current = { pi: 0, ci: 0, deleting: false }
-    let timer: ReturnType<typeof setTimeout>
-    const tick = () => {
-      const s = stateRef.current
-      const full = phrases[s.pi % phrases.length]
-      if (!s.deleting) {
-        s.ci++
-        if (s.ci >= full.length) {
-          s.deleting = true
-          setTyped(full)
-          timer = setTimeout(tick, 2000)
-          return
-        }
-      } else {
-        s.ci--
-        if (s.ci <= 0) {
-          s.deleting = false
-          s.pi = (s.pi + 1) % phrases.length
-        }
-      }
-      setTyped(full.slice(0, s.ci))
-      timer = setTimeout(tick, s.deleting ? 24 : 45)
+    const el = scrollRef.current
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
+  }, [messages, isThinking])
+
+  const enviar = (text: string) => {
+    const t = text.trim()
+    if (!t || isThinking) return
+    if (selectedEmpresaId == null) return // el backend exige empresa
+    sendMessage({ text: t })
+    setInput("")
+  }
+
+  // Dictado por voz (Web Speech API — Chrome/Edge). Rellena el campo con lo dicho.
+  const toggleVoz = () => {
+    if (listening) {
+      recognitionRef.current?.stop()
+      setListening(false)
+      return
     }
-    timer = setTimeout(tick, 400)
-    return () => clearTimeout(timer)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contextLabel])
+    const SR = (typeof window !== "undefined" &&
+      ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)) as any
+    if (!SR) {
+      alert("El dictado por voz necesita Chrome o Edge. Escribe tu pregunta mientras tanto.")
+      return
+    }
+    const rec = new SR()
+    rec.lang = "es-CO"
+    rec.interimResults = true
+    rec.continuous = false
+    rec.onresult = (e: any) => {
+      const txt = Array.from(e.results)
+        .map((r: any) => r[0].transcript)
+        .join("")
+      setInput(txt)
+    }
+    rec.onerror = () => setListening(false)
+    rec.onend = () => setListening(false)
+    recognitionRef.current = rec
+    setListening(true)
+    rec.start()
+  }
+
+  const sinEmpresa = selectedEmpresaId == null
 
   return (
     <div className="lipai">
@@ -101,9 +135,12 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
         @media (prefers-reduced-motion:reduce){ .lipai-orb .halo{ animation:none } }
         .lipai-live{ width:6px; height:6px; border-radius:50%; background:#37f5a0; box-shadow:0 0 8px #37f5a0; animation:lipai-blink 1.8s ease-in-out infinite; }
         @keyframes lipai-blink{ 0%,100%{opacity:1} 50%{opacity:.35} }
-        .lipai-cur{ display:inline-block; width:2px; height:15px; background:#3fe0ee; margin-left:1px; transform:translateY(2px); animation:lipai-c .9s step-end infinite; }
-        @keyframes lipai-c{ 50%{opacity:0} }
         .lipai-sug:hover{ background:rgba(0,194,220,.16) !important; border-color:rgba(0,194,220,.5) !important; }
+        .lipai-ta{ background:transparent; border:0; outline:none; resize:none; color:#eaf7fb; font-size:14px; line-height:20px; width:100%; max-height:96px; }
+        .lipai-ta::placeholder{ color:#7fbdcf; }
+        .lipai-mic-on{ animation:lipai-mic 1.1s ease-in-out infinite; }
+        @keyframes lipai-mic{ 0%,100%{box-shadow:0 0 0 0 rgba(255,90,90,.5)} 50%{box-shadow:0 0 0 6px rgba(255,90,90,0)} }
+        .lipai-thread::-webkit-scrollbar{ width:6px } .lipai-thread::-webkit-scrollbar-thumb{ background:rgba(120,190,230,.3); border-radius:6px }
       `}</style>
 
       <div className="lipai-in">
@@ -121,45 +158,118 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
               Lee tu operación en vivo{empresaLabel ? ` · ${empresaLabel}` : ""}
             </div>
           </div>
-          <Sparkles className="ml-auto h-4 w-4 flex-none" style={{ color: "#3fe0ee" }} />
+          {onOpen ? (
+            <button
+              onClick={onOpen}
+              title="Abrir a pantalla completa"
+              className="ml-auto flex h-7 w-7 flex-none items-center justify-center rounded-lg"
+              style={{ color: "#7fbdcf", background: "rgba(255,255,255,.06)" }}
+            >
+              <Maximize2 className="h-[15px] w-[15px]" />
+            </button>
+          ) : (
+            <Sparkles className="ml-auto h-4 w-4 flex-none" style={{ color: "#3fe0ee" }} />
+          )}
         </div>
 
-        <button
-          onClick={onOpen}
-          className="relative z-[2] mt-3.5 flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left"
+        {/* Hilo de conversación INLINE (aparece al preguntar) */}
+        {messages.length > 0 && (
+          <div
+            ref={scrollRef}
+            className="lipai-thread relative z-[2] mt-3 max-h-[240px] space-y-2.5 overflow-y-auto pr-1"
+          >
+            {messages.map((m) => (
+              <InlineBubble key={m.id} message={m} />
+            ))}
+            {status === "submitted" && (
+              <div className="flex items-center gap-2 text-[12px]" style={{ color: "#9fd4e6" }}>
+                <Bot className="h-3.5 w-3.5" /> Pensando…
+              </div>
+            )}
+            {error && (
+              <div className="rounded-lg px-2.5 py-1.5 text-[12px]" style={{ background: "rgba(255,90,90,.14)", color: "#ff9a94" }}>
+                Ocurrió un error: {error.message}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Composer: escribir + micrófono + Preguntar */}
+        <div
+          className="relative z-[2] mt-3.5 flex items-end gap-2 rounded-xl px-3 py-2"
           style={{ background: "rgba(255,255,255,.06)", border: "1px solid rgba(150,210,240,.2)" }}
-          aria-label="Abrir asistente"
         >
-          <span className="min-w-0 flex-1 truncate text-[14px]" style={{ color: "#cfe6f0" }}>
-            {typed}
-            <span className="lipai-cur" />
-          </span>
-          <span
-            className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-lg"
-            style={{ color: "#7fbdcf", background: "rgba(255,255,255,.05)" }}
+          <textarea
+            rows={1}
+            className="lipai-ta flex-1 py-1"
+            placeholder={sinEmpresa ? "Selecciona una empresa arriba para preguntar…" : placeholder}
+            value={input}
+            disabled={sinEmpresa}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault()
+                enviar(input)
+              }
+            }}
+          />
+
+          {/* Micrófono (dictado por voz) */}
+          <button
+            type="button"
+            onClick={toggleVoz}
+            disabled={sinEmpresa}
+            title={listening ? "Detener dictado" : "Hablarle a la IA"}
+            className={`flex h-[30px] w-[30px] flex-none items-center justify-center rounded-lg ${listening ? "lipai-mic-on" : ""}`}
+            style={{
+              color: listening ? "#fff" : "#7fbdcf",
+              background: listening ? "#e5484d" : "rgba(255,255,255,.05)",
+              opacity: sinEmpresa ? 0.5 : 1,
+            }}
           >
             <Mic className="h-[15px] w-[15px]" />
-          </span>
-          <span
-            className="flex-none rounded-lg px-3.5 py-2 text-[12.5px] font-bold"
-            style={{ background: "linear-gradient(135deg,#3fe0ee,#00c2dc)", color: "#04222a", boxShadow: "0 4px 14px rgba(0,194,220,.4)" }}
-          >
-            Preguntar
-          </span>
-        </button>
+          </button>
 
-        <div className="relative z-[2] mt-3 flex flex-wrap gap-2">
-          {sugs.map((s) => (
+          {/* Preguntar / Detener */}
+          {isThinking ? (
             <button
-              key={s}
-              onClick={onOpen}
-              className="lipai-sug rounded-full px-3 py-1.5 text-[12px] font-medium transition-colors"
-              style={{ color: "#cbe7f1", background: "rgba(255,255,255,.06)", border: "1px solid rgba(150,210,240,.16)" }}
+              type="button"
+              onClick={() => stop()}
+              title="Detener"
+              className="flex h-[34px] flex-none items-center gap-1.5 rounded-lg px-3 text-[12.5px] font-bold"
+              style={{ background: "rgba(255,255,255,.14)", color: "#eaf7fb" }}
             >
-              {s}
+              <Square className="h-3.5 w-3.5 fill-current" /> Detener
             </button>
-          ))}
+          ) : (
+            <button
+              type="button"
+              onClick={() => enviar(input)}
+              disabled={sinEmpresa || !input.trim()}
+              className="flex h-[34px] flex-none items-center gap-1.5 rounded-lg px-3.5 text-[12.5px] font-bold disabled:opacity-50"
+              style={{ background: "linear-gradient(135deg,#3fe0ee,#00c2dc)", color: "#04222a", boxShadow: "0 4px 14px rgba(0,194,220,.4)" }}
+            >
+              <ArrowUp className="h-[15px] w-[15px]" /> Preguntar
+            </button>
+          )}
         </div>
+
+        {/* Sugerencias (solo antes de la primera pregunta, para ahorrar espacio) */}
+        {messages.length === 0 && (
+          <div className="relative z-[2] mt-3 flex flex-wrap gap-2">
+            {sugs.map((s) => (
+              <button
+                key={s}
+                onClick={() => enviar(s)}
+                disabled={sinEmpresa}
+                className="lipai-sug rounded-full px-3 py-1.5 text-[12px] font-medium transition-colors disabled:opacity-50"
+                style={{ color: "#cbe7f1", background: "rgba(255,255,255,.06)", border: "1px solid rgba(150,210,240,.16)" }}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Atención del día — la IA prioriza lo que requiere foco (datos reales). */}
         {alertas && alertas.length > 0 && (
@@ -196,6 +306,35 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
       </div>
     </div>
   )
+}
+
+/** Burbuja compacta para el hilo inline (fondo oscuro de la tarjeta). */
+function InlineBubble({ message }: { message: UIMessage }) {
+  const isUser = message.role === "user"
+  const text = getMessageText(message)
+  return (
+    <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+      <div
+        className="max-w-[88%] whitespace-pre-wrap break-words rounded-xl px-3 py-2 text-[13px] leading-relaxed"
+        style={
+          isUser
+            ? { background: "linear-gradient(135deg,#3fe0ee,#00c2dc)", color: "#04222a" }
+            : { background: "rgba(255,255,255,.08)", color: "#eaf7fb", border: "1px solid rgba(150,210,240,.15)" }
+        }
+      >
+        {text || "…"}
+      </div>
+    </div>
+  )
+}
+
+/** Extrae el texto plano de un UIMessage (AI SDK 6 usa `parts`, no `content`). */
+function getMessageText(message: UIMessage): string {
+  if (!message.parts || !Array.isArray(message.parts)) return ""
+  return message.parts
+    .filter((p): p is { type: "text"; text: string } => p.type === "text" && typeof (p as any).text === "string")
+    .map((p) => p.text)
+    .join("")
 }
 
 const SEV: Record<AtencionItem["sev"], { background: string; color: string }> = {

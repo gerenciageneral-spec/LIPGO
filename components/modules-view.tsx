@@ -1,12 +1,13 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { groups, type GroupKey, type Module } from "@/lib/dashboard-data"
 import { ArrowLeft } from "lucide-react"
 import { LipAiAssistant, type AtencionItem } from "@/components/lip-ai-assistant"
-import { AreaKpis } from "@/components/area-kpis"
+import { AreaKpis, type ValorBsc } from "@/components/area-kpis"
 import { useAuth } from "@/components/auth-provider"
-import { getAtencionDelDia } from "@/lib/atencion-actions"
+import { getIndicadoresValores } from "@/lib/sig-actions"
+import { AREA_KPIS, KPI_DEFS, formatKpi, kpiSev } from "@/lib/kpis-area"
 
 interface ModulesViewProps {
   groupKey: GroupKey
@@ -15,6 +16,40 @@ interface ModulesViewProps {
 }
 
 const TEAL = "#00b4cc"
+
+function monthRange() {
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, "0")
+  const day = String(d.getDate()).padStart(2, "0")
+  return { desde: `${y}-${m}-01`, hasta: `${y}-${m}-${day}` }
+}
+
+/**
+ * Deriva las "tareas del día" del submódulo a partir de SUS PROPIOS KPIs del
+ * BSC: los indicadores del área que están por debajo de meta (crit/warn) se
+ * convierten en focos de atención. Así cada submódulo muestra tareas distintas
+ * y siempre alineadas con los KPIs que se ven arriba. Crit primero.
+ */
+function alertasDesdeKpis(groupKey: GroupKey, valores: Record<string, ValorBsc>): AtencionItem[] {
+  const keys = AREA_KPIS[groupKey] ?? []
+  const items = keys
+    .map((k) => {
+      const def = KPI_DEFS[k]
+      const v = valores[k]
+      if (!def || !v) return null
+      const sev = kpiSev(def, v.valor)
+      if (sev !== "crit" && sev !== "warn") return null
+      const metaTxt = def.meta != null ? ` · meta ${formatKpi(def, def.meta)}` : ""
+      return {
+        label: `${def.nombre}: ${formatKpi(def, v.valor)}${metaTxt}`,
+        sev: sev === "crit" ? ("crit" as const) : ("warn" as const),
+      }
+    })
+    .filter((x): x is AtencionItem => x !== null)
+  // Crit primero, luego warn.
+  return items.sort((a, b) => (a.sev === "crit" ? -1 : 1) - (b.sev === "crit" ? -1 : 1))
+}
 
 // Tarjeta de módulo COMPACTA (estilo Odoo): ícono teal + nombre. Homogénea
 // para todos los grupos porque este componente es compartido.
@@ -40,23 +75,43 @@ function ModuleCard({ module, onSelect }: { module: Module; onSelect: (name: str
 
 export function ModulesView({ groupKey, onBack, onSelectModule }: ModulesViewProps) {
   const { selectedEmpresaId, selectedEmpresaNombre } = useAuth()
-  const [alertas, setAlertas] = useState<AtencionItem[]>([])
+  const [valores, setValores] = useState<Record<string, ValorBsc>>({})
+  const [loading, setLoading] = useState(true)
 
   const group = groups.find((g) => g.key === groupKey)
 
-  // Atención del día (real, por empresa) para la tarjeta de IA.
+  // UNA sola lectura del BSC por empresa/grupo (+ refresco cada 3 min). Alimenta
+  // los KPIs del área Y las tareas del día del submódulo, así siempre coinciden.
   useEffect(() => {
-    if (!selectedEmpresaId) return
+    const keys = AREA_KPIS[groupKey] ?? []
+    if (keys.length === 0 || !selectedEmpresaId) {
+      setValores({})
+      setLoading(false)
+      return
+    }
     let cancel = false
-    getAtencionDelDia()
-      .then((r) => {
-        if (!cancel && r.success) setAlertas(r.items as AtencionItem[])
-      })
-      .catch(() => {})
+    const load = async () => {
+      try {
+        const { desde, hasta } = monthRange()
+        const r = await getIndicadoresValores(selectedEmpresaId, desde, hasta)
+        if (!cancel && r.success) setValores(r.valores as Record<string, ValorBsc>)
+      } catch {
+        // silencioso
+      } finally {
+        if (!cancel) setLoading(false)
+      }
+    }
+    setLoading(true)
+    load()
+    const interval = setInterval(load, 180000)
     return () => {
       cancel = true
+      clearInterval(interval)
     }
-  }, [selectedEmpresaId, groupKey])
+  }, [groupKey, selectedEmpresaId])
+
+  // Tareas del día = KPIs del área bajo meta. Memo para no recalcular en cada render.
+  const alertas = useMemo(() => alertasDesdeKpis(groupKey, valores), [groupKey, valores])
 
   if (!group) return null
 
@@ -92,17 +147,16 @@ export function ModulesView({ groupKey, onBack, onSelectModule }: ModulesViewPro
         </span>
       </div>
 
-      {/* Asistente IA premium — con atención del día real por empresa */}
+      {/* Asistente IA premium — tareas del día PROPIAS de este submódulo (KPIs bajo meta) */}
       <LipAiAssistant
         contextLabel={group.title}
         empresaLabel={selectedEmpresaNombre}
         alertas={alertas}
         onOpen={() => onSelectModule("Asistente IA")}
-        onAlerta={(a) => a.modulo && onSelectModule(a.modulo)}
       />
 
       {/* Indicadores del área leídos del BSC (por empresa, en vivo) */}
-      <AreaKpis groupKey={groupKey} />
+      <AreaKpis groupKey={groupKey} valores={valores} loading={loading} />
 
       {/* Módulos directos */}
       {group.modules && group.modules.length > 0 && (
