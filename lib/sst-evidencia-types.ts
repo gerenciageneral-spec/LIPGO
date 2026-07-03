@@ -33,69 +33,6 @@ export interface IndicadorRow {
   observacion: string | null
 }
 
-export interface MedevacRow {
-  id?: number
-  idempresa: number
-  centro_trabajo: string | null
-  nombres: string | null
-  documento_tipo: string | null
-  documento: string | null
-  cargo: string | null
-  celular: string | null
-  alergias: string | null
-  rh: string | null
-  arl: string | null
-  eps: string | null
-  contacto_nombre: string | null
-  contacto_telefono: string | null
-  contacto_parentesco: string | null
-  email: string | null
-  mes_cumple: string | null
-  marca_temporal: string | null
-  created_at?: string | null
-}
-
-export interface PerfilSociodemograficoRow {
-  id?: number
-  idempresa: number
-  estado: string | null // activo | retirado
-  documento_tipo: string | null
-  documento: string | null
-  nombres: string | null
-  apellidos: string | null
-  fecha_nacimiento: string | null
-  edad: number | null
-  sexo: string | null
-  eps: string | null
-  afp: string | null
-  arl: string | null
-  centro_trabajo: string | null
-  turno: string | null
-  cargo: string | null
-  fecha_ingreso: string | null
-  fecha_retiro: string | null
-  pais_nacimiento: string | null
-  depto_nacimiento: string | null
-  municipio_residencia: string | null
-  grupo_etnico: string | null
-  nivel_escolaridad: string | null
-  estado_civil: string | null
-  cabeza_familia: string | null
-  num_hijos: number | null
-  personas_hogar: number | null
-  ingresos_familiares: string | null
-  tipo_vivienda: string | null
-  caracteristicas_vivienda: string | null
-  zona: string | null
-  direccion: string | null
-  transporte: string | null
-  estrato: string | null
-  consume_alcohol: string | null
-  actividad_fisica: string | null
-  fumador: string | null
-  marca_temporal: string | null
-}
-
 export interface IpevrRow {
   id?: number
   idempresa: number
@@ -122,20 +59,6 @@ export interface IpevrRow {
   peor_consecuencia: string | null
   medidas_intervencion: string | null
   fecha?: string | null
-  // --- Columnas ricas del formato LIP (SST-MA-002) ---
-  tarea?: string | null
-  especificacion?: string | null
-  medida_eliminacion?: string | null
-  medida_sustitucion?: string | null
-  control_ingenieria?: string | null
-  control_administrativo?: string | null
-  medida_epp?: string | null
-  gc_plan_accion?: string | null
-  gc_fecha_implementacion?: string | null
-  gc_tipo_plan?: string | null
-  gc_controles_propuestos?: string | null
-  gc_controles_implementados?: string | null
-  gc_pct_cumplimiento?: number | null
 }
 
 export interface IncidenteRow {
@@ -196,45 +119,6 @@ export interface IncidenteRow {
   causa_condiciones_inseguras?: string | null
   causa_factores_personales?: string | null
   causa_factores_trabajo?: string | null
-  // --- SST-FOR-21 (formato original LIP) ---
-  documento_tipo?: string | null
-  documento_numero?: string | null
-  fecha_nacimiento?: string | null
-  sexo?: string | null
-  eps?: string | null
-  arl?: string | null
-  afp?: string | null
-  salario?: number | null
-  codigo_ocupacion?: string | null
-  fecha_ingreso?: string | null
-  jornada_habitual?: string | null
-  centro_trabajo?: string | null
-  centro_direccion?: string | null
-  centro_municipio?: string | null
-  codigo_actividad?: string | null
-  fecha_reporte?: string | null
-  tiempo_laborado_previo?: string | null
-  dentro_fuera_empresa?: string | null
-  requirio_transporte?: boolean | null
-  ausentismo_tipo?: string | null
-  ausentismo_fecha_inicial?: string | null
-  ausentismo_fecha_final?: string | null
-  divulgacion_leccion?: string | null
-  charla_seguridad?: string | null
-  retroalimentacion?: string | null
-  firmas?: any
-  documento_url?: string | null
-  documento_editable_url?: string | null
-}
-
-export interface IncidenteTestigoRow {
-  id?: number
-  incidente_id: number
-  idempresa?: number | null
-  nombre: string | null
-  documento: string | null
-  version: string | null
-  cargo?: string | null
 }
 
 export interface IncidenteAccionRow {

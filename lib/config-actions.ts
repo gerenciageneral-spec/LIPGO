@@ -547,9 +547,9 @@ export async function fetchDestinos() {
   }
 }
 
-export async function getProductosForFilter() {
+export async function getProductosForFilter(selectedEmpresaId?: number | null) {
   const supabase = await createClient()
-  const empresaId = await getCurrentEmpresaIdForInsert()
+  const empresaId = selectedEmpresaId ?? (await getCurrentEmpresaIdForInsert())
 
   try {
     let query = supabase

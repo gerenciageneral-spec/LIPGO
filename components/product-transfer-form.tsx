@@ -296,10 +296,10 @@ export function ProductTransferForm() {
       <Tabs defaultValue="localizaciones" className="w-full">
         <TabsList className="grid w-full grid-cols-2 max-w-md">
           <TabsTrigger value="localizaciones" className="text-xs md:text-sm">
-            Traslado de localizaciones
+            Traslado sin QR
           </TabsTrigger>
           <TabsTrigger value="estibas" className="text-xs md:text-sm">
-            Traslado entre estibas
+            Traslado entre estibas/arrume
           </TabsTrigger>
         </TabsList>
 

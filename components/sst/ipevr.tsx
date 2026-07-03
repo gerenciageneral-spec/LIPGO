@@ -11,7 +11,6 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useToast } from "@/hooks/use-toast"
 import { SST_TOKENS } from "@/components/sst/sst-utils"
 import { Kpi, Sec, Row3, Field, Sel } from "@/components/sst/sst-form-ui"
@@ -57,11 +56,9 @@ const vacio = () => ({
   proceso: "",
   zona: "",
   actividad: "",
-  tarea: "",
   rutinaria: "true",
   clasificacion_peligro: "Físico",
   descripcion_peligro: "",
-  especificacion: "",
   efectos_posibles: "",
   control_fuente: "",
   control_medio: "",
@@ -71,19 +68,7 @@ const vacio = () => ({
   nc: "25",
   n_expuestos: 1,
   peor_consecuencia: "",
-  // medidas de intervención por jerarquía de controles
-  medida_eliminacion: "",
-  medida_sustitucion: "",
-  control_ingenieria: "",
-  control_administrativo: "",
-  medida_epp: "",
-  // gestión del cambio (seguimiento del plan)
-  gc_plan_accion: "",
-  gc_fecha_implementacion: "",
-  gc_tipo_plan: "",
-  gc_controles_propuestos: "",
-  gc_controles_implementados: "",
-  gc_pct_cumplimiento: 0,
+  medidas_intervencion: "",
 })
 
 export function MatrizIpevr({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaId?: number | null }) {
@@ -94,7 +79,6 @@ export function MatrizIpevr({ selectedEmpresaId: propEmpresaId }: { selectedEmpr
   const [form, setForm] = useState<Record<string, any>>(vacio())
   const [rows, setRows] = useState<IpevrRow[]>([])
   const [saving, setSaving] = useState(false)
-  const [detalle, setDetalle] = useState<IpevrRow | null>(null)
   const set = (k: string, v: any) => setForm((f) => ({ ...f, [k]: v }))
 
   const np = Number(form.nd) * Number(form.ne)
@@ -115,16 +99,6 @@ export function MatrizIpevr({ selectedEmpresaId: propEmpresaId }: { selectedEmpr
       return
     }
     setSaving(true)
-    const medidasResumen = [
-      ["Eliminación", form.medida_eliminacion],
-      ["Sustitución", form.medida_sustitucion],
-      ["Ing.", form.control_ingenieria],
-      ["Admin.", form.control_administrativo],
-      ["EPP", form.medida_epp],
-    ]
-      .map(([l, v]) => (String(v || "").trim() ? `${l}: ${String(v).trim()}` : ""))
-      .filter(Boolean)
-      .join(" | ")
     const payload = {
       ...form,
       rutinaria: form.rutinaria === "true",
@@ -132,8 +106,6 @@ export function MatrizIpevr({ selectedEmpresaId: propEmpresaId }: { selectedEmpr
       ne: Number(form.ne),
       nc: Number(form.nc),
       n_expuestos: Number(form.n_expuestos),
-      gc_pct_cumplimiento: Number(form.gc_pct_cumplimiento) || 0,
-      medidas_intervencion: medidasResumen || form.medidas_intervencion || "",
     }
     const res = await saveIpevr(payload as Partial<IpevrRow>, empresaId)
     setSaving(false)
@@ -190,9 +162,6 @@ export function MatrizIpevr({ selectedEmpresaId: propEmpresaId }: { selectedEmpr
                 <Field l="Actividad">
                   <Input value={form.actividad} onChange={(e) => set("actividad", e.target.value)} />
                 </Field>
-                <Field l="Tarea">
-                  <Input value={form.tarea} onChange={(e) => set("tarea", e.target.value)} />
-                </Field>
                 <Field l="¿Rutinaria?">
                   <Sel
                     v={form.rutinaria}
@@ -207,11 +176,8 @@ export function MatrizIpevr({ selectedEmpresaId: propEmpresaId }: { selectedEmpr
                   <Sel v={form.clasificacion_peligro} on={(v) => set("clasificacion_peligro", v)} o={CLASIF} />
                 </Field>
               </Row3>
-              <Field l="Descripción del peligro (clasificación específica)">
+              <Field l="Descripción del peligro">
                 <Textarea value={form.descripcion_peligro} onChange={(e) => set("descripcion_peligro", e.target.value)} />
-              </Field>
-              <Field l="Especificación (situación / cómo se genera)">
-                <Textarea value={form.especificacion} onChange={(e) => set("especificacion", e.target.value)} />
               </Field>
               <Field l="Efectos posibles">
                 <Textarea value={form.efectos_posibles} onChange={(e) => set("efectos_posibles", e.target.value)} />
@@ -266,49 +232,9 @@ export function MatrizIpevr({ selectedEmpresaId: propEmpresaId }: { selectedEmpr
               <Field l="Peor consecuencia">
                 <Input value={form.peor_consecuencia} onChange={(e) => set("peor_consecuencia", e.target.value)} />
               </Field>
-            </Sec>
-
-            <Sec n="Medidas de intervención propuestas (jerarquía de controles)">
-              <Row3>
-                <Field l="Eliminación">
-                  <Textarea rows={2} value={form.medida_eliminacion} onChange={(e) => set("medida_eliminacion", e.target.value)} />
-                </Field>
-                <Field l="Sustitución">
-                  <Textarea rows={2} value={form.medida_sustitucion} onChange={(e) => set("medida_sustitucion", e.target.value)} />
-                </Field>
-                <Field l="Controles de ingeniería">
-                  <Textarea rows={2} value={form.control_ingenieria} onChange={(e) => set("control_ingenieria", e.target.value)} />
-                </Field>
-                <Field l="Controles administrativos">
-                  <Textarea rows={2} value={form.control_administrativo} onChange={(e) => set("control_administrativo", e.target.value)} />
-                </Field>
-                <Field l="Elementos de protección personal (EPP)">
-                  <Textarea rows={2} value={form.medida_epp} onChange={(e) => set("medida_epp", e.target.value)} />
-                </Field>
-              </Row3>
-            </Sec>
-
-            <Sec n="Gestión del cambio (seguimiento del plan de acción)">
-              <Row3>
-                <Field l="Plan de acción">
-                  <Input value={form.gc_plan_accion} onChange={(e) => set("gc_plan_accion", e.target.value)} />
-                </Field>
-                <Field l="Fecha de implementación">
-                  <Input value={form.gc_fecha_implementacion} onChange={(e) => set("gc_fecha_implementacion", e.target.value)} placeholder="dd/mm/aaaa" />
-                </Field>
-                <Field l="Tipo de plan (jerarquización)">
-                  <Input value={form.gc_tipo_plan} onChange={(e) => set("gc_tipo_plan", e.target.value)} />
-                </Field>
-                <Field l="Controles propuestos">
-                  <Input value={form.gc_controles_propuestos} onChange={(e) => set("gc_controles_propuestos", e.target.value)} />
-                </Field>
-                <Field l="Controles implementados">
-                  <Input value={form.gc_controles_implementados} onChange={(e) => set("gc_controles_implementados", e.target.value)} />
-                </Field>
-                <Field l="% de cumplimiento">
-                  <Input type="number" value={form.gc_pct_cumplimiento} onChange={(e) => set("gc_pct_cumplimiento", Number(e.target.value))} />
-                </Field>
-              </Row3>
+              <Field l="Medidas de intervención (jerarquía de controles)">
+                <Textarea value={form.medidas_intervencion} onChange={(e) => set("medidas_intervencion", e.target.value)} />
+              </Field>
             </Sec>
 
             <Button onClick={guardar} disabled={saving} style={{ background: SST_TOKENS.navy, color: "white" }}>
@@ -328,8 +254,6 @@ export function MatrizIpevr({ selectedEmpresaId: propEmpresaId }: { selectedEmpr
                   <th className="p-2 text-center">NR</th>
                   <th className="p-2 text-center">Nivel</th>
                   <th className="p-2 text-left">Aceptabilidad</th>
-                  <th className="p-2 text-center">% Cumpl.</th>
-                  <th className="p-2 text-center">Detalle</th>
                   <th className="p-2 text-left w-64">Soportes</th>
                 </tr>
               </thead>
@@ -346,18 +270,6 @@ export function MatrizIpevr({ selectedEmpresaId: propEmpresaId }: { selectedEmpr
                         <Badge style={{ background: n.c, color: "white" }}>{r.interpretacion_nr ?? n.i}</Badge>
                       </td>
                       <td className="p-2 text-xs">{r.aceptabilidad}</td>
-                      <td className="p-2 text-center">
-                        {r.gc_pct_cumplimiento != null ? (
-                          <Badge style={{ background: Number(r.gc_pct_cumplimiento) >= 100 ? SST_TOKENS.ok : Number(r.gc_pct_cumplimiento) >= 50 ? SST_TOKENS.warn : SST_TOKENS.bad, color: "white" }}>
-                            {Number(r.gc_pct_cumplimiento)}%
-                          </Badge>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                      </td>
-                      <td className="p-2 text-center">
-                        <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => setDetalle(r)}>Ver</Button>
-                      </td>
                       <td className="p-2 align-top">
                         <SoportesDocumentales
                           norma="SST 0312"
@@ -373,7 +285,7 @@ export function MatrizIpevr({ selectedEmpresaId: propEmpresaId }: { selectedEmpr
                 })}
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="p-6 text-center text-muted-foreground">
+                    <td colSpan={7} className="p-6 text-center text-muted-foreground">
                       Sin peligros registrados aún.
                     </td>
                   </tr>
@@ -383,83 +295,6 @@ export function MatrizIpevr({ selectedEmpresaId: propEmpresaId }: { selectedEmpr
           </Card>
         </TabsContent>
       </Tabs>
-
-      <Dialog open={!!detalle} onOpenChange={(o) => !o && setDetalle(null)}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-          {detalle && (
-            <>
-              <DialogHeader>
-                <DialogTitle className="text-base" style={{ color: SST_TOKENS.navy }}>
-                  {detalle.proceso} · {detalle.descripcion_peligro}
-                </DialogTitle>
-              </DialogHeader>
-              <div className="space-y-3 text-sm">
-                <DetSec t="Contexto" rows={[
-                  ["Proceso", detalle.proceso],
-                  ["Actividad", detalle.actividad],
-                  ["Tarea", detalle.tarea],
-                  ["Zona / lugar", detalle.zona],
-                  ["¿Rutinaria?", detalle.rutinaria ? "Sí" : "No"],
-                  ["N.º expuestos", detalle.n_expuestos],
-                ]} />
-                <DetSec t="Peligro" rows={[
-                  ["Clasificación", detalle.clasificacion_peligro],
-                  ["Descripción", detalle.descripcion_peligro],
-                  ["Especificación", detalle.especificacion],
-                  ["Efectos posibles", detalle.efectos_posibles],
-                ]} />
-                <DetSec t="Controles existentes" rows={[
-                  ["Fuente", detalle.control_fuente],
-                  ["Medio", detalle.control_medio],
-                  ["Individuo", detalle.control_individuo],
-                ]} />
-                <DetSec t="Valoración del riesgo (GTC 45)" rows={[
-                  ["ND · NE · NP", `${detalle.nd} · ${detalle.ne} · ${detalle.np ?? ""}`],
-                  ["NC · NR", `${detalle.nc} · ${detalle.nr ?? ""}`],
-                  ["Interpretación NR", detalle.interpretacion_nr],
-                  ["Aceptabilidad", detalle.aceptabilidad],
-                  ["Peor consecuencia", detalle.peor_consecuencia],
-                ]} />
-                <DetSec t="Medidas de intervención (jerarquía)" rows={[
-                  ["Eliminación", detalle.medida_eliminacion],
-                  ["Sustitución", detalle.medida_sustitucion],
-                  ["Controles de ingeniería", detalle.control_ingenieria],
-                  ["Controles administrativos", detalle.control_administrativo],
-                  ["EPP", detalle.medida_epp],
-                ]} />
-                <DetSec t="Gestión del cambio" rows={[
-                  ["Plan de acción", detalle.gc_plan_accion],
-                  ["Fecha implementación", detalle.gc_fecha_implementacion],
-                  ["Tipo de plan", detalle.gc_tipo_plan],
-                  ["Controles propuestos", detalle.gc_controles_propuestos],
-                  ["Controles implementados", detalle.gc_controles_implementados],
-                  ["% de cumplimiento", detalle.gc_pct_cumplimiento != null ? `${detalle.gc_pct_cumplimiento}%` : ""],
-                ]} />
-              </div>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
-    </div>
-  )
-}
-
-function DetSec({ t, rows }: { t: string; rows: [string, any][] }) {
-  const visibles = rows.filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== "")
-  if (!visibles.length) return null
-  return (
-    <div className="rounded-md border">
-      <div className="px-2 py-1 text-xs font-bold text-white" style={{ background: SST_TOKENS.navy }}>{t}</div>
-      <table className="w-full">
-        <tbody>
-          {visibles.map(([k, v], i) => (
-            <tr key={i} className="border-b last:border-0">
-              <td className="px-2 py-1 align-top text-xs font-medium text-muted-foreground w-48">{k}</td>
-              <td className="px-2 py-1 align-top text-xs">{String(v)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   )
 }

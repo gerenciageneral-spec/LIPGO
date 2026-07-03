@@ -232,6 +232,7 @@ export default function DashboardOperacionDia() {
     if (estadoNormalized === "Finalizado LIP") return "bg-blue-600 text-white"
     if (estadoNormalized === "En proceso") return "bg-blue-100 text-blue-700"
     if (estadoNormalized === "En cola") return "bg-yellow-100 text-yellow-700"
+    if (estadoNormalized === "Proceso Pausado") return "bg-red-600 text-white"
     if (estadoNormalized === "Sin lote" || estadoNormalized === "Por Pesar") return "bg-red-100 text-red-700"
     return "bg-slate-100 text-slate-700"
   }
@@ -453,10 +454,13 @@ export default function DashboardOperacionDia() {
                       Fin.Op
                     </TableHead>
                     <TableHead className="text-[10px] font-semibold text-slate-700 whitespace-nowrap py-1 px-1">
-                      Pes.Fin
+                      T.Proc
                     </TableHead>
                     <TableHead className="text-[10px] font-semibold text-slate-700 whitespace-nowrap py-1 px-1">
-                      T.Proc
+                      T.Pausa
+                    </TableHead>
+                    <TableHead className="text-[10px] font-semibold text-slate-700 whitespace-nowrap py-1 px-1">
+                      Pes.Fin
                     </TableHead>
                     <TableHead className="text-[10px] font-semibold text-slate-700 whitespace-nowrap py-1 px-1">
                       Estado
@@ -466,7 +470,7 @@ export default function DashboardOperacionDia() {
                 <TableBody>
                   {dashboardData.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={15} className="text-center py-4 text-sm text-slate-500">
+                      <TableCell colSpan={16} className="text-center py-4 text-sm text-slate-500">
                         No hay datos disponibles
                       </TableCell>
                     </TableRow>
@@ -508,10 +512,17 @@ export default function DashboardOperacionDia() {
                           {formatTime(row.fincargue)}
                         </TableCell>
                         <TableCell className="text-[10px] whitespace-nowrap py-1 px-1">
-                          {row.pesajefinal || "-"}
+                          {row.tiempo_en_proceso || "-"}
+                        </TableCell>
+                        <TableCell
+                          className={`text-[10px] whitespace-nowrap py-1 px-1 ${
+                            row.estado?.trim() === "Proceso Pausado" ? "font-semibold text-red-600" : ""
+                          }`}
+                        >
+                          {row.total_tiempo_pausado || "-"}
                         </TableCell>
                         <TableCell className="text-[10px] whitespace-nowrap py-1 px-1">
-                          {row.tiempo_en_proceso || "-"}
+                          {row.pesajefinal || "-"}
                         </TableCell>
                         <TableCell className="whitespace-nowrap py-1 px-1">
                           <span
@@ -550,7 +561,7 @@ export default function DashboardOperacionDia() {
   )
 }
 
-/* ──────────────────────────────────────────────────────────────────
+/* ─────��────────────────────────────────────────────────────────────
  * DashboardTicker
  *
  * Tira de mensajes con desplazamiento horizontal continuo, estilo

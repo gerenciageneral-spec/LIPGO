@@ -4,6 +4,7 @@ import Link from "next/link"
 import { FileText, Wallet, CalendarClock, BarChart3, Receipt, AlertCircle, ArrowRight } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { usePortal } from "@/components/portal/portal-provider"
+import { ReglamentoInterno } from "@/components/portal/reglamento-interno"
 
 /**
  * Acciones rapidas del Inicio del portal. Las rutas apuntan a /portal/* al
@@ -73,6 +74,9 @@ export default function PortalInicioPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      {/* Reglamento Interno de Trabajo: lectura y confirmacion */}
+      <ReglamentoInterno />
+
       {/* Accesos rapidos tipo app bancaria */}
       <section>
         <div className="flex items-center justify-between mb-3">

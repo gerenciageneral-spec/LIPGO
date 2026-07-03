@@ -101,58 +101,6 @@ export async function getLocationsFromSaldoInvDetalleForTransactions(
   }
 }
 
-/**
- * Localizaciones de una BODEGA (almacén) específica que además tienen saldo en
- * saldoinvdetalle para la empresa. Cruza `locations.bodega = bodegaId` con las
- * localizaciones presentes en saldoinvdetalle. Alimenta el campo Localización
- * del módulo de Transacciones: solo muestra las localizaciones de la bodega
- * elegida en el campo Almacén.
- */
-export async function getLocationsByWarehouse(
-  bodegaId: number,
-  selectedEmpresaId?: number | null,
-): Promise<string[]> {
-  try {
-    if (!bodegaId) return []
-    const supabase = await createClient()
-    const empresaId = selectedEmpresaId ?? (await getCurrentEmpresaId())
-
-    // 1) Códigos de localización que pertenecen a la bodega.
-    const { data: locs, error: locErr } = await supabase
-      .from("locations")
-      .select("codigo")
-      .eq("bodega", bodegaId)
-    if (locErr) {
-      console.error("[v0] getLocationsByWarehouse: error locations:", locErr)
-      return []
-    }
-    const codigosBodega = new Set((locs ?? []).map((l: any) => String(l.codigo)))
-    if (codigosBodega.size === 0) return []
-
-    // 2) Localizaciones con saldo en saldoinvdetalle para la empresa (paginado).
-    const conSaldo = new Set<string>()
-    let from = 0
-    while (true) {
-      const { data, error } = await supabase
-        .from("saldoinvdetalle")
-        .select("location")
-        .eq("idempresa", empresaId)
-        .range(from, from + 999)
-      if (error) { console.error("[v0] getLocationsByWarehouse: error saldos:", error); break }
-      for (const r of data ?? []) if (r.location) conSaldo.add(String(r.location))
-      if (!data || data.length < 1000) break
-      from += 1000
-      if (from > 60000) break
-    }
-
-    // 3) Intersección: localizaciones de la bodega que además tienen saldo.
-    return [...conSaldo].filter((loc) => codigosBodega.has(loc)).sort()
-  } catch (error) {
-    console.error("[v0] Unexpected error getLocationsByWarehouse:", error)
-    return []
-  }
-}
-
 export async function getProductosFromSaldoInvDetalleByLocation(
   location: string,
   // `onlyWithStock`: si es true, descartamos filas con stock_disp <= 0
@@ -354,11 +302,14 @@ export async function getLocationsByProductAndBatch(
   }
 }
 
-export async function getLocations(bodegaId?: number): Promise<Location[]> {
+export async function getLocations(
+  bodegaId?: number,
+  selectedEmpresaId?: number | null,
+): Promise<Location[]> {
   try {
     const supabase = await createClient()
 
-    const empresaId = await getCurrentEmpresaIdForInsert()
+    const empresaId = selectedEmpresaId ?? (await getCurrentEmpresaIdForInsert())
     console.log("[v0] Filtering locations by empresa_id:", empresaId)
 
     let query = supabase
@@ -424,7 +375,7 @@ export async function getLocationsWithId(
   }
 }
 
-export async function getProductsWithCodes() {
+export async function getProductsWithCodes(selectedEmpresaId?: number | null) {
   try {
     const supabase = await createClient()
 
@@ -434,6 +385,15 @@ export async function getProductsWithCodes() {
       .eq("activo", true)
       .order("nombre", { ascending: true })
 
+    // Filtro dinamico de empresa: solo se aplica cuando el llamador pasa
+    // explicitamente un `selectedEmpresaId` (p.ej. el modulo de Inventario,
+    // que respeta el selector de empresa de la barra superior). Los flujos
+    // de Produccion/QR siguen llamando sin argumento y conservan el
+    // comportamiento previo (catalogo completo de productos activos).
+    if (selectedEmpresaId) {
+      query = query.eq("id_empresa", selectedEmpresaId)
+    }
+
     const { data, error } = await query
 
     if (error) {
@@ -441,7 +401,13 @@ export async function getProductsWithCodes() {
       return []
     }
 
-    console.log("[v0] Fetched", data?.length || 0, "productos without empresa filter in production entry")
+    console.log(
+      "[v0] Fetched",
+      data?.length || 0,
+      "productos (empresa filter:",
+      selectedEmpresaId ?? "none",
+      ")",
+    )
     return (data as ProductWithCode[]) || []
   } catch (error) {
     console.error("[v0] Unexpected error:", error)
@@ -498,8 +464,6 @@ export interface InventoryTransaction {
   cantidad: number
   tipo_movimiento: "Entrada" | "Salida" | "Reproceso"
   observaciones?: string | null // Added observaciones field
-  cod_movimiento?: string | null // Código de nomenclatura elegido (si null, lo deriva el trigger)
-  clave_responsable?: string | null // Clave del responsable que autoriza el movimiento (control de acceso)
 }
 
 export async function registerInventoryTransaction(transaction: InventoryTransaction) {
@@ -527,33 +491,7 @@ export async function registerInventoryTransaction(transaction: InventoryTransac
     const empresaId = await getCurrentEmpresaIdForInsert()
     const usuario = await getCurrentUsuarioForInsert()
 
-    // Clave del responsable (control de acceso). Si hay claves configuradas en
-    // inv_clave_movimiento, se EXIGE una clave válida; si la tabla no existe o
-    // no hay claves activas, el movimiento queda LIBRE (transición/pruebas).
-    const claveInput = String(transaction.clave_responsable ?? "").trim()
-    let autoriza = ""
-    try {
-      const admin = await getSupabaseAdmin()
-      const { data: claves, error: claveErr } = await admin
-        .from("inv_clave_movimiento")
-        .select("responsable,clave")
-        .eq("activo", true)
-      if (!claveErr && claves && claves.length > 0) {
-        if (!claveInput) return { success: false, message: "Ingresa la clave del responsable para mover inventario." }
-        const match = claves.find((c: any) => String(c.clave) === claveInput)
-        if (!match) return { success: false, message: "Clave de responsable inválida. No se registró el movimiento." }
-        autoriza = match.responsable || ""
-      }
-    } catch {
-      /* tabla no disponible aún → movimiento libre */
-    }
-    // No se guarda la clave en claro; se deja la trazabilidad de quién autorizó.
-    const obsBase = transaction.observaciones || ""
-    const obsConClave = autoriza
-      ? `${obsBase}${obsBase ? " · " : ""}[autoriza: ${autoriza}]`
-      : obsBase || null
-
-    const insertData: any = {
+    const insertData = {
       id: nextId,
       idempresa: empresaId,
       idproducto: transaction.id_producto,
@@ -564,14 +502,12 @@ export async function registerInventoryTransaction(transaction: InventoryTransac
       almacen: transaction.almacen, // Now stores almacen name (string) instead of ID
       cantidad: transaction.cantidad,
       tipomov: transaction.tipo_movimiento,
-      observaciones: obsConClave, // Added observaciones field to insert data
+      observaciones: transaction.observaciones || null, // Added observaciones field to insert data
       status: "aprobado",
       origen: "transaccion manual",
       creadopor: usuario,
       creado: await getColombiaDateTime(), // Using Colombia timezone - MUST await
     }
-    // Código de nomenclatura elegido (si no viene, el trigger lo deriva).
-    if (transaction.cod_movimiento) insertData.cod_movimiento = transaction.cod_movimiento
 
     console.log("[v0] Insert data:", insertData)
 
@@ -1548,20 +1484,24 @@ export async function approveProductionEntry(
 
 export async function rejectProductionEntry(id: number): Promise<{ success: boolean; message: string }> {
   try {
-    const supabase = await createClient()
-    const { error } = await supabase.from("invtrans").update({ status: "rechazado" }).eq("id", id)
-
-    if (error) {
-      console.error("[v0] Error rejecting production entry:", error)
-      return { success: false, message: "Error al rechazar el ingreso: " + error.message }
-    }
-
-    return { success: true, message: "Ingreso rechazado exitosamente" }
-  } catch (error) {
-    console.error("[v0] Unexpected error rejecting production entry:", error)
-    return { success: false, message: "Error inesperado al rechazar el ingreso" }
+  // Al rechazar un ingreso de produccion simplemente eliminamos la linea de
+  // invtrans (ya no se marca como "rechazado"). Se usa el cliente admin
+  // porque la tabla `invtrans` tiene RLS habilitada y el cliente anon no
+  // puede escribir/eliminar en ella.
+  const supabase = await getSupabaseAdmin()
+  const { error } = await supabase.from("invtrans").delete().eq("id", id)
+  
+  if (error) {
+  console.error("[v0] Error rejecting production entry:", error)
+  return { success: false, message: "Error al rechazar el ingreso: " + error.message }
   }
-}
+  
+  return { success: true, message: "Ingreso rechazado y eliminado exitosamente" }
+  } catch (error) {
+  console.error("[v0] Unexpected error rejecting production entry:", error)
+  return { success: false, message: "Error inesperado al rechazar el ingreso" }
+  }
+  }
 
 export interface InventoryTransactionRecord {
   id: number
@@ -1583,7 +1523,6 @@ export interface InventoryTransactionRecord {
   fechaprod?: string | null // Added fechaprod field to InventoryTransactionRecord interface
   almacen?: string // Added almacen field to InventoryTransactionRecord interface
   ordentolva?: string | null // Orden de tolva asociada al ingreso de produccion
-  cod_movimiento?: string | null // Código de nomenclatura del movimiento (101/601/311/701/702/551)
 }
 
 export async function getAllInventoryTransactions(filters?: {
@@ -1597,11 +1536,16 @@ export async function getAllInventoryTransactions(filters?: {
   idempresa?: number
 }): Promise<InventoryTransactionRecord[]> {
   try {
-    const supabase = await createClient()
+    // La tabla `invtrans` tiene RLS habilitada y el cliente anon no puede
+    // leerla (devuelve 0 filas), por eso la tabla aparecia vacia. Usamos el
+    // cliente admin (service_role) para poder leer, igual que otros modulos
+    // que consultan tablas protegidas. El aislamiento por empresa se sigue
+    // garantizando con el filtro `idempresa` de abajo.
+    const supabase = await getSupabaseAdmin()
     let query = supabase
       .from("invtrans")
       .select(
-        "id, idempresa, idproducto, codproducto, nombreproducto, lote, location, cantidad, tipomov, status, origen, creadopor, creado, pdf, observaciones, fechavencimiento, fechaprod, almacen, ordentolva, cod_movimiento",
+        "id, idempresa, idproducto, codproducto, nombreproducto, lote, location, cantidad, tipomov, status, origen, creadopor, creado, pdf, observaciones, fechavencimiento, fechaprod, almacen, ordentolva",
       )
 
     // Filter by empresa_id if provided
@@ -1953,10 +1897,11 @@ export async function getAllLocationsFromSaldoInvDetalle(): Promise<string[]> {
  */
 export async function getLocationsFromSaldoInvDetalle(
   bodegaId?: number,
+  selectedEmpresaId?: number | null,
 ): Promise<string[]> {
   try {
     const supabase = await createClient()
-    const empresaId = await getCurrentEmpresaId()
+    const empresaId = selectedEmpresaId ?? (await getCurrentEmpresaId())
 
     const { data, error } = await supabase
       .from("saldoinvdetalle")
@@ -2020,10 +1965,12 @@ export async function getLocationsFromSaldoInvDetalle(
   }
 }
 
-export async function getProductsFromSaldoInvDetalle(): Promise<string[]> {
+export async function getProductsFromSaldoInvDetalle(
+  selectedEmpresaId?: number | null,
+): Promise<string[]> {
   try {
     const supabase = await createClient()
-    const empresaId = await getCurrentEmpresaId()
+    const empresaId = selectedEmpresaId ?? (await getCurrentEmpresaId())
 
     const { data, error } = await supabase
       .from("saldoinvdetalle")
@@ -2218,7 +2165,8 @@ export async function registerProductTransfer(
 export async function getInventoryForAudit(
   location: string,
   productFilter?: string,
-): Promise<{ nombreproducto: string; lote: string; stock_actual: number }[]> {
+  selectedEmpresaId?: number | null,
+  ): Promise<{ nombreproducto: string; lote: string; stock_actual: number }[]> {
   const supabase = await createClient()
   // Aplicamos el filtro dinamico de empresa (mismo helper que el resto
   // de funciones del modulo). Sin esto, dos empresas con el mismo
@@ -2226,7 +2174,7 @@ export async function getInventoryForAudit(
   // conteo fisico se cargarian lotes que no pertenecen a la empresa
   // activa. `stock_actual > 0` ya estaba; lo conservamos para que el
   // operador solo vea producto realmente contable.
-  const empresaId = await getCurrentEmpresaId()
+  const empresaId = selectedEmpresaId ?? (await getCurrentEmpresaId())
 
   let query = supabase
     .from("saldoinvdetalle")

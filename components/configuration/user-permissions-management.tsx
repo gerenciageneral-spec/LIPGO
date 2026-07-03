@@ -51,18 +51,6 @@ function collectPerms(modules: { name: string; label?: string }[]): PermItem[] {
   return out
 }
 
-// Permisos que NO son modulos del menu pero deben poder otorgarse aqui.
-// Caso SIG: las pestanas por norma viven dentro de un unico modulo
-// ("Matriz Integrada SIG"), pero cada una tiene su permiso. Se inyectan en su
-// subgrupo para que Gestion de Usuarios los exponga sin crear items de menu.
-const EXTRA_PERMS_POR_SUBGRUPO: Record<string, PermItem[]> = {
-  "Sistema Integrado (SIG)": [
-    { key: "sig_iso9001", label: "— Pestaña ISO 9001:2015" },
-    { key: "sig_iso14001", label: "— Pestaña ISO 14001:2015" },
-    { key: "sig_iso45001", label: "— Pestaña ISO 45001:2018" },
-  ],
-}
-
 const PERMISSION_TREE: PermGroup[] = groups
   .map((g) => {
     const sections: PermSection[] = []
@@ -71,7 +59,7 @@ const PERMISSION_TREE: PermGroup[] = groups
       if (perms.length) sections.push({ title: null, permissions: perms })
     }
     for (const sg of g.subgroups ?? []) {
-      const perms = [...collectPerms(sg.modules), ...(EXTRA_PERMS_POR_SUBGRUPO[sg.title] ?? [])]
+      const perms = collectPerms(sg.modules)
       if (perms.length) sections.push({ title: sg.title, permissions: perms })
     }
     return { title: g.title, sections }

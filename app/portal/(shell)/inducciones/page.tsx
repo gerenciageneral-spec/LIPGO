@@ -42,9 +42,12 @@ export default function PortalInduccionesPage() {
     load()
   }, [colaborador?.colaborador_id])
 
-  // Una induccion esta aprobada si existe algun intento aprobado con su codigo.
-  const aprobadaPorCodigo = (codigo: string | null) =>
-    !!codigo && resultados.some((r) => r.codigo_sig === codigo && r.aprobado)
+  // Una induccion esta aprobada si existe algun intento aprobado para ESA
+  // capacitacion. Se empareja por `capacitacion_id` (el id de la induccion),
+  // que es un identificador estable; NO por `codigo_sig`, porque ese campo
+  // puede ser null o diferir entre `capacitaciones` y su evaluacion asociada.
+  const aprobadaPorInduccion = (induccionId: string) =>
+    resultados.some((r) => r.capacitacion_id === induccionId && r.aprobado)
 
   return (
     <div className="space-y-6">
@@ -82,7 +85,7 @@ export default function PortalInduccionesPage() {
       ) : (
         <div className="grid gap-3">
           {inducciones.map((ind) => {
-            const aprobada = aprobadaPorCodigo(ind.codigo_sig)
+            const aprobada = aprobadaPorInduccion(ind.id)
             return (
               <Card key={ind.id} className="overflow-hidden transition-colors hover:border-primary/40">
                 <CardContent className="flex items-center justify-between gap-4 p-4">

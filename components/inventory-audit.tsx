@@ -14,6 +14,7 @@ import {
   getProductsFromSaldoInvDetalle,
   getInventoryForAudit,
 } from "@/lib/inventory-actions"
+import { useAuth } from "@/components/auth-provider"
 
 interface AuditItem {
   nombreproducto: string
@@ -33,6 +34,7 @@ interface AlmacenOption {
 const ALL_ALMACENES = "all"
 
 export default function InventoryAudit() {
+  const { selectedEmpresaId } = useAuth()
   const [almacenes, setAlmacenes] = useState<AlmacenOption[]>([])
   const [selectedAlmacen, setSelectedAlmacen] = useState<string>(ALL_ALMACENES)
   const [locations, setLocations] = useState<string[]>([])
@@ -48,26 +50,39 @@ export default function InventoryAudit() {
   // Carga inicial: almacenes y catalogo de productos (los productos no
   // dependen del almacen porque saldoinvdetalle ya viene filtrado por
   // empresa, y un producto puede existir en varias locations).
+  // Recargamos almacenes y catalogo de productos cada vez que cambia la
+  // empresa seleccionada en la barra superior. Ademas reseteamos las
+  // selecciones para que el usuario no quede con almacen/localizacion de
+  // otra empresa, y limpiamos cualquier conteo en curso.
   useEffect(() => {
     void loadAlmacenes()
     void loadProducts()
-  }, [])
+    setSelectedAlmacen(ALL_ALMACENES)
+    setSelectedProduct("all")
+    setAuditItems([])
+    setIsAuditing(false)
+    setIsValidated(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedEmpresaId])
 
   // Cuando cambia el almacen seleccionado, recargamos las localizaciones.
   // Memoizamos con useCallback porque la usamos como effect dependency
   // y queremos evitar recreaciones innecesarias.
-  const loadLocations = useCallback(async (bodegaId?: number) => {
-    setLoadingLocations(true)
-    try {
-      const locs = await getLocationsFromSaldoInvDetalle(bodegaId)
-      setLocations(locs)
-    } catch (error) {
-      console.error("[v0] Error loading locations:", error)
-      setLocations([])
-    } finally {
-      setLoadingLocations(false)
-    }
-  }, [])
+  const loadLocations = useCallback(
+    async (bodegaId?: number) => {
+      setLoadingLocations(true)
+      try {
+        const locs = await getLocationsFromSaldoInvDetalle(bodegaId, selectedEmpresaId)
+        setLocations(locs)
+      } catch (error) {
+        console.error("[v0] Error loading locations:", error)
+        setLocations([])
+      } finally {
+        setLoadingLocations(false)
+      }
+    },
+    [selectedEmpresaId],
+  )
 
   useEffect(() => {
     const bodegaId =
@@ -80,9 +95,9 @@ export default function InventoryAudit() {
 
   const loadAlmacenes = async () => {
     try {
-      const data = await getAlmacenes()
+      const data = await getAlmacenes(selectedEmpresaId ?? undefined)
       // Mapeamos a la forma que necesita el Select. `getAlmacenes` ya
-      // devuelve solo los de la empresa activa.
+      // devuelve solo los de la empresa seleccionada (o la activa si no hay).
       const opts: AlmacenOption[] = (data ?? []).map((a: { id: number; nombre: string }) => ({
         id: a.id,
         nombre: a.nombre,
@@ -96,7 +111,7 @@ export default function InventoryAudit() {
 
   const loadProducts = async () => {
     try {
-      const prods = await getProductsFromSaldoInvDetalle()
+      const prods = await getProductsFromSaldoInvDetalle(selectedEmpresaId)
       setProducts(prods)
     } catch (error) {
       console.error("[v0] Error loading products:", error)
@@ -113,7 +128,7 @@ export default function InventoryAudit() {
     setIsValidated(false)
 
     try {
-      const data = await getInventoryForAudit(selectedLocation, selectedProduct)
+      const data = await getInventoryForAudit(selectedLocation, selectedProduct, selectedEmpresaId)
 
       // Initialize audit items with conteo = 0 and diferencia = 0
       const items: AuditItem[] = data.map((item) => ({

@@ -981,8 +981,11 @@ export async function registerHoraPicking(orderId: number) {
 
 /**
  * Pausa el proceso de cargue de una orden. Crea una nueva linea en la tabla
- * `pausas` con el numero de orden, la hora de inicio del paro (hora Colombia)
- * y activo = true. Solo deberia llamarse cuando la orden ya tiene iniciocargue.
+ * `pausas` con el numero de orden y la hora de inicio del paro (hora Colombia).
+ * NO se envia `activo`: esa columna es generada por la base de datos (se
+ * calcula automaticamente a partir de `fin`), por lo que insertar un valor
+ * explicito produce el error "cannot insert a non default value into column
+ * activo". Solo deberia llamarse cuando la orden ya tiene iniciocargue.
  */
 export async function pausarOrden(ordenCargue: string) {
   const supabase = await createClient()
@@ -992,7 +995,6 @@ export async function pausarOrden(ordenCargue: string) {
     {
       ordendecargue: ordenCargue,
       inicio,
-      activo: true,
     },
   ])
 

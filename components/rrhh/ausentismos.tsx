@@ -43,8 +43,7 @@ import {
   type Diagnostico,
   type HeadcountColaborador,
 } from "@/lib/ausentismos-actions"
-import { AusentismosResumen } from "@/components/rrhh/ausentismos-dashboards"
-import { AusentismosAnalisisDiario } from "@/components/rrhh/ausentismos-analisis-diario"
+import { AusentismosResumen, AusentismosCostos } from "@/components/rrhh/ausentismos-dashboards"
 import {
   Plus,
   Trash2,
@@ -55,6 +54,7 @@ import {
   FileDown,
   ListChecks,
   BarChart3,
+  DollarSign,
 } from "lucide-react"
 
 // Meses para el selector de "Mes de la incapacidad".
@@ -98,7 +98,6 @@ const initialForm = {
   salario_base_dia: "",
   costos_empresa: "",
   costos_eps: "",
-  costos_arl: "",
   total_salario_pagado: "",
   observaciones: "",
 }
@@ -127,6 +126,7 @@ export default function Ausentismos() {
   const [tipoFiltro, setTipoFiltro] = useState<"todos" | "EG" | "AT">("todos")
   const [soloRevision, setSoloRevision] = useState(false)
   // Filtro por centro de trabajo (proyecto en el que se está trabajando).
+  const [proyectoFiltro, setProyectoFiltro] = useState<string>("todos")
   // Filtros por año y mes (se derivan de la fecha inicial / campo mes).
   const [anioFiltro, setAnioFiltro] = useState<string>("todos")
   const [mesFiltro, setMesFiltro] = useState<string>("todos")
@@ -281,7 +281,6 @@ export default function Ausentismos() {
       salario_base_dia: a.salario_base_dia?.toString() ?? "",
       costos_empresa: a.costos_empresa?.toString() ?? "",
       costos_eps: a.costos_eps?.toString() ?? "",
-      costos_arl: a.costos_arl?.toString() ?? "",
       total_salario_pagado: a.total_salario_pagado?.toString() ?? "",
       observaciones: a.observaciones || "",
     })
@@ -297,21 +296,6 @@ export default function Ausentismos() {
     }))
     setDiagQuery(d.codigo)
     setDiagOpen(false)
-  }
-
-  // Al cambiar el tipo de evento, el costo de la entidad se mueve al campo
-  // correcto: EG -> EPS, AT -> ARL (la ARL asume el 100%). Así un único campo
-  // refleja siempre la entidad que paga según lo elegido en "Tipo de evento".
-  const handleTipoEvento = (value: "EG" | "AT") => {
-    setForm((f) => {
-      const entidadActual = f.tipo_evento === "AT" ? f.costos_arl : f.costos_eps
-      return {
-        ...f,
-        tipo_evento: value,
-        costos_eps: value === "EG" ? entidadActual : "",
-        costos_arl: value === "AT" ? entidadActual : "",
-      }
-    })
   }
 
   // Mantiene el total de dias = dias incapacidad + prorroga.
@@ -355,9 +339,7 @@ export default function Ausentismos() {
         salario_base: toNum(form.salario_base),
         salario_base_dia: toNum(form.salario_base_dia),
         costos_empresa: toNum(form.costos_empresa),
-        // El costo de la entidad va a EPS (EG) o a ARL (AT) según el tipo de evento.
-        costos_eps: form.tipo_evento === "AT" ? 0 : toNum(form.costos_eps),
-        costos_arl: form.tipo_evento === "AT" ? toNum(form.costos_arl) : 0,
+        costos_eps: toNum(form.costos_eps),
         total_salario_pagado: toNum(form.total_salario_pagado),
         observaciones: form.observaciones.trim() || null,
       }
@@ -433,6 +415,7 @@ export default function Ausentismos() {
       if (mesFiltro !== "todos" && mesDe(a) !== mesFiltro) return false
       if (estadoFiltro !== "todos" && (a.estado_colaborador || "").trim().toUpperCase() !== estadoFiltro)
         return false
+      if (proyectoFiltro !== "todos" && (a.centro_trabajo || "").trim() !== proyectoFiltro) return false
       if (tipoFiltro !== "todos" && a.tipo_evento !== tipoFiltro) return false
       if (soloRevision && !a.requiere_revision_sst) return false
       if (!q) return true
@@ -443,7 +426,7 @@ export default function Ausentismos() {
         (a.descripcion_diagnostico?.toLowerCase().includes(q) ?? false)
       )
     })
-  }, [items, search, tipoFiltro, soloRevision, anioFiltro, mesFiltro, estadoFiltro])
+  }, [items, search, tipoFiltro, soloRevision, proyectoFiltro, anioFiltro, mesFiltro, estadoFiltro])
 
   const totalRevision = useMemo(
     () => items.filter((i) => i.requiere_revision_sst).length,
@@ -591,7 +574,7 @@ export default function Ausentismos() {
                     <Label htmlFor="tipo">Tipo de evento</Label>
                     <Select
                       value={form.tipo_evento}
-                      onValueChange={(v) => handleTipoEvento(v as "EG" | "AT")}
+                      onValueChange={(v) => setForm({ ...form, tipo_evento: v as "EG" | "AT" })}
                     >
                       <SelectTrigger id="tipo" className="w-full">
                         <SelectValue />
@@ -794,36 +777,13 @@ export default function Ausentismos() {
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label htmlFor="cep">
-                      {form.tipo_evento === "AT" ? "Costos ARL (asume 100%)" : "Costos EPS"}
-                    </Label>
+                    <Label htmlFor="cep">Costos EPS/ARL</Label>
                     <Input
                       id="cep"
                       type="number"
-                      value={form.tipo_evento === "AT" ? form.costos_arl : form.costos_eps}
-                      onChange={(e) =>
-                        setForm({
-                          ...form,
-                          ...(form.tipo_evento === "AT"
-                            ? { costos_arl: e.target.value }
-                            : { costos_eps: e.target.value }),
-                        })
-                      }
+                      value={form.costos_eps}
+                      onChange={(e) => setForm({ ...form, costos_eps: e.target.value })}
                     />
-                    {form.tipo_evento === "AT" && (
-                      <button
-                        type="button"
-                        className="text-xs text-teal-600 hover:underline"
-                        onClick={() => {
-                          const dia = toNum(form.salario_base_dia)
-                          const dias = toNum(form.total_dias_incapacidad)
-                          if (dia && dias)
-                            setForm((f) => ({ ...f, costos_arl: String(Math.round(dia * dias)) }))
-                        }}
-                      >
-                        Calcular ARL = días × salario día
-                      </button>
-                    )}
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="tsp">Total salario pagado</Label>
@@ -920,7 +880,19 @@ export default function Ausentismos() {
             <SelectItem value="RETIRADO">Retirado</SelectItem>
           </SelectContent>
         </Select>
-        {/* El proyecto lo define el SELECTOR GLOBAL (conector) — sin filtro interno. */}
+        <Select value={proyectoFiltro} onValueChange={setProyectoFiltro}>
+          <SelectTrigger className="w-full sm:w-56">
+            <SelectValue placeholder="Proyecto / Centro de trabajo" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todos">Todos los proyectos</SelectItem>
+            {proyectos.map((p) => (
+              <SelectItem key={p} value={p}>
+                {p}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Select value={tipoFiltro} onValueChange={(v) => setTipoFiltro(v as typeof tipoFiltro)}>
           <SelectTrigger className="w-full sm:w-52">
             <SelectValue placeholder="Tipo de evento" />
@@ -948,13 +920,13 @@ export default function Ausentismos() {
             <ListChecks className="h-4 w-4" />
             Registros
           </TabsTrigger>
-          <TabsTrigger value="analisis" className="gap-2">
-            <AlertTriangle className="h-4 w-4" />
-            Análisis (control diario)
-          </TabsTrigger>
           <TabsTrigger value="resumen" className="gap-2">
             <BarChart3 className="h-4 w-4" />
             Resumen
+          </TabsTrigger>
+          <TabsTrigger value="costos" className="gap-2">
+            <DollarSign className="h-4 w-4" />
+            Costos
           </TabsTrigger>
         </TabsList>
 
@@ -1045,16 +1017,13 @@ export default function Ausentismos() {
           </div>
         </TabsContent>
 
-        <TabsContent value="analisis">
-          <AusentismosAnalisisDiario />
-        </TabsContent>
-
         <TabsContent value="resumen">
           <AusentismosResumen items={filtered} />
         </TabsContent>
 
-        {/* La hoja de Costos se movió al submódulo "Recobro de Incapacidades"
-            para centralizar toda la información de costos de incapacidades. */}
+        <TabsContent value="costos">
+          <AusentismosCostos items={filtered} />
+        </TabsContent>
       </Tabs>
     </div>
   )

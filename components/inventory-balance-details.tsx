@@ -24,6 +24,51 @@ import {
 } from "@/lib/inventory-actions"
 import { getCategoriasForFilter, getSubcategoriasForFilter, getProductosForFilter } from "@/lib/config-actions"
 
+/**
+ * Calcula la edad de un lote en dias a partir de un codigo con formato
+ * AAAAMMDD (p.ej. "20260107"), comparando esa fecha contra el dia de hoy.
+ * Devuelve el numero de dias transcurridos (positivo si el lote es del
+ * pasado) o `null` si el codigo no es una fecha valida en ese formato.
+ */
+function calcularEdadLote(lote: string | null | undefined): number | null {
+  if (!lote) return null
+  const limpio = lote.trim()
+  if (!/^\d{8}$/.test(limpio)) return null
+
+  const anio = Number(limpio.slice(0, 4))
+  const mes = Number(limpio.slice(4, 6))
+  const dia = Number(limpio.slice(6, 8))
+
+  // Validamos rangos basicos para descartar codigos que no son fechas.
+  if (mes < 1 || mes > 12 || dia < 1 || dia > 31) return null
+
+  const fechaLote = new Date(anio, mes - 1, dia)
+  // Verificamos que la fecha construida coincida (evita casos como 20260230).
+  if (
+    fechaLote.getFullYear() !== anio ||
+    fechaLote.getMonth() !== mes - 1 ||
+    fechaLote.getDate() !== dia
+  ) {
+    return null
+  }
+
+  const hoy = new Date()
+  // Normalizamos ambas fechas a medianoche para contar dias completos.
+  fechaLote.setHours(0, 0, 0, 0)
+  hoy.setHours(0, 0, 0, 0)
+
+  const msPorDia = 1000 * 60 * 60 * 24
+  return Math.round((hoy.getTime() - fechaLote.getTime()) / msPorDia)
+}
+
+/** Formatea la edad del lote para mostrarla en la tabla. */
+function formatearEdadLote(dias: number | null): string {
+  if (dias === null) return "-"
+  if (dias < 0) return `${Math.abs(dias)} días (futuro)`
+  if (dias === 0) return "Hoy"
+  return `${dias} ${dias === 1 ? "día" : "días"}`
+}
+
 export function InventoryBalanceDetails() {
   const { selectedEmpresaId } = useAuth()
   const [balances, setBalances] = useState<InventoryBalanceDetail[]>([])
@@ -70,7 +115,7 @@ export function InventoryBalanceDetails() {
 
   const loadProductos = async () => {
     try {
-      const data = await getProductosForFilter()
+      const data = await getProductosForFilter(selectedEmpresaId)
       setProductos(data)
     } catch (error) {
       console.error("[v0] Error loading productos:", error)
@@ -97,7 +142,7 @@ export function InventoryBalanceDetails() {
   }, [categoriaFilter])
 
   const loadLocations = async () => {
-    const data = await getLocations()
+    const data = await getLocations(undefined, selectedEmpresaId)
     setLocations(data)
   }
 
@@ -335,6 +380,7 @@ export function InventoryBalanceDetails() {
                   <TableHead className="sticky top-0 z-20 bg-muted border-b whitespace-nowrap">Categoría</TableHead>
                   <TableHead className="sticky top-0 z-20 bg-muted border-b whitespace-nowrap">Sub Categoría</TableHead>
                   <TableHead className="sticky top-0 z-20 bg-muted border-b whitespace-nowrap">Lote</TableHead>
+                  <TableHead className="sticky top-0 z-20 bg-muted border-b whitespace-nowrap">Edad del Lote</TableHead>
                   <TableHead className="sticky top-0 z-20 bg-muted border-b whitespace-nowrap">Localización</TableHead>
                   <TableHead className="sticky top-0 z-20 bg-muted border-b whitespace-nowrap text-right">Stock Disponible</TableHead>
                   <TableHead className="sticky top-0 z-20 bg-muted border-b whitespace-nowrap text-right">Stock Reservado</TableHead>
@@ -344,13 +390,13 @@ export function InventoryBalanceDetails() {
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
                       Cargando...
                     </TableCell>
                   </TableRow>
                 ) : balances.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
                       No se encontraron registros
                     </TableCell>
                   </TableRow>
@@ -363,6 +409,9 @@ export function InventoryBalanceDetails() {
                       <TableCell>{balance.categoria}</TableCell>
                       <TableCell>{balance.subcategoria}</TableCell>
                       <TableCell>{balance.lote}</TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        {formatearEdadLote(calcularEdadLote(balance.lote))}
+                      </TableCell>
                       <TableCell>{balance.location}</TableCell>
                       <TableCell className="text-right font-medium">{balance.stock_disp.toLocaleString()}</TableCell>
                       <TableCell className="text-right font-medium">{balance.stock_res.toLocaleString()}</TableCell>

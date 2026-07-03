@@ -4,7 +4,7 @@ import Link from "next/link"
 import Image from "next/image"
 import { usePathname, useRouter } from "next/navigation"
 import { useEffect, type ReactNode } from "react"
-import { Home, FileText, Wallet, CalendarClock, BarChart3, AlertCircle, GraduationCap, LogOut, Target, type LucideIcon } from "lucide-react"
+import { Home, FileText, Wallet, CalendarClock, BarChart3, AlertCircle, GraduationCap, LogOut, type LucideIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { usePortal } from "@/components/portal/portal-provider"
 import { cn } from "@/lib/utils"
@@ -29,9 +29,6 @@ const MENU: MenuItem[] = [
   // campo `asistencia` no es null para el colaborador autenticado
   // (ej: incapacidades, permisos, ausencias). Filtra por
   // `identificacion`.
-  // "Mi aporte" = vista individual del trabajador: cómo contribuye a las metas
-  // de LIP y cuándo incumple (en vivo desde LIPgo, ligado a su desempeño).
-  { label: "Mi aporte", href: "/portal/mi-aporte", icon: Target },
   { label: "Novedades", href: "/portal/novedades", icon: AlertCircle },
   // "Balance" abrevia "Balance de toneladas y horas extra" para que
   // quepa comodo en el menu inferior movil. La pagina filtra por el

@@ -26,7 +26,7 @@ import {
   getWarehouses,
   registerInventoryTransaction,
   searchInventoryByQR,
-  getLocationsByWarehouse,
+  getLocationsFromSaldoInvDetalleForTransactions,
   getProductosFromSaldoInvDetalleByLocation,
   getLotesFromSaldoInvDetalleByLocationAndProduct,
 } from "@/lib/inventory-actions"
@@ -77,54 +77,25 @@ export function InventoryTransactionsForm() {
     localizacion: "",
     cantidad: "",
     tipo_movimiento: "",
-    cod_movimiento: "", // código de nomenclatura del movimiento
-    clave: "", // clave del responsable (control; libre mientras se prueba)
     observaciones: "",
   })
-
-  // Conceptos de la nomenclatura según el tipo de movimiento (código LIPgo).
-  const CONCEPTOS: Record<string, { c: string; l: string }[]> = {
-    Entrada: [
-      { c: "701", l: "Sobrante / Ajuste + (701)" },
-      { c: "101", l: "Recepción / Devolución (101)" },
-      { c: "561", l: "Inventario inicial (561)" },
-    ],
-    Salida: [
-      { c: "702", l: "Faltante / Ajuste − (702)" },
-      { c: "601", l: "Despacho (601)" },
-    ],
-    Reproceso: [{ c: "551", l: "Merma / Reproceso (551)" }],
-  }
-  const codigoPorDefecto = (tipo: string) => (tipo === "Entrada" ? "701" : tipo === "Salida" ? "702" : tipo === "Reproceso" ? "551" : "")
 
   useEffect(() => {
     loadData()
   }, [selectedEmpresaId])
 
-  // Al cambiar de empresa: limpiar bodega, localizaciones y selecciones dependientes.
+  // Load all locations from saldoinvdetalle when component mounts or empresa changes
   useEffect(() => {
-    setAllLocations([])
+    const loadLocationsFromSaldo = async () => {
+      const locations = await getLocationsFromSaldoInvDetalleForTransactions(selectedEmpresaId)
+      setAllLocations(locations)
+    }
+    loadLocationsFromSaldo()
+    // Al cambiar de empresa, limpiar las selecciones dependientes.
     setFormData((prev) => ({ ...prev, localizacion: "", producto: "", id_producto: 0, codigo_producto: "", lote: "" }))
     setSelectedWarehouse(null)
     setCurrentStock(null)
   }, [selectedEmpresaId])
-
-  // Las localizaciones dependen de la BODEGA (almacén) elegida: solo se muestran
-  // las localizaciones amarradas a esa bodega que además tienen saldo.
-  useEffect(() => {
-    const loadLocationsForWarehouse = async () => {
-      if (!selectedWarehouse) {
-        setAllLocations([])
-        return
-      }
-      const locations = await getLocationsByWarehouse(selectedWarehouse, selectedEmpresaId)
-      setAllLocations(locations)
-    }
-    loadLocationsForWarehouse()
-    // Al cambiar de bodega, limpiar localización/producto/lote.
-    setFormData((prev) => ({ ...prev, localizacion: "", producto: "", id_producto: 0, codigo_producto: "", lote: "" }))
-    setCurrentStock(null)
-  }, [selectedWarehouse, selectedEmpresaId])
 
   // When location changes (or el tipo de movimiento cambia), recargar
   // los productos de esa localizacion. Para Salida/Reproceso pasamos
@@ -212,14 +183,14 @@ export function InventoryTransactionsForm() {
   const loadData = async () => {
     const [warehousesData, productsData] = await Promise.all([
       getWarehouses(selectedEmpresaId),
-      getProductsWithCodes(),
+      getProductsWithCodes(selectedEmpresaId),
     ])
     setWarehouses(warehousesData)
     setProducts(productsData)
   }
 
   const loadLocations = async (warehouseId: number) => {
-    const locationsData = await getLocations(warehouseId)
+    const locationsData = await getLocations(warehouseId, selectedEmpresaId)
     setLocations(locationsData)
   }
 
@@ -321,8 +292,6 @@ export function InventoryTransactionsForm() {
       localizacion: "",
       cantidad: "",
       tipo_movimiento: "",
-      cod_movimiento: "",
-      clave: "",
       observaciones: "",
     })
     setCurrentStock(null)
@@ -450,8 +419,6 @@ export function InventoryTransactionsForm() {
       cantidad: Number.parseFloat(formData.cantidad),
       tipo_movimiento: formData.tipo_movimiento as "Entrada" | "Salida" | "Reproceso",
       observaciones: formData.observaciones,
-      cod_movimiento: formData.cod_movimiento || codigoPorDefecto(formData.tipo_movimiento) || null,
-      clave_responsable: formData.clave || null,
     })
 
     console.log("[v0] Transaction result:", result)
@@ -500,8 +467,6 @@ export function InventoryTransactionsForm() {
         localizacion: "",
         cantidad: "",
         tipo_movimiento: "",
-        cod_movimiento: "",
-        clave: "",
         observaciones: "",
       })
       setCurrentStock(null)
@@ -671,7 +636,7 @@ export function InventoryTransactionsForm() {
                 </Label>
                 <Select
                   value={formData.tipo_movimiento}
-                  onValueChange={(value) => setFormData({ ...formData, tipo_movimiento: value, lote: "", cod_movimiento: codigoPorDefecto(value) })}
+                  onValueChange={(value) => setFormData({ ...formData, tipo_movimiento: value, lote: "" })}
                 >
                   <SelectTrigger id="tipo_movimiento" className="h-8 md:h-9 text-xs md:text-sm">
                     <SelectValue placeholder="Seleccionar tipo" />
@@ -683,31 +648,6 @@ export function InventoryTransactionsForm() {
                   </SelectContent>
                 </Select>
               </div>
-
-              {/* Concepto / código de nomenclatura (lo nuevo). Queda en invtrans.cod_movimiento. */}
-              {formData.tipo_movimiento && (
-                <div className="space-y-2">
-                  <Label htmlFor="cod_movimiento" className="text-xs md:text-sm">
-                    Concepto del movimiento (nomenclatura)
-                  </Label>
-                  <Select
-                    value={formData.cod_movimiento || codigoPorDefecto(formData.tipo_movimiento)}
-                    onValueChange={(value) => setFormData({ ...formData, cod_movimiento: value })}
-                  >
-                    <SelectTrigger id="cod_movimiento" className="h-8 md:h-9 text-xs md:text-sm">
-                      <SelectValue placeholder="Seleccionar concepto" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(CONCEPTOS[formData.tipo_movimiento] || []).map((o) => (
-                        <SelectItem key={o.c} value={o.c}>{o.l}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-[11px] text-muted-foreground">
-                    Código que identifica el movimiento en el inventario: <b>{formData.cod_movimiento || codigoPorDefecto(formData.tipo_movimiento) || "—"}</b>
-                  </p>
-                </div>
-              )}
 
               <div className="space-y-2">
                 <Label htmlFor="localizacion" className="text-xs md:text-sm">
@@ -885,24 +825,6 @@ export function InventoryTransactionsForm() {
                 placeholder="Ingrese observaciones adicionales (opcional)"
                 className="h-8 md:h-9 text-xs md:text-sm"
               />
-            </div>
-
-            {/* Clave del responsable: control de quién mueve inventario.
-                Libre mientras se prueba; luego será obligatoria por responsable. */}
-            <div className="space-y-2">
-              <Label htmlFor="clave" className="text-xs md:text-sm">
-                Clave del responsable <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                id="clave"
-                type="password"
-                value={formData.clave}
-                onChange={(e) => setFormData({ ...formData, clave: e.target.value })}
-                placeholder="Clave que autoriza el movimiento"
-                className="h-8 md:h-9 text-xs md:text-sm"
-                autoComplete="off"
-              />
-              <p className="text-[11px] text-muted-foreground">Cada responsable usa su clave para autorizar el movimiento (queda registrado quién autoriza).</p>
             </div>
 
             <div className="flex justify-end">

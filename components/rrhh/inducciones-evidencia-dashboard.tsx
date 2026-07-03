@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { AlertTriangle, CheckCircle2, Search, BookOpen, ClipboardList, FileText, Loader2, Trash2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { useAuth } from "@/hooks/use-auth"
 import {
   getEvidenciaInducciones,
   guardarEvidenciaInduccion,
@@ -45,6 +46,7 @@ export default function InduccionesEvidenciaDashboard() {
   const [intentoAEliminar, setIntentoAEliminar] = useState<IntentoInduccion | null>(null)
   const [eliminandoId, setEliminandoId] = useState<string | null>(null)
   const { toast } = useToast()
+  const { selectedEmpresaId } = useAuth()
 
   // Elimina el intento: borra el resultado del trabajador y reabre la induccion.
   const confirmarEliminar = async () => {
@@ -69,7 +71,7 @@ export default function InduccionesEvidenciaDashboard() {
     let cancelled = false
     const load = async () => {
       setLoading(true)
-      const result = await getEvidenciaInducciones()
+      const result = await getEvidenciaInducciones(selectedEmpresaId)
       if (!cancelled) {
         setIntentos(result.success ? result.data : [])
         setLoading(false)
@@ -79,7 +81,7 @@ export default function InduccionesEvidenciaDashboard() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [selectedEmpresaId])
 
   // Genera el PDF de evidencia, lo sube al storage, persiste su URL en la
   // evaluacion y lo abre en una nueva pestana.

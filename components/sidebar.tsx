@@ -199,7 +199,6 @@ export function Sidebar({
     { key: "auditoria" as GroupKey, label: "Auditoría", icon: Search },
     { key: "integral" as GroupKey, label: "Gestión Integral", icon: LayoutDashboard },
     { key: "lip" as GroupKey, label: "Gestión LIP", icon: Users },
-    { key: "financiera" as GroupKey, label: "Gestión Financiera", icon: Wallet },
     { key: "rrhh" as GroupKey, label: "Gestión Humana", icon: Users },
     { key: "certificaciones_lip" as GroupKey, label: "Certificaciones LIP", icon: BadgeCheck },
     { key: "compensacion" as GroupKey, label: "Compensación", icon: Wallet },

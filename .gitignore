@@ -15,12 +15,3 @@ node_modules
 .next/
 .DS_Store
 .vercel
-
-# Documentos fuente del cliente (planillas SST/matrices, zips) — no versionar
-/*.xlsx
-/*.xls
-/*.doc
-/*.docx
-/*.zip
-# Artefacto de build de TypeScript
-tsconfig.tsbuildinfo

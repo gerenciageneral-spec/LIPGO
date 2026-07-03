@@ -837,6 +837,12 @@ function DetalleSolicitud({ s }: { s: SolicitudTrabajador }) {
       <div className="space-y-1">
         <div className="text-xs text-muted-foreground">{s.tipo_permiso || "Permiso"}</div>
         <div className="text-sm">{rango}</div>
+        {s.comentarios?.trim() ? (
+          <div className="max-w-[220px] whitespace-normal break-words text-xs leading-relaxed text-muted-foreground">
+            <span className="font-medium text-foreground">Motivo: </span>
+            {s.comentarios.trim()}
+          </div>
+        ) : null}
         <PermisoAprobacionBadge
           gh={s.permiso_aprobacion_gh}
           coord={s.permiso_aprobacion_coord}

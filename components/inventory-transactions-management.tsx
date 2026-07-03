@@ -49,8 +49,8 @@ export function InventoryTransactionsManagement() {
     setLoading(true)
     const [transData, locData, prodData] = await Promise.all([
       getAllInventoryTransactions({ ...filters, idempresa: selectedEmpresaId }),
-      getLocations(),
-      getProductsWithCodes(),
+      getLocations(undefined, selectedEmpresaId),
+      getProductsWithCodes(selectedEmpresaId),
     ])
     setTransactions(transData)
     setLocations(locData)
@@ -84,7 +84,6 @@ export function InventoryTransactionsManagement() {
       Localización: transaction.location,
       Cantidad: transaction.cantidad,
       "Tipo Movimiento": transaction.tipomov,
-      "Cód. Mov.": transaction.cod_movimiento || "-",
       Status: transaction.status || "-",
       Origen: transaction.origen,
       "Creado por": transaction.creadopor,
@@ -259,7 +258,6 @@ export function InventoryTransactionsManagement() {
                   <TableHead className="sticky top-0 z-20 bg-muted border-b text-xs sm:text-sm whitespace-nowrap">Localización</TableHead>
                   <TableHead className="sticky top-0 z-20 bg-muted border-b text-xs sm:text-sm whitespace-nowrap">Cantidad</TableHead>
                   <TableHead className="sticky top-0 z-20 bg-muted border-b text-xs sm:text-sm whitespace-nowrap">Tipo Mov.</TableHead>
-                  <TableHead className="sticky top-0 z-20 bg-muted border-b text-xs sm:text-sm whitespace-nowrap">Cód. Mov.</TableHead>
                   <TableHead className="sticky top-0 z-20 bg-muted border-b text-xs sm:text-sm whitespace-nowrap">Status</TableHead>
                   <TableHead className="sticky top-0 z-20 bg-muted border-b text-xs sm:text-sm whitespace-nowrap">Origen</TableHead>
                   <TableHead className="sticky top-0 z-20 bg-muted border-b text-xs sm:text-sm whitespace-nowrap">Creado por</TableHead>
@@ -269,7 +267,7 @@ export function InventoryTransactionsManagement() {
               <TableBody>
                 {transactions.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={12} className="text-center text-muted-foreground text-xs sm:text-sm">
+                    <TableCell colSpan={11} className="text-center text-muted-foreground text-xs sm:text-sm">
                       No hay transacciones registradas
                     </TableCell>
                   </TableRow>
@@ -283,7 +281,6 @@ export function InventoryTransactionsManagement() {
                       <TableCell className="text-xs sm:text-sm">{transaction.location}</TableCell>
                       <TableCell className="text-xs sm:text-sm">{transaction.cantidad}</TableCell>
                       <TableCell className="text-xs sm:text-sm">{transaction.tipomov}</TableCell>
-                      <TableCell className="text-xs sm:text-sm font-medium">{transaction.cod_movimiento || "-"}</TableCell>
                       <TableCell className="text-xs sm:text-sm">{transaction.status || "-"}</TableCell>
                       <TableCell className="text-xs sm:text-sm">{transaction.origen}</TableCell>
                       <TableCell className="text-xs sm:text-sm">{transaction.creadopor}</TableCell>

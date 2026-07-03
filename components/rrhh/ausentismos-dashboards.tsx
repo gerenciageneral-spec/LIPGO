@@ -303,10 +303,9 @@ export function AusentismosResumen({ items }: { items: Ausentismo[] }) {
 export function AusentismosCostos({ items }: { items: Ausentismo[] }) {
   const data = useMemo(() => {
     const costoEmpresa = items.reduce((s, a) => s + num(a.costos_empresa), 0)
-    // EPS/ARL: lo que asumen las entidades (EPS en EG + ARL en AT).
-    const costoEps = items.reduce((s, a) => s + num(a.costos_eps) + num(a.costos_arl), 0)
+    const costoEps = items.reduce((s, a) => s + num(a.costos_eps), 0)
     const costoTotal = items.reduce(
-      (s, a) => s + (num(a.total_salario_pagado) || num(a.costos_empresa) + num(a.costos_eps) + num(a.costos_arl)),
+      (s, a) => s + (num(a.total_salario_pagado) || num(a.costos_empresa) + num(a.costos_eps)),
       0,
     )
     const totalDias = items.reduce((s, a) => s + num(a.total_dias_incapacidad), 0)
@@ -314,15 +313,15 @@ export function AusentismosCostos({ items }: { items: Ausentismo[] }) {
     const costoPorCaso = items.length ? costoTotal / items.length : 0
 
     const costoDe = (a: Ausentismo) =>
-      num(a.total_salario_pagado) || num(a.costos_empresa) + num(a.costos_eps) + num(a.costos_arl)
+      num(a.total_salario_pagado) || num(a.costos_empresa) + num(a.costos_eps)
 
-    // Costo empresa vs EPS/ARL por mes (stacked)
+    // Costo empresa vs EPS por mes (stacked)
     const mesMap = new Map<string, { empresa: number; eps: number }>()
     for (const a of items) {
       const key = a.mes?.trim() || "Sin mes"
       const cur = mesMap.get(key) || { empresa: 0, eps: 0 }
       cur.empresa += num(a.costos_empresa)
-      cur.eps += num(a.costos_eps) + num(a.costos_arl)
+      cur.eps += num(a.costos_eps)
       mesMap.set(key, cur)
     }
     const porMes = Array.from(mesMap.entries())

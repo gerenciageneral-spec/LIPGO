@@ -56,7 +56,7 @@ export function InventoryBalanceGlobal() {
 
   const loadProductos = async () => {
     try {
-      const data = await getProductosForFilter()
+      const data = await getProductosForFilter(selectedEmpresaId)
       setProductos(data)
     } catch (error) {
       console.error("[v0] Error loading productos:", error)
