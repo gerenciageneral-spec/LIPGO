@@ -5,7 +5,7 @@ import {
   stepCountIs,
   type UIMessage,
 } from "ai"
-import { google } from "@ai-sdk/google"
+import { anthropic } from "@ai-sdk/anthropic"
 import { supabase } from "@/lib/supabase-client"
 import { getUserPermissions } from "@/lib/permissions-actions"
 import { z } from "zod"
@@ -18,12 +18,12 @@ import { z } from "zod"
  *
  *  Stack:
  *   - Vercel AI SDK 6 (`ai`)        -> streaming + tools + multi-step
- *   - @ai-sdk/google                -> Gemini 2.5 Flash Lite
+ *   - @ai-sdk/anthropic             -> Claude (Anthropic) — soporte tecnológico
  *   - @supabase/supabase-js         -> conexion directa a Supabase
  *   - zod                           -> validacion de inputs del tool
  *
  *  Variables de entorno asumidas:
- *   - GOOGLE_GENERATIVE_AI_API_KEY  (la usa @ai-sdk/google automaticamente)
+ *   - ANTHROPIC_API_KEY             (la usa @ai-sdk/anthropic automaticamente)
  *
  *  El cliente de Supabase se importa desde `@/lib/supabase-client`, que ya
  *  es el singleton del proyecto con la URL + anon key configuradas, asi
@@ -249,7 +249,13 @@ export async function POST(req: Request) {
     // 2) Stream con la tool `consultar_supabase`
     // -----------------------------------------------------------------------
     const result = streamText({
-      model: google("gemini-2.5-flash-lite"),
+      // Claude (Anthropic) es el soporte tecnológico del asistente. Haiku 4.5:
+      // rápido y económico, con tool use + streaming — buen encaje para un chat
+      // de datos de alto volumen. TODA la lógica de la REGLA DE ORO (solo-lectura
+      // + permisos por usuario) es independiente del proveedor, así que la
+      // migración desde Gemini no la toca. (Para subir calidad: "claude-sonnet-5"
+      // o "claude-opus-4-8" — solo cambia este string.)
+      model: anthropic("claude-haiku-4-5"),
       // System prompt dinamico: fecha + idEmpresa + tablas permitidas al usuario.
       system: buildSystemPrompt(idEmpresa as string | number, tablasOk),
       // Pasamos el historial COMPLETO (convertido al formato ModelMessage
