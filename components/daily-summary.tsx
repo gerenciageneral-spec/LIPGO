@@ -1,8 +1,9 @@
 "use client"
 
-import { FileText, TrendingUp, Package } from "lucide-react"
+import { Truck, TrendingUp } from "lucide-react"
 import { useEffect, useState } from "react"
 import { getDailySummaryStats } from "@/lib/dashboard-summary-actions"
+import { getMetaDiaForEmpresa } from "@/lib/empresa-meta-dia"
 import { useAuth } from "@/components/auth-provider"
 
 interface DailySummaryStats {
@@ -24,6 +25,7 @@ export function DailySummary() {
     if (!selectedEmpresaId) return
 
     const loadStats = async () => {
+      setLoading(true)
       try {
         const result = await getDailySummaryStats()
         if (result.success && result.data) {
@@ -37,60 +39,101 @@ export function DailySummary() {
     }
 
     loadStats()
-    // Refresh every 5 minutes
     const interval = setInterval(loadStats, 300000)
     return () => clearInterval(interval)
   }, [selectedEmpresaId])
 
-  const cards = [
-    {
-      title: "Órdenes hoy",
-      value: loading ? "..." : stats.ordenesHoy.toString(),
-      icon: FileText,
-      bgColor: "bg-blue-50",
-      iconColor: "text-blue-500",
-    },
-    {
-      title: "Pedidos Hoy",
-      value: loading ? "..." : stats.pedidosHoy.toString(),
-      icon: TrendingUp,
-      bgColor: "bg-green-50",
-      iconColor: "text-green-500",
-    },
-    {
-      title: "Toneladas movidas",
-      value: loading ? "..." : `${stats.toneladasMovidas} t`,
-      icon: Package,
-      bgColor: "bg-purple-50",
-      iconColor: "text-purple-500",
-    },
-  ]
+  // Meta de toneladas del día, POR EMPRESA (cambia con el selector global).
+  const meta = getMetaDiaForEmpresa(selectedEmpresaId)
+  const ton = stats.toneladasMovidas
+  const pct = meta > 0 ? Math.min(100, Math.round((ton / meta) * 100)) : null
+
+  // Anillo de meta.
+  const R = 22
+  const CIRC = 2 * Math.PI * R
+  const dashoffset = pct === null ? CIRC : CIRC * (1 - pct / 100)
+  const ringColor = pct === null ? "#00b4cc" : pct >= 85 ? "#12a06a" : pct >= 60 ? "#c8871a" : "#d1443f"
 
   return (
-    <div className="mb-4 sm:mb-8">
-      <h2 className="text-base sm:text-2xl font-semibold text-foreground mb-2 sm:mb-4">Resumen del día</h2>
+    <div className="mb-6 sm:mb-8">
+      <h2 className="mb-3 text-xs font-bold uppercase tracking-widest text-muted-foreground sm:mb-4">Pulso operativo</h2>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-2 sm:gap-4">
-        {cards.map((stat) => {
-          const Icon = stat.icon
-
-          return (
-            <div
-              key={stat.title}
-              className="bg-card border border-border rounded-lg sm:rounded-xl p-2 sm:p-4 hover:shadow-md transition-shadow"
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
+        {/* Órdenes */}
+        <div className="rounded-2xl border border-border bg-card p-4 sm:p-5">
+          <div className="mb-2.5 flex items-center gap-3">
+            <span
+              className="flex h-9 w-9 flex-none items-center justify-center rounded-xl"
+              style={{ backgroundColor: "#1f8fb026", color: "#1f8fb0" }}
             >
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-[10px] sm:text-xs text-muted-foreground mb-0.5 sm:mb-1">{stat.title}</h3>
-                  <p className="text-lg sm:text-2xl font-bold text-foreground">{stat.value}</p>
-                </div>
-                <div className={`p-1.5 sm:p-2.5 rounded-lg ${stat.bgColor}`}>
-                  <Icon className={`h-3.5 w-3.5 sm:h-5 sm:w-5 ${stat.iconColor}`} />
-                </div>
+              <Truck className="h-[18px] w-[18px]" />
+            </span>
+            <span className="text-3xl font-extrabold tabular-nums tracking-tight" style={{ color: "#1f8fb0" }}>
+              {loading ? "…" : stats.ordenesHoy}
+            </span>
+            <span className="ml-auto text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+              Órdenes
+            </span>
+          </div>
+          <p className="text-[13px] leading-snug text-muted-foreground">
+            <b className="text-foreground">{loading ? "…" : `${ton} t`}</b> despachadas hoy en este proyecto.
+          </p>
+        </div>
+
+        {/* Toneladas con MEDIDOR DE META (por empresa) */}
+        <div className="rounded-2xl border border-border bg-card p-4 sm:p-5">
+          <div className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+            Toneladas · meta {meta ? `${meta} t` : "—"}
+          </div>
+          <div className="flex items-center gap-4">
+            <svg viewBox="0 0 58 58" className="h-[58px] w-[58px] flex-none">
+              <circle cx="29" cy="29" r={R} fill="none" stroke="var(--border)" strokeWidth="7" />
+              <circle
+                cx="29"
+                cy="29"
+                r={R}
+                fill="none"
+                stroke={ringColor}
+                strokeWidth="7"
+                strokeLinecap="round"
+                strokeDasharray={CIRC}
+                strokeDashoffset={dashoffset}
+                style={{ transform: "rotate(-90deg)", transformOrigin: "center", transition: "stroke-dashoffset .6s ease" }}
+              />
+              <text x="29" y="33" textAnchor="middle" className="fill-foreground" style={{ font: "800 14px sans-serif" }}>
+                {pct === null ? "—" : `${pct}%`}
+              </text>
+            </svg>
+            <div>
+              <div className="text-2xl font-extrabold tabular-nums tracking-tight text-foreground">
+                {loading ? "…" : ton}
+                <span className="ml-0.5 text-sm font-bold text-muted-foreground">t</span>
+              </div>
+              <div className="mt-1 text-[13px] leading-snug text-muted-foreground">
+                {pct === null ? "Sin meta asignada." : pct >= 100 ? "Meta cumplida ✓" : `${pct}% de la meta del día.`}
               </div>
             </div>
-          )
-        })}
+          </div>
+        </div>
+
+        {/* Pedidos */}
+        <div className="rounded-2xl border border-border bg-card p-4 sm:p-5">
+          <div className="mb-2.5 flex items-center gap-3">
+            <span
+              className="flex h-9 w-9 flex-none items-center justify-center rounded-xl"
+              style={{ backgroundColor: "#2f9b6426", color: "#2f9b64" }}
+            >
+              <TrendingUp className="h-[18px] w-[18px]" />
+            </span>
+            <span className="text-3xl font-extrabold tabular-nums tracking-tight" style={{ color: "#2f9b64" }}>
+              {loading ? "…" : stats.pedidosHoy}
+            </span>
+            <span className="ml-auto text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+              Pedidos
+            </span>
+          </div>
+          <p className="text-[13px] leading-snug text-muted-foreground">Pedidos programados hoy en este proyecto.</p>
+        </div>
       </div>
     </div>
   )

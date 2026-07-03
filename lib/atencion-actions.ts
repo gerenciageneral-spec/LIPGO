@@ -1,0 +1,90 @@
+"use server"
+
+import { createClient } from "@/lib/supabase-client"
+import { getCurrentEmpresaId } from "@/lib/company-filter"
+
+// Ítem de "atención del día" que la IA prioriza. Datos REALES por empresa.
+export interface AtencionRow {
+  label: string
+  sev: "crit" | "warn" | "info"
+  /** Módulo a abrir al tocar la alerta (nombre exacto del módulo). */
+  modulo?: string
+}
+
+function colombiaDate(): string {
+  const now = new Date()
+  const t = new Date(now.toLocaleString("en-US", { timeZone: "America/Bogota" }))
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`
+}
+
+function colombiaHour(): number {
+  const now = new Date()
+  return new Date(now.toLocaleString("en-US", { timeZone: "America/Bogota" })).getHours()
+}
+
+function firstOfMonth(): string {
+  const now = new Date()
+  const t = new Date(now.toLocaleString("en-US", { timeZone: "America/Bogota" }))
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-01`
+}
+
+/**
+ * Calcula lo que "requiere atención hoy" para la empresa seleccionada (cookie
+ * del selector global). Defensivo: cualquier fallo devuelve lista vacía y la
+ * tarjeta de IA simplemente no muestra el bloque.
+ */
+export async function getAtencionDelDia(): Promise<{ success: boolean; items: AtencionRow[] }> {
+  try {
+    const supabase = await createClient()
+    const empresaId = await getCurrentEmpresaId()
+    if (!empresaId) return { success: true, items: [] }
+
+    const items: AtencionRow[] = []
+    const today = colombiaDate()
+
+    // 1) Cargues del día sin cerrar (fincargue null) → riesgo de SLA.
+    const { count: sinCerrar } = await supabase
+      .from("cabeceraoc")
+      .select("ordendecargue", { count: "exact", head: true })
+      .eq("idempresa", empresaId)
+      .eq("fechacargue", today)
+      .is("fincargue", null)
+    if (sinCerrar && sinCerrar > 0) {
+      items.push({
+        label: `${sinCerrar} cargue${sinCerrar !== 1 ? "s" : ""} sin cerrar hoy`,
+        sev: sinCerrar > 3 ? "crit" : "warn",
+        modulo: "Gestión de Ordenes",
+      })
+    }
+
+    // 2) Facturas por solicitar del mes (estadofactura null).
+    const { count: facturas } = await supabase
+      .from("cabeceraoc")
+      .select("ordendecargue", { count: "exact", head: true })
+      .eq("idempresa", empresaId)
+      .is("estadofactura", null)
+      .gte("fechacargue", firstOfMonth())
+    if (facturas && facturas > 0) {
+      items.push({
+        label: `${facturas} factura${facturas !== 1 ? "s" : ""} por solicitar`,
+        sev: "warn",
+        modulo: "Gestión de Facturas",
+      })
+    }
+
+    // "Vida propia" de la IA: si hay pendientes y ya es tarde (>= 3pm Colombia),
+    // escala una alerta de CUMPLIMIENTO al frente — no se están atendiendo a
+    // tiempo. Así el asistente insiste en el cierre del día.
+    if (items.length > 0 && colombiaHour() >= 15) {
+      items.unshift({
+        label: "⚠ Cumplimiento: atiende los pendientes antes del cierre del día",
+        sev: "crit",
+      })
+    }
+
+    return { success: true, items }
+  } catch (e) {
+    console.error("[atencion] error:", e)
+    return { success: false, items: [] }
+  }
+}

@@ -7,6 +7,7 @@ import {
 } from "ai"
 import { google } from "@ai-sdk/google"
 import { supabase } from "@/lib/supabase-client"
+import { getUserPermissions } from "@/lib/permissions-actions"
 import { z } from "zod"
 
 /**
@@ -55,6 +56,27 @@ const TABLAS = [
   "saldoinvdetalle",
 ] as const
 type Tabla = (typeof TABLAS)[number]
+
+/**
+ * REGLA DE ORO (seguridad, sin excepción): cada tabla SOLO es consultable por
+ * el asistente si el usuario tiene AL MENOS UNO de estos permisos — los mismos
+ * que se otorgan en "Gestión de Usuarios / Accesos de Usuario". Sin permiso, el
+ * asistente NO puede leer esa información. Además el asistente es SOLO LECTURA
+ * (la tool solo hace `.select()`; no existe ninguna tool de escritura).
+ */
+const TABLA_PERMISOS: Record<Tabla, string[]> = {
+  pedidoscabecera: ["entrada_pedidos", "gestionar_pedidos", "gestion_integral_pedidos", "dashboardpedidos"],
+  pedidosdetalle: ["entrada_pedidos", "gestionar_pedidos", "gestion_integral_pedidos", "dashboardpedidos"],
+  cabeceraoc: ["generar_ordenes_cargue", "generar_ordenes_descargue", "distribucion", "gestion_ordenes", "dashboardrecepcion"],
+  detalleoc: ["generar_ordenes_cargue", "generar_ordenes_descargue", "distribucion", "gestion_ordenes", "dashboardrecepcion"],
+  saldoinvdetalle: ["saldos_inventario", "saldos_producto", "transacciones_inventario", "gestion_transacciones", "auditoria_inventario"],
+}
+
+/** Tablas que este usuario SÍ puede consultar según sus permisos. */
+function tablasPermitidas(permisos: Record<string, boolean> | null): Tabla[] {
+  if (!permisos) return []
+  return TABLAS.filter((t) => TABLA_PERMISOS[t].some((p) => permisos[p] === true))
+}
 
 /**
  * Operadores de Supabase que el modelo puede usar para construir filtros.
@@ -107,7 +129,7 @@ function getColumnaEmpresa(tabla: Tabla): string | null {
  * el server). Esto da al modelo conciencia temporal real para resolver
  * referencias relativas como "hoy", "este mes" o "el mes pasado".
  */
-function buildSystemPrompt(idEmpresa: string | number): string {
+function buildSystemPrompt(idEmpresa: string | number, tablasOk: Tabla[]): string {
   const fechaHoy = new Date().toLocaleDateString("es-CO", {
     weekday: "long",
     year: "numeric",
@@ -153,6 +175,12 @@ Antes de usar la herramienta, analiza la intención del usuario y usa estrictame
     Sinónimos del usuario: 'inventario', 'stock', 'existencias', 'saldos', 'disponibilidad', 'cuántos hay en bodega', 'qué tenemos de'.
 
     Uso: Para consultar si hay mercancía disponible, revisar stock actual, lotes o ubicaciones (location) de los productos.
+
+REGLA DE ORO (INQUEBRANTABLE, SIN EXCEPCIÓN):
+
+    - Eres de SOLO LECTURA. NUNCA modificas datos, código ni la base de datos. No puedes crear, editar ni borrar nada — ni en Supabase ni en la app. Si te lo piden, explica que no puedes.
+    - SOLO puedes consultar estas tablas, según los permisos de ESTE usuario (otorgados en "Gestión de Usuarios / Accesos de Usuario"): ${tablasOk.length ? tablasOk.join(", ") : "NINGUNA — este usuario no tiene permisos de datos"}.
+    - Si el usuario pide información de un área para la que no tiene permiso (una tabla fuera de esa lista), respóndele con claridad y amabilidad que no tiene permiso para acceder a esa información, y NO intentes consultarla. Esto es inviolable: podría exponer información privilegiada o privada.
 
 REGLAS DE COMPORTAMIENTO:
 
@@ -210,12 +238,20 @@ export async function POST(req: Request) {
     }
 
     // -----------------------------------------------------------------------
+    // REGLA DE ORO (permisos): resuelve los permisos del usuario actual
+    // (server-side, no falseable por el cliente) y limita el asistente a las
+    // tablas que ESE usuario puede consultar. Sin permiso => sin acceso.
+    // -----------------------------------------------------------------------
+    const permisos = (await getUserPermissions()) as Record<string, boolean> | null
+    const tablasOk = tablasPermitidas(permisos)
+
+    // -----------------------------------------------------------------------
     // 2) Stream con la tool `consultar_supabase`
     // -----------------------------------------------------------------------
     const result = streamText({
       model: google("gemini-2.5-flash-lite"),
-      // System prompt dinamico: incluye fecha actual + idEmpresa.
-      system: buildSystemPrompt(idEmpresa as string | number),
+      // System prompt dinamico: fecha + idEmpresa + tablas permitidas al usuario.
+      system: buildSystemPrompt(idEmpresa as string | number, tablasOk),
       // Pasamos el historial COMPLETO (convertido al formato ModelMessage
       // que espera el SDK). Esto le da al modelo memoria de conversacion:
       // puede resolver referencias relativas tipo "y del mes pasado?" o
@@ -236,9 +272,11 @@ export async function POST(req: Request) {
             "automaticamente el filtro por empresa cuando aplica.",
           inputSchema: z.object({
             tabla: z
-              .enum(TABLAS)
+              .enum(
+                (tablasOk.length ? tablasOk : (["__sin_permiso__"] as const)) as unknown as [string, ...string[]],
+              )
               .describe(
-                "Nombre exacto de la tabla. Debe ser una de: pedidoscabecera, pedidosdetalle, cabeceraoc, detalleoc, saldoinvdetalle.",
+                "Nombre exacto de la tabla. SOLO puedes usar tablas para las que este usuario tiene permiso.",
               ),
             columnas: z
               .string()
@@ -276,6 +314,17 @@ export async function POST(req: Request) {
           }),
           execute: async ({ tabla, columnas, filtros }) => {
             try {
+              // REGLA DE ORO (defensa en profundidad): aunque el enum ya limita
+              // las opciones, revalidamos que la tabla esté permitida para este
+              // usuario. Sin permiso => no se consulta, sin excepción.
+              if (!tablasOk.includes(tabla as Tabla)) {
+                return {
+                  error:
+                    "No tienes permiso para acceder a esta información. Solicítalo en Gestión de Usuarios / Accesos de Usuario.",
+                  filas: [],
+                  total_filas: 0,
+                }
+              }
               // ---------------------------------------------------------------
               // a) Construye la query base con la tabla y columnas pedidas.
               //    Limitamos a 50 filas para evitar respuestas gigantes.

@@ -101,7 +101,7 @@ export default function DashboardPage() {
         <img
           src="/images/design-mode/LipGoBG(1).png"
           alt=""
-          className="w-[300px] h-[300px] sm:w-[500px] sm:h-[500px] lg:w-[800px] lg:h-[800px] object-contain opacity-15"
+          className="w-[300px] h-[300px] sm:w-[500px] sm:h-[500px] lg:w-[800px] lg:h-[800px] object-contain opacity-[0.05]"
         />
       </div>
     </div>

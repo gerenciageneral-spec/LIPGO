@@ -22,57 +22,59 @@ export interface Group {
 }
 
 export type GroupKey =
-  | "vehiculos"
   | "pedidos"
   | "inventarios"
   | "produccion"
-  | "auditoria"
   | "integral"
   | "lip"
   | "rrhh"
   | "certificaciones_lip"
-  | "compensacion"
   | "configuracion"
   | "despachos"
-  | "bascula"
   | "mrp"
   | "financiera"
 
 export const groups: Group[] = [
   {
-    key: "vehiculos",
-    title: "Gestión de Vehículos",
-    icon: Truck,
-    modules: [
-      { name: "Registrar Vehículos", icon: Clock },
-      { name: "Ver Vehículos", icon: Eye },
-      { name: "Registro sanitario", icon: ClipboardCheck },
-      { name: "Ver historial de Inspección", icon: History },
-    ],
-  },
-  {
+    // REORG (2026-07-03): "Recepción y Despacho" fusiona los antiguos grupos
+    // "Gestión de Vehículos", "Despachos/Recepción" y "Báscula" en un solo
+    // grupo por flujo de puerta (inbound/outbound). Los módulos conservan su
+    // `name` → sus permisos NO cambian; solo cambia dónde se muestran.
     key: "despachos",
-    title: "Despachos/Recepción",
+    title: "Recepción y Despacho",
     icon: Truck,
-    modules: [
-      { name: "Generar Órdenes de Cargue", icon: Truck },
-      { name: "Generar Órdenes de Descargue", icon: Truck },
-      { name: "Generar Orden de Distribución", icon: Truck },
-      { name: "Gestión de Ordenes", icon: Receipt },
-      { name: "Recepción de Traslado", icon: Eye },
-      // Dashboard de indicadores de despachos y recepción. Su visibilidad
-      // queda gobernada por el permiso `dashboardrecepcion` (mapeado en
-      // `lib/permissions-map.ts`).
-      { name: "Dashboard Despachos/Recepción", icon: LayoutDashboard },
-    ],
-  },
-  {
-    key: "bascula",
-    title: "Báscula",
-    icon: Scale,
-    modules: [
-      { name: "Báscula", icon: Scale },
-      { name: "Historial Báscula", icon: History },
+    modules: [],
+    subgroups: [
+      {
+        title: "Órdenes y Recepción",
+        modules: [
+          { name: "Generar Órdenes de Cargue", icon: Truck },
+          { name: "Generar Órdenes de Descargue", icon: Truck },
+          { name: "Generar Orden de Distribución", icon: Truck },
+          { name: "Gestión de Ordenes", icon: Receipt },
+          { name: "Recepción de Traslado", icon: Eye },
+          // Dashboard de indicadores de despachos y recepción. Su visibilidad
+          // queda gobernada por el permiso `dashboardrecepcion` (mapeado en
+          // `lib/permissions-map.ts`).
+          { name: "Dashboard Despachos/Recepción", icon: LayoutDashboard },
+        ],
+      },
+      {
+        title: "Vehículos y Portería",
+        modules: [
+          { name: "Registrar Vehículos", icon: Clock },
+          { name: "Ver Vehículos", icon: Eye },
+          { name: "Registro sanitario", icon: ClipboardCheck },
+          { name: "Ver historial de Inspección", icon: History },
+        ],
+      },
+      {
+        title: "Báscula",
+        modules: [
+          { name: "Báscula", icon: Scale },
+          { name: "Historial Báscula", icon: History },
+        ],
+      },
     ],
   },
   {
@@ -110,6 +112,9 @@ export const groups: Group[] = [
           { name: "Montacargas y personal día", icon: Truck },
           { name: "Panel LIP Inventario", icon: BarChart3, label: "Panel de Inventario (Exactitud y movimientos)" },
           { name: "Cuadre de Inventario", icon: ClipboardCheck, label: "Cuadre y Correcciones (Cierre mensual)" },
+          // REORG (2026-07-03): "Auditoría de Inventario" se movió aquí desde su
+          // antiguo grupo propio "Auditoría". Conserva su `name`/permiso.
+          { name: "Auditoría de Inventario", icon: Search },
         ],
       },
       {
@@ -138,16 +143,8 @@ export const groups: Group[] = [
     ],
   },
   {
-    key: "auditoria",
-    title: "Auditoría",
-    icon: Search,
-    modules: [
-      { name: "Auditoría de Inventario", icon: ClipboardCheck },
-    ],
-  },
-  {
     key: "integral",
-    title: "Gestión Integral",
+    title: "Torre de Control",
     icon: LayoutDashboard,
     modules: [
       { name: "Dashboard Operacion", icon: Activity },
@@ -156,7 +153,7 @@ export const groups: Group[] = [
   },
   {
     key: "lip",
-    title: "Gestión LIP",
+    title: "Operación LIP",
     icon: Users,
     modules: [],
     subgroups: [
@@ -181,7 +178,6 @@ export const groups: Group[] = [
           { name: "Satisfacción y PQRSF", icon: ClipboardList, label: "Satisfacción y PQRSF (conductores y cliente)" },
           // Calificación del conductor EN CALIENTE al fin de cargue (kiosko 🟢🟡🔴).
           { name: "Calificación del Conductor", icon: Star, label: "Calificación del Conductor (en caliente)" },
-          { name: "Registro Preoperacional", icon: ClipboardCheck },
           { name: "Aprobar Turnos", icon: CheckCircle },
           // Modulo "Bitácora": registro diario de novedades/observaciones
           // de la operacion. CRUD sobre la tabla `bitacora` filtrado por
@@ -199,19 +195,9 @@ export const groups: Group[] = [
           { name: "Registro de asistencia", icon: UserCheck, label: "Registro de Asistencia" },
         ],
       },
-      {
-        // Subgrupo de gestion administrativa / direccion. Agrupa la
-        // captura de gastos del dia a dia y las vistas de consolidacion
-        // financiera (P&L y dashboard de gastos). Cada modulo sigue
-        // protegido por su permiso individual: "Registrar Gasto" y
-        // "Dashboard Gastos" por `gastos`, y "Estado de Resultados"
-        // por `estadoresultados`.
-        title: "Administración LIP",
-        modules: [
-          { name: "Registrar Gasto", icon: Receipt },
-          { name: "Dashboard Gastos", icon: BarChart3 },
-        ],
-      },
+      // REORG (2026-07-03): el subgrupo "Administración LIP" (Registrar Gasto,
+      // Dashboard Gastos) se movió a "Gestión Financiera". Conservan sus
+      // permisos (gastos).
     ],
   },
   {
@@ -240,6 +226,15 @@ export const groups: Group[] = [
           { name: "Estado de Resultados", icon: BarChart3 },
         ],
       },
+      {
+        // REORG (2026-07-03): "Gastos" trasladado desde "Gestión LIP ·
+        // Administración LIP". Conservan su permiso `gastos`.
+        title: "Gastos",
+        modules: [
+          { name: "Registrar Gasto", icon: Receipt },
+          { name: "Dashboard Gastos", icon: BarChart3 },
+        ],
+      },
     ],
   },
   {
@@ -266,9 +261,8 @@ export const groups: Group[] = [
         title: "Gestión de Contratación",
         modules: [
           { name: "Gestión de Contratos", icon: FileText },
-          { name: "Gestión de Dotación EPP", icon: Package, label: "Dotación de EPP" },
-          // Examenes medicos: solo para empleados aptos en la entrevista.
-          { name: "Examenes Médicos", icon: Stethoscope },
+          // REORG (2026-07-03): "Dotación de EPP" y "Exámenes Médicos" se movieron
+          // a SST (salud ocupacional / EPP, SG-SST 0312). Conservan sus permisos.
         ],
       },
       {
@@ -312,13 +306,32 @@ export const groups: Group[] = [
           { name: "Gestión de Solicitudes", icon: ClipboardList },
         ],
       },
+      {
+        // REORG (2026-07-03): "Asistencia y Tiempos" trasladado desde el
+        // antiguo grupo "Compensación". Los módulos conservan sus permisos.
+        title: "Asistencia y Tiempos",
+        modules: [
+          { name: "Tabla Asistencia", icon: ClipboardList, label: "Tabla de Asistencia" },
+          { name: "Visor", icon: Eye, label: "Visor de Asistencia" },
+          { name: "Turnos", icon: Clock, label: "Turnos por Puesto" },
+          { name: "Asignación horas extra", icon: Clock, label: "Asignación de Horas Extra" },
+        ],
+      },
+      {
+        // REORG (2026-07-03): "Nómina" trasladado desde "Compensación".
+        title: "Nómina",
+        modules: [
+          { name: "Nominapersonal", icon: Banknote, label: "Nómina de Personal" },
+          { name: "Proyecciones", icon: Calculator, label: "Proyecciones de Nómina" },
+        ],
+      },
     ],
   },
   {
     // Modulo de certificaciones LIP. Agrupa el sistema SST 0312 y el centro
     // de evidencia ISO 9001 (movido desde Auditoria) como submodulos.
     key: "certificaciones_lip",
-    title: "Certificaciones LIP",
+    title: "Certificaciones · SIG (Calidad · Ambiente · SST)",
     icon: BadgeCheck,
     // Submódulos agrupados POR NORMA para que se vea claro a cuál pertenece
     // cada uno: SIG transversal, luego una sección por norma certificable.
@@ -371,29 +384,12 @@ export const groups: Group[] = [
           { name: "Actividades y Comités", icon: GraduationCap, label: "Actividades y Comités" },
           { name: "MEDEVAC", icon: Stethoscope, label: "MEDEVAC (Plan de Emergencias Médicas)" },
           { name: "Perfil Sociodemográfico", icon: Users, label: "Perfil Sociodemográfico (SST-FOR-32)" },
-        ],
-      },
-    ],
-  },
-  {
-    key: "compensacion",
-    title: "Compensación",
-    icon: Wallet,
-    subgroups: [
-      {
-        title: "Asistencia y Tiempos",
-        modules: [
-          { name: "Tabla Asistencia", icon: ClipboardList, label: "Tabla de Asistencia" },
-          { name: "Visor", icon: Eye, label: "Visor de Asistencia" },
-          { name: "Turnos", icon: Clock, label: "Turnos por Puesto" },
-          { name: "Asignación horas extra", icon: Clock, label: "Asignación de Horas Extra" },
-        ],
-      },
-      {
-        title: "Nómina",
-        modules: [
-          { name: "Nominapersonal", icon: Banknote, label: "Nómina de Personal" },
-          { name: "Proyecciones", icon: Calculator, label: "Proyecciones de Nómina" },
+          // REORG (2026-07-03): salud ocupacional y seguridad operativa (SG-SST
+          // 0312) consolidadas en SST. Vienen de RRHH·Contratación y Operación LIP.
+          // Conservan sus `name`/permisos originales.
+          { name: "Examenes Médicos", icon: Stethoscope },
+          { name: "Gestión de Dotación EPP", icon: Package, label: "Dotación de EPP" },
+          { name: "Registro Preoperacional", icon: ClipboardCheck },
         ],
       },
     ],

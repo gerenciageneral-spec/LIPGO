@@ -1,6 +1,9 @@
 "use client"
 
 import React from "react"
+import { useAuth } from "@/components/auth-provider"
+import { LipAiAssistant, type AtencionItem } from "@/components/lip-ai-assistant"
+import { getAtencionDelDia } from "@/lib/atencion-actions"
 import { TopBar } from "@/components/top-bar"
 import { DailySummary } from "@/components/daily-summary"
 import { ModuleCards } from "@/components/module-cards"
@@ -156,6 +159,32 @@ export function MainContent({
   const [basculaOrderId, setBasculaOrderId] = React.useState<number | null>(null) // Added state to store initial order ID for Báscula module
   const [sanitaryRegistryVehicleId, setSanitaryRegistryVehicleId] = React.useState<number | null>(null) // Added state to store initial vehicle ID for Sanitary Registry module
 
+  // Saludo del hero: personalizado por hora del día + nombre + empresa. Se
+  // calcula en useEffect para no romper la hidratación (hora del server ≠ cliente).
+  const { profile, selectedEmpresaId, selectedEmpresaNombre } = useAuth()
+  const [nowInfo, setNowInfo] = React.useState<{ saludo: string; fecha: string }>({ saludo: "Hola", fecha: "" })
+  const [homeAlertas, setHomeAlertas] = React.useState<AtencionItem[]>([])
+  React.useEffect(() => {
+    if (!selectedEmpresaId) return
+    let cancel = false
+    getAtencionDelDia()
+      .then((r) => {
+        if (!cancel && r.success) setHomeAlertas(r.items as AtencionItem[])
+      })
+      .catch(() => {})
+    return () => {
+      cancel = true
+    }
+  }, [selectedEmpresaId])
+  React.useEffect(() => {
+    const d = new Date()
+    const h = d.getHours()
+    const saludo = h < 12 ? "Buenos días" : h < 19 ? "Buenas tardes" : "Buenas noches"
+    const f = d.toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" })
+    setNowInfo({ saludo, fecha: f.charAt(0).toUpperCase() + f.slice(1) })
+  }, [])
+  const primerNombre = (profile?.nombre || "").trim().split(" ")[0]
+
   // Helper to match module names to config keys more reliably
   const getConfigModule = (moduleName: string | null) => {
     if (!moduleName) return null
@@ -279,13 +308,41 @@ export function MainContent({
             <OrderEditPage orderId={editingOrderId} onBack={() => setEditingOrderId(null)} />
           ) : !selectedGroup ? (
             <>
-              {/* Welcome Section */}
-              <div className="mb-4 sm:mb-8">
-                <h1 className="text-xl sm:text-4xl font-bold text-foreground mb-1 sm:mb-2">
-                  Bienvenido a <span className="text-foreground">LiP</span>
-                  <span className="text-primary">Go</span>
-                </h1>
-                <p className="text-xs sm:text-lg text-muted-foreground">Logística inteligente en tiempo real</p>
+              {/* Hero premium con IA (rediseño 2026-07-03). Solo layout; el botón
+                  abre el Asistente IA que ya existe. */}
+              <style>{`
+                .lipgo-home-hero{ position:relative; overflow:hidden; border-radius:18px; color:#eaf6fa;
+                  background:
+                    radial-gradient(80% 130% at 92% -20%, rgba(0,194,220,.30), transparent 55%),
+                    radial-gradient(70% 120% at -5% 120%, rgba(95,120,225,.32), transparent 55%),
+                    linear-gradient(120deg,#0a2545,#0b2f57 55%,#0e4a72);
+                  border:1px solid rgba(120,190,230,.15); }
+                .lipgo-ai-bar{ background:rgba(255,255,255,.1); border:1px solid rgba(180,230,245,.28); backdrop-filter:blur(4px); }
+                .lipgo-ai-bar input::placeholder{ color:#bfe0ec; }
+                .lipgo-ai-chip{ color:#d6eef5; background:rgba(255,255,255,.08); border:1px solid rgba(180,230,245,.2); transition:background .15s; }
+                .lipgo-ai-chip:hover{ background:rgba(255,255,255,.16); }
+              `}</style>
+              <div className="lipgo-home-hero mb-4 p-5 sm:mb-5 sm:p-6">
+                <div className="relative z-10">
+                  <h1 className="text-2xl font-extrabold tracking-tight sm:text-4xl">
+                    <span aria-hidden="true">👋</span> {nowInfo.saludo}
+                    {primerNombre ? `, ${primerNombre}` : ""}
+                  </h1>
+                  <p className="mt-1 text-sm sm:text-base" style={{ color: "#9fd4e6" }}>
+                    {nowInfo.fecha}
+                    {selectedEmpresaNombre ? ` · ${selectedEmpresaNombre}` : ""}
+                  </p>
+                </div>
+              </div>
+
+              {/* Asistente IA premium (mismo componente que en submenús) */}
+              <div className="mb-5 sm:mb-6">
+                <LipAiAssistant
+                  empresaLabel={selectedEmpresaNombre}
+                  alertas={homeAlertas}
+                  onOpen={() => onSelectModule("Asistente IA")}
+                  onAlerta={(a) => a.modulo && onSelectModule(a.modulo)}
+                />
               </div>
 
               {/* Daily Summary */}
