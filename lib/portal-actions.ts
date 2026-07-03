@@ -528,3 +528,65 @@ export async function tieneNovedadesUltimos30Dias(
     return { tieneNovedades: false, cantidad: 0 }
   }
 }
+
+/**
+ * Devuelve el valor actual de `reglamentocheck` para el colaborador
+ * (identificado por su `identificacion`). Si esta poblado, significa
+ * que el trabajador ya confirmo haber leido y comprendido el
+ * Reglamento Interno de Trabajo (guardamos la fecha/hora de Colombia).
+ */
+export async function getReglamentoCheck(
+  identificacion: string,
+): Promise<{ confirmado: boolean }> {
+  const ident = (identificacion || "").trim()
+  if (!ident) return { confirmado: false }
+
+  try {
+    const supabase = await getSupabaseAdmin()
+    const { data, error } = await supabase
+      .from("headcount")
+      .select("reglamentocheck")
+      .eq("identificacion", ident)
+      .maybeSingle()
+
+    if (error) {
+      console.log("[v0] portal getReglamentoCheck error:", error.message)
+      return { confirmado: false }
+    }
+    // `reglamentocheck` es una columna boolean en `headcount`.
+    return { confirmado: data?.reglamentocheck === true }
+  } catch (err: any) {
+    console.log("[v0] portal getReglamentoCheck exception:", err?.message)
+    return { confirmado: false }
+  }
+}
+
+/**
+ * Marca que el colaborador leyo y comprendio el Reglamento Interno de
+ * Trabajo, poniendo en `true` la columna boolean
+ * `headcount.reglamentocheck`.
+ */
+export async function confirmarReglamentoLeido(
+  identificacion: string,
+): Promise<{ success: boolean; error?: string }> {
+  const ident = (identificacion || "").trim()
+  if (!ident) return { success: false, error: "Falta la identificacion." }
+
+  try {
+    const supabase = await getSupabaseAdmin()
+
+    const { error } = await supabase
+      .from("headcount")
+      .update({ reglamentocheck: true })
+      .eq("identificacion", ident)
+
+    if (error) {
+      console.log("[v0] portal confirmarReglamento error:", error.message)
+      return { success: false, error: "No se pudo guardar la confirmacion." }
+    }
+    return { success: true }
+  } catch (err: any) {
+    console.log("[v0] portal confirmarReglamento exception:", err?.message)
+    return { success: false, error: "Ocurrio un error inesperado." }
+  }
+}

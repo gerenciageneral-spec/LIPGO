@@ -55,6 +55,13 @@ Carpeta entregable del **Sistema Integrado de Gestión (SIG)** — Certificacion
 
 _(se irán agregando filas a medida que avancemos por bloques)_
 
+> **SQL 20 a 48 (tracker al día):** esta tabla llega hasta el bloque 23; el estado
+> completo y actualizado de los scripts **20-48** está en `ESTADO_PROYECTO_SIG.md` §3.
+> **Pendiente real por correr ahora: `48_cierre_firma_digital.sql`** (firma digital del
+> acta de cierre de inventario; luego firmar las actas mes a mes). Opcionales/pausados:
+> `36_cierre_facturacion_historica.sql` (opcional) y `46_cierre_fisico_congelado.sql`
+> (**PAUSADO** — no correr aún). **44 = OBSOLETO, NO EJECUTAR.**
+
 ## Verificación rápida (opcional, tras correr el 01)
 ```sql
 select (select count(*) from sig_normas)            as normas,        -- 3
