@@ -9,8 +9,29 @@ import { anthropic } from "@ai-sdk/anthropic"
 import { supabase } from "@/lib/supabase-client"
 import { getUserPermissions } from "@/lib/permissions-actions"
 import { MODULE_PERMISSION_MAP } from "@/lib/permissions-map"
+import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getCurrentEmpresaId } from "@/lib/company-filter"
 import { z } from "zod"
+
+/**
+ * Códigos de novedad válidos (deben coincidir EXACTAMENTE con NOTICE_OPTIONS del
+ * módulo "Novedades de personal"). Es una lista blanca: la IA solo puede poner
+ * uno de estos valores en la columna `asistencia` de registroasistencia.
+ */
+const CODIGOS_NOVEDAD = [
+  "38- Licencia no remunerada- Deducción",
+  "13- Incapacidad por enfermedad general al 100%",
+  "14- Incapacidad por enfermedad general al 50",
+  "15- Incapacidad por enfermedad general al 66%- ingreso",
+  "16- Incapacidad por enfermedad profesional",
+  "20- Licencia maternidad/paternidad",
+  "21- Licencia por luto",
+  "22- Licencia remunerada",
+  "31- Vacaciones disfrutadas",
+  "Retiro",
+  "Descanso",
+  "Descanso compensatorio domingo anterior",
+] as const
 
 /**
  * ============================================================================
@@ -56,6 +77,7 @@ const TABLAS = [
   "cabeceraoc",
   "detalleoc",
   "saldoinvdetalle",
+  "registroasistencia",
 ] as const
 type Tabla = (typeof TABLAS)[number]
 
@@ -72,6 +94,7 @@ const TABLA_PERMISOS: Record<Tabla, string[]> = {
   cabeceraoc: ["generar_ordenes_cargue", "generar_ordenes_descargue", "distribucion", "gestion_ordenes", "dashboardrecepcion"],
   detalleoc: ["generar_ordenes_cargue", "generar_ordenes_descargue", "distribucion", "gestion_ordenes", "dashboardrecepcion"],
   saldoinvdetalle: ["saldos_inventario", "saldos_producto", "transacciones_inventario", "gestion_transacciones", "auditoria_inventario"],
+  registroasistencia: ["novedades_personal", "asignacion_horas_extra", "attendance_registration", "attendance_table", "aprobacionturnos"],
 }
 
 /** Tablas que este usuario SÍ puede consultar según sus permisos. */
@@ -114,6 +137,7 @@ function getColumnaEmpresa(tabla: Tabla): string | null {
       return "id_empresa"
     case "cabeceraoc":
     case "saldoinvdetalle":
+    case "registroasistencia":
       return "idempresa"
     case "detalleoc":
       // detalleoc no tiene columna de empresa propia. Para seguridad
@@ -211,6 +235,10 @@ COLUMNAS CLAVE (cablea cada pregunta a su tabla + columna EXACTA):
     INVENTARIO / stock (Tabla: saldoinvdetalle):
     - Existencias por producto / lote / ubicación. Para "cuántos productos/registros" usa contar:true.
 
+    ASISTENCIA / NOVEDADES / HORAS EXTRA (Tabla: registroasistencia):
+    - Una fila por trabajador y día. Columnas útiles: "id", "nombre", "identificacion" (cédula), "fecha", "asistencia" (código de novedad), "aprobado" (estado de horas extra), "hed"/"hedf"/"hen"/"hef"/"hn" (horas extra), "especialidad".
+    - Para ENCONTRAR a un trabajador: consulta 'registroasistencia' filtrando "nombre" (ilike, ej. '%juan%') y "fecha". Necesitas su "id" para ejecutar acciones.
+
     CÓMO ELEGIR EL MODO:
     - Cantidad ("¿cuántos...?", "número de") -> contar:true.
     - Total de una magnitud ("¿cuántas toneladas?", "¿cuánto vendí?") -> sumar:"<columna numérica>".
@@ -218,7 +246,8 @@ COLUMNAS CLAVE (cablea cada pregunta a su tabla + columna EXACTA):
 
 REGLA DE ORO (INQUEBRANTABLE, SIN EXCEPCIÓN):
 
-    - Eres de SOLO LECTURA. NUNCA modificas datos, código ni la base de datos. No puedes crear, editar ni borrar nada — ni en Supabase ni en la app. Si te lo piden, explica que no puedes.
+    - NUNCA modificas el CÓDIGO, la ESTRUCTURA de las tablas, ni las TABLAS NÚCLEO del proceso/inventario (cabeceraoc, detalleoc, saldoinvdetalle, pedidoscabecera, pedidosdetalle e invtrans). Esas son intocables: SOLO LECTURA, sin excepción.
+    - La ÚNICA forma en que puedes escribir es mediante las ACCIONES CONTROLADAS listadas más abajo (ej. registrar una novedad, aprobar horas extra), siempre con el permiso del usuario y SIEMPRE con confirmación previa. No existe ninguna otra forma de crear/editar/borrar. Si te piden algo fuera de esas acciones, explica que no puedes.
     - SOLO puedes consultar estas tablas, según los permisos de ESTE usuario (otorgados en "Gestión de Usuarios / Accesos de Usuario"): ${tablasOk.length ? tablasOk.join(", ") : "NINGUNA — este usuario no tiene permisos de datos"}.
     - Si el usuario pide información de un área para la que no tiene permiso (una tabla fuera de esa lista), respóndele con claridad y amabilidad que no tiene permiso para acceder a esa información, y NO intentes consultarla. Esto es inviolable: podría exponer información privilegiada o privada.
 
@@ -236,6 +265,16 @@ REGLAS DE COMPORTAMIENTO:
     No asumas nombres de columnas que no conozcas. Usa tu mejor criterio lógico para mapear la pregunta del usuario a las tablas descritas.
 
     ALCANCE POR PROYECTO (empresa seleccionada): el ID ${idEmpresa} corresponde al proyecto que el usuario tiene SELECCIONADO en el selector superior, y se filtra automáticamente en TODAS tus consultas. SOLO puedes ver datos de ESE proyecto. Si el usuario pregunta por otro proyecto/empresa distinto, NO inventes ni intentes consultarlo: explícale con amabilidad que cambie el proyecto en el selector de arriba (el selector solo le muestra los proyectos a los que tiene acceso). Nunca mezcles datos de varios proyectos.
+
+ACCIONES CONTROLADAS (escritura con CONFIRMACIÓN previa):
+
+    Puedes EJECUTAR ciertas acciones operativas que NO ponen en riesgo la estructura ni el núcleo del sistema. REGLA ABSOLUTA: antes de escribir SIEMPRE confirma con el usuario en una frase clara (ej. "¿Confirmo que registro la novedad de JUAN PEREZ como '31- Vacaciones disfrutadas' hoy?") y SOLO ejecuta la herramienta de escritura cuando el usuario responda que SÍ. Si no ha confirmado, NO escribas.
+
+    - registrar_novedad_personal (requiere permiso 'Novedades de personal'): pone una novedad a un trabajador. Pasos: (1) busca su fila con consultar_supabase en 'registroasistencia' por nombre + fecha (hoy si no dicen otra); (2) si hay varias coincidencias o ninguna, pídele que aclare; (3) confirma trabajador + código de novedad; (4) al confirmar, ejecuta con el 'id' de la fila y el código EXACTO.
+      Códigos válidos: ${CODIGOS_NOVEDAD.join(" | ")}.
+    - aprobar_horas_extra (requiere permiso 'Asignación horas extra'): aprueba las horas extra de un registro. Busca la fila (registroasistencia, del trabajador/fecha), confirma, y al confirmar ejecuta con el 'id'.
+
+    PROHIBIDO ESCRIBIR (sin excepción): código, estructura de tablas, y las tablas núcleo (cabeceraoc, detalleoc, saldoinvdetalle, pedidoscabecera, pedidosdetalle, invtrans). Ahí solo consultas, nunca creas/editas/borras.
 
 NAVEGACIÓN (abrir módulos para el usuario):
 
@@ -599,6 +638,77 @@ export async function POST(req: Request) {
               }
             }
             return { permitido: true, navegar_a: modulo, mensaje: `Listo, te abro ${modulo}.` }
+          },
+        }),
+        // ACCIÓN DE ESCRITURA (controlada): registrar una novedad a un
+        // trabajador en registroasistencia. NUNCA toca tablas núcleo. Valida
+        // permiso + pertenencia a la empresa ANTES de escribir. La confirmación
+        // previa la exige el system prompt (el modelo confirma con el usuario).
+        registrar_novedad_personal: tool({
+          description:
+            "ACCIÓN DE ESCRITURA. Registra una novedad (incapacidad, licencia, vacaciones, retiro, descanso…) a un trabajador en su registro de asistencia. Llama esto SOLO después de que el usuario confirme explícitamente. Requiere el 'id' EXACTO de la fila de registroasistencia (búscalo antes con consultar_supabase por nombre + fecha) y el código de novedad EXACTO de la lista permitida.",
+          inputSchema: z.object({
+            id: z.number().describe("id de la fila en registroasistencia del trabajador (obtenido con consultar_supabase)."),
+            codigo_novedad: z
+              .enum(CODIGOS_NOVEDAD as unknown as [string, ...string[]])
+              .describe("Código de novedad EXACTO de la lista permitida."),
+          }),
+          execute: async ({ id, codigo_novedad }) => {
+            if (permisos?.novedades_personal !== true) {
+              return { ok: false, error: "No tienes permiso para registrar novedades de personal." }
+            }
+            const admin = await getSupabaseAdmin()
+            // Validar pertenencia a la empresa ANTES de escribir (los UPDATE por
+            // id no re-filtran empresa; lo hacemos aquí para no cruzar proyectos).
+            const { data: fila, error: e1 } = await admin
+              .from("registroasistencia")
+              .select("id, idempresa, nombre, fecha")
+              .eq("id", id)
+              .single()
+            if (e1 || !fila) return { ok: false, error: "No encontré ese registro de asistencia." }
+            if (String(fila.idempresa) !== String(idEmpresa)) {
+              return { ok: false, error: "Ese registro pertenece a otra empresa; no puedo modificarlo." }
+            }
+            const { error: e2 } = await admin
+              .from("registroasistencia")
+              .update({ asistencia: codigo_novedad, puesto: null, horasturno: null, especialidad: false })
+              .eq("id", id)
+            if (e2) return { ok: false, error: e2.message }
+            return {
+              ok: true,
+              mensaje: `Novedad "${codigo_novedad}" registrada a ${fila.nombre} (${fila.fecha}).`,
+              trabajador: fila.nombre,
+              fecha: fila.fecha,
+            }
+          },
+        }),
+        // ACCIÓN DE ESCRITURA (controlada): aprobar horas extra de un registro.
+        aprobar_horas_extra: tool({
+          description:
+            "ACCIÓN DE ESCRITURA. Aprueba las horas extra de un registro de asistencia. Llama esto SOLO después de que el usuario confirme explícitamente. Requiere el 'id' EXACTO de la fila de registroasistencia (búscalo antes con consultar_supabase por nombre + fecha).",
+          inputSchema: z.object({
+            id: z.number().describe("id de la fila en registroasistencia con horas extra a aprobar."),
+          }),
+          execute: async ({ id }) => {
+            if (permisos?.asignacion_horas_extra !== true) {
+              return { ok: false, error: "No tienes permiso para aprobar horas extra." }
+            }
+            const admin = await getSupabaseAdmin()
+            const { data: fila, error: e1 } = await admin
+              .from("registroasistencia")
+              .select("id, idempresa, nombre, fecha")
+              .eq("id", id)
+              .single()
+            if (e1 || !fila) return { ok: false, error: "No encontré ese registro." }
+            if (String(fila.idempresa) !== String(idEmpresa)) {
+              return { ok: false, error: "Ese registro pertenece a otra empresa; no puedo modificarlo." }
+            }
+            const { error: e2 } = await admin
+              .from("registroasistencia")
+              .update({ aprobado: "aprobado" })
+              .eq("id", id)
+            if (e2) return { ok: false, error: e2.message }
+            return { ok: true, mensaje: `Horas extra aprobadas para ${fila.nombre} (${fila.fecha}).` }
           },
         }),
       },
