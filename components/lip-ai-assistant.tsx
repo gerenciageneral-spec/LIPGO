@@ -1,10 +1,11 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Sparkles, Mic, Lightbulb, ArrowUp, Square, Maximize2, Bot } from "lucide-react"
+import { Sparkles, Mic, Lightbulb, ArrowUp, Square, Maximize2, Bot, X } from "lucide-react"
 import { useChat } from "@ai-sdk/react"
 import { DefaultChatTransport, type UIMessage } from "ai"
 import { useAuth } from "@/components/auth-provider"
+import { sugerenciasDe } from "@/lib/kpis-area"
 
 export interface AtencionItem {
   label: string
@@ -26,6 +27,8 @@ interface LipAiAssistantProps {
   onNavigate?: (modulo: string) => void
   /** Abrir un MÓDULO PRINCIPAL/grupo cuando la IA lo decide (abrir_modulo). */
   onOpenGroup?: (key: string) => void
+  /** Clave del grupo actual (para sugerencias contextuales de ese módulo). */
+  groupKey?: string
 }
 
 /**
@@ -35,29 +38,34 @@ interface LipAiAssistantProps {
  * usando el mismo backend Claude (/api/chat), gobernado por los permisos del
  * usuario. Reutilizable en Inicio y en cada submenú.
  */
-export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, onAlerta, onNavigate, onOpenGroup }: LipAiAssistantProps) {
+export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, onAlerta, onNavigate, onOpenGroup, groupKey }: LipAiAssistantProps) {
   const { selectedEmpresaId } = useAuth()
   const area = contextLabel?.trim()
 
-  // idEmpresa siempre fresco para inyectarlo en cada request (el transport se
-  // captura una sola vez, así que leemos de un ref y no del closure).
+  // idEmpresa + contexto siempre frescos para inyectarlos en cada request (el
+  // transport se captura una sola vez, así que leemos de refs, no del closure).
   const idEmpresaRef = useRef<number | null>(selectedEmpresaId ?? null)
   useEffect(() => {
     idEmpresaRef.current = selectedEmpresaId ?? null
   }, [selectedEmpresaId])
+  const contextoRef = useRef<string | undefined>(contextLabel)
+  useEffect(() => {
+    contextoRef.current = contextLabel
+  }, [contextLabel])
 
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
         api: "/api/chat",
         prepareSendMessagesRequest: ({ messages, id }) => ({
-          body: { id, messages, idEmpresa: idEmpresaRef.current },
+          // El selector global manda: idEmpresa es SIEMPRE la empresa seleccionada.
+          body: { id, messages, idEmpresa: idEmpresaRef.current, contexto: contextoRef.current },
         }),
       }),
     [],
   )
 
-  const { messages, sendMessage, status, stop, error } = useChat({ transport })
+  const { messages, sendMessage, status, stop, error, setMessages } = useChat({ transport })
   const isThinking = status === "submitted" || status === "streaming"
 
   const [input, setInput] = useState("")
@@ -70,15 +78,21 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
   const spokenRef = useRef<Set<string>>(new Set())
   const finalVozRef = useRef("")
 
-  // Preguntas sugeridas CABLEADAS a tablas reales (cada una da datos exactos):
-  //  · pedidos  -> pedidoscabecera (conteo)
-  //  · toneladas-> cabeceraoc, suma de pesovascula (peso de báscula)
-  //  · cargues  -> cabeceraoc (conteo + fincargue null)
-  const sugs = [
-    "¿Cuántos pedidos hay este mes?",
-    "¿Cuántas toneladas se despacharon este mes?",
-    "¿Cuántos cargues siguen sin cerrar hoy?",
-  ]
+  // Preguntas sugeridas PROPIAS del módulo/área actual (no fuera de contexto).
+  const sugs = sugerenciasDe(groupKey)
+
+  // Cerrar el chat: limpia el hilo y vuelve la tarjeta a su tamaño compacto.
+  const cerrarChat = () => {
+    try {
+      window.speechSynthesis?.cancel()
+    } catch {}
+    try {
+      recognitionRef.current?.stop()
+    } catch {}
+    setMessages([])
+    setInput("")
+    spokenRef.current = new Set()
+  }
 
   const placeholder = area ? `Pregúntale a LIP sobre ${area}…` : "Pregúntale a LIP: ¿cómo va la operación hoy?"
 
@@ -229,7 +243,7 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
           box-shadow:0 0 34px rgba(0,194,220,.16), 0 16px 40px rgba(0,0,0,.28); }
         @keyframes lipai-spin{ to{ --lipai-a:360deg; } }
         @media (prefers-reduced-motion:reduce){ .lipai{ animation:none; background:linear-gradient(120deg,#00c2dc,#4f8ff0); } }
-        .lipai-in{ position:relative; overflow:hidden; border-radius:18.4px; padding:15px 16px 14px;
+        .lipai-in{ position:relative; overflow:hidden; border-radius:18.4px; padding:12px 14px 12px;
           background:linear-gradient(180deg,#0c2140,#0a1a30); }
         .lipai-in::after{ content:""; position:absolute; inset:0; pointer-events:none;
           background:radial-gradient(70% 130% at 100% -10%, rgba(0,194,220,.20), transparent 55%); }
@@ -264,25 +278,37 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
               Lee tu operación en vivo{empresaLabel ? ` · ${empresaLabel}` : ""}
             </div>
           </div>
-          {onOpen ? (
-            <button
-              onClick={onOpen}
-              title="Abrir a pantalla completa"
-              className="ml-auto flex h-7 w-7 flex-none items-center justify-center rounded-lg"
-              style={{ color: "#7fbdcf", background: "rgba(255,255,255,.06)" }}
-            >
-              <Maximize2 className="h-[15px] w-[15px]" />
-            </button>
-          ) : (
-            <Sparkles className="ml-auto h-4 w-4 flex-none" style={{ color: "#3fe0ee" }} />
-          )}
+          <div className="ml-auto flex flex-none items-center gap-1.5">
+            {messages.length > 0 && (
+              <button
+                onClick={cerrarChat}
+                title="Cerrar chat"
+                className="flex h-7 w-7 items-center justify-center rounded-lg"
+                style={{ color: "#7fbdcf", background: "rgba(255,255,255,.06)" }}
+              >
+                <X className="h-[15px] w-[15px]" />
+              </button>
+            )}
+            {onOpen ? (
+              <button
+                onClick={onOpen}
+                title="Abrir a pantalla completa"
+                className="flex h-7 w-7 items-center justify-center rounded-lg"
+                style={{ color: "#7fbdcf", background: "rgba(255,255,255,.06)" }}
+              >
+                <Maximize2 className="h-[15px] w-[15px]" />
+              </button>
+            ) : (
+              <Sparkles className="h-4 w-4" style={{ color: "#3fe0ee" }} />
+            )}
+          </div>
         </div>
 
         {/* Hilo de conversación INLINE (aparece al preguntar) */}
         {messages.length > 0 && (
           <div
             ref={scrollRef}
-            className="lipai-thread relative z-[2] mt-3 max-h-[240px] space-y-2.5 overflow-y-auto pr-1"
+            className="lipai-thread relative z-[2] mt-3 max-h-[168px] space-y-2.5 overflow-y-auto pr-1"
           >
             {messages.map((m) => (
               <InlineBubble key={m.id} message={m} />

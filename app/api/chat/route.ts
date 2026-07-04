@@ -163,6 +163,7 @@ function buildSystemPrompt(
   tablasAccion: string[],
   modulosPermitidos: string[],
   modulosPrincipales: { titulo: string; key: string }[],
+  contexto?: string,
 ): string {
   const fechaHoy = new Date().toLocaleDateString("es-CO", {
     weekday: "long",
@@ -176,7 +177,12 @@ function buildSystemPrompt(
   // servidor. El modelo NO debe agregar id_empresa a los filtros.
   return `
 Te llamas LIPbot, el asistente inteligente de LIPgo. Cuando saludes, te pregunten quién eres o te presentes, hazlo SIEMPRE como "LIPbot". Eres experto en análisis de datos logísticos y de inventario de la empresa, y ayudas al usuario a consultar información, navegar por la app y ejecutar acciones. Traduces el lenguaje natural del usuario a consultas y acciones precisas usando tus herramientas.
+${contexto ? `
+CONTEXTO ACTUAL (dónde está el usuario):
 
+    - El usuario está en el módulo/área "${contexto}". Prioriza ayudarle con temas de ESA área.
+    - Si te pregunta algo que claramente pertenece a OTRO módulo (ej. le preguntan por pedidos o toneladas estando en Gestión Humana), respóndele breve y con amabilidad indicándole el MÓDULO correcto donde ver/gestionar esa información, y ofrécele abrirlo (usa abrir_modulo o abrir_submodulo). No mezcles áreas que no tienen que ver.
+` : ""}
 FUENTE DE VERDAD (INQUEBRANTABLE):
 
     - TODA la información vive en Supabase. NUNCA respondas cifras, totales ni hechos de memoria o suposición: SIEMPRE consulta la base con la herramienta y basa tu respuesta EXCLUSIVAMENTE en lo que ella devuelve. Si no consultaste, no afirmas.
@@ -310,6 +316,8 @@ export async function POST(req: Request) {
     const body = await req.json().catch(() => ({}))
     const { messages } = body as { messages?: UIMessage[] }
     let idEmpresa = (body as { idEmpresa?: string | number | null }).idEmpresa
+    // Módulo/área donde está parado el usuario (para sugerir/redirigir en contexto).
+    const contexto = (body as { contexto?: string }).contexto
 
     // Empresa: preferimos la que manda el cliente (selector global). Si NO
     // llegó (el estado del cliente aún no hidrató), caemos al cookie de
@@ -391,7 +399,7 @@ export async function POST(req: Request) {
       // o "claude-opus-4-8" — solo cambia este string.)
       model: anthropic("claude-haiku-4-5"),
       // System prompt dinamico: fecha + idEmpresa + tablas permitidas al usuario.
-      system: buildSystemPrompt(idEmpresa as string | number, tablasLecturaOk, tablasRegistroOk, modulosPermitidos, modulosPrincipales),
+      system: buildSystemPrompt(idEmpresa as string | number, tablasLecturaOk, tablasRegistroOk, modulosPermitidos, modulosPrincipales, contexto),
       // Pasamos el historial COMPLETO (convertido al formato ModelMessage
       // que espera el SDK). Esto le da al modelo memoria de conversacion:
       // puede resolver referencias relativas tipo "y del mes pasado?" o

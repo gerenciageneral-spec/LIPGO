@@ -154,6 +154,7 @@ export function ModulesView({ groupKey, onBack, onSelectModule, onNavigate, onOp
       {/* Asistente IA premium — tareas del día PROPIAS de este submódulo (KPIs bajo meta) */}
       <LipAiAssistant
         contextLabel={group.title}
+        groupKey={groupKey}
         empresaLabel={selectedEmpresaNombre}
         alertas={alertas}
         onOpen={() => onSelectModule("Asistente IA")}

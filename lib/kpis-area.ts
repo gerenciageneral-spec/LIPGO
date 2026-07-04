@@ -47,6 +47,35 @@ export const AREA_KPIS: Record<string, string[]> = {
   // mrp / configuracion: sin indicadores de área en el BSC → no muestran KPIs.
 }
 
+// Preguntas SUGERIDAS propias de cada área (grupo del menú). Cada una está
+// alineada a datos que LIPbot puede consultar/gestionar EN ESE módulo, para no
+// mostrar sugerencias fuera de contexto (ej. no ofrecer "pedidos" en RRHH).
+export const AREA_SUGERENCIAS: Record<string, string[]> = {
+  integral: ["¿Cómo va el SLA global hoy?", "¿Cumplimos la meta de toneladas?", "¿Qué requiere mi atención hoy?"],
+  pedidos: ["¿Cuántos pedidos hay este mes?", "¿Cuánto suman los pedidos del mes?", "¿Qué pedidos están pendientes?"],
+  despachos: ["¿Cuántas toneladas cargué hoy?", "¿Cuántos cargues siguen sin cerrar?", "¿Cuántos vehículos se atendieron hoy?"],
+  inventarios: ["¿Qué stock hay disponible?", "¿Cómo va la exactitud de inventario?", "¿Cuántos registros de inventario hay?"],
+  produccion: ["¿Cuántas toneladas se produjeron este mes?", "¿Cómo va la meta de producción?"],
+  lip: ["¿Cómo va el SLA de tiempos?", "¿Cuántos cargues sin cerrar hoy?", "¿Cuántas toneladas cargué este mes?"],
+  financiera: ["¿Qué facturas hay por solicitar?", "¿Cuánto suman los gastos del mes?", "Registrar un gasto"],
+  rrhh: ["¿Cuántos colaboradores activos hay?", "Registrar una novedad a un trabajador", "¿Cómo va el ausentismo del mes?"],
+  certificaciones_lip: ["¿Cómo va la satisfacción del cliente?", "¿Cómo va la satisfacción del conductor?"],
+  configuracion: ["Crear un cliente nuevo", "Registrar un producto", "Editar un destino"],
+}
+
+// Sugerencias genéricas (Inicio / sin grupo específico).
+const SUGERENCIAS_GENERICAS = [
+  "¿Qué requiere mi atención hoy?",
+  "¿Cuántas toneladas cargué este mes?",
+  "¿Cuántos pedidos hay este mes?",
+]
+
+/** Sugerencias para un grupo del menú; si no hay mapeo, usa las genéricas. */
+export function sugerenciasDe(groupKey?: string): string[] {
+  if (groupKey && AREA_SUGERENCIAS[groupKey]) return AREA_SUGERENCIAS[groupKey]
+  return SUGERENCIAS_GENERICAS
+}
+
 export function formatKpi(def: KpiDef, valor: number): string {
   switch (def.fmt) {
     case "pct":
