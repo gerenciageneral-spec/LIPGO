@@ -138,6 +138,10 @@ export interface UserPermissions {
   // del headcount en `registroasistencia`. Mismo formato que el
   // resto de columnas operativas: sin separador, todo en minuscula.
   programacionturnos: boolean
+  // Permiso del modulo "Notificaciones al Personal" (Operación Lip).
+  // Gobierna el envio de alertas y programacion de turnos por WhatsApp
+  // al celular del personal. Coincide con la columna en `permisos_usuarios`.
+  notificaciones: boolean
   // Configuración
   config_bodegas: boolean
   config_categorias: boolean
@@ -306,6 +310,7 @@ export const MODULE_PERMISSION_MAP: Record<string, keyof UserPermissions> = {
   "Recobro de Incapacidades": "recobro_incapacidades",
   Turnos: "gestionturnos",
   "Programación de turnos": "programacionturnos",
+  "Notificaciones al Personal": "notificaciones",
   Visor: "visor",
   Bodegas: "config_bodegas",
   Categorías: "config_categorias",

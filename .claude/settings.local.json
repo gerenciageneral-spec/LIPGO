@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs grep -l \"useAuth\")",
+      "Bash(npx tsc *)",
+      "Bash(curl -s -X POST \"http://localhost:3000/api/notificaciones/enviar\" -H \"Content-Type: application/json\" -d '{\"empresaId\":1,\"tipo\":\"alerta\",\"mensaje\":\"Hola {nombre}, prueba de simulacion LIP.\",\"createdBy\":\"test@lip-sas.com\",\"destinatarios\":[{\"documento\":\"999\",\"nombre\":\"Prueba Uno\",\"celular\":\"3011309151\"},{\"documento\":\"998\",\"nombre\":\"Prueba Dos\",\"celular\":\"sincelular\"}]}')",
+      "Bash(node -e 'let s=\"\";process.stdin.on\\(\"data\",d=>s+=d\\).on\\(\"end\",\\(\\)=>{console.log\\(s\\)}\\)')"
+    ]
+  }
+}

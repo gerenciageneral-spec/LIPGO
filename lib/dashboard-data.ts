@@ -1,4 +1,4 @@
-import { Truck, Scale, ClipboardCheck, Package, FileText, CheckCircle, Box, PackagePlus, BarChart3, Package2, ArrowRightLeft, History, Search, LayoutDashboard, Activity, FileCheck, Receipt, Clock, Users, Eye, Settings, Type as type, LucideIcon, CreditCard, UserCheck, Store, Tag, Layers, MapPin, Warehouse, Gauge, QrCode, Sparkles, BadgeCheck, BookOpen, Lock, ClipboardList, CalendarDays, NotebookPen, GraduationCap, Wallet, Banknote, Calculator, CalendarClock, FolderOpen, FolderArchive, UserCog, HeartHandshake, ShieldCheck, Stethoscope, AlertTriangle, Star } from "lucide-react"
+import { Truck, Scale, ClipboardCheck, Package, FileText, CheckCircle, Box, PackagePlus, BarChart3, Package2, ArrowRightLeft, History, Search, LayoutDashboard, Activity, FileCheck, Receipt, Clock, Users, Eye, Settings, Type as type, LucideIcon, CreditCard, UserCheck, Store, Tag, Layers, MapPin, Warehouse, Gauge, QrCode, Sparkles, BadgeCheck, BookOpen, Lock, ClipboardList, CalendarDays, NotebookPen, GraduationCap, Wallet, Banknote, Calculator, CalendarClock, FolderOpen, FolderArchive, UserCog, HeartHandshake, ShieldCheck, Stethoscope, AlertTriangle, Star, Send } from "lucide-react"
 
 export interface Module {
   name: string
@@ -193,6 +193,9 @@ export const groups: Group[] = [
           // Movido desde "Compensación" por solicitud del negocio.
           // Conserva su permiso original.
           { name: "Registro de asistencia", icon: UserCheck, label: "Registro de Asistencia" },
+          // Envio de alertas y programacion de turnos por WhatsApp al
+          // celular del personal (desde colaboradores_th / registroasistencia).
+          { name: "Notificaciones al Personal", icon: Send, label: "Notificaciones al Personal (WhatsApp)" },
         ],
       },
       // REORG (2026-07-03): el subgrupo "Administración LIP" (Registrar Gasto,
