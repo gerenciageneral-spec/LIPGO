@@ -7,14 +7,31 @@ import { SplashScreen } from "@/components/splash-screen"
 import { LipbotDock } from "@/components/lipbot-dock"
 import { groups, type GroupKey } from "@/lib/dashboard-data"
 import { useAuth } from "@/components/auth-provider"
+import { getAtencionDelDia } from "@/lib/atencion-actions"
+import type { AtencionItem } from "@/components/lip-ai-assistant"
 import { useRouter } from "next/navigation"
 
 export default function DashboardPage() {
-  const { user, loading } = useAuth()
+  const { user, loading, selectedEmpresaId } = useAuth()
   const router = useRouter()
   const [selectedGroup, setSelectedGroup] = useState<GroupKey | null>(null)
   const [selectedModule, setSelectedModule] = useState<string | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+
+  // Atención del día (por empresa) para el badge del LIPbot flotante.
+  const [alertas, setAlertas] = useState<AtencionItem[]>([])
+  useEffect(() => {
+    if (!selectedEmpresaId) return
+    let cancel = false
+    getAtencionDelDia()
+      .then((r) => {
+        if (!cancel && r.success) setAlertas(r.items as AtencionItem[])
+      })
+      .catch(() => {})
+    return () => {
+      cancel = true
+    }
+  }, [selectedEmpresaId])
 
   // Navegación robusta a un módulo (usada por el asistente IA con abrir_modulo).
   // Fija el GRUPO que contiene el módulo además del módulo, porque main-content
@@ -123,14 +140,17 @@ export default function DashboardPage() {
         sidebarCollapsed={sidebarCollapsed}
       />
 
-      {/* LIPbot flotante — aparece DENTRO de los módulos/formularios (donde NO
-          está la tarjeta inline de Inicio/submenús ni el Asistente a pantalla
-          completa), evitando duplicar LIPbot en una misma pantalla. Consciente
-          del módulo actual. */}
-      {selectedModule && selectedModule !== "Asistente IA" && (
+      {/* LIPbot flotante GLOBAL — UN solo lugar en TODAS las pantallas (Inicio,
+          submenús y módulos). No se muestra dentro del propio Asistente a
+          pantalla completa. Consciente del módulo/área actual. */}
+      {selectedModule !== "Asistente IA" && (
         <LipbotDock
-          contextLabel={selectedModule}
+          contextLabel={
+            selectedModule ??
+            (selectedGroup ? groups.find((g) => g.key === selectedGroup)?.title : "Inicio")
+          }
           groupKey={selectedGroup ?? undefined}
+          alertas={alertas}
           onNavigate={navigateToModule}
           onOpenGroup={openGroup}
         />

@@ -2,8 +2,9 @@
 
 import React from "react"
 import { useAuth } from "@/components/auth-provider"
-import { LipAiAssistant, type AtencionItem } from "@/components/lip-ai-assistant"
+import { AtencionBanner } from "@/components/atencion-banner"
 import { getAtencionDelDia } from "@/lib/atencion-actions"
+import type { AtencionItem } from "@/components/lip-ai-assistant"
 import { TopBar } from "@/components/top-bar"
 import { DailySummary } from "@/components/daily-summary"
 import { ModuleCards } from "@/components/module-cards"
@@ -342,23 +343,26 @@ export function MainContent({
                 </div>
               </div>
 
-              {/* Asistente IA premium (mismo componente que en submenús) */}
-              <div className="mb-5 sm:mb-6">
-                <LipAiAssistant
-                  empresaLabel={selectedEmpresaNombre}
-                  alertas={homeAlertas}
-                  onOpen={() => onSelectModule("Asistente IA")}
-                  onAlerta={(a) => a.modulo && onNavigateModule(a.modulo)}
-                  onNavigate={onNavigateModule}
-                  onOpenGroup={onOpenGroup}
-                />
-              </div>
+              {/* Atención del día — tareas en riesgo/urgentes (reubicadas fuera de LIPbot) */}
+              {homeAlertas.length > 0 && (
+                <div className="mb-4 sm:mb-5">
+                  <AtencionBanner
+                    alertas={homeAlertas}
+                    onAlerta={(a) => {
+                      const m = (a as { modulo?: string }).modulo
+                      if (m) onNavigateModule(m)
+                    }}
+                  />
+                </div>
+              )}
 
-              {/* Daily Summary */}
-              <DailySummary />
-
-              {/* Module Cards */}
+              {/* Aplicaciones — protagonista del Inicio (LIPbot vive en el botón flotante) */}
               <ModuleCards onSelectGroup={onSelectGroup} onSelectModule={onSelectModule} />
+
+              {/* Pulso operativo */}
+              <div className="mt-5 sm:mt-6">
+                <DailySummary />
+              </div>
             </>
           ) : selectedModule === "Entrada de pedidos" ? (
             <PermissionGuard moduleName="Entrada de pedidos">

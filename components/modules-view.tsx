@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from "react"
 import { groups, type GroupKey, type Module } from "@/lib/dashboard-data"
 import { ArrowLeft } from "lucide-react"
-import { LipAiAssistant, type AtencionItem } from "@/components/lip-ai-assistant"
+import type { AtencionItem } from "@/components/lip-ai-assistant"
+import { AtencionBanner } from "@/components/atencion-banner"
 import { AreaKpis, type ValorBsc } from "@/components/area-kpis"
 import { useAuth } from "@/components/auth-provider"
 import { getIndicadoresValores } from "@/lib/sig-actions"
@@ -77,8 +78,8 @@ function ModuleCard({ module, onSelect }: { module: Module; onSelect: (name: str
   )
 }
 
-export function ModulesView({ groupKey, onBack, onSelectModule, onNavigate, onOpenGroup }: ModulesViewProps) {
-  const { selectedEmpresaId, selectedEmpresaNombre } = useAuth()
+export function ModulesView({ groupKey, onBack, onSelectModule }: ModulesViewProps) {
+  const { selectedEmpresaId } = useAuth()
   const [valores, setValores] = useState<Record<string, ValorBsc>>({})
   const [loading, setLoading] = useState(true)
 
@@ -114,7 +115,7 @@ export function ModulesView({ groupKey, onBack, onSelectModule, onNavigate, onOp
     }
   }, [groupKey, selectedEmpresaId])
 
-  // Tareas del día = KPIs del área bajo meta. Memo para no recalcular en cada render.
+  // Tareas del día = KPIs del área bajo meta (crit/warn). Se muestran en el banner.
   const alertas = useMemo(() => alertasDesdeKpis(groupKey, valores), [groupKey, valores])
 
   if (!group) return null
@@ -151,16 +152,8 @@ export function ModulesView({ groupKey, onBack, onSelectModule, onNavigate, onOp
         </span>
       </div>
 
-      {/* Asistente IA premium — tareas del día PROPIAS de este submódulo (KPIs bajo meta) */}
-      <LipAiAssistant
-        contextLabel={group.title}
-        groupKey={groupKey}
-        empresaLabel={selectedEmpresaNombre}
-        alertas={alertas}
-        onOpen={() => onSelectModule("Asistente IA")}
-        onNavigate={onNavigate ?? onSelectModule}
-        onOpenGroup={onOpenGroup}
-      />
+      {/* Atención del día — tareas en riesgo/urgentes del área (KPIs bajo meta) */}
+      <AtencionBanner alertas={alertas} />
 
       {/* Indicadores del área leídos del BSC (por empresa, en vivo) */}
       <AreaKpis groupKey={groupKey} valores={valores} loading={loading} />
