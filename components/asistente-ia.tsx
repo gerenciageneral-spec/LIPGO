@@ -21,10 +21,11 @@ import { useAuth } from "@/components/auth-provider"
  *  - `status`: 'ready' | 'submitted' | 'streaming' | 'error'.
  *  - El input es estado local (no managed en v5/v6).
  */
-export default function AsistenteIA() {
+export default function AsistenteIA({ onNavigate }: { onNavigate?: (modulo: string) => void } = {}) {
   const [input, setInput] = useState("")
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const navegadosRef = useRef<Set<string>>(new Set())
 
   // Empresa activa global del CRM (proviene de la TopBar via auth-provider).
   // El asistente NO tiene su propio selector: respeta el contexto que el
@@ -71,6 +72,27 @@ export default function AsistenteIA() {
     if (!el) return
     el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
   }, [messages, isThinking])
+
+  // Navegación: si la IA usó 'abrir_modulo' y el backend autorizó, abrimos ese
+  // módulo (una sola vez por toolCallId).
+  useEffect(() => {
+    if (!onNavigate) return
+    for (const m of messages) {
+      if (m.role !== "assistant" || !m.parts) continue
+      for (const p of m.parts as any[]) {
+        if (
+          p?.type === "tool-abrir_modulo" &&
+          p?.state === "output-available" &&
+          p?.output?.permitido &&
+          p?.output?.navegar_a &&
+          !navegadosRef.current.has(p.toolCallId)
+        ) {
+          navegadosRef.current.add(p.toolCallId)
+          onNavigate(p.output.navegar_a as string)
+        }
+      }
+    }
+  }, [messages, onNavigate])
 
   // Auto-grow del textarea (max 6 lineas aprox.)
   useEffect(() => {

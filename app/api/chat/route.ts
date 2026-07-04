@@ -8,6 +8,7 @@ import {
 import { anthropic } from "@ai-sdk/anthropic"
 import { supabase } from "@/lib/supabase-client"
 import { getUserPermissions } from "@/lib/permissions-actions"
+import { MODULE_PERMISSION_MAP } from "@/lib/permissions-map"
 import { getCurrentEmpresaId } from "@/lib/company-filter"
 import { z } from "zod"
 
@@ -130,7 +131,7 @@ function getColumnaEmpresa(tabla: Tabla): string | null {
  * el server). Esto da al modelo conciencia temporal real para resolver
  * referencias relativas como "hoy", "este mes" o "el mes pasado".
  */
-function buildSystemPrompt(idEmpresa: string | number, tablasOk: Tabla[]): string {
+function buildSystemPrompt(idEmpresa: string | number, tablasOk: Tabla[], modulosPermitidos: string[]): string {
   const fechaHoy = new Date().toLocaleDateString("es-CO", {
     weekday: "long",
     year: "numeric",
@@ -236,6 +237,13 @@ REGLAS DE COMPORTAMIENTO:
 
     ALCANCE POR PROYECTO (empresa seleccionada): el ID ${idEmpresa} corresponde al proyecto que el usuario tiene SELECCIONADO en el selector superior, y se filtra automáticamente en TODAS tus consultas. SOLO puedes ver datos de ESE proyecto. Si el usuario pregunta por otro proyecto/empresa distinto, NO inventes ni intentes consultarlo: explícale con amabilidad que cambie el proyecto en el selector de arriba (el selector solo le muestra los proyectos a los que tiene acceso). Nunca mezcles datos de varios proyectos.
 
+NAVEGACIÓN (abrir módulos para el usuario):
+
+    - Puedes ABRIR un módulo/submódulo con la herramienta 'abrir_modulo' cuando el usuario lo pida ('abre X', 'llévame a X', 'muéstrame el módulo X', 'quiero ir a X').
+    - SOLO puedes abrir los módulos que ESTE usuario tiene habilitados (según Gestión de Usuarios / Accesos de Usuario): ${modulosPermitidos.length ? modulosPermitidos.join(", ") : "ninguno por ahora"}.
+    - Usa el nombre EXACTO de esa lista. Si piden abrir algo que NO está en la lista, explícale con amabilidad que no tiene permiso para ese módulo (o que no existe) y NO lo abras.
+    - Tras abrir, confirma en una frase corta (ej. "Listo, te abro Gestión de Facturas").
+
     Da respuestas naturales, resumidas y útiles basadas en los datos retornados por la herramienta.
 `.trim()
 }
@@ -295,6 +303,10 @@ export async function POST(req: Request) {
     // -----------------------------------------------------------------------
     const permisos = (await getUserPermissions()) as Record<string, boolean> | null
     const tablasOk = tablasPermitidas(permisos)
+    // Módulos que ESTE usuario puede ABRIR (navegación), según sus permisos.
+    const modulosPermitidos = Object.keys(MODULE_PERMISSION_MAP).filter(
+      (nombre) => permisos?.[MODULE_PERMISSION_MAP[nombre]] === true,
+    )
 
     // -----------------------------------------------------------------------
     // 2) Stream con la tool `consultar_supabase`
@@ -308,7 +320,7 @@ export async function POST(req: Request) {
       // o "claude-opus-4-8" — solo cambia este string.)
       model: anthropic("claude-haiku-4-5"),
       // System prompt dinamico: fecha + idEmpresa + tablas permitidas al usuario.
-      system: buildSystemPrompt(idEmpresa as string | number, tablasOk),
+      system: buildSystemPrompt(idEmpresa as string | number, tablasOk, modulosPermitidos),
       // Pasamos el historial COMPLETO (convertido al formato ModelMessage
       // que espera el SDK). Esto le da al modelo memoria de conversacion:
       // puede resolver referencias relativas tipo "y del mes pasado?" o
@@ -563,6 +575,30 @@ export async function POST(req: Request) {
                   "Error desconocido al consultar la base de datos.",
               }
             }
+          },
+        }),
+        // Navegación: abre un módulo/submódulo para el usuario. Valida el
+        // permiso con los mismos permisos del usuario (Accesos de Usuario).
+        // El frontend detecta el resultado {permitido, navegar_a} y navega.
+        abrir_modulo: tool({
+          description:
+            "Abre un módulo o submódulo de la aplicación para el usuario (navegación en la app). Úsalo cuando pidan 'abre X', 'llévame a X' o 'muéstrame el módulo X'. Usa el nombre EXACTO del módulo (de la lista de módulos permitidos del system prompt). El sistema valida el permiso del usuario.",
+          inputSchema: z.object({
+            modulo: z
+              .string()
+              .min(1)
+              .describe("Nombre EXACTO del módulo/submódulo a abrir, tal como aparece en la lista de módulos permitidos."),
+          }),
+          execute: async ({ modulo }) => {
+            const key = MODULE_PERMISSION_MAP[modulo]
+            const permitido = !!(key && permisos?.[key] === true)
+            if (!permitido) {
+              return {
+                permitido: false,
+                mensaje: `No tienes permiso para abrir "${modulo}" (o el módulo no existe). Solicítalo en Gestión de Usuarios / Accesos de Usuario.`,
+              }
+            }
+            return { permitido: true, navegar_a: modulo, mensaje: `Listo, te abro ${modulo}.` }
           },
         }),
       },

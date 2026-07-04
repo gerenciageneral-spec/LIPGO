@@ -342,6 +342,7 @@ export function MainContent({
                   alertas={homeAlertas}
                   onOpen={() => onSelectModule("Asistente IA")}
                   onAlerta={(a) => a.modulo && onSelectModule(a.modulo)}
+                  onNavigate={onSelectModule}
                 />
               </div>
 
@@ -889,7 +890,7 @@ export function MainContent({
                 pequenas siga siendo usable.
               */}
               <div className="h-[calc(100dvh-9rem)] min-h-[520px] w-full overflow-hidden rounded-lg border border-border/60">
-                <AsistenteIA />
+                <AsistenteIA onNavigate={onSelectModule} />
               </div>
             </PermissionGuard>
           ) : configDef ? (

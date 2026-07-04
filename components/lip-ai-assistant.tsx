@@ -22,6 +22,8 @@ interface LipAiAssistantProps {
   alertas?: AtencionItem[]
   /** Acción al tocar una alerta (ej. abrir el módulo relacionado). */
   onAlerta?: (a: AtencionItem) => void
+  /** Navegar a un módulo cuando la IA lo decide (herramienta abrir_modulo). */
+  onNavigate?: (modulo: string) => void
 }
 
 /**
@@ -31,7 +33,7 @@ interface LipAiAssistantProps {
  * usando el mismo backend Claude (/api/chat), gobernado por los permisos del
  * usuario. Reutilizable en Inicio y en cada submenú.
  */
-export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, onAlerta }: LipAiAssistantProps) {
+export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, onAlerta, onNavigate }: LipAiAssistantProps) {
   const { selectedEmpresaId } = useAuth()
   const area = contextLabel?.trim()
 
@@ -78,6 +80,29 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
     const el = scrollRef.current
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
   }, [messages, isThinking])
+
+  // Navegación: si la IA usó la herramienta 'abrir_modulo' y el backend
+  // autorizó (permitido:true), abrimos ese módulo. Cada llamada se ejecuta
+  // una sola vez (rastreo por toolCallId).
+  const navegadosRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (!onNavigate) return
+    for (const m of messages) {
+      if (m.role !== "assistant" || !m.parts) continue
+      for (const p of m.parts as any[]) {
+        if (
+          p?.type === "tool-abrir_modulo" &&
+          p?.state === "output-available" &&
+          p?.output?.permitido &&
+          p?.output?.navegar_a &&
+          !navegadosRef.current.has(p.toolCallId)
+        ) {
+          navegadosRef.current.add(p.toolCallId)
+          onNavigate(p.output.navegar_a as string)
+        }
+      }
+    }
+  }, [messages, onNavigate])
 
   const enviar = (text: string) => {
     const t = text.trim()

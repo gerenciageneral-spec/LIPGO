@@ -46,7 +46,7 @@ function alertasDesdeKpis(groupKey: GroupKey, valores: Record<string, ValorBsc>)
         sev: sev === "crit" ? ("crit" as const) : ("warn" as const),
       }
     })
-    .filter((x): x is AtencionItem => x !== null)
+    .filter((x): x is { label: string; sev: "crit" | "warn" } => x !== null)
   // Crit primero, luego warn.
   return items.sort((a, b) => (a.sev === "crit" ? -1 : 1) - (b.sev === "crit" ? -1 : 1))
 }
@@ -153,6 +153,7 @@ export function ModulesView({ groupKey, onBack, onSelectModule }: ModulesViewPro
         empresaLabel={selectedEmpresaNombre}
         alertas={alertas}
         onOpen={() => onSelectModule("Asistente IA")}
+        onNavigate={onSelectModule}
       />
 
       {/* Indicadores del área leídos del BSC (por empresa, en vivo) */}
