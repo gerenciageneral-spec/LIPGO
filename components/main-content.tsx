@@ -329,16 +329,16 @@ export function MainContent({
                 .lipgo-ai-chip{ color:#d6eef5; background:rgba(255,255,255,.08); border:1px solid rgba(180,230,245,.2); transition:background .15s; }
                 .lipgo-ai-chip:hover{ background:rgba(255,255,255,.16); }
               `}</style>
-              <div className="lipgo-home-hero mb-4 p-5 sm:mb-5 sm:p-6">
-                <div className="relative z-10">
-                  <h1 className="text-2xl font-extrabold tracking-tight sm:text-4xl">
+              <div className="lipgo-home-hero mb-3 px-4 py-2.5">
+                <div className="relative z-10 flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
+                  <h1 className="text-base font-extrabold tracking-tight sm:text-lg">
                     <span aria-hidden="true">👋</span> {nowInfo.saludo}
                     {primerNombre ? `, ${primerNombre}` : ""}
                   </h1>
-                  <p className="mt-1 text-sm sm:text-base" style={{ color: "#9fd4e6" }}>
+                  <span className="text-xs sm:text-sm" style={{ color: "#9fd4e6" }}>
                     {nowInfo.fecha}
                     {selectedEmpresaNombre ? ` · ${selectedEmpresaNombre}` : ""}
-                  </p>
+                  </span>
                 </div>
               </div>
 
