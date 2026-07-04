@@ -289,12 +289,15 @@ export function Sidebar({
           permisos ni rutas. */}
       <style>{`
         .lipgo-sb{
-          --card:#0b2138; --card-foreground:#e2eef8; --foreground:#e2eef8;
-          --background:#0e2b46; --muted-foreground:#8aa6bf;
-          --accent:#12365170; --accent-foreground:#ffffff;
+          --card:#0b2138; --card-foreground:#ffffff; --foreground:#ffffff;
+          --background:#0e2b46; --muted-foreground:#d6e6f5;
+          --accent:#1c4a72; --accent-foreground:#ffffff;
           --border:#1b3350; --input:#1b3350; --primary:#00c2dc; --ring:#00c2dc;
           background-image:linear-gradient(180deg,#0b2138,#071a30);
         }
+        /* Letras del menú en BLANCO con alto contraste (peticion de diseño). */
+        .lipgo-sb nav button span{ color:#ffffff; }
+        .lipgo-sb nav button{ color:#eaf4ff; }
         .lipgo-sb .bg-primary{ box-shadow:0 0 12px rgba(0,194,220,.65); }
         .lipgo-hero-bg{ background:
           radial-gradient(120% 90% at 82% 0%, rgba(0,194,220,.30), transparent 58%),
