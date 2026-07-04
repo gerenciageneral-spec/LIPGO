@@ -10,6 +10,7 @@ import { supabase } from "@/lib/supabase-client"
 import { getUserPermissions } from "@/lib/permissions-actions"
 import { MODULE_PERMISSION_MAP } from "@/lib/permissions-map"
 import { groups } from "@/lib/dashboard-data"
+import { REGISTRO_ACCIONES, NUCLEO_PROHIBIDO, pkDe } from "@/lib/lipbot-registry"
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getCurrentEmpresaId } from "@/lib/company-filter"
 import { z } from "zod"
@@ -158,7 +159,8 @@ function getColumnaEmpresa(tabla: Tabla): string | null {
  */
 function buildSystemPrompt(
   idEmpresa: string | number,
-  tablasOk: Tabla[],
+  tablasLectura: string[],
+  tablasAccion: string[],
   modulosPermitidos: string[],
   modulosPrincipales: { titulo: string; key: string }[],
 ): string {
@@ -254,7 +256,7 @@ REGLA DE ORO (INQUEBRANTABLE, SIN EXCEPCIÓN):
 
     - NUNCA modificas el CÓDIGO, la ESTRUCTURA de las tablas, ni las TABLAS NÚCLEO del proceso/inventario (cabeceraoc, detalleoc, saldoinvdetalle, pedidoscabecera, pedidosdetalle e invtrans). Esas son intocables: SOLO LECTURA, sin excepción.
     - La ÚNICA forma en que puedes escribir es mediante las ACCIONES CONTROLADAS listadas más abajo (ej. registrar una novedad, aprobar horas extra), siempre con el permiso del usuario y SIEMPRE con confirmación previa. No existe ninguna otra forma de crear/editar/borrar. Si te piden algo fuera de esas acciones, explica que no puedes.
-    - SOLO puedes consultar estas tablas, según los permisos de ESTE usuario (otorgados en "Gestión de Usuarios / Accesos de Usuario"): ${tablasOk.length ? tablasOk.join(", ") : "NINGUNA — este usuario no tiene permisos de datos"}.
+    - SOLO puedes consultar estas tablas, según los permisos de ESTE usuario (otorgados en "Gestión de Usuarios / Accesos de Usuario"): ${tablasLectura.length ? tablasLectura.join(", ") : "NINGUNA — este usuario no tiene permisos de datos"}.
     - Si el usuario pide información de un área para la que no tiene permiso (una tabla fuera de esa lista), respóndele con claridad y amabilidad que no tiene permiso para acceder a esa información, y NO intentes consultarla. Esto es inviolable: podría exponer información privilegiada o privada.
 
 CÓMO CONTAR (¡CRÍTICO PARA DAR CIFRAS CORRECTAS!):
@@ -279,6 +281,9 @@ ACCIONES CONTROLADAS (escritura con CONFIRMACIÓN previa):
     - registrar_novedad_personal (requiere permiso 'Novedades de personal'): pone una novedad a un trabajador. Pasos: (1) busca su fila con consultar_supabase en 'registroasistencia' por nombre + fecha (hoy si no dicen otra); (2) si hay varias coincidencias o ninguna, pídele que aclare; (3) confirma trabajador + código de novedad; (4) al confirmar, ejecuta con el 'id' de la fila y el código EXACTO.
       Códigos válidos: ${CODIGOS_NOVEDAD.join(" | ")}.
     - aprobar_horas_extra (requiere permiso 'Asignación horas extra'): aprueba las horas extra de un registro. Busca la fila (registroasistencia, del trabajador/fecha), confirma, y al confirmar ejecuta con el 'id'.
+
+    - ejecutar_accion (acción GENÉRICA): para LLENAR FORMATOS o AJUSTAR registros en otros módulos (crear/editar). Tablas habilitadas para ESTE usuario (según sus permisos): ${tablasAccion.length ? tablasAccion.join(", ") : "ninguna por ahora"}.
+      Flujo OBLIGATORIO: (1) si es editar, primero consulta la tabla con consultar_supabase para hallar el 'id' y ver las columnas EXACTAS; (2) arma los 'datos' (columna→valor) con nombres de columna reales; (3) CONFIRMA con el usuario qué vas a escribir; (4) al confirmar, llama ejecutar_accion con tabla, operacion ('insert'/'update'), datos y (para update) el id. La empresa se pone/valida automáticamente; no incluyas la columna de empresa en 'datos'.
 
     PROHIBIDO ESCRIBIR (sin excepción): código, estructura de tablas, y las tablas núcleo (cabeceraoc, detalleoc, saldoinvdetalle, pedidoscabecera, pedidosdetalle, invtrans). Ahí solo consultas, nunca creas/editas/borras.
 
@@ -352,6 +357,12 @@ export async function POST(req: Request) {
     // -----------------------------------------------------------------------
     const permisos = (await getUserPermissions()) as Record<string, boolean> | null
     const tablasOk = tablasPermitidas(permisos)
+    // Tablas del REGISTRO que este usuario puede tocar (lectura + acciones), según permiso.
+    const tablasRegistroOk = Object.keys(REGISTRO_ACCIONES).filter((t) =>
+      REGISTRO_ACCIONES[t].permisos.some((p) => permisos?.[p] === true),
+    )
+    // Todo lo que LIPbot puede LEER: núcleo permitido (solo lectura) + registro.
+    const tablasLecturaOk: string[] = [...tablasOk, ...tablasRegistroOk]
     // SUBMÓDULOS que este usuario puede abrir (ítems internos), según permisos.
     const modulosPermitidos = Object.keys(MODULE_PERMISSION_MAP).filter(
       (nombre) => permisos?.[MODULE_PERMISSION_MAP[nombre]] === true,
@@ -380,7 +391,7 @@ export async function POST(req: Request) {
       // o "claude-opus-4-8" — solo cambia este string.)
       model: anthropic("claude-haiku-4-5"),
       // System prompt dinamico: fecha + idEmpresa + tablas permitidas al usuario.
-      system: buildSystemPrompt(idEmpresa as string | number, tablasOk, modulosPermitidos, modulosPrincipales),
+      system: buildSystemPrompt(idEmpresa as string | number, tablasLecturaOk, tablasRegistroOk, modulosPermitidos, modulosPrincipales),
       // Pasamos el historial COMPLETO (convertido al formato ModelMessage
       // que espera el SDK). Esto le da al modelo memoria de conversacion:
       // puede resolver referencias relativas tipo "y del mes pasado?" o
@@ -404,7 +415,7 @@ export async function POST(req: Request) {
           inputSchema: z.object({
             tabla: z
               .enum(
-                (tablasOk.length ? tablasOk : (["__sin_permiso__"] as const)) as unknown as [string, ...string[]],
+                (tablasLecturaOk.length ? tablasLecturaOk : (["__sin_permiso__"] as const)) as unknown as [string, ...string[]],
               )
               .describe(
                 "Nombre exacto de la tabla. SOLO puedes usar tablas para las que este usuario tiene permiso.",
@@ -460,7 +471,7 @@ export async function POST(req: Request) {
               // REGLA DE ORO (defensa en profundidad): aunque el enum ya limita
               // las opciones, revalidamos que la tabla esté permitida para este
               // usuario. Sin permiso => no se consulta, sin excepción.
-              if (!tablasOk.includes(tabla as Tabla)) {
+              if (!tablasLecturaOk.includes(tabla as string)) {
                 return {
                   error:
                     "No tienes permiso para acceder a esta información. Solicítalo en Gestión de Usuarios / Accesos de Usuario.",
@@ -482,7 +493,8 @@ export async function POST(req: Request) {
               //    PostgREST aplique el filtro multi-tenant.
               // ---------------------------------------------------------------
               const cols = (columnas || "*").trim() || "*"
-              const colEmpresa = getColumnaEmpresa(tabla as Tabla)
+              // Columna de empresa: núcleo (getColumnaEmpresa) o registro.
+              const colEmpresa = REGISTRO_ACCIONES[tabla]?.colEmpresa ?? getColumnaEmpresa(tabla as Tabla)
               const filtroEmpresaResumen:
                 | { columna: string; valor: any; via?: string }
                 | null = colEmpresa
@@ -700,7 +712,7 @@ export async function POST(req: Request) {
             if (permisos?.novedades_personal !== true) {
               return { ok: false, error: "No tienes permiso para registrar novedades de personal." }
             }
-            const admin = await getSupabaseAdmin()
+            const admin: any = await getSupabaseAdmin()
             // Validar pertenencia a la empresa ANTES de escribir (los UPDATE por
             // id no re-filtran empresa; lo hacemos aquí para no cruzar proyectos).
             const { data: fila, error: e1 } = await admin
@@ -736,7 +748,7 @@ export async function POST(req: Request) {
             if (permisos?.asignacion_horas_extra !== true) {
               return { ok: false, error: "No tienes permiso para aprobar horas extra." }
             }
-            const admin = await getSupabaseAdmin()
+            const admin: any = await getSupabaseAdmin()
             const { data: fila, error: e1 } = await admin
               .from("registroasistencia")
               .select("id, idempresa, nombre, fecha")
@@ -752,6 +764,66 @@ export async function POST(req: Request) {
               .eq("id", id)
             if (e2) return { ok: false, error: e2.message }
             return { ok: true, mensaje: `Horas extra aprobadas para ${fila.nombre} (${fila.fecha}).` }
+          },
+        }),
+        // ACCIÓN DE ESCRITURA GENÉRICA (gobernada por el REGISTRO). Permite a
+        // LIPbot llenar formatos / ajustar registros en las tablas habilitadas
+        // (NO núcleo), con permiso + empresa validada. La confirmación previa la
+        // exige el system prompt. Insert/Update; sin delete.
+        ejecutar_accion: tool({
+          description:
+            "ACCIÓN DE ESCRITURA GENÉRICA: inserta o actualiza un registro en una tabla PERMITIDA (llenar un formato, ajustar un indicador, etc.). Llama esto SOLO después de que el usuario CONFIRME explícitamente. Para 'update', primero consulta la tabla con consultar_supabase para obtener el 'id' y conocer las columnas exactas. Nunca la uses para tablas núcleo (están bloqueadas).",
+          inputSchema: z.object({
+            tabla: z.string().min(1).describe("Nombre EXACTO de la tabla habilitada."),
+            operacion: z.enum(["insert", "update"]).describe("insert = crear un registro nuevo; update = modificar uno existente."),
+            datos: z
+              .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
+              .describe("Objeto columna→valor a escribir. Usa los nombres EXACTOS de columnas de la tabla."),
+            id: z.number().optional().describe("id de la fila a actualizar (obligatorio para 'update')."),
+          }),
+          execute: async ({ tabla, operacion, datos, id }) => {
+            // 1) Núcleo: jamás se escribe.
+            if (NUCLEO_PROHIBIDO.has(tabla)) {
+              return { ok: false, error: `"${tabla}" es una tabla núcleo del proceso: es de SOLO LECTURA, no puedo escribir en ella.` }
+            }
+            // 2) Debe estar habilitada en el registro.
+            const reg = REGISTRO_ACCIONES[tabla]
+            if (!reg) {
+              return { ok: false, error: `No puedo ejecutar acciones en "${tabla}" (no está habilitada para el asistente).` }
+            }
+            if (operacion === "insert" && !reg.insert) return { ok: false, error: `No está permitido crear registros en "${tabla}".` }
+            if (operacion === "update" && !reg.update) return { ok: false, error: `No está permitido modificar registros en "${tabla}".` }
+            // 3) Permiso del usuario (Accesos de Usuario).
+            if (!reg.permisos.some((p) => permisos?.[p] === true)) {
+              return { ok: false, error: `No tienes permiso para ejecutar acciones en "${tabla}". Se otorga en Gestión de Usuarios / Accesos de Usuario.` }
+            }
+            const admin: any = await getSupabaseAdmin()
+            const pk = pkDe(tabla)
+            const limpio: Record<string, any> = { ...(datos as Record<string, any>) }
+            delete limpio[pk] // el id/pk no se toca desde datos
+
+            if (operacion === "insert") {
+              if (reg.colEmpresa) limpio[reg.colEmpresa] = idEmpresa // multi-tenant obligatorio
+              const { error } = await admin.from(tabla).insert(limpio)
+              if (error) {
+                return { ok: false, error: error.message, hint: "Revisa que estén las columnas/valores requeridos por el formato." }
+              }
+              return { ok: true, mensaje: `Registro creado en ${tabla}.` }
+            }
+
+            // update
+            if (id == null) return { ok: false, error: "Para actualizar necesito el 'id' de la fila (búscalo con consultar_supabase)." }
+            if (!reg.colEmpresa) return { ok: false, error: `No puedo actualizar "${tabla}" de forma segura (sin columna de empresa).` }
+            delete limpio[reg.colEmpresa] // no permitir mover el registro de empresa
+            // Validar pertenencia a la empresa ANTES de escribir.
+            const { data: fila, error: e1 } = await admin.from(tabla).select(`${pk}, ${reg.colEmpresa}`).eq(pk, id).single()
+            if (e1 || !fila) return { ok: false, error: "No encontré ese registro." }
+            if (String(fila[reg.colEmpresa]) !== String(idEmpresa)) {
+              return { ok: false, error: "Ese registro pertenece a otra empresa; no puedo modificarlo." }
+            }
+            const { error: e2 } = await admin.from(tabla).update(limpio).eq(pk, id)
+            if (e2) return { ok: false, error: e2.message }
+            return { ok: true, mensaje: `Registro ${id} actualizado en ${tabla}.` }
           },
         }),
       },
