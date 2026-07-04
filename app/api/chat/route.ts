@@ -176,11 +176,41 @@ Antes de usar la herramienta, analiza la intención del usuario y usa estrictame
 
     Uso: Para consultar si hay mercancía disponible, revisar stock actual, lotes o ubicaciones (location) de los productos.
 
+COLUMNAS CLAVE (cablea cada pregunta a su tabla + columna EXACTA):
+
+    TONELADAS / peso despachado (Tabla: cabeceraoc):
+    - Usa sumar:"pesovascula" (peso REAL de báscula, ya en toneladas). Filtra por "fechacargue" para el periodo pedido.
+    - "pesoorden" es el peso PLANEADO de la orden; usa pesovascula salvo que pidan explícitamente lo planeado.
+
+    ÓRDENES DE CARGUE / despachos (Tabla: cabeceraoc):
+    - Número de órdenes: contar:true. Fecha del despacho: "fechacargue". Cargue SIN cerrar: filtro fincargue IS null.
+    - "tipooperacion" = 'Cargue' o 'Descargue'. "placa", "conductor", "transporte", "cliente" identifican el viaje.
+    - Estado de factura: "estadofactura" (null = por gestionar).
+
+    PEDIDOS (Tabla: pedidoscabecera):
+    - Número de pedidos: contar:true. Fecha: "fecha" (o "fecha_programada"). Valor: sumar:"total_linea" o "total_pagar".
+    - Aprobación: "aprobado" ('si'/'no'). Estado de entrega: "estado". Cliente: "cliente".
+
+    INVENTARIO / stock (Tabla: saldoinvdetalle):
+    - Existencias por producto / lote / ubicación. Para "cuántos productos/registros" usa contar:true.
+
+    CÓMO ELEGIR EL MODO:
+    - Cantidad ("¿cuántos...?", "número de") -> contar:true.
+    - Total de una magnitud ("¿cuántas toneladas?", "¿cuánto vendí?") -> sumar:"<columna numérica>".
+    - Ver detalle o ejemplos -> lista normal (devuelve hasta 50 filas).
+
 REGLA DE ORO (INQUEBRANTABLE, SIN EXCEPCIÓN):
 
     - Eres de SOLO LECTURA. NUNCA modificas datos, código ni la base de datos. No puedes crear, editar ni borrar nada — ni en Supabase ni en la app. Si te lo piden, explica que no puedes.
     - SOLO puedes consultar estas tablas, según los permisos de ESTE usuario (otorgados en "Gestión de Usuarios / Accesos de Usuario"): ${tablasOk.length ? tablasOk.join(", ") : "NINGUNA — este usuario no tiene permisos de datos"}.
     - Si el usuario pide información de un área para la que no tiene permiso (una tabla fuera de esa lista), respóndele con claridad y amabilidad que no tiene permiso para acceder a esa información, y NO intentes consultarla. Esto es inviolable: podría exponer información privilegiada o privada.
+
+CÓMO CONTAR (¡CRÍTICO PARA DAR CIFRAS CORRECTAS!):
+
+    - Para CUALQUIER pregunta de cantidad ('cuántos pedidos', 'número de órdenes', 'total de facturas', 'cuántas hay'), DEBES llamar la herramienta con "contar": true. Eso devuelve el CONTEO EXACTO de TODAS las filas.
+    - NUNCA cuentes filas tú mismo ni estimes: la lista normal está limitada a 50 filas de EJEMPLO, así que contar a mano daría un número equivocado.
+    - Si la pregunta trae un periodo ('este mes', 'hoy', 'esta semana'), agrega el filtro de fecha correspondiente ADEMÁS de "contar": true.
+    - NUNCA inventes cifras. Si no llamaste la herramienta y leíste su resultado, no des ningún número.
 
 REGLAS DE COMPORTAMIENTO:
 
@@ -275,7 +305,9 @@ export async function POST(req: Request) {
             "Consulta de SOLO LECTURA contra la base de datos de logistica e " +
             "inventario. Recibe la tabla, las columnas a traer y una lista " +
             "opcional de filtros (combinados con AND). El sistema inyecta " +
-            "automaticamente el filtro por empresa cuando aplica.",
+            "automaticamente el filtro por empresa cuando aplica. Con " +
+            "'contar':true devuelve el TOTAL EXACTO de filas (usalo para " +
+            "preguntas de cantidad); si no, devuelve hasta 50 filas de ejemplo.",
           inputSchema: z.object({
             tabla: z
               .enum(
@@ -317,8 +349,20 @@ export async function POST(req: Request) {
               )
               .default([])
               .describe("Lista de filtros aplicados con AND. Usa [] si no hay."),
+            contar: z
+              .boolean()
+              .default(false)
+              .describe(
+                "true = devuelve SOLO el conteo EXACTO de filas (no trae datos). Úsalo SIEMPRE para preguntas de cantidad: '¿cuántos...?', 'número de', 'total de'.",
+              ),
+            sumar: z
+              .string()
+              .optional()
+              .describe(
+                "Nombre de una columna NUMÉRICA para TOTALIZAR (suma exacta de todas las filas). Ej.: toneladas despachadas = tabla 'cabeceraoc' con sumar:'pesovascula'. Combínalo con filtros de fecha. No lo uses junto con 'contar'.",
+              ),
           }),
-          execute: async ({ tabla, columnas, filtros }) => {
+          execute: async ({ tabla, columnas, filtros, contar, sumar }) => {
             try {
               // REGLA DE ORO (defensa en profundidad): aunque el enum ya limita
               // las opciones, revalidamos que la tabla esté permitida para este
@@ -345,93 +389,130 @@ export async function POST(req: Request) {
               //    PostgREST aplique el filtro multi-tenant.
               // ---------------------------------------------------------------
               const cols = (columnas || "*").trim() || "*"
-              let query
-              if (tabla === "detalleoc") {
-                query = supabase
-                  .from("detalleoc")
-                  .select(`${cols}, cabeceraoc!inner(idempresa)`)
-                  .eq("cabeceraoc.idempresa", idEmpresa as any)
-                  .limit(50)
-              } else {
-                query = supabase.from(tabla).select(cols).limit(50)
-              }
-
-              // ---------------------------------------------------------------
-              // b) Aplica los filtros del modelo uno por uno con los metodos
-              //    nativos de Supabase (mas seguro que SQL raw).
-              // ---------------------------------------------------------------
-              for (const f of filtros ?? []) {
-                const op = f.operador as Operador
-                const col = f.columna
-                const val = f.valor as any
-
-                switch (op) {
-                  case "eq":
-                    query = query.eq(col, val)
-                    break
-                  case "neq":
-                    query = query.neq(col, val)
-                    break
-                  case "gt":
-                    query = query.gt(col, val)
-                    break
-                  case "gte":
-                    query = query.gte(col, val)
-                    break
-                  case "lt":
-                    query = query.lt(col, val)
-                    break
-                  case "lte":
-                    query = query.lte(col, val)
-                    break
-                  case "like":
-                    query = query.like(col, String(val))
-                    break
-                  case "ilike":
-                    query = query.ilike(col, String(val))
-                    break
-                  case "is":
-                    // espera true | false | null
-                    query = query.is(col, val as any)
-                    break
-                  case "in":
-                    query = query.in(col, Array.isArray(val) ? val : [val])
-                    break
-                }
-              }
-
-              // ---------------------------------------------------------------
-              // c) FILTRO DE SEGURIDAD OBLIGATORIO: inyectamos siempre el
-              //    `idEmpresa` recibido del frontend en la columna que
-              //    corresponda a cada tabla. Esto garantiza que la IA no
-              //    pueda leer datos de otra empresa aunque construya mal
-              //    los filtros.
-              //
-              //    Para `detalleoc` el filtro ya quedo aplicado en el paso
-              //    (a) via el INNER JOIN contra cabeceraoc, asi que aqui
-              //    solo cubrimos las otras 4 tablas que tienen columna de
-              //    empresa directa.
-              // ---------------------------------------------------------------
               const colEmpresa = getColumnaEmpresa(tabla as Tabla)
-              let filtroEmpresaResumen:
+              const filtroEmpresaResumen:
                 | { columna: string; valor: any; via?: string }
-                | null = null
+                | null = colEmpresa
+                ? { columna: colEmpresa, valor: idEmpresa }
+                : tabla === "detalleoc"
+                  ? { columna: "cabeceraoc.idempresa", valor: idEmpresa, via: "INNER JOIN con cabeceraoc" }
+                  : null
 
-              if (colEmpresa) {
-                query = query.eq(colEmpresa, idEmpresa as any)
-                filtroEmpresaResumen = { columna: colEmpresa, valor: idEmpresa }
-              } else if (tabla === "detalleoc") {
-                filtroEmpresaResumen = {
-                  columna: "cabeceraoc.idempresa",
-                  valor: idEmpresa,
-                  via: "INNER JOIN con cabeceraoc",
+              // Aplica los filtros del modelo + el FILTRO OBLIGATORIO de empresa
+              // (multi-tenant) a cualquier query builder. Para detalleoc el
+              // filtro de empresa va en el select embebido (inner join), en
+              // `baseSelect`, no aquí.
+              const aplicar = (q: any) => {
+                for (const f of filtros ?? []) {
+                  const op = f.operador as Operador
+                  const col = f.columna
+                  const val = f.valor as any
+                  switch (op) {
+                    case "eq": q = q.eq(col, val); break
+                    case "neq": q = q.neq(col, val); break
+                    case "gt": q = q.gt(col, val); break
+                    case "gte": q = q.gte(col, val); break
+                    case "lt": q = q.lt(col, val); break
+                    case "lte": q = q.lte(col, val); break
+                    case "like": q = q.like(col, String(val)); break
+                    case "ilike": q = q.ilike(col, String(val)); break
+                    case "is": q = q.is(col, val as any); break
+                    case "in": q = q.in(col, Array.isArray(val) ? val : [val]); break
+                  }
                 }
+                if (colEmpresa) q = q.eq(colEmpresa, idEmpresa as any)
+                return q
+              }
+
+              // Crea el select base. Para detalleoc agrega el INNER JOIN a
+              // cabeceraoc + su filtro de empresa (la tabla no tiene idempresa).
+              const baseSelect = (sel: string, opts?: { count: "exact"; head: boolean }) => {
+                if (tabla === "detalleoc") {
+                  const relSel = sel ? `${sel}, cabeceraoc!inner(idempresa)` : "cabeceraoc!inner(idempresa)"
+                  const s = opts
+                    ? supabase.from("detalleoc").select(relSel, opts)
+                    : supabase.from("detalleoc").select(relSel)
+                  return (s as any).eq("cabeceraoc.idempresa", idEmpresa as any)
+                }
+                return opts ? supabase.from(tabla).select(sel, opts) : supabase.from(tabla).select(sel)
               }
 
               // ---------------------------------------------------------------
-              // d) Ejecuta y retorna al modelo.
+              // d) Ejecuta según el modo: CONTAR (total exacto) / SUMAR
+              //    (totaliza una columna numérica paginando) / LISTAR (hasta 50).
               // ---------------------------------------------------------------
-              const { data, error } = await query
+              if (contar) {
+                const { count, error } = await aplicar(
+                  baseSelect(tabla === "detalleoc" ? "" : "*", { count: "exact", head: true }),
+                )
+                if (error) {
+                  return {
+                    ok: false,
+                    error: error.message,
+                    hint: "El conteo fallo. Posibles causas: columna inexistente en un filtro, tipo incompatible, o RLS.",
+                    tabla,
+                    filtros_aplicados: filtros,
+                    filtro_empresa: filtroEmpresaResumen,
+                  }
+                }
+                return {
+                  ok: true,
+                  tabla,
+                  es_conteo: true,
+                  filtros_aplicados: filtros,
+                  filtro_empresa: filtroEmpresaResumen,
+                  total: count ?? 0,
+                }
+              }
+
+              // Modo SUMA: totaliza una columna numérica sobre TODAS las filas,
+              // paginando de a 1000 (los agregados de PostgREST están off).
+              // Ej.: toneladas despachadas = suma de `pesovascula` en cabeceraoc.
+              if (sumar) {
+                const PAGE = 1000
+                const MAX_PAGES = 40
+                let suma = 0
+                let filasSumadas = 0
+                let pagina = 0
+                let parcial = false
+                while (pagina < MAX_PAGES) {
+                  const desde = pagina * PAGE
+                  const { data, error } = await aplicar(baseSelect(sumar)).range(desde, desde + PAGE - 1)
+                  if (error) {
+                    return {
+                      ok: false,
+                      error: error.message,
+                      hint: "La suma fallo. Verifica que la columna a sumar sea numérica.",
+                      tabla,
+                      columna_sumada: sumar,
+                      filtros_aplicados: filtros,
+                      filtro_empresa: filtroEmpresaResumen,
+                    }
+                  }
+                  const filas = (data ?? []) as any[]
+                  for (const row of filas) {
+                    const v = Number(row?.[sumar])
+                    if (Number.isFinite(v)) suma += v
+                  }
+                  filasSumadas += filas.length
+                  if (filas.length < PAGE) break
+                  pagina++
+                  if (pagina >= MAX_PAGES) parcial = true
+                }
+                return {
+                  ok: true,
+                  tabla,
+                  es_suma: true,
+                  columna_sumada: sumar,
+                  total: Math.round(suma * 1000) / 1000,
+                  filas_sumadas: filasSumadas,
+                  parcial,
+                  filtros_aplicados: filtros,
+                  filtro_empresa: filtroEmpresaResumen,
+                }
+              }
+
+              const { data, error } = await aplicar(baseSelect(cols)).limit(50)
               if (error) {
                 return {
                   ok: false,

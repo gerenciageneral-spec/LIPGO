@@ -61,9 +61,15 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
   const recognitionRef = useRef<any>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
 
-  const sugs = area
-    ? [`¿Cómo va ${area} hoy?`, "¿Dónde pierdo SLA?", "Pendientes por gestionar"]
-    : ["Órdenes por despachar hoy", "Pedidos de este mes", "Stock disponible"]
+  // Preguntas sugeridas CABLEADAS a tablas reales (cada una da datos exactos):
+  //  · pedidos  -> pedidoscabecera (conteo)
+  //  · toneladas-> cabeceraoc, suma de pesovascula (peso de báscula)
+  //  · cargues  -> cabeceraoc (conteo + fincargue null)
+  const sugs = [
+    "¿Cuántos pedidos hay este mes?",
+    "¿Cuántas toneladas se despacharon este mes?",
+    "¿Cuántos cargues siguen sin cerrar hoy?",
+  ]
 
   const placeholder = area ? `Pregúntale a LIP sobre ${area}…` : "Pregúntale a LIP: ¿cómo va la operación hoy?"
 
