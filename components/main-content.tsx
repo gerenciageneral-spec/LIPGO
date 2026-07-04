@@ -144,6 +144,8 @@ interface MainContentProps {
   onBack: () => void
   onSelectGroup: (group: GroupKey) => void
   onSelectModule: (moduleName: string) => void
+  /** Navegación robusta (fija grupo + módulo). La usa el asistente IA. */
+  onNavigateModule: (moduleName: string) => void
   sidebarCollapsed: boolean
 }
 
@@ -153,6 +155,7 @@ export function MainContent({
   onBack,
   onSelectGroup,
   onSelectModule,
+  onNavigateModule,
   sidebarCollapsed,
 }: MainContentProps) {
   const [editingOrderId, setEditingOrderId] = React.useState<number | null>(null)
@@ -341,8 +344,8 @@ export function MainContent({
                   empresaLabel={selectedEmpresaNombre}
                   alertas={homeAlertas}
                   onOpen={() => onSelectModule("Asistente IA")}
-                  onAlerta={(a) => a.modulo && onSelectModule(a.modulo)}
-                  onNavigate={onSelectModule}
+                  onAlerta={(a) => a.modulo && onNavigateModule(a.modulo)}
+                  onNavigate={onNavigateModule}
                 />
               </div>
 
@@ -890,7 +893,7 @@ export function MainContent({
                 pequenas siga siendo usable.
               */}
               <div className="h-[calc(100dvh-9rem)] min-h-[520px] w-full overflow-hidden rounded-lg border border-border/60">
-                <AsistenteIA onNavigate={onSelectModule} />
+                <AsistenteIA onNavigate={onNavigateModule} />
               </div>
             </PermissionGuard>
           ) : configDef ? (
@@ -900,7 +903,12 @@ export function MainContent({
           ) : selectedModule ? (
             <ModulePlaceholder moduleName={selectedModule} onBack={onBack} />
           ) : (
-            <ModulesView groupKey={selectedGroup} onBack={onBack} onSelectModule={onSelectModule} />
+            <ModulesView
+              groupKey={selectedGroup}
+              onBack={onBack}
+              onSelectModule={onSelectModule}
+              onNavigate={onNavigateModule}
+            />
           )}
         </div>
       </main>

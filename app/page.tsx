@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"
 import { Sidebar } from "@/components/sidebar"
 import { MainContent } from "@/components/main-content"
 import { SplashScreen } from "@/components/splash-screen"
-import type { GroupKey } from "@/lib/dashboard-data"
+import { groups, type GroupKey } from "@/lib/dashboard-data"
 import { useAuth } from "@/components/auth-provider"
 import { useRouter } from "next/navigation"
 
@@ -14,6 +14,24 @@ export default function DashboardPage() {
   const [selectedGroup, setSelectedGroup] = useState<GroupKey | null>(null)
   const [selectedModule, setSelectedModule] = useState<string | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+
+  // Navegación robusta a un módulo (usada por el asistente IA con abrir_modulo).
+  // Fija el GRUPO que contiene el módulo además del módulo, porque main-content
+  // solo renderiza un módulo si hay un grupo seleccionado. Si no lo encuentra en
+  // ningún grupo, cae a un grupo válido para salir del home.
+  const navigateToModule = (moduleName: string) => {
+    let gk: GroupKey | null = null
+    for (const g of groups) {
+      const enDirecto = g.modules?.some((m) => m.name === moduleName)
+      const enSub = g.subgroups?.some((sg) => sg.modules.some((m) => m.name === moduleName))
+      if (enDirecto || enSub) {
+        gk = g.key
+        break
+      }
+    }
+    setSelectedGroup((prev) => gk ?? prev ?? (groups[0]?.key ?? null))
+    setSelectedModule(moduleName)
+  }
   // Controla si la pantalla de bienvenida debe mostrarse antes del
   // dashboard. Solo se activa una vez por sesion: el login-form deja un
   // flag en `sessionStorage` que aqui leemos y limpiamos. Asi evitamos
@@ -85,6 +103,7 @@ export default function DashboardPage() {
         selectedGroup={selectedGroup}
         selectedModule={selectedModule}
         onSelectModule={setSelectedModule}
+        onNavigateModule={navigateToModule}
         onBack={() => {
           if (selectedModule) {
             setSelectedModule(null)
