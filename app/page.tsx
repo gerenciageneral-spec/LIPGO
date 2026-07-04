@@ -4,6 +4,7 @@ import { useState, useEffect } from "react"
 import { Sidebar } from "@/components/sidebar"
 import { MainContent } from "@/components/main-content"
 import { SplashScreen } from "@/components/splash-screen"
+import { LipbotDock } from "@/components/lipbot-dock"
 import { groups, type GroupKey } from "@/lib/dashboard-data"
 import { useAuth } from "@/components/auth-provider"
 import { useRouter } from "next/navigation"
@@ -121,6 +122,19 @@ export default function DashboardPage() {
         onSelectGroup={setSelectedGroup}
         sidebarCollapsed={sidebarCollapsed}
       />
+
+      {/* LIPbot flotante — aparece DENTRO de los módulos/formularios (donde NO
+          está la tarjeta inline de Inicio/submenús ni el Asistente a pantalla
+          completa), evitando duplicar LIPbot en una misma pantalla. Consciente
+          del módulo actual. */}
+      {selectedModule && selectedModule !== "Asistente IA" && (
+        <LipbotDock
+          contextLabel={selectedModule}
+          groupKey={selectedGroup ?? undefined}
+          onNavigate={navigateToModule}
+          onOpenGroup={openGroup}
+        />
+      )}
 
       {/* Background Watermark */}
       <div className="fixed inset-0 flex items-center justify-center pointer-events-none z-0">
