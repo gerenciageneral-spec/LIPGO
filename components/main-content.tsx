@@ -67,6 +67,7 @@ import { ExtraHoursAssignment } from "@/components/extra-hours-assignment" // Ad
 import PersonnelNotices from "@/components/personnel-notices" // Added import for personnel notices module
 import GestionTurnos from "@/components/rrhh/gestion-turnos" // CRUD de turnos (tabla tarifasturnos)
 import ProgramacionTurnos from "@/components/rrhh/programacion-turnos" // Programación a futuro de personal en `registroasistencia`
+import NotificacionesPersonal from "@/components/rrhh/notificaciones-personal" // Envío de alertas/turnos por WhatsApp al celular del personal
 import { ViewPicking } from "@/components/view-picking" // Added import for ViewPicking component
 import { Tarifas } from "@/components/configuration/tarifas" // Added import for Tarifas component
 import { FacturacionProyectos } from "@/components/facturacion-proyectos" // Added import for Facturacion Proyectos component
@@ -146,6 +147,8 @@ interface MainContentProps {
   onSelectModule: (moduleName: string) => void
   /** Navegación robusta (fija grupo + módulo). La usa el asistente IA. */
   onNavigateModule: (moduleName: string) => void
+  /** Abrir un módulo principal (grupo/barra izquierda). La usa el asistente IA. */
+  onOpenGroup: (key: string) => void
   sidebarCollapsed: boolean
 }
 
@@ -156,6 +159,7 @@ export function MainContent({
   onSelectGroup,
   onSelectModule,
   onNavigateModule,
+  onOpenGroup,
   sidebarCollapsed,
 }: MainContentProps) {
   const [editingOrderId, setEditingOrderId] = React.useState<number | null>(null)
@@ -346,6 +350,7 @@ export function MainContent({
                   onOpen={() => onSelectModule("Asistente IA")}
                   onAlerta={(a) => a.modulo && onNavigateModule(a.modulo)}
                   onNavigate={onNavigateModule}
+                  onOpenGroup={onOpenGroup}
                 />
               </div>
 
@@ -823,6 +828,10 @@ export function MainContent({
             <PermissionGuard moduleName="Programación de turnos">
               <ProgramacionTurnos />
             </PermissionGuard>
+          ) : selectedModule === "Notificaciones al Personal" ? (
+            <PermissionGuard moduleName="Notificaciones al Personal">
+              <NotificacionesPersonal />
+            </PermissionGuard>
           ) : selectedModule === "Tarifas" ? (
             <PermissionGuard moduleName="Tarifas">
               <Tarifas />
@@ -893,7 +902,7 @@ export function MainContent({
                 pequenas siga siendo usable.
               */}
               <div className="h-[calc(100dvh-9rem)] min-h-[520px] w-full overflow-hidden rounded-lg border border-border/60">
-                <AsistenteIA onNavigate={onNavigateModule} />
+                <AsistenteIA onNavigate={onNavigateModule} onOpenGroup={onOpenGroup} />
               </div>
             </PermissionGuard>
           ) : configDef ? (
@@ -908,6 +917,7 @@ export function MainContent({
               onBack={onBack}
               onSelectModule={onSelectModule}
               onNavigate={onNavigateModule}
+              onOpenGroup={onOpenGroup}
             />
           )}
         </div>

@@ -32,6 +32,12 @@ export default function DashboardPage() {
     setSelectedGroup((prev) => gk ?? prev ?? (groups[0]?.key ?? null))
     setSelectedModule(moduleName)
   }
+
+  // Abrir un MÓDULO PRINCIPAL (grupo de la barra izquierda): muestra su submenú.
+  const openGroup = (key: string) => {
+    setSelectedGroup(key as GroupKey)
+    setSelectedModule(null)
+  }
   // Controla si la pantalla de bienvenida debe mostrarse antes del
   // dashboard. Solo se activa una vez por sesion: el login-form deja un
   // flag en `sessionStorage` que aqui leemos y limpiamos. Asi evitamos
@@ -104,6 +110,7 @@ export default function DashboardPage() {
         selectedModule={selectedModule}
         onSelectModule={setSelectedModule}
         onNavigateModule={navigateToModule}
+        onOpenGroup={openGroup}
         onBack={() => {
           if (selectedModule) {
             setSelectedModule(null)

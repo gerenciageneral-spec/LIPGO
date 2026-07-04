@@ -15,6 +15,8 @@ interface ModulesViewProps {
   onSelectModule: (moduleName: string) => void
   /** Navegación robusta (grupo + módulo) para el asistente IA. */
   onNavigate?: (moduleName: string) => void
+  /** Abrir un módulo principal (grupo) para el asistente IA. */
+  onOpenGroup?: (key: string) => void
 }
 
 const TEAL = "#00b4cc"
@@ -75,7 +77,7 @@ function ModuleCard({ module, onSelect }: { module: Module; onSelect: (name: str
   )
 }
 
-export function ModulesView({ groupKey, onBack, onSelectModule, onNavigate }: ModulesViewProps) {
+export function ModulesView({ groupKey, onBack, onSelectModule, onNavigate, onOpenGroup }: ModulesViewProps) {
   const { selectedEmpresaId, selectedEmpresaNombre } = useAuth()
   const [valores, setValores] = useState<Record<string, ValorBsc>>({})
   const [loading, setLoading] = useState(true)
@@ -156,6 +158,7 @@ export function ModulesView({ groupKey, onBack, onSelectModule, onNavigate }: Mo
         alertas={alertas}
         onOpen={() => onSelectModule("Asistente IA")}
         onNavigate={onNavigate ?? onSelectModule}
+        onOpenGroup={onOpenGroup}
       />
 
       {/* Indicadores del área leídos del BSC (por empresa, en vivo) */}

@@ -21,7 +21,10 @@ import { useAuth } from "@/components/auth-provider"
  *  - `status`: 'ready' | 'submitted' | 'streaming' | 'error'.
  *  - El input es estado local (no managed en v5/v6).
  */
-export default function AsistenteIA({ onNavigate }: { onNavigate?: (modulo: string) => void } = {}) {
+export default function AsistenteIA({
+  onNavigate,
+  onOpenGroup,
+}: { onNavigate?: (modulo: string) => void; onOpenGroup?: (key: string) => void } = {}) {
   const [input, setInput] = useState("")
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
@@ -76,23 +79,20 @@ export default function AsistenteIA({ onNavigate }: { onNavigate?: (modulo: stri
   // Navegación: si la IA usó 'abrir_modulo' y el backend autorizó, abrimos ese
   // módulo (una sola vez por toolCallId).
   useEffect(() => {
-    if (!onNavigate) return
     for (const m of messages) {
       if (m.role !== "assistant" || !m.parts) continue
       for (const p of m.parts as any[]) {
-        if (
-          p?.type === "tool-abrir_modulo" &&
-          p?.state === "output-available" &&
-          p?.output?.permitido &&
-          p?.output?.navegar_a &&
-          !navegadosRef.current.has(p.toolCallId)
-        ) {
+        if (p?.state !== "output-available" || !p?.output?.permitido || navegadosRef.current.has(p.toolCallId)) continue
+        if (p?.type === "tool-abrir_submodulo" && p.output.navegar_a) {
           navegadosRef.current.add(p.toolCallId)
-          onNavigate(p.output.navegar_a as string)
+          onNavigate?.(p.output.navegar_a as string)
+        } else if (p?.type === "tool-abrir_modulo" && p.output.navegar_grupo) {
+          navegadosRef.current.add(p.toolCallId)
+          onOpenGroup?.(p.output.navegar_grupo as string)
         }
       }
     }
-  }, [messages, onNavigate])
+  }, [messages, onNavigate, onOpenGroup])
 
   // Auto-grow del textarea (max 6 lineas aprox.)
   useEffect(() => {

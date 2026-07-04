@@ -22,8 +22,10 @@ interface LipAiAssistantProps {
   alertas?: AtencionItem[]
   /** Acción al tocar una alerta (ej. abrir el módulo relacionado). */
   onAlerta?: (a: AtencionItem) => void
-  /** Navegar a un módulo cuando la IA lo decide (herramienta abrir_modulo). */
+  /** Abrir un SUBMÓDULO cuando la IA lo decide (herramienta abrir_submodulo). */
   onNavigate?: (modulo: string) => void
+  /** Abrir un MÓDULO PRINCIPAL/grupo cuando la IA lo decide (abrir_modulo). */
+  onOpenGroup?: (key: string) => void
 }
 
 /**
@@ -33,7 +35,7 @@ interface LipAiAssistantProps {
  * usando el mismo backend Claude (/api/chat), gobernado por los permisos del
  * usuario. Reutilizable en Inicio y en cada submenú.
  */
-export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, onAlerta, onNavigate }: LipAiAssistantProps) {
+export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, onAlerta, onNavigate, onOpenGroup }: LipAiAssistantProps) {
   const { selectedEmpresaId } = useAuth()
   const area = contextLabel?.trim()
 
@@ -91,23 +93,20 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
   // una sola vez (rastreo por toolCallId).
   const navegadosRef = useRef<Set<string>>(new Set())
   useEffect(() => {
-    if (!onNavigate) return
     for (const m of messages) {
       if (m.role !== "assistant" || !m.parts) continue
       for (const p of m.parts as any[]) {
-        if (
-          p?.type === "tool-abrir_modulo" &&
-          p?.state === "output-available" &&
-          p?.output?.permitido &&
-          p?.output?.navegar_a &&
-          !navegadosRef.current.has(p.toolCallId)
-        ) {
+        if (p?.state !== "output-available" || !p?.output?.permitido || navegadosRef.current.has(p.toolCallId)) continue
+        if (p?.type === "tool-abrir_submodulo" && p.output.navegar_a) {
           navegadosRef.current.add(p.toolCallId)
-          onNavigate(p.output.navegar_a as string)
+          onNavigate?.(p.output.navegar_a as string)
+        } else if (p?.type === "tool-abrir_modulo" && p.output.navegar_grupo) {
+          navegadosRef.current.add(p.toolCallId)
+          onOpenGroup?.(p.output.navegar_grupo as string)
         }
       }
     }
-  }, [messages, onNavigate])
+  }, [messages, onNavigate, onOpenGroup])
 
   const enviar = (text: string, porVoz = false) => {
     const t = text.trim()

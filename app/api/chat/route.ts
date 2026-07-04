@@ -9,6 +9,7 @@ import { anthropic } from "@ai-sdk/anthropic"
 import { supabase } from "@/lib/supabase-client"
 import { getUserPermissions } from "@/lib/permissions-actions"
 import { MODULE_PERMISSION_MAP } from "@/lib/permissions-map"
+import { groups } from "@/lib/dashboard-data"
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getCurrentEmpresaId } from "@/lib/company-filter"
 import { z } from "zod"
@@ -155,7 +156,12 @@ function getColumnaEmpresa(tabla: Tabla): string | null {
  * el server). Esto da al modelo conciencia temporal real para resolver
  * referencias relativas como "hoy", "este mes" o "el mes pasado".
  */
-function buildSystemPrompt(idEmpresa: string | number, tablasOk: Tabla[], modulosPermitidos: string[]): string {
+function buildSystemPrompt(
+  idEmpresa: string | number,
+  tablasOk: Tabla[],
+  modulosPermitidos: string[],
+  modulosPrincipales: { titulo: string; key: string }[],
+): string {
   const fechaHoy = new Date().toLocaleDateString("es-CO", {
     weekday: "long",
     year: "numeric",
@@ -276,12 +282,16 @@ ACCIONES CONTROLADAS (escritura con CONFIRMACIÓN previa):
 
     PROHIBIDO ESCRIBIR (sin excepción): código, estructura de tablas, y las tablas núcleo (cabeceraoc, detalleoc, saldoinvdetalle, pedidoscabecera, pedidosdetalle, invtrans). Ahí solo consultas, nunca creas/editas/borras.
 
-NAVEGACIÓN (abrir módulos para el usuario):
+NAVEGACIÓN (abrir para el usuario):
 
-    - Puedes ABRIR un módulo/submódulo con la herramienta 'abrir_modulo' cuando el usuario lo pida ('abre X', 'llévame a X', 'muéstrame el módulo X', 'quiero ir a X').
-    - SOLO puedes abrir los módulos que ESTE usuario tiene habilitados (según Gestión de Usuarios / Accesos de Usuario): ${modulosPermitidos.length ? modulosPermitidos.join(", ") : "ninguno por ahora"}.
-    - Usa el nombre EXACTO de esa lista. Si piden abrir algo que NO está en la lista, explícale con amabilidad que no tiene permiso para ese módulo (o que no existe) y NO lo abras.
-    - Tras abrir, confirma en una frase corta (ej. "Listo, te abro Gestión de Facturas").
+    TERMINOLOGÍA (¡importante!): un MÓDULO PRINCIPAL es uno de los de la BARRA IZQUIERDA; un SUBMÓDULO es un ítem que está DENTRO de un módulo principal.
+
+    - Si piden abrir un MÓDULO ("abre el módulo X", "ábreme X", "ve a X" refiriéndose a algo de la barra izquierda) -> usa la herramienta 'abrir_modulo' (abre el principal y muestra sus submódulos).
+      Módulos principales que puedes abrir: ${modulosPrincipales.length ? modulosPrincipales.map((m) => m.titulo).join(", ") : "ninguno por ahora"}.
+    - Si piden abrir un SUBMÓDULO específico ("llévame al submódulo X", "abre X" cuando X es un ítem interno) -> usa la herramienta 'abrir_submodulo' (va directo al ítem).
+      Submódulos que puedes abrir: ${modulosPermitidos.length ? modulosPermitidos.join(", ") : "ninguno por ahora"}.
+    - Elige la herramienta correcta según pidan módulo o submódulo. Usa el nombre EXACTO de la lista que corresponda. Si no está o no tiene permiso, dilo con amabilidad y NO abras.
+    - Tras abrir, confirma en una frase corta (ej. "Listo, te abro el módulo Almacenamiento").
 
     Da respuestas naturales, resumidas y útiles basadas en los datos retornados por la herramienta.
 `.trim()
@@ -342,10 +352,21 @@ export async function POST(req: Request) {
     // -----------------------------------------------------------------------
     const permisos = (await getUserPermissions()) as Record<string, boolean> | null
     const tablasOk = tablasPermitidas(permisos)
-    // Módulos que ESTE usuario puede ABRIR (navegación), según sus permisos.
+    // SUBMÓDULOS que este usuario puede abrir (ítems internos), según permisos.
     const modulosPermitidos = Object.keys(MODULE_PERMISSION_MAP).filter(
       (nombre) => permisos?.[MODULE_PERMISSION_MAP[nombre]] === true,
     )
+    // MÓDULOS PRINCIPALES (barra izquierda = grupos) que puede abrir: aquellos
+    // donde tiene al menos un submódulo permitido. { titulo, key }.
+    const modulosPrincipales = groups
+      .filter((g) => {
+        const subs = [...(g.modules ?? []), ...((g.subgroups ?? []).flatMap((sg) => sg.modules))]
+        return subs.some((m) => {
+          const k = MODULE_PERMISSION_MAP[m.name]
+          return !!(k && permisos?.[k] === true)
+        })
+      })
+      .map((g) => ({ titulo: g.title, key: g.key as string }))
 
     // -----------------------------------------------------------------------
     // 2) Stream con la tool `consultar_supabase`
@@ -359,7 +380,7 @@ export async function POST(req: Request) {
       // o "claude-opus-4-8" — solo cambia este string.)
       model: anthropic("claude-haiku-4-5"),
       // System prompt dinamico: fecha + idEmpresa + tablas permitidas al usuario.
-      system: buildSystemPrompt(idEmpresa as string | number, tablasOk, modulosPermitidos),
+      system: buildSystemPrompt(idEmpresa as string | number, tablasOk, modulosPermitidos, modulosPrincipales),
       // Pasamos el historial COMPLETO (convertido al formato ModelMessage
       // que espera el SDK). Esto le da al modelo memoria de conversacion:
       // puede resolver referencias relativas tipo "y del mes pasado?" o
@@ -616,17 +637,39 @@ export async function POST(req: Request) {
             }
           },
         }),
-        // Navegación: abre un módulo/submódulo para el usuario. Valida el
-        // permiso con los mismos permisos del usuario (Accesos de Usuario).
-        // El frontend detecta el resultado {permitido, navegar_a} y navega.
+        // Navegación a un MÓDULO PRINCIPAL (barra izquierda = grupo). Abre el
+        // principal y muestra sus submódulos. El frontend detecta
+        // {permitido, navegar_grupo} y navega al grupo.
         abrir_modulo: tool({
           description:
-            "Abre un módulo o submódulo de la aplicación para el usuario (navegación en la app). Úsalo cuando pidan 'abre X', 'llévame a X' o 'muéstrame el módulo X'. Usa el nombre EXACTO del módulo (de la lista de módulos permitidos del system prompt). El sistema valida el permiso del usuario.",
+            "Abre un MÓDULO PRINCIPAL (los de la barra izquierda) y muestra sus submódulos. Úsalo cuando pidan abrir un módulo principal. Usa el nombre EXACTO de la lista de módulos principales del system prompt.",
           inputSchema: z.object({
             modulo: z
               .string()
               .min(1)
-              .describe("Nombre EXACTO del módulo/submódulo a abrir, tal como aparece en la lista de módulos permitidos."),
+              .describe("Nombre EXACTO del módulo principal (barra izquierda) a abrir."),
+          }),
+          execute: async ({ modulo }) => {
+            const g = modulosPrincipales.find((x) => x.titulo.toLowerCase() === modulo.trim().toLowerCase())
+            if (!g) {
+              return {
+                permitido: false,
+                mensaje: `No tienes acceso al módulo "${modulo}" o no existe. Módulos disponibles: ${modulosPrincipales.map((m) => m.titulo).join(", ") || "ninguno"}.`,
+              }
+            }
+            return { permitido: true, navegar_grupo: g.key, mensaje: `Listo, te abro el módulo ${g.titulo}.` }
+          },
+        }),
+        // Navegación a un SUBMÓDULO (ítem interno). El frontend detecta
+        // {permitido, navegar_a} y navega directo al submódulo.
+        abrir_submodulo: tool({
+          description:
+            "Abre un SUBMÓDULO específico (ítem interno de un módulo) para el usuario. Úsalo cuando pidan un submódulo concreto. Usa el nombre EXACTO de la lista de submódulos permitidos. El sistema valida el permiso.",
+          inputSchema: z.object({
+            modulo: z
+              .string()
+              .min(1)
+              .describe("Nombre EXACTO del submódulo a abrir, tal como aparece en la lista de submódulos permitidos."),
           }),
           execute: async ({ modulo }) => {
             const key = MODULE_PERMISSION_MAP[modulo]
@@ -634,7 +677,7 @@ export async function POST(req: Request) {
             if (!permitido) {
               return {
                 permitido: false,
-                mensaje: `No tienes permiso para abrir "${modulo}" (o el módulo no existe). Solicítalo en Gestión de Usuarios / Accesos de Usuario.`,
+                mensaje: `No tienes permiso para abrir "${modulo}" (o el submódulo no existe). Solicítalo en Gestión de Usuarios / Accesos de Usuario.`,
               }
             }
             return { permitido: true, navegar_a: modulo, mensaje: `Listo, te abro ${modulo}.` }
