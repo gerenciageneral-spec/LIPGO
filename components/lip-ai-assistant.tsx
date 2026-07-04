@@ -62,6 +62,11 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
   const [listening, setListening] = useState(false)
   const recognitionRef = useRef<any>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  // Voz conversacional: si la pregunta se hizo por voz, la respuesta se lee en
+  // voz alta (TTS) y, si la IA repregunta, se reabre el micrófono.
+  const speakNextRef = useRef(false)
+  const spokenRef = useRef<Set<string>>(new Set())
+  const finalVozRef = useRef("")
 
   // Preguntas sugeridas CABLEADAS a tablas reales (cada una da datos exactos):
   //  · pedidos  -> pedidoscabecera (conteo)
@@ -104,45 +109,116 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
     }
   }, [messages, onNavigate])
 
-  const enviar = (text: string) => {
+  const enviar = (text: string, porVoz = false) => {
     const t = text.trim()
     if (!t || isThinking) return
     // No bloqueamos por empresa: el backend resuelve la empresa activa desde
     // el cookie si el estado del cliente aún no cargó. Escribir/hablar/enviar
     // SIEMPRE está habilitado.
+    if (porVoz) speakNextRef.current = true // la respuesta se leerá en voz alta
     sendMessage({ text: t })
     setInput("")
   }
 
-  // Dictado por voz (Web Speech API — Chrome/Edge). Rellena el campo con lo dicho.
+  // Limpia markdown para que la voz suene natural (sin *, #, `, enlaces…).
+  const limpiarParaVoz = (t: string) =>
+    t
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+      .replace(/[*_`#>]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+
+  // Inicia el comando de voz. Al terminar de hablar el usuario, ENVÍA solo
+  // (voz = comando) y marca que la respuesta se leerá en voz alta.
+  const iniciarVoz = () => {
+    const SR = (typeof window !== "undefined" &&
+      ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)) as any
+    if (!SR) {
+      alert("El comando de voz necesita Chrome o Edge. Escribe tu pregunta mientras tanto.")
+      return
+    }
+    try {
+      window.speechSynthesis?.cancel() // que no se escuche a sí mismo
+    } catch {}
+    const rec = new SR()
+    rec.lang = "es-CO"
+    rec.interimResults = true
+    rec.continuous = false
+    finalVozRef.current = ""
+    rec.onresult = (e: any) => {
+      let interim = ""
+      let final = ""
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const seg = e.results[i][0].transcript
+        if (e.results[i].isFinal) final += seg
+        else interim += seg
+      }
+      if (final) finalVozRef.current += final
+      setInput((finalVozRef.current + interim).trim())
+    }
+    rec.onerror = () => setListening(false)
+    rec.onend = () => {
+      setListening(false)
+      const txt = finalVozRef.current.trim()
+      finalVozRef.current = ""
+      if (txt) enviar(txt, true) // por voz -> responde hablando
+    }
+    recognitionRef.current = rec
+    setListening(true)
+    rec.start()
+  }
+
   const toggleVoz = () => {
     if (listening) {
       recognitionRef.current?.stop()
       setListening(false)
       return
     }
-    const SR = (typeof window !== "undefined" &&
-      ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)) as any
-    if (!SR) {
-      alert("El dictado por voz necesita Chrome o Edge. Escribe tu pregunta mientras tanto.")
-      return
-    }
-    const rec = new SR()
-    rec.lang = "es-CO"
-    rec.interimResults = true
-    rec.continuous = false
-    rec.onresult = (e: any) => {
-      const txt = Array.from(e.results)
-        .map((r: any) => r[0].transcript)
-        .join("")
-      setInput(txt)
-    }
-    rec.onerror = () => setListening(false)
-    rec.onend = () => setListening(false)
-    recognitionRef.current = rec
-    setListening(true)
-    rec.start()
+    iniciarVoz()
   }
+
+  // Voz de salida (TTS): lee la respuesta en voz alta. Si la IA hizo una
+  // pregunta (contiene '?'), reabre el micrófono para que respondas por voz.
+  const hablar = (texto: string) => {
+    try {
+      const synth = window.speechSynthesis
+      if (!synth) return
+      synth.cancel()
+      const u = new SpeechSynthesisUtterance(limpiarParaVoz(texto))
+      u.lang = "es-CO"
+      u.rate = 1.02
+      u.onend = () => {
+        if (/\?/.test(texto)) iniciarVoz() // repreguntó -> te escucha por voz
+      }
+      synth.speak(u)
+    } catch {}
+  }
+
+  // Cuando la pregunta vino por voz, lee la respuesta en voz alta (una sola vez
+  // por mensaje). Se dispara al terminar el streaming (isThinking pasa a false).
+  useEffect(() => {
+    if (isThinking || !speakNextRef.current) return
+    const last = [...messages].reverse().find((m) => m.role === "assistant")
+    if (!last || spokenRef.current.has(last.id)) return
+    const texto = getMessageText(last)
+    if (!texto) return
+    spokenRef.current.add(last.id)
+    speakNextRef.current = false
+    hablar(texto)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isThinking, messages])
+
+  // Al desmontar: corta voz y micrófono.
+  useEffect(() => {
+    return () => {
+      try {
+        window.speechSynthesis?.cancel()
+      } catch {}
+      try {
+        recognitionRef.current?.stop()
+      } catch {}
+    }
+  }, [])
 
   return (
     <div className="lipai">
