@@ -134,7 +134,7 @@ export default function AsistenteIA({
           </div>
           <div className="min-w-0 flex-1">
             <h1 className="text-sm font-semibold leading-tight text-foreground">
-              Asistente IA
+              LIPbot
             </h1>
             <p className="text-xs text-muted-foreground leading-tight">
               {isThinking ? "Pensando..." : "Listo para ayudarte"}

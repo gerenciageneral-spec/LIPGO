@@ -257,7 +257,7 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
           </div>
           <div className="min-w-0">
             <div className="text-[15px] font-extrabold tracking-tight" style={{ color: "#eaf7fb" }}>
-              LIP · Asistente inteligente
+              LIPbot
             </div>
             <div className="flex items-center gap-1.5 text-[11.5px]" style={{ color: "#7fbdcf" }}>
               <span className="lipai-live" />
