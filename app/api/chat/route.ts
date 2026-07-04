@@ -8,6 +8,7 @@ import {
 import { anthropic } from "@ai-sdk/anthropic"
 import { supabase } from "@/lib/supabase-client"
 import { getUserPermissions } from "@/lib/permissions-actions"
+import { getCurrentEmpresaId } from "@/lib/company-filter"
 import { z } from "zod"
 
 /**
@@ -230,23 +231,28 @@ export async function POST(req: Request) {
     // 1) Parseo y validacion de entrada
     // -----------------------------------------------------------------------
     const body = await req.json().catch(() => ({}))
-    const { messages, idEmpresa } = body as {
-      messages?: UIMessage[]
-      idEmpresa?: string | number | null
-    }
+    const { messages } = body as { messages?: UIMessage[] }
+    let idEmpresa = (body as { idEmpresa?: string | number | null }).idEmpresa
 
-    // `idEmpresa` es OBLIGATORIO. Sin el no podemos garantizar el filtrado
-    // multi-tenant, asi que cortamos en frio con 400.
+    // Empresa: preferimos la que manda el cliente (selector global). Si NO
+    // llegó (el estado del cliente aún no hidrató), caemos al cookie de
+    // empresa del servidor. Así el chat funciona siempre y el filtrado
+    // multi-tenant sigue garantizado (el cookie es la empresa activa).
     if (
       idEmpresa === undefined ||
       idEmpresa === null ||
       idEmpresa === "" ||
       (typeof idEmpresa === "number" && Number.isNaN(idEmpresa))
     ) {
+      idEmpresa = await getCurrentEmpresaId()
+    }
+
+    // Solo cortamos si NO hay empresa ni en el body ni en el cookie.
+    if (idEmpresa === undefined || idEmpresa === null || idEmpresa === "") {
       return new Response(
         JSON.stringify({
           error:
-            "Falta el parametro 'idEmpresa' en el body. Es obligatorio para filtrar los datos por empresa.",
+            "No se pudo determinar la empresa activa. Selecciona una empresa en la barra superior.",
         }),
         {
           status: 400,

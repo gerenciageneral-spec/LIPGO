@@ -82,7 +82,9 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
   const enviar = (text: string) => {
     const t = text.trim()
     if (!t || isThinking) return
-    if (selectedEmpresaId == null) return // el backend exige empresa
+    // No bloqueamos por empresa: el backend resuelve la empresa activa desde
+    // el cookie si el estado del cliente aún no cargó. Escribir/hablar/enviar
+    // SIEMPRE está habilitado.
     sendMessage({ text: t })
     setInput("")
   }
@@ -116,8 +118,6 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
     setListening(true)
     rec.start()
   }
-
-  const sinEmpresa = selectedEmpresaId == null
 
   return (
     <div className="lipai">
@@ -208,9 +208,8 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
           <textarea
             rows={1}
             className="lipai-ta flex-1 py-1"
-            placeholder={sinEmpresa ? "Selecciona una empresa arriba para preguntar…" : placeholder}
+            placeholder={placeholder}
             value={input}
-            disabled={sinEmpresa}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
@@ -224,13 +223,11 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
           <button
             type="button"
             onClick={toggleVoz}
-            disabled={sinEmpresa}
             title={listening ? "Detener dictado" : "Hablarle a la IA"}
             className={`flex h-[30px] w-[30px] flex-none items-center justify-center rounded-lg ${listening ? "lipai-mic-on" : ""}`}
             style={{
               color: listening ? "#fff" : "#7fbdcf",
               background: listening ? "#e5484d" : "rgba(255,255,255,.05)",
-              opacity: sinEmpresa ? 0.5 : 1,
             }}
           >
             <Mic className="h-[15px] w-[15px]" />
@@ -251,7 +248,7 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
             <button
               type="button"
               onClick={() => enviar(input)}
-              disabled={sinEmpresa || !input.trim()}
+              disabled={!input.trim()}
               className="flex h-[34px] flex-none items-center gap-1.5 rounded-lg px-3.5 text-[12.5px] font-bold disabled:opacity-50"
               style={{ background: "linear-gradient(135deg,#3fe0ee,#00c2dc)", color: "#04222a", boxShadow: "0 4px 14px rgba(0,194,220,.4)" }}
             >
@@ -267,8 +264,7 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
               <button
                 key={s}
                 onClick={() => enviar(s)}
-                disabled={sinEmpresa}
-                className="lipai-sug rounded-full px-3 py-1.5 text-[12px] font-medium transition-colors disabled:opacity-50"
+                className="lipai-sug rounded-full px-3 py-1.5 text-[12px] font-medium transition-colors"
                 style={{ color: "#cbe7f1", background: "rgba(255,255,255,.06)", border: "1px solid rgba(150,210,240,.16)" }}
               >
                 {s}

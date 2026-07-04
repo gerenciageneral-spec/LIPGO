@@ -84,9 +84,8 @@ export default function AsistenteIA() {
     e?.preventDefault()
     const text = input.trim()
     if (!text || isThinking) return
-    // Sin empresa activa el backend rechaza con 400. Lo bloqueamos en
-    // el cliente para no perder lo que el usuario escribio.
-    if (selectedEmpresaId == null) return
+    // No bloqueamos por empresa: si el estado del cliente aún no cargó, el
+    // backend resuelve la empresa activa desde el cookie. Enviar siempre.
     sendMessage({ text })
     setInput("")
   }
@@ -220,7 +219,7 @@ export default function AsistenteIA() {
               <Button
                 type="submit"
                 size="icon"
-                disabled={!input.trim() || selectedEmpresaId == null}
+                disabled={!input.trim()}
                 aria-label="Enviar mensaje"
                 className="h-9 w-9 shrink-0 rounded-full"
               >
