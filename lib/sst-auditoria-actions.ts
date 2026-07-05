@@ -1,7 +1,7 @@
 "use server"
 
 import { createClient } from "@/lib/supabase-client"
-import { getCurrentEmpresaIdForInsert } from "@/lib/user-context"
+import { SIG_EMPRESA_LIP } from "@/lib/sig-types"
 import type {
   Autoevaluacion,
   AuditoriaData,
@@ -13,9 +13,12 @@ import type {
   Respuesta,
 } from "@/lib/sst-types"
 
-async function resolveEmpresaId(empresaIdFromClient?: number | null): Promise<number | null> {
-  if (empresaIdFromClient && !Number.isNaN(empresaIdFromClient)) return empresaIdFromClient
-  return await getCurrentEmpresaIdForInsert()
+// El SG-SST (Resolución 0312) es ÚNICO de LIP (empresa 100). LIP es la única
+// empresa que se certifica; los ID 1-4 son proyectos/clientes donde LIP presta
+// el servicio con LIPgo. Por eso el módulo ignora el selector de cliente a
+// propósito y siempre opera a nivel LIP.
+async function resolveEmpresaId(_empresaIdFromClient?: number | null): Promise<number> {
+  return SIG_EMPRESA_LIP
 }
 
 // ---------------------------------------------------------------------------
@@ -26,16 +29,19 @@ async function getAutoevaluacion(
   empresaId: number,
   anio?: number | null,
 ): Promise<{ autoevaluacion: Autoevaluacion | null; aniosDisponibles: number[] }> {
-  // Lista de anios disponibles para el selector.
+  // Autoevaluación ÚNICA de LIP. No se filtra por empresa (LIP es la única
+  // empresa que se certifica); así funciona antes y después de re-etiquetar la
+  // autoevaluación a alcance LIP (100). El parámetro empresaId se conserva por
+  // compatibilidad de firma pero no se usa para filtrar.
+  void empresaId
   const { data: anios } = await supabase
     .from("sst_autoevaluaciones")
     .select("anio")
-    .eq("idempresa", empresaId)
     .order("anio", { ascending: false })
 
   const aniosDisponibles = Array.from(new Set((anios ?? []).map((a: any) => a.anio as number)))
 
-  let query = supabase.from("sst_autoevaluaciones").select("*").eq("idempresa", empresaId)
+  let query = supabase.from("sst_autoevaluaciones").select("*")
   if (anio) query = query.eq("anio", anio)
   const { data, error } = await query.order("anio", { ascending: false }).limit(1).maybeSingle()
 
@@ -187,6 +193,9 @@ export async function getAuditoria0312(
   const tablas = Array.from(
     new Set(estandares.map((e) => e.tabla).filter((t): t is string => !!t)),
   )
+  // Evidencia = registros VIVOS de LIP en cada tabla de soporte. Como LIP es la
+  // única empresa (los ID 1-4 son proyectos/sitios donde opera), se cuentan
+  // TODOS los registros de la tabla: son todos de LIP. No se filtra por empresa.
   const evidencia: Record<string, number> = {}
   await Promise.all(
     tablas.map(async (tabla) => {
@@ -194,7 +203,6 @@ export async function getAuditoria0312(
         const { count, error } = await supabase
           .from(tabla)
           .select("*", { count: "exact", head: true })
-          .eq("idempresa", empresaId)
         evidencia[tabla] = error ? 0 : count ?? 0
       } catch {
         evidencia[tabla] = 0

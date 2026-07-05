@@ -1597,7 +1597,18 @@ export async function getIndicadoresValores(
     const factPend = await contar("cabeceraoc", (q: any) => filtroFact(q).is("estadofactura", null))
     const lipFacturacion = pct(factTot - factPend, factTot)
 
+    // --- SG-SST 0312: puntaje de la autoevaluación de LIP (una sola, alcance LIP) ---
+    const { data: aeSST } = await supabase
+      .from("sst_autoevaluaciones")
+      .select("puntaje_total")
+      .order("anio", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    const sgsst0312 = Number(aeSST?.puntaje_total ?? 0)
+
     const valores: Record<string, SigIndicadorValor> = {
+      // Cumplimiento SG-SST (Resolución 0312) — avance real de los 60 estándares.
+      sgsst_0312: { valor: Math.round(sgsst0312 * 10) / 10, base: "Autoevaluación 0312 (Art. 27)" },
       // Desempeño de LIP = cargues finalizados por LIP (fincargue).
       desp_cumplimiento: { valor: pct(finalizadasLIP, totOrdenes), base: `${finalizadasLIP}/${totOrdenes}` },
       // Valor agregado: ciclo completo registrado en LIPgo (trazabilidad para el cliente).

@@ -1,12 +1,13 @@
 "use server"
 
 import { createClient } from "@/lib/supabase-client"
-import { getCurrentEmpresaIdForInsert } from "@/lib/user-context"
+import { SIG_EMPRESA_LIP } from "@/lib/sig-types"
 import type { PlanMejoraRow, IndicadorRow } from "@/lib/sst-evidencia-types"
 
-async function resolveEmpresaId(fromClient?: number | null): Promise<number | null> {
-  if (fromClient && !Number.isNaN(fromClient)) return fromClient
-  return await getCurrentEmpresaIdForInsert()
+// El Plan de Mejoramiento del SG-SST es de LIP (empresa 100), igual que la
+// autoevaluación 0312. LIP es la única empresa que se certifica.
+async function resolveEmpresaId(_fromClient?: number | null): Promise<number> {
+  return SIG_EMPRESA_LIP
 }
 
 // ---------- PLAN DE MEJORAMIENTO (sst_plan_mejora) ----------
