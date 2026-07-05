@@ -23,6 +23,7 @@ export interface Medio {
 export interface Cliente {
   id: number
   nombre: string
+  nit?: string | null
 }
 
 export interface Destino {

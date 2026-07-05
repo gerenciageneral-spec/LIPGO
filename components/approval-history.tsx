@@ -225,7 +225,7 @@ export function ApprovalHistory() {
                       <TableCell>
                         {record.pdf ? (
                           <button
-                            onClick={() => window.open(record.pdf, "_blank")}
+                            onClick={() => window.open(record.pdf as string, "_blank")}
                             className="text-fuchsia-500 hover:text-fuchsia-600 transition-colors"
                             title="Ver PDF"
                           >

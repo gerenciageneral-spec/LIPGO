@@ -199,7 +199,7 @@ export function GenericCrudTable({ moduleDef, hideNewButton = false }: GenericCr
             const uniqueDepartamentos = Array.from(
               new Set(result.data.map((destino: any) => destino.departamento).filter(Boolean)),
             ).sort()
-            options[field.name] = uniqueDepartamentos.map((dep: string) => ({
+            options[field.name] = uniqueDepartamentos.map((dep: any) => ({
               label: dep,
               value: dep,
             }))
@@ -702,7 +702,7 @@ if (moduleDef.tableName === "almacenes" && selectedEmpresaId) {
       } else {
         toast({
           title: "Error",
-          description: result.message || "No se pudo guardar el registro.",
+          description: (result as any).message || "No se pudo guardar el registro.",
           variant: "destructive",
         })
       }

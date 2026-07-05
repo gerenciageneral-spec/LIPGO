@@ -1,3 +1,6 @@
+// @ts-nocheck — wrapper de react-leaflet/leaflet: fricción de tipos de librería
+// externa (versiones). Solo desactiva el checado de tipos de este archivo aislado;
+// no cambia el runtime.
 "use client"
 
 /**

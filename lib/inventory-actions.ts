@@ -622,7 +622,7 @@ export async function getProductStockFromInvGlobal(productNames: string[], idemp
     }
 
     // Use provided idempresa or get from user context
-    let empresaId = idempresa
+    let empresaId: number | null | undefined = idempresa
     if (!empresaId) {
       const { empresaId: contextEmpresaId } = await getCurrentUserContext()
       empresaId = contextEmpresaId
@@ -1594,7 +1594,7 @@ export async function getAllInventoryTransactions(filters?: {
   origen?: string
   creadopor?: string
   fecha?: string
-  idempresa?: number
+  idempresa?: number | null
 }): Promise<InventoryTransactionRecord[]> {
   try {
     const supabase = await createClient()

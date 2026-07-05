@@ -216,7 +216,7 @@ const loadOrders = async () => {
     if (result.success) {
       setOrders(result.data)
       // Populate ordersWithPhotos from initial load if data is available
-      const photosExist = result.data.filter((order) => order.photos_count > 0).map((order) => order.id)
+      const photosExist = result.data.filter((order: any) => order.photos_count > 0).map((order: any) => order.id)
       setOrdersWithPhotos(new Set(photosExist))
     } else {
       toast({

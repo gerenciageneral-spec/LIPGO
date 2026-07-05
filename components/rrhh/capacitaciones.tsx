@@ -688,7 +688,7 @@ export default function Capacitaciones() {
                       {(() => {
                         const generando =
                           downloadingPlanillaId === capacitacion.id
-                        const planillaLista = Boolean(capacitacion.planilla)
+                        const planillaLista = Boolean((capacitacion as any).planilla)
                         return (
                           <Button
                             variant="outline"

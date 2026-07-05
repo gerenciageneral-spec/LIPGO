@@ -425,7 +425,7 @@ console.log("[v0] Proyecciones: Loading employees for empresa:", selectedEmpresa
         const colombiaDateTime = new Date()
         const timeString = colombiaDateTime.toISOString().split("T")[1]?.split(".")[0] || "00:00:00"
         const auxiliares = tolvaData.empleados
-          .map((emp) => emp.nombreempleado || emp.nombre)
+          .map((emp: any) => emp.nombreempleado || emp.nombre)
           .filter((name: string) => name)
           .join(",")
 
@@ -461,7 +461,7 @@ console.log("[v0] Proyecciones: Loading employees for empresa:", selectedEmpresa
         }
       } else if (editingTolvaId) {
         // Update existing tolva
-        const result = await updateTolva(editingTolvaId, {
+        const result = await (updateTolva as any)(editingTolvaId, {
           fechaFabricacion: tolvaData.fechaFabricacion,
           empleados: tolvaData.empleados,
           productos: productosConCantidad.map((p) => ({

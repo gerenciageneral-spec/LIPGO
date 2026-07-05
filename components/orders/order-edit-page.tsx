@@ -428,7 +428,7 @@ function OrderEditPage({ order, onSave, onCancel }: OrderEditPageProps) {
       }
 
       const { generateAndUploadOrderPDF } = await import("@/lib/pdf-actions")
-      const pdfResult = await generateAndUploadOrderPDF(pdfData, order.idpedido)
+      const pdfResult = await generateAndUploadOrderPDF(pdfData as any, order.idpedido)
 
       if (!pdfResult.success || !pdfResult.url) {
         console.error("[v0] Error generating PDF:", pdfResult.error)

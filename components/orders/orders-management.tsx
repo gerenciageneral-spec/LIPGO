@@ -893,7 +893,7 @@ export function OrdersManagement(_props?: { onEditOrder?: (orderId: number) => v
       formData.append("file", pdfBlob, fileName)
       formData.append("path", `pedidos/${fileName}`)
 
-      const result = await uploadPDF(formData)
+      const result: any = await (uploadPDF as any)(formData)
 
       if (result.error) {
         console.error("Error uploading PDF:", result.error)

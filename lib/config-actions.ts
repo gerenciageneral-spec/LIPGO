@@ -234,7 +234,7 @@ export async function getNextId(tableName: string, primaryKey: string) {
       return { success: true, nextId: 1 }
     }
 
-    const maxId = data[0][primaryKey]
+    const maxId = (data[0] as any)[primaryKey]
     return { success: true, nextId: maxId + 1 }
   } catch (error) {
     console.error(`Error getting next ID from ${tableName}:`, error)

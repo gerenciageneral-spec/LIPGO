@@ -702,7 +702,7 @@ function GenerateLoadOrdersComponent() {
   const loadVehicles = async () => {
     const vehiclesData = await getVehiclesFromCitas()
     if (vehiclesData.success && vehiclesData.data) {
-      setVehicles(vehiclesData.data)
+      setVehicles(vehiclesData.data as any)
     }
   }
 

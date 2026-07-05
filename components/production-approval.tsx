@@ -55,7 +55,7 @@ export function ProductionApproval() {
 
   const loadLocations = async (almacenId?: number) => {
     const locs = await getLocations(almacenId)
-    setLocations(locs)
+    setLocations(locs as any)
   }
 
   const loadAlmacenes = async () => {

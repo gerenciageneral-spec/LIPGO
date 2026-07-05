@@ -26,6 +26,7 @@ export interface ModuleDefinition {
   name: string
   tableName: string
   displayName?: string
+  title?: string
   primaryKey: string
   icon?: any
   fields: FieldDefinition[]

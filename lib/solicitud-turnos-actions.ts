@@ -18,7 +18,7 @@ interface CreateSolicitudParams {
   lineas: LineaSolicitud[]
   firmasolicitante: string | null
   idempresa: number | null
-  usuariosolicitud: string | null
+  usuariosolicitud?: string | null
 }
 
 export async function createSolicitudTurnos(params: CreateSolicitudParams) {

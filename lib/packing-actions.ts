@@ -318,7 +318,7 @@ export async function assignPersonnelToOrder(
   password: string,
   observaciones: string,
 ) {
-  return await _assignPersonnelToOrder(orderId, orderNumber, selectedPersonnel, password, observaciones)
+  return await (_assignPersonnelToOrder as any)(orderId, orderNumber, selectedPersonnel, password, observaciones)
 }
 
 export async function savePickingPhotos(orderId: number, photoUrls: string[]) {

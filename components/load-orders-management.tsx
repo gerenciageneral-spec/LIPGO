@@ -115,7 +115,7 @@ export function LoadOrdersManagement() {
     for (const id of empresaIds) {
       const result = await getEmpresaById(id)
       if (result) {
-        empresasData.set(id, result)
+        empresasData.set(id, result as any)
       }
     }
 

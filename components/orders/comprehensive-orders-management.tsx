@@ -963,8 +963,8 @@ export function ComprehensiveOrdersManagement() {
                                 <DropdownMenuItem
                                   onClick={() => handleAnnulClick(order)}
                                   disabled={
-                                    order.aprobado?.toLowerCase() !== "si" ||
-                                    (order.ocargue && order.ocargue.trim() !== "")
+                                    !!(order.aprobado?.toLowerCase() !== "si" ||
+                                    (order.ocargue && order.ocargue.trim() !== ""))
                                   }
                                   className={
                                     order.aprobado?.toLowerCase() !== "si" ||

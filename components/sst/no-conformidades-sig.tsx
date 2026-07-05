@@ -29,6 +29,7 @@ import {
   eliminarNoConformidad,
 } from "@/lib/sig-actions"
 import { getClientesLIP } from "@/lib/sig-actions"
+import { getAllEmpresas } from "@/lib/actions"
 import type { SigProceso, SigNcCatalogo, SigNoConformidad } from "@/lib/sig-types"
 import { Loader2, AlertOctagon, Plus, Pencil, Trash2, ShieldAlert, ClipboardList } from "lucide-react"
 
