@@ -118,7 +118,7 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
     spokenRef.current = new Set()
   }
 
-  const placeholder = area ? `Pregúntale a LIP sobre ${area}…` : "Pregúntale a LIP: ¿cómo va la operación hoy?"
+  const placeholder = area ? `Pregúntale a LIPbot sobre ${area}…` : "Pregúntale a LIPbot: ¿cómo va la operación hoy?"
 
   // Auto-scroll del hilo inline al llegar nuevos chunks.
   useEffect(() => {
