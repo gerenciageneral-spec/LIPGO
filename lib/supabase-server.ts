@@ -1,7 +1,12 @@
 import { createServerClient as createSupabaseServerClient } from "@supabase/ssr"
+import type { SupabaseClient } from "@supabase/supabase-js"
 import { cookies } from "next/headers"
 
-export function createServerClient() {
+// Tipo de esquema PERMISIVO (ver nota en supabase-client.ts): sin tipos generados
+// de la BD el cliente resolvía cada tabla a `never`. Type-only, no afecta runtime.
+type DBClient = SupabaseClient<any, any, any>
+
+export function createServerClient(): DBClient {
   const cookieStore = cookies()
 
   return createSupabaseServerClient(

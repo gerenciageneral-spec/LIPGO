@@ -14,7 +14,7 @@ export interface Subgroup {
 }
 
 export interface Group {
-  key: string
+  key: GroupKey
   title: string
   icon: LucideIcon
   modules?: Module[]
