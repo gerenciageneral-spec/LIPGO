@@ -122,7 +122,8 @@ export function UserPermissionsManagement() {
       group.sections.forEach((section) => {
         section.permissions.forEach((perm) => {
           const permValue = userPermissions?.[perm.key]
-          initializedPermissions[perm.key] = permValue === true
+          // Cast type-only por índice dinámico sobre keyof union; lógica intacta.
+          ;(initializedPermissions as any)[perm.key] = permValue === true
         })
       })
     })
@@ -140,7 +141,7 @@ export function UserPermissionsManagement() {
   const handleSelectAll = (groupPermissions: PermItem[], checked: boolean) => {
     const updates: Partial<UserPermissions> = {}
     groupPermissions.forEach((perm) => {
-      updates[perm.key] = checked
+      ;(updates as any)[perm.key] = checked
     })
     setPermissions((prev) => ({
       ...prev,
@@ -277,7 +278,7 @@ export function UserPermissionsManagement() {
                                 >
                                   <Checkbox
                                     id={`${selectedUser.id}-${group.title}-${section.title ?? "general"}-${perm.key}`}
-                                    checked={isEnabled}
+                                    checked={!!isEnabled}
                                     onCheckedChange={(checked) =>
                                       handlePermissionChange(perm.key as string, checked as boolean)
                                     }

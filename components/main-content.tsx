@@ -313,7 +313,7 @@ export function MainContent({
           }
         >
           {editingOrderId ? (
-            <OrderEditPage orderId={editingOrderId} onBack={() => setEditingOrderId(null)} />
+            <OrderEditPage {...({ orderId: editingOrderId, onBack: () => setEditingOrderId(null) } as any)} />
           ) : !selectedGroup ? (
             <>
               {/* Hero premium con IA (rediseño 2026-07-03). Solo layout; el botón

@@ -812,7 +812,7 @@ export function FacturacionProyectos() {
                     // Parse date correctly to avoid timezone issues
                     // Extract just the date portion if it's a timestamp
                     const dateString = (record.fechaorden as any) instanceof Date
-                      ? record.fechaorden.toISOString().split('T')[0]
+                      ? (record.fechaorden as any).toISOString().split('T')[0]
                       : typeof record.fechaorden === 'string'
                       ? record.fechaorden.split(' ')[0]
                       : new Date(record.fechaorden).toISOString().split('T')[0]
@@ -1098,7 +1098,7 @@ export function FacturacionProyectos() {
                     ) : paginatedTurnosData.length > 0 ? (
                       paginatedTurnosData.map((record, idx) => {
                         const dateString = (record.fecha as any) instanceof Date
-                          ? record.fecha.toISOString().split('T')[0]
+                          ? (record.fecha as any).toISOString().split('T')[0]
                           : typeof record.fecha === 'string'
                           ? record.fecha.split(' ')[0]
                           : new Date(record.fecha).toISOString().split('T')[0]

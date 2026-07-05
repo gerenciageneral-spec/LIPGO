@@ -184,7 +184,7 @@ function GenerateLoadOrdersComponent() {
       }
 
       if (vehiclesData.success && vehiclesData.data) {
-        setVehicles(vehiclesData.data)
+        setVehicles(vehiclesData.data as any)
       }
     }
     loadFilterData()
@@ -401,7 +401,7 @@ function GenerateLoadOrdersComponent() {
             producto: detail.producto,
             totalUnidadesPedidas: detail.unidadespendientes,
             totalUnidadesDespachadas: cantDesp,
-            invDisp: detail.producto ? productStock[detail.producto] || 0 : 0,
+            invDisp: detail.producto ? productStock[detail.producto as any] || 0 : 0,
             idproducto: detail.idproducto,
             peso_unitkg: detail.peso_unitkg || 0,
           }
@@ -524,7 +524,7 @@ function GenerateLoadOrdersComponent() {
             productsList.push({
               producto: detail.producto,
               cantidad: cantDesp,
-              toneladas: (detail.peso_unitkg * cantDesp) / 1000,
+              toneladas: (detail.peso_unitkg! * cantDesp) / 1000,
               cliente: order?.cliente || "",
               destino: order?.destino || "",
               idpedido: orderId,

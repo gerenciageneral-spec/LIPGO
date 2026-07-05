@@ -55,6 +55,10 @@ interface ProductLine {
 interface OrderEntryFormProps {
   onManageOrders?: () => void
   editOrderId?: number
+  // Alias/callbacks opcionales usados por algunos contenedores (main-content,
+  // comprehensive). No se consumen aquí; se declaran para compatibilidad de tipos.
+  onNavigateToManageOrders?: () => void
+  onOrderSaved?: () => void
 }
 
 function OrderEntryForm({ onManageOrders, editOrderId }: OrderEntryFormProps = {}) {

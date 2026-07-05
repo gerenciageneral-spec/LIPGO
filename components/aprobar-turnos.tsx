@@ -391,7 +391,7 @@ export function AprobarTurnos() {
               const pdfData = await pdfUploadRes.json()
               pdfUrl = pdfData.url
               // Update records with PDF URL
-              await updatePdfUrl(selectedIds, pdfUrl)
+              await updatePdfUrl(selectedIds, pdfUrl as string)
             } else {
               const errData = await pdfUploadRes.json().catch(() => ({}))
               console.error("[v0] upload-pdf fail:", pdfUploadRes.status, errData)

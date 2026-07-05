@@ -1172,10 +1172,10 @@ export async function registerSanitaryVerification(data: {
   fumigador: string
   auxiliar: string
   foto?: string | null
-  vehicleId?: number
+  vehicleId?: number | null
   aprobacion?: string
   isVehicleOnly?: boolean
-  citasVehiculosId?: number
+  citasVehiculosId?: number | null
 }) {
   const supabase = await createClient()
   try {

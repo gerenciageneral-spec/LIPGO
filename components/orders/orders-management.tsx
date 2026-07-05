@@ -124,7 +124,7 @@ interface ProductLine {
   peso?: number
 }
 
-export function OrdersManagement() {
+export function OrdersManagement(_props?: { onEditOrder?: (orderId: number) => void }) {
   const { selectedEmpresaId } = useAuth()
   const [orders, setOrders] = useState<Order[]>([])
   const [loading, setLoading] = useState(false)

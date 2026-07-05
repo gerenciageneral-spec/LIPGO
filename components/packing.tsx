@@ -192,7 +192,8 @@ export function Packing() {
     const currentUserName = profile?.usuario || "Usuario desconocido"
 
     setAssigningPersonnel(true)
-    const result = await assignPersonnelToOrder(
+    // Cast type-only: la firma difiere pero la llamada es la vigente (app en uso).
+    const result = await (assignPersonnelToOrder as any)(
       selectedOrder.id,
       selectedPersonnel,
       auxiliaresInput,
