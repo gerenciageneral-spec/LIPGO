@@ -216,11 +216,14 @@ export function MatrizIntegradaSIG({ selectedEmpresaId: propEmpresaId }: Props) 
           cargados += 1
         }
       }
-      // % de avance = cobertura documental (Cargado + Aprobado) sobre lo aplicable.
-      // "Aprobado" es un subconjunto que se muestra aparte como dato del auditor.
-      const pct = total > 0 ? Math.round((cargados / total) * 100) : 0
+      // AVANCE REAL de la norma: sin evidencia = 0 · documentado (cargado, sin
+      // verificar) = medio avance · verificado/aprobado = avance completo. Subir un
+      // documento no cierra el numeral; documental y verificado se muestran aparte.
+      const soloCargados = Math.max(0, cargados - aprobados)
+      const pct = total > 0 ? Math.round(((aprobados + soloCargados * 0.5) / total) * 100) : 0
+      const pctDocumental = total > 0 ? Math.round((cargados / total) * 100) : 0
       const pctAprobado = total > 0 ? Math.round((aprobados / total) * 100) : 0
-      return { norma: n, total, cargados, aprobados, pct, pctAprobado }
+      return { norma: n, total, cargados, aprobados, soloCargados, pct, pctDocumental, pctAprobado }
     })
   }, [normas, rows])
 
@@ -265,12 +268,12 @@ export function MatrizIntegradaSIG({ selectedEmpresaId: propEmpresaId }: Props) 
                 {a.pct}%
               </span>
             </div>
-            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Implementación documental</p>
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Avance real de la norma</p>
             <Progress value={a.pct} className="mt-1 h-2" />
             <p className="mt-1.5 text-xs text-muted-foreground">
-              {a.cargados} con evidencia · {a.aprobados} verificados · {a.total} aplican
+              {a.aprobados} verificados · {a.soloCargados} documentados (sin verificar) · {a.total} aplican
             </p>
-            <p className="text-[11px] text-muted-foreground">Verificado por auditor: {a.pctAprobado}%</p>
+            <p className="text-[11px] text-muted-foreground">Documentado {a.pctDocumental}% · Verificado {a.pctAprobado}%</p>
             {a.norma.codigo === "ISO45001" && avance0312 != null && (
               <p className="mt-1 text-[11px] font-medium" style={{ color: valoracion0312(avance0312).color }}>
                 Ref. SG-SST 0312 (Art. 27): {avance0312}% · {valoracion0312(avance0312).label}

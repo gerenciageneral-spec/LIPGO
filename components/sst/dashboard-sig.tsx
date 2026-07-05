@@ -197,7 +197,7 @@ export function DashboardSIG({ selectedEmpresaId: propEmpresaId }: Props) {
         const s = statsPorNorma[n.codigo] ?? { total: 0, cargados: 0, aprobados: 0, pendientes: 0 }
         return {
           norma: n.codigo.replace("ISO", "ISO "),
-          Implementación: s.total ? Math.round((s.cargados / s.total) * 100) : 0,
+          Documental: s.total ? Math.round((s.cargados / s.total) * 100) : 0,
           Verificado: s.total ? Math.round((s.aprobados / s.total) * 100) : 0,
         }
       }),
@@ -217,19 +217,25 @@ export function DashboardSIG({ selectedEmpresaId: propEmpresaId }: Props) {
   )
 
   // Brechas: numerales pendientes (sin evidencia) según el filtro de norma.
-  const brechas = useMemo(() => {
+  // "Qué le falta" a la norma, en las dos dimensiones del avance real:
+  // (1) faltaDocumentar = numerales aplicables SIN evidencia (estado pendiente);
+  // (2) faltaVerificar  = numerales con documento cargado pero SIN aprobar (estado cargado).
+  const brechasPorEstado = useMemo(() => {
     const objetivo = filtroNorma === "ALL" ? visibles : visibles.filter((n) => n.codigo === filtroNorma)
-    const out: { numeral: string; tema: string; norma: string }[] = []
+    const faltaDocumentar: { numeral: string; tema: string; norma: string }[] = []
+    const faltaVerificar: { numeral: string; tema: string; norma: string }[] = []
     for (const row of rows) {
       for (const n of objetivo) {
         const c = row.celdas.find((x) => x.norma_id === n.id)
-        if (c && c.aplica && c.estado === "pendiente") {
-          out.push({ numeral: row.requisito.numeral, tema: row.requisito.tema, norma: n.codigo })
-        }
+        if (!c || !c.aplica) continue
+        const ref = { numeral: row.requisito.numeral, tema: row.requisito.tema, norma: n.codigo }
+        if (c.estado === "pendiente") faltaDocumentar.push(ref)
+        else if (c.estado === "cargado") faltaVerificar.push(ref)
       }
     }
-    return out
+    return { faltaDocumentar, faltaVerificar }
   }, [rows, visibles, filtroNorma])
+  const brechas = brechasPorEstado.faltaDocumentar
 
   // Listado maestro filtrado por norma + búsqueda.
   const maestroFiltrado = useMemo(() => {
@@ -274,12 +280,14 @@ export function DashboardSIG({ selectedEmpresaId: propEmpresaId }: Props) {
     // KPIs por norma
     autoTable(doc, {
       startY: 28,
-      head: [["Norma", "% Implementación", "% Verificado", "Pendientes", "Aplican"]],
+      head: [["Norma", "% Avance real", "Documentado", "Verificado", "Falta documentar", "Falta verificar", "Aplican"]],
       body: normasMostradas.map((n) => {
         const s = statsPorNorma[n.codigo] ?? { total: 0, cargados: 0, aprobados: 0, pendientes: 0 }
-        const pct = s.total ? Math.round((s.cargados / s.total) * 100) : 0
-        const pctApr = s.total ? Math.round((s.aprobados / s.total) * 100) : 0
-        return [n.nombre, `${pct}%`, `${pctApr}%`, String(s.pendientes), String(s.total)]
+        const soloCargados = Math.max(0, s.cargados - s.aprobados)
+        const pctDoc = s.total ? Math.round((s.cargados / s.total) * 100) : 0
+        const pctVer = s.total ? Math.round((s.aprobados / s.total) * 100) : 0
+        const pctAvance = s.total ? Math.round(((s.aprobados + soloCargados * 0.5) / s.total) * 100) : 0
+        return [n.nombre, `${pctAvance}%`, `${pctDoc}%`, `${pctVer}%`, String(s.pendientes), String(soloCargados), String(s.total)]
       }),
       styles: { fontSize: 9 },
       headStyles: { fillColor: [13, 59, 110] },
@@ -438,24 +446,30 @@ export function DashboardSIG({ selectedEmpresaId: propEmpresaId }: Props) {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {normasMostradas.map((n) => {
           const s = statsPorNorma[n.codigo] ?? { total: 0, cargados: 0, aprobados: 0, pendientes: 0 }
-          const pct = s.total ? Math.round((s.cargados / s.total) * 100) : 0
-          const pctApr = s.total ? Math.round((s.aprobados / s.total) * 100) : 0
+          // AVANCE REAL de la norma (no solo documental, no solo lo aprobado):
+          // sin evidencia = 0 · documentado (cargado, sin verificar) = medio avance ·
+          // verificado/eficaz = avance completo. Subir un documento NO es cumplir la
+          // norma, pero sí es medio camino frente a no tener nada.
+          const soloCargados = Math.max(0, s.cargados - s.aprobados) // cargado pero no verificado
+          const pctDoc = s.total ? Math.round((s.cargados / s.total) * 100) : 0
+          const pctVer = s.total ? Math.round((s.aprobados / s.total) * 100) : 0
+          const pctAvance = s.total ? Math.round(((s.aprobados + soloCargados * 0.5) / s.total) * 100) : 0
           return (
             <Card key={n.id} className="p-4">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-semibold" style={{ color: n.color ?? SST_TOKENS.navy }}>
                   {n.nombre}
                 </span>
-                <span className="text-lg font-bold" style={{ color: colorPct(pct) }}>
-                  {pct}%
+                <span className="text-lg font-bold" style={{ color: colorPct(pctAvance) }}>
+                  {pctAvance}%
                 </span>
               </div>
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Implementación documental</p>
-              <Progress value={pct} className="mt-1 h-2" />
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Avance real de la norma</p>
+              <Progress value={pctAvance} className="mt-1 h-2" />
               <p className="mt-1.5 text-xs text-muted-foreground">
-                {s.cargados} con evidencia · {s.aprobados} verificados · {s.pendientes} pendientes · {s.total} aplican
+                {s.aprobados} verificados · {soloCargados} documentados (sin verificar) · {s.pendientes} sin evidencia · {s.total} aplican
               </p>
-              <p className="text-[11px] text-muted-foreground">Verificado por auditor: {pctApr}%</p>
+              <p className="text-[11px] text-muted-foreground">Documentado {pctDoc}% · Verificado {pctVer}%</p>
               {n.codigo === "ISO45001" && avance0312 != null && (
                 <p className="mt-1 text-[11px] font-medium" style={{ color: valoracion0312(avance0312).color }}>
                   Ref. SG-SST 0312 (Art. 27): {avance0312}% · {valoracion0312(avance0312).label}
@@ -470,7 +484,7 @@ export function DashboardSIG({ selectedEmpresaId: propEmpresaId }: Props) {
       <div className="grid gap-3 lg:grid-cols-2">
         <Card className="p-4">
           <p className="mb-2 text-sm font-semibold" style={{ color: SST_TOKENS.ink }}>
-            Implementación vs. Verificado por norma
+            Documental vs. Verificado por norma
           </p>
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={chartNormas} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
@@ -538,26 +552,60 @@ export function DashboardSIG({ selectedEmpresaId: propEmpresaId }: Props) {
         </Card>
       </div>
 
-      {/* Brechas */}
+      {/* Qué le falta a la norma (para llegar al 100% de avance real) */}
       <Card className="p-4">
-        <div className="mb-2 flex items-center gap-2">
+        <div className="mb-3 flex items-center gap-2">
           <AlertCircle className="h-4 w-4" style={{ color: SST_TOKENS.bad }} />
           <span className="text-sm font-semibold" style={{ color: SST_TOKENS.ink }}>
-            Brechas — numerales sin evidencia ({brechas.length})
+            Qué le falta a la norma
           </span>
         </div>
-        {brechas.length === 0 ? (
-          <p className="text-xs text-muted-foreground">Sin brechas en el alcance seleccionado. 🎉</p>
+        {brechasPorEstado.faltaDocumentar.length === 0 && brechasPorEstado.faltaVerificar.length === 0 ? (
+          <p className="text-xs text-muted-foreground">Nada pendiente en el alcance seleccionado. 🎉</p>
         ) : (
-          <div className="flex flex-wrap gap-1.5">
-            {brechas.map((b, i) => (
-              <Badge key={`${b.norma}-${b.numeral}-${i}`} variant="outline" className="text-[11px]">
-                <span className="font-mono">{b.numeral}</span>
-                <span className="ml-1 text-muted-foreground">{b.norma.replace("ISO", "ISO ")}</span>
-              </Badge>
-            ))}
+          <div className="grid gap-4 md:grid-cols-2">
+            {/* 1) Falta documentar */}
+            <div>
+              <p className="mb-1.5 text-xs font-semibold" style={{ color: SST_TOKENS.bad }}>
+                Falta documentar — sin evidencia ({brechasPorEstado.faltaDocumentar.length})
+              </p>
+              {brechasPorEstado.faltaDocumentar.length === 0 ? (
+                <p className="text-[11px] text-muted-foreground">Todo tiene al menos evidencia cargada.</p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {brechasPorEstado.faltaDocumentar.map((b, i) => (
+                    <Badge key={`d-${b.norma}-${b.numeral}-${i}`} variant="outline" className="text-[11px]" title={b.tema}>
+                      <span className="font-mono">{b.numeral}</span>
+                      <span className="ml-1 text-muted-foreground">{b.norma.replace("ISO", "ISO ")}</span>
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </div>
+            {/* 2) Falta verificar */}
+            <div>
+              <p className="mb-1.5 text-xs font-semibold" style={{ color: SST_TOKENS.warn }}>
+                Falta verificar — documentado sin aprobar ({brechasPorEstado.faltaVerificar.length})
+              </p>
+              {brechasPorEstado.faltaVerificar.length === 0 ? (
+                <p className="text-[11px] text-muted-foreground">Nada pendiente de verificación.</p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {brechasPorEstado.faltaVerificar.map((b, i) => (
+                    <Badge key={`v-${b.norma}-${b.numeral}-${i}`} variant="outline" className="text-[11px]" title={b.tema}>
+                      <span className="font-mono">{b.numeral}</span>
+                      <span className="ml-1 text-muted-foreground">{b.norma.replace("ISO", "ISO ")}</span>
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
+        <p className="mt-3 text-[11px] text-muted-foreground">
+          El <strong>avance real</strong> sube al documentar lo que falta (medio avance) y se completa al
+          <strong> verificar/aprobar</strong> la evidencia (avance total). Subir un documento no cierra el numeral por sí solo.
+        </p>
       </Card>
 
       {/* Listado Maestro */}
