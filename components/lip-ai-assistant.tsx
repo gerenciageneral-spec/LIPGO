@@ -29,6 +29,8 @@ interface LipAiAssistantProps {
   onOpenGroup?: (key: string) => void
   /** Clave del grupo actual (para sugerencias contextuales de ese módulo). */
   groupKey?: string
+  /** Variante HERO (Inicio): presencia más grande e imponente — LIPbot protagonista. */
+  hero?: boolean
 }
 
 /**
@@ -38,7 +40,7 @@ interface LipAiAssistantProps {
  * usando el mismo backend Claude (/api/chat), gobernado por los permisos del
  * usuario. Reutilizable en Inicio y en cada submenú.
  */
-export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, onAlerta, onNavigate, onOpenGroup, groupKey }: LipAiAssistantProps) {
+export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, onAlerta, onNavigate, onOpenGroup, groupKey, hero }: LipAiAssistantProps) {
   const { selectedEmpresaId } = useAuth()
   const area = contextLabel?.trim()
 
@@ -234,7 +236,7 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
   }, [])
 
   return (
-    <div className="lipai">
+    <div className={`lipai ${hero ? "lipai-hero" : ""}`}>
       <style>{`
         @property --lipai-a{ syntax:'<angle>'; initial-value:0deg; inherits:false; }
         .lipai{ position:relative; border-radius:20px; padding:1.6px;
@@ -261,6 +263,11 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
         .lipai-mic-on{ animation:lipai-mic 1.1s ease-in-out infinite; }
         @keyframes lipai-mic{ 0%,100%{box-shadow:0 0 0 0 rgba(255,90,90,.5)} 50%{box-shadow:0 0 0 6px rgba(255,90,90,0)} }
         .lipai-thread::-webkit-scrollbar{ width:6px } .lipai-thread::-webkit-scrollbar-thumb{ background:rgba(120,190,230,.3); border-radius:6px }
+        /* Variante HERO (Inicio): LIPbot protagonista — más grande y con más aire. */
+        .lipai-hero .lipai-in{ padding:18px 20px 16px; }
+        .lipai-hero .lipai-orb{ width:52px; height:52px; }
+        .lipai-hero .lipai-ta{ font-size:15px; line-height:22px; }
+        .lipai-hero .lipai-thread{ max-height:220px; }
       `}</style>
 
       <div className="lipai-in">
@@ -270,10 +277,13 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
             <div className="core" />
           </div>
           <div className="min-w-0">
-            <div className="text-[15px] font-extrabold tracking-tight" style={{ color: "#eaf7fb" }}>
+            <div
+              className={`${hero ? "text-[19px]" : "text-[15px]"} font-extrabold tracking-tight`}
+              style={{ color: "#eaf7fb" }}
+            >
               LIPbot
             </div>
-            <div className="flex items-center gap-1.5 text-[11.5px]" style={{ color: "#7fbdcf" }}>
+            <div className={`flex items-center gap-1.5 ${hero ? "text-[12.5px]" : "text-[11.5px]"}`} style={{ color: "#7fbdcf" }}>
               <span className="lipai-live" />
               Lee tu operación en vivo{empresaLabel ? ` · ${empresaLabel}` : ""}
             </div>

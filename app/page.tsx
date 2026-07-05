@@ -140,10 +140,11 @@ export default function DashboardPage() {
         sidebarCollapsed={sidebarCollapsed}
       />
 
-      {/* LIPbot flotante GLOBAL — UN solo lugar en TODAS las pantallas (Inicio,
-          submenús y módulos). No se muestra dentro del propio Asistente a
-          pantalla completa. Consciente del módulo/área actual. */}
-      {selectedModule !== "Asistente IA" && (
+      {/* LIPbot flotante — en submenús y módulos. En el INICIO no se muestra
+          porque ahí LIPbot es el HÉROE (protagonista, embebido arriba), así que
+          nunca hay dos superficies del asistente a la vez. Tampoco dentro del
+          Asistente a pantalla completa. Consciente del módulo/área actual. */}
+      {selectedModule !== "Asistente IA" && (selectedGroup || selectedModule) && (
         <LipbotDock
           contextLabel={
             selectedModule ??

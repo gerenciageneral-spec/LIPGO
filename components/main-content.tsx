@@ -2,9 +2,8 @@
 
 import React from "react"
 import { useAuth } from "@/components/auth-provider"
-import { AtencionBanner } from "@/components/atencion-banner"
 import { getAtencionDelDia } from "@/lib/atencion-actions"
-import type { AtencionItem } from "@/components/lip-ai-assistant"
+import { LipAiAssistant, type AtencionItem } from "@/components/lip-ai-assistant"
 import { TopBar } from "@/components/top-bar"
 import { DailySummary } from "@/components/daily-summary"
 import { ModuleCards } from "@/components/module-cards"
@@ -343,20 +342,55 @@ export function MainContent({
                 </div>
               </div>
 
-              {/* Atención del día — tareas en riesgo/urgentes (reubicadas fuera de LIPbot) */}
-              {homeAlertas.length > 0 && (
-                <div className="mb-4 sm:mb-5">
-                  <AtencionBanner
-                    alertas={homeAlertas}
-                    onAlerta={(a) => {
-                      const m = (a as { modulo?: string }).modulo
-                      if (m) onNavigateModule(m)
-                    }}
-                  />
+              {/* ===== LIPbot — LA INTELIGENCIA DE LIPGO, protagonista del Inicio =====
+                  La IA es el diferencial: no es un chat, es un copiloto que consulta
+                  datos reales, navega y EJECUTA acciones (gobernado por permisos). Es
+                  la puerta de entrada y además surge las alertas del día. El botón
+                  flotante queda para el resto de pantallas (aquí no, para no duplicar). */}
+              <section className="mb-5 sm:mb-6">
+                <div className="mb-2.5">
+                  <span
+                    className="inline-flex items-center gap-1.5 text-[10.5px] font-extrabold uppercase tracking-[0.16em]"
+                    style={{ color: "#00a6c4" }}
+                  >
+                    <span aria-hidden="true">✨</span> La inteligencia de LIPgo
+                  </span>
+                  <p className="mt-1 max-w-[62ch] text-[13px] text-muted-foreground">
+                    Háblale a <span className="font-bold text-foreground">LIPbot</span> en lenguaje natural: te da{" "}
+                    <span className="font-semibold text-foreground">datos exactos</span>, te{" "}
+                    <span className="font-semibold text-foreground">lleva al módulo</span> y{" "}
+                    <span className="font-semibold text-foreground">ejecuta acciones</span> por ti — todo gobernado por tus permisos.
+                  </p>
                 </div>
-              )}
 
-              {/* Aplicaciones — protagonista del Inicio (LIPbot vive en el botón flotante) */}
+                <LipAiAssistant
+                  hero
+                  empresaLabel={selectedEmpresaNombre}
+                  alertas={homeAlertas}
+                  onAlerta={(a) => {
+                    const m = (a as { modulo?: string }).modulo
+                    if (m) onNavigateModule(m)
+                  }}
+                  onNavigate={onNavigateModule}
+                  onOpenGroup={onOpenGroup}
+                  onOpen={() => onSelectModule("Asistente IA")}
+                />
+
+                {/* Los tres superpoderes — lo que hace a LIPbot distinto de un chat */}
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <span className="inline-flex items-center gap-2 rounded-xl border border-border bg-muted/60 px-3 py-1.5 text-xs font-semibold text-foreground">
+                    <span aria-hidden="true">🔎</span> <span><b className="font-extrabold">Consulta</b> tus datos reales</span>
+                  </span>
+                  <span className="inline-flex items-center gap-2 rounded-xl border border-border bg-muted/60 px-3 py-1.5 text-xs font-semibold text-foreground">
+                    <span aria-hidden="true">🧭</span> <span><b className="font-extrabold">Navega</b> a cualquier módulo</span>
+                  </span>
+                  <span className="inline-flex items-center gap-2 rounded-xl border border-border bg-muted/60 px-3 py-1.5 text-xs font-semibold text-foreground">
+                    <span aria-hidden="true">⚡</span> <span><b className="font-extrabold">Ejecuta</b> acciones por ti</span>
+                  </span>
+                </div>
+              </section>
+
+              {/* Aplicaciones — el otro pilar del Inicio */}
               <ModuleCards onSelectGroup={onSelectGroup} onSelectModule={onSelectModule} />
 
               {/* Pulso operativo */}
