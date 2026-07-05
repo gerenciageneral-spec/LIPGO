@@ -270,7 +270,7 @@ console.log("[v0] selectedEmpresaId:", selectedEmpresaId)
         pesoBascula: orderData.pesoBascula,
         lineas: lineasConProducto.map((line) => ({
           id: line.id,
-          producto: line.producto ?? undefined,
+          producto: line.producto as any,
           cantidad: line.cantidad,
           pesoBrutoTotal: line.pesoBrutoTotal,
         })),

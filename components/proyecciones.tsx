@@ -466,7 +466,7 @@ console.log("[v0] Proyecciones: Loading employees for empresa:", selectedEmpresa
           empleados: tolvaData.empleados,
           productos: productosConCantidad.map((p) => ({
             id: p.id,
-            producto: p.producto ?? undefined,
+            producto: p.producto as any,
             cantidad: p.cantidad,
           })),
         })
@@ -494,7 +494,7 @@ console.log("[v0] Proyecciones: Loading employees for empresa:", selectedEmpresa
           empleados: tolvaData.empleados as any,
           productos: productosConCantidad.map((p) => ({
             id: p.id,
-            producto: p.producto ?? undefined,
+            producto: p.producto as any,
             cantidad: p.cantidad,
           })),
           idempresaSeleccionada:

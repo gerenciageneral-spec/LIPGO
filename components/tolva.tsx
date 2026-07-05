@@ -416,7 +416,7 @@ export function Tolva({
           empleados: tolvaData.empleados,
           productos: productosConCantidad.map((p) => ({
             id: p.id,
-            producto: p.producto ?? undefined,
+            producto: p.producto as any,
             cantidad: p.cantidad,
           })),
         })
@@ -442,7 +442,7 @@ export function Tolva({
           empleados: tolvaData.empleados,
           productos: productosConCantidad.map((p) => ({
             id: p.id,
-            producto: p.producto ?? undefined,
+            producto: p.producto as any,
             cantidad: p.cantidad,
           })),
         })

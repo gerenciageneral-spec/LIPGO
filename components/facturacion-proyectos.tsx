@@ -352,7 +352,7 @@ export function FacturacionProyectos() {
     }
 
     // Prepare data for export with formatted values
-    const exportData = filteredTurnosData.map((record) => ({
+    const exportData: any[] = filteredTurnosData.map((record) => ({
       "Fecha": formatDateForExport(record.fecha),
       "Nombre": record.nombre || "",
       "Puesto": record.puesto || "",
@@ -431,7 +431,7 @@ export function FacturacionProyectos() {
     }
 
     // Prepare data for export with formatted values
-    const exportData = filteredData.map((record) => ({
+    const exportData: any[] = filteredData.map((record) => ({
       "Fecha Orden": formatDateForExport(record.fechaorden),
       "Fecha Cargue": formatDateForExport(record.fechacargue),
       "Cliente": record.cliente || "",
@@ -811,7 +811,7 @@ export function FacturacionProyectos() {
                   paginatedData.map((record, idx) => {
                     // Parse date correctly to avoid timezone issues
                     // Extract just the date portion if it's a timestamp
-                    const dateString = record.fechaorden instanceof Date 
+                    const dateString = (record.fechaorden as any) instanceof Date
                       ? record.fechaorden.toISOString().split('T')[0]
                       : typeof record.fechaorden === 'string'
                       ? record.fechaorden.split(' ')[0]
@@ -1097,7 +1097,7 @@ export function FacturacionProyectos() {
                       </TableRow>
                     ) : paginatedTurnosData.length > 0 ? (
                       paginatedTurnosData.map((record, idx) => {
-                        const dateString = record.fecha instanceof Date 
+                        const dateString = (record.fecha as any) instanceof Date
                           ? record.fecha.toISOString().split('T')[0]
                           : typeof record.fecha === 'string'
                           ? record.fecha.split(' ')[0]

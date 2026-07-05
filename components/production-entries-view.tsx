@@ -164,7 +164,7 @@ export function ProductionEntriesView() {
     window.open(pdfUrl, "_blank")
   }
 
-  const handleDownloadPDF = (pdfUrl: string | null, transactionId: number) => {
+  const handleDownloadPDF = (pdfUrl: string | null | undefined, transactionId: number) => {
     if (!pdfUrl) {
       toast({
         title: "Advertencia",
@@ -577,7 +577,7 @@ export function ProductionEntriesView() {
                                 ? "No se puede editar un registro aprobado o rechazado"
                                 : "Editar"
                             }
-                            disabled={transaction.status && transaction.status !== "Pendiente aprobar"}
+                            disabled={!!(transaction.status && transaction.status !== "Pendiente aprobar")}
                           >
                             <Pencil className="h-4 w-4" />
                           </Button>
@@ -590,7 +590,7 @@ export function ProductionEntriesView() {
                                 ? "Solo se pueden eliminar registros pendientes de aprobar"
                                 : "Eliminar"
                             }
-                            disabled={transaction.status && transaction.status !== "Pendiente aprobar"}
+                            disabled={!!(transaction.status && transaction.status !== "Pendiente aprobar")}
                           >
                             <Trash2 className="h-4 w-4 text-red-600" />
                           </Button>

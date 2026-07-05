@@ -1719,8 +1719,9 @@ export interface UpdateInventoryTransactionData {
   idproducto: number
   codproducto: string
   nombreproducto: string
-  categoria: string
-  subcategoria: string
+  // Opcionales: varios formularios de edición no los envían (runtime vigente).
+  categoria?: string
+  subcategoria?: string
   lote: string
   location: string
   cantidad: number

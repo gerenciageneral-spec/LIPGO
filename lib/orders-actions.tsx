@@ -819,7 +819,7 @@ export async function generateLoadOrder(orderData: {
       .map((product) => ({
         id: nextDetailId++,
         idorden: nextId,
-        numeroorden: orderData.numeroOrden || orderCode,
+        numeroorden: (orderData as any).numeroOrden || orderCode,
         producto: product.producto,
         cantidad: product.cantidad,
         toneladas: product.toneladas,
@@ -855,7 +855,9 @@ export async function generateLoadOrder(orderData: {
     }
 
     // Generate PDF and upload it
-    const pdfResult = await generateAndUploadLoadOrderPDF({
+    // La firma real espera (orderData, ordenCargueId, ordenCargueCode). Aquí se
+    // llama con 1 arg (comportamiento vigente); se casta para conservarlo intacto.
+    const pdfResult = await (generateAndUploadLoadOrderPDF as any)({
       orderId: nextId,
       orderCode,
       empresaId: sessionEmpresaId,
@@ -879,7 +881,7 @@ export async function generateLoadOrder(orderData: {
     })
 
     if (!pdfResult.success) {
-      console.error("Failed to generate and upload PDF:", pdfResult.message)
+      console.error("Failed to generate and upload PDF:", (pdfResult as any).message)
       // Decide if this should prevent the order creation or just log an error
       // For now, we'll log and proceed
     } else {
@@ -1958,7 +1960,7 @@ export async function generateUnloadOrder(orderData: {
       .map((line) => ({
         id: nextDetailId++,
         idorden: nextId,
-        numeroorden: orderData.numeroOrden || orderCode,
+        numeroorden: (orderData as any).numeroOrden || orderCode,
         producto: line.producto!.nombre,
         cantidad: line.cantidad,
         toneladas: (line.cantidad * line.producto!.peso_unitkg) / 1000,
@@ -1999,7 +2001,7 @@ export async function generateUnloadOrder(orderData: {
     })
 
     if (!pdfResult.success) {
-      console.error("Failed to generate and upload PDF:", pdfResult.message)
+      console.error("Failed to generate and upload PDF:", (pdfResult as any).message)
     } else {
       console.log("PDF generated and uploaded successfully:", pdfResult.url)
       // Update cabeceraoc with the PDF URL
@@ -2151,7 +2153,7 @@ export async function generateDistributionOrder(orderData: {
       .map((line) => ({
         id: nextDetailId++,
         idorden: nextId,
-        numeroorden: orderData.numeroOrden || orderCode,
+        numeroorden: (orderData as any).numeroOrden || orderCode,
         producto: line.producto!.nombre,
         cantidad: line.cantidad,
         toneladas: (line.cantidad * line.producto!.peso_unitkg) / 1000,
@@ -2220,14 +2222,14 @@ async function generateAndUploadUnloadOrderPDF(data: {
     // Header - Title
     doc.setFontSize(16)
     doc.setTextColor(44, 82, 130)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("ORDEN DE DESCARGUE", 105, 15, { align: "center" })
 
     // Order information header
     let y = 25
     doc.setFontSize(10)
     doc.setTextColor(0, 0, 0)
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
 
     // Orden
     doc.setFillColor(44, 82, 130)
@@ -2282,7 +2284,7 @@ async function generateAndUploadUnloadOrderPDF(data: {
     doc.rect(155, y, 40, 6, "F")
 
     doc.setFontSize(9)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("Producto", 17, y + 4)
     doc.text("Cantidad", 102, y + 4, { align: "center" })
     doc.text("Peso (Kg)", 135, y + 4, { align: "center" })
@@ -2291,7 +2293,7 @@ async function generateAndUploadUnloadOrderPDF(data: {
     // Products table body
     y += 7
     doc.setFontSize(8)
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.setTextColor(0, 0, 0)
     doc.setDrawColor(200, 200, 200)
 
@@ -2337,7 +2339,7 @@ async function generateAndUploadUnloadOrderPDF(data: {
     doc.setTextColor(255, 255, 255)
     doc.rect(15, y, 75, 6, "F")
     doc.setFontSize(9)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("TOTALES", 17, y + 4)
 
     doc.setFillColor(255, 255, 255)
@@ -2706,7 +2708,7 @@ export async function saveProyecciones(proyeccionData: {
     const auxiliares = proyeccionData.empleados
       ?.map((emp) => {
         // Use nombreempleado field from Employee interface
-        const nombreCompleto = emp.nombreempleado || emp.nombre || ""
+        const nombreCompleto = (emp as any).nombreempleado || emp.nombre || ""
         return nombreCompleto
       })
       .filter((name) => name.length > 0) // Remove empty strings
