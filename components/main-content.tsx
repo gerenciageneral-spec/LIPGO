@@ -4,6 +4,7 @@ import React from "react"
 import { useAuth } from "@/components/auth-provider"
 import { getAtencionDelDia } from "@/lib/atencion-actions"
 import { LipAiAssistant, type AtencionItem } from "@/components/lip-ai-assistant"
+import { AtencionBanner } from "@/components/atencion-banner"
 import { TopBar } from "@/components/top-bar"
 import { DailySummary } from "@/components/daily-summary"
 import { ModuleCards } from "@/components/module-cards"
@@ -363,31 +364,42 @@ export function MainContent({
                   </p>
                 </div>
 
+                {/* Barra de comando: compacta por defecto, se expande al preguntar.
+                    Protagonista por tratamiento (brillo + orbe), no por tamaño → los
+                    módulos quedan visibles. Sugerencias contextuales al módulo. */}
                 <LipAiAssistant
-                  hero
+                  variant="bar"
                   empresaLabel={selectedEmpresaNombre}
-                  alertas={homeAlertas}
-                  onAlerta={(a) => {
-                    const m = (a as { modulo?: string }).modulo
-                    if (m) onNavigateModule(m)
-                  }}
                   onNavigate={onNavigateModule}
                   onOpenGroup={onOpenGroup}
                   onOpen={() => onSelectModule("Asistente IA")}
                 />
 
                 {/* Los tres superpoderes — lo que hace a LIPbot distinto de un chat */}
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <span className="inline-flex items-center gap-2 rounded-xl border border-border bg-muted/60 px-3 py-1.5 text-xs font-semibold text-foreground">
-                    <span aria-hidden="true">🔎</span> <span><b className="font-extrabold">Consulta</b> tus datos reales</span>
+                <div className="mt-2.5 flex flex-wrap gap-2">
+                  <span className="inline-flex items-center gap-2 rounded-lg border border-border bg-muted/60 px-2.5 py-1 text-[11.5px] font-semibold text-foreground">
+                    <span aria-hidden="true">🔎</span> <span><b className="font-extrabold">Consulta</b> datos reales</span>
                   </span>
-                  <span className="inline-flex items-center gap-2 rounded-xl border border-border bg-muted/60 px-3 py-1.5 text-xs font-semibold text-foreground">
+                  <span className="inline-flex items-center gap-2 rounded-lg border border-border bg-muted/60 px-2.5 py-1 text-[11.5px] font-semibold text-foreground">
                     <span aria-hidden="true">🧭</span> <span><b className="font-extrabold">Navega</b> a cualquier módulo</span>
                   </span>
-                  <span className="inline-flex items-center gap-2 rounded-xl border border-border bg-muted/60 px-3 py-1.5 text-xs font-semibold text-foreground">
+                  <span className="inline-flex items-center gap-2 rounded-lg border border-border bg-muted/60 px-2.5 py-1 text-[11.5px] font-semibold text-foreground">
                     <span aria-hidden="true">⚡</span> <span><b className="font-extrabold">Ejecuta</b> acciones por ti</span>
                   </span>
                 </div>
+
+                {/* Atención del día — franja compacta (fuera de la barra de IA) */}
+                {homeAlertas.length > 0 && (
+                  <div className="mt-3.5">
+                    <AtencionBanner
+                      alertas={homeAlertas}
+                      onAlerta={(a) => {
+                        const m = (a as { modulo?: string }).modulo
+                        if (m) onNavigateModule(m)
+                      }}
+                    />
+                  </div>
+                )}
               </section>
 
               {/* Aplicaciones — el otro pilar del Inicio */}

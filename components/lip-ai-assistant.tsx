@@ -31,6 +31,10 @@ interface LipAiAssistantProps {
   groupKey?: string
   /** Variante HERO (Inicio): presencia más grande e imponente — LIPbot protagonista. */
   hero?: boolean
+  /** Variante BARRA DE COMANDO (Inicio): compacta (una fila) que se EXPANDE al
+   *  preguntar/enfocar. Protagonista por tratamiento, no por tamaño — deja los
+   *  módulos visibles. Patrón Raycast/Linear/Perplexity. */
+  variant?: "card" | "bar"
 }
 
 /**
@@ -40,7 +44,10 @@ interface LipAiAssistantProps {
  * usando el mismo backend Claude (/api/chat), gobernado por los permisos del
  * usuario. Reutilizable en Inicio y en cada submenú.
  */
-export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, onAlerta, onNavigate, onOpenGroup, groupKey, hero }: LipAiAssistantProps) {
+export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, onAlerta, onNavigate, onOpenGroup, groupKey, hero, variant = "card" }: LipAiAssistantProps) {
+  const isBar = variant === "bar"
+  // En modo barra: colapsada por defecto; se expande al enfocar o al haber chat.
+  const [focused, setFocused] = useState(false)
   const { selectedEmpresaId } = useAuth()
   const area = contextLabel?.trim()
 
@@ -74,6 +81,21 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
   const [listening, setListening] = useState(false)
   const recognitionRef = useRef<any>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const taRef = useRef<HTMLTextAreaElement | null>(null)
+
+  // Modo barra: ⌘K / Ctrl+K enfoca la barra de comando (patrón command-palette).
+  useEffect(() => {
+    if (!isBar) return
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault()
+        setFocused(true)
+        taRef.current?.focus()
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [isBar])
   // Voz conversacional: si la pregunta se hizo por voz, la respuesta se lee en
   // voz alta (TTS) y, si la IA repregunta, se reabre el micrófono.
   const speakNextRef = useRef(false)
@@ -236,7 +258,11 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
   }, [])
 
   return (
-    <div className={`lipai ${hero ? "lipai-hero" : ""}`}>
+    <div
+      className={`lipai ${hero ? "lipai-hero" : ""} ${isBar ? "lipai-bar" : ""} ${
+        isBar && (focused || messages.length > 0) ? "lipai-open" : ""
+      }`}
+    >
       <style>{`
         @property --lipai-a{ syntax:'<angle>'; initial-value:0deg; inherits:false; }
         .lipai{ position:relative; border-radius:20px; padding:1.6px;
@@ -268,10 +294,29 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
         .lipai-hero .lipai-orb{ width:52px; height:52px; }
         .lipai-hero .lipai-ta{ font-size:15px; line-height:22px; }
         .lipai-hero .lipai-thread{ max-height:220px; }
+
+        /* ===== Variante BARRA DE COMANDO: compacta (una fila) que se expande ===== */
+        .lipai-bar .lipai-in{ display:flex; flex-direction:column; padding:9px 11px; }
+        .lipai-bar .lipai-header{ display:none; }        /* el orbe va en la fila del composer */
+        .lipai-bar .lipai-alertas{ display:none; }       /* las alertas van fuera, en su franja */
+        .lipai-bar .lipai-composer{ order:-2; margin-top:0 !important; background:transparent !important; border:0 !important; padding:0 !important; }
+        .lipai-bar .lipai-sugs{ order:-1; margin-top:11px !important; }
+        .lipai-bar .lipai-thread{ order:0; margin-top:11px !important; }
+        /* Colapsada: solo la fila de comando (se ocultan hilo y sugerencias). */
+        .lipai-bar:not(.lipai-open) .lipai-thread,
+        .lipai-bar:not(.lipai-open) .lipai-sugs{ display:none; }
+        /* Orbe compacto embebido en la fila (solo en modo barra). */
+        .lipai-orb-inline{ display:none; }
+        .lipai-bar .lipai-orb-inline{ display:block; width:30px; height:30px; flex:none; }
+        .lipai-bar .lipai-ta{ font-size:14.5px; }
+        /* Badge ⌘K (solo barra colapsada) — afford del atajo command-palette. */
+        .lipai-kbd{ display:none; font:700 10px/1 ui-sans-serif,system-ui; color:#9fd4e6; flex:none;
+          background:rgba(4,34,42,.35); padding:4px 7px; border-radius:6px; border:1px solid rgba(150,210,240,.18); }
+        .lipai-bar:not(.lipai-open) .lipai-kbd{ display:inline-flex; }
       `}</style>
 
       <div className="lipai-in">
-        <div className="relative z-[2] flex items-center gap-3">
+        <div className="lipai-header relative z-[2] flex items-center gap-3">
           <div className="lipai-orb">
             <div className="halo" />
             <div className="core" />
@@ -336,16 +381,26 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
           </div>
         )}
 
-        {/* Composer: escribir + micrófono + Preguntar */}
+        {/* Composer: (orbe en modo barra) + escribir + micrófono + Preguntar */}
         <div
-          className="relative z-[2] mt-3.5 flex items-end gap-2 rounded-xl px-3 py-2"
+          className="lipai-composer relative z-[2] mt-3.5 flex items-center gap-2.5 rounded-xl px-3 py-2"
           style={{ background: "rgba(255,255,255,.06)", border: "1px solid rgba(150,210,240,.2)" }}
+          onClick={() => {
+            if (isBar) taRef.current?.focus()
+          }}
         >
+          <div className="lipai-orb lipai-orb-inline">
+            <div className="halo" />
+            <div className="core" />
+          </div>
           <textarea
+            ref={taRef}
             rows={1}
             className="lipai-ta flex-1 py-1"
             placeholder={placeholder}
             value={input}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setTimeout(() => setFocused(false), 140)}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
@@ -354,6 +409,8 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
               }
             }}
           />
+
+          <span className="lipai-kbd" aria-hidden="true">⌘K</span>
 
           {/* Micrófono (dictado por voz) */}
           <button
@@ -393,9 +450,9 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
           )}
         </div>
 
-        {/* Sugerencias (solo antes de la primera pregunta, para ahorrar espacio) */}
+        {/* Sugerencias contextuales del módulo (solo antes de la primera pregunta) */}
         {messages.length === 0 && (
-          <div className="relative z-[2] mt-3 flex flex-wrap gap-2">
+          <div className="lipai-sugs relative z-[2] mt-3 flex flex-wrap gap-2">
             {sugs.map((s) => (
               <button
                 key={s}
@@ -412,7 +469,7 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
         {/* Atención del día — la IA prioriza lo que requiere foco (datos reales). */}
         {alertas && alertas.length > 0 && (
           <div
-            className="relative z-[2] mt-3.5 flex gap-3 rounded-xl px-3 py-3"
+            className="lipai-alertas relative z-[2] mt-3.5 flex gap-3 rounded-xl px-3 py-3"
             style={{ background: "rgba(0,194,220,.08)", border: "1px solid rgba(0,194,220,.22)" }}
           >
             <span
