@@ -8,6 +8,8 @@ export interface UserProfile {
   usuario: string
   empresa_id: number
   empresa_nombre: string
+  // Nombre del usuario (opcional): varios componentes lo leen (saludo, firmas).
+  nombre?: string | null
 }
 
 const supabaseAdmin = createClient(

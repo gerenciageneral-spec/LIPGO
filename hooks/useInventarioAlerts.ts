@@ -14,7 +14,7 @@ export interface InventarioAlert {
   stock_global: number
 }
 
-export function useInventarioAlerts(empresaId?: number, userId?: string) {
+export function useInventarioAlerts(empresaId?: number | null, userId?: string) {
   const [alerts, setAlerts] = useState<InventarioAlert[]>([])
   const [count, setCount] = useState(0)
   const [hasPermission, setHasPermission] = useState(false)

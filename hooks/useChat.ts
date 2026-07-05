@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase-client'
 
 export const useChat = (currentUserId: string) => {
-  const [users, setUsers] = useState([])
-  const [messages, setMessages] = useState([])
+  const [users, setUsers] = useState<any[]>([])
+  const [messages, setMessages] = useState<any[]>([])
   const [activeChatId, setActiveChatId] = useState<string | null>(null)
   
   // 1. Cargar la lista de usuarios (Profiles) para el Sidebar

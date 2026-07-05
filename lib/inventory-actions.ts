@@ -700,7 +700,7 @@ export async function getInventoryBalanceDetails(
   locationFilter?: string,
   categoriaFilter?: string,
   subcategoriaFilter?: string,
-  empresaId?: number,
+  empresaId?: number | null,
 ): Promise<InventoryBalanceDetail[]> {
   try {
     const supabase = await createClient()
@@ -841,7 +841,7 @@ export async function getInventoryBalanceGlobal(
   categoriaFilter?: string,
   subcategoriaFilter?: string,
   productoFilter?: string,
-  empresaId?: number,
+  empresaId?: number | null,
 ): Promise<InventoryBalanceGlobal[]> {
   try {
     const supabase = await createClient()
@@ -1018,7 +1018,7 @@ export async function exportInventoryDetailsToExcel(
   locationFilter?: string,
   categoriaFilter?: string,
   subcategoriaFilter?: string,
-  empresaId?: number,
+  empresaId?: number | null,
 ): Promise<{ success: boolean; data?: string; filename?: string; error?: string }> {
   try {
     const details = await getInventoryBalanceDetails(

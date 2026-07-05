@@ -41,7 +41,7 @@ export interface HeadcountPerson {
 }
 
 export async function getHeadcountList() {
-  const supabase = createClient()
+  const supabase = await createClient()
   const empresaId = await getCurrentEmpresaIdForInsert()
 
   const { data, error } = await supabase
@@ -59,7 +59,7 @@ export async function getHeadcountList() {
 }
 
 export async function createHeadcountPerson(person: Omit<HeadcountPerson, "id" | "idempresa">) {
-  const supabase = createClient()
+  const supabase = await createClient()
   const empresaId = await getCurrentEmpresaIdForInsert()
 
   const { data, error } = await supabase
@@ -80,7 +80,7 @@ export async function createHeadcountPerson(person: Omit<HeadcountPerson, "id" |
 }
 
 export async function updateHeadcountPerson(id: number, person: Partial<HeadcountPerson>) {
-  const supabase = createClient()
+  const supabase = await createClient()
 
   const { data, error } = await supabase.from("headcount").update(person).eq("id", id).select().single()
 
@@ -93,7 +93,7 @@ export async function updateHeadcountPerson(id: number, person: Partial<Headcoun
 }
 
 export async function deleteHeadcountPerson(id: number) {
-  const supabase = createClient()
+  const supabase = await createClient()
 
   const { error } = await supabase.from("headcount").delete().eq("id", id)
 

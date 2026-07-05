@@ -26,8 +26,10 @@ export async function GET(request: NextRequest) {
     // Calculate offset
     const offset = (page - 1) * pageSize
 
-    // Helper function to apply filters to a query
-    const applyFilters = (q: ReturnType<typeof supabase.from>) => {
+    // Helper function to apply filters to a query. `q: any` porque la cadena
+    // .eq()/.or()/.ilike() devuelve un FilterBuilder distinto del QueryBuilder
+    // inicial y la reasignación no tipa. Type-only, no cambia el runtime.
+    const applyFilters = (q: any) => {
       if (empresaId) {
         q = q.eq("idempresa", parseInt(empresaId, 10))
       }

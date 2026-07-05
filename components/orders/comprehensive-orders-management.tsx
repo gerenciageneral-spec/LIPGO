@@ -93,6 +93,8 @@ interface Order {
   npedido?: string | null
   id_empresa?: number
   empresafactura?: string | null
+  revisioncartera?: string | null
+  revisiongerencia?: string | null
 }
 
 interface ProductLine {

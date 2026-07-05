@@ -305,7 +305,7 @@ export async function generatePackingPDF(
   }
 }
 
-export async function getCarguDescarguePersonnel(empresaId?: number) {
+export async function getCarguDescarguePersonnel(empresaId?: number | null) {
   return await _getCarguDescarguePersonnel(empresaId)
 }
 

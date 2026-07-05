@@ -47,12 +47,12 @@ export async function uploadPDF(
     // Header with logo
     doc.setFontSize(16)
     doc.setTextColor(200, 16, 46)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text(empresaData.nombre, 105, 15, { align: "center" })
 
     doc.setFontSize(8)
     doc.setTextColor(0, 0, 0)
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.text(`NIT: ${empresaData.nit}`, 105, 20, { align: "center" })
     doc.text(empresaData.direccion, 105, 25, { align: "center" })
     doc.text("Formato Orden de Cargue", 105, 30, { align: "center" })
@@ -86,7 +86,7 @@ export async function uploadPDF(
     doc.rect(15, y, 180, 6, "F")
 
     doc.setFontSize(8)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("Cliente", 20, y + 4)
     doc.text("Destino", 63, y + 4)
     doc.text("Producto", 90, y + 4)
@@ -94,7 +94,7 @@ export async function uploadPDF(
     doc.text("Peso (Ton)", 172, y + 4, { align: "center" })
 
     y += 6
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.setFontSize(6)
     doc.setTextColor(0, 0, 0)
     doc.setDrawColor(200, 200, 200)
@@ -135,7 +135,7 @@ export async function uploadPDF(
     doc.setTextColor(255, 255, 255)
     doc.rect(15, y, 110, 6, "F")
     doc.setFontSize(9)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("TOTALES", 20, y + 4)
 
     doc.setFillColor(255, 255, 255)
@@ -149,7 +149,7 @@ export async function uploadPDF(
 
     // Vehicle details section
     y += 12
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.setFillColor(200, 200, 200)
     doc.rect(15, y, 85, 6, "F")
     doc.setTextColor(0, 0, 0)
@@ -212,7 +212,7 @@ export async function uploadPDF(
     doc.setTextColor(255, 255, 255)
     doc.rect(15, y, 180, 6, "F")
     doc.setFontSize(9)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("Observaciones", 20, y + 4)
 
     y += 6
@@ -355,7 +355,7 @@ export async function generateAndUploadOrderPDF(
     doc.setTextColor(255, 255, 255)
     doc.rect(15, y, 180, 7, "F")
     doc.setFontSize(8)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("#", 17, y + 5)
     doc.text("Referencia", 25, y + 5)
     doc.text("Precio unitario", 95, y + 5)
@@ -368,15 +368,15 @@ export async function generateAndUploadOrderPDF(
 
     let rowNumber = 1
     doc.setDrawColor(200, 200, 200)
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
 
     // Products grouped by category
     Object.entries(orderData.groupedProducts).forEach(([categoria, categoryProducts]: [string, any]) => {
       doc.setFillColor(245, 245, 245)
       doc.rect(15, y, 180, 6, "FD")
-      doc.setFont(undefined, "bold")
+      doc.setFont(undefined as any, "bold")
       doc.text(categoria, 25, y + 4)
-      doc.setFont(undefined, "normal")
+      doc.setFont(undefined as any, "normal")
       y += 6
 
       categoryProducts.forEach((product: any) => {
@@ -408,7 +408,7 @@ export async function generateAndUploadOrderPDF(
     doc.setFillColor(224, 224, 224)
     doc.rect(15, y, 180, 6, "F")
     doc.setFontSize(8)
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.text("Total orden", 20, y + 4)
     doc.text(`$ ${orderData.subtotal.toLocaleString("es-CO")}`, 175, y + 4)
 
@@ -421,7 +421,7 @@ export async function generateAndUploadOrderPDF(
     doc.text(`$ 0`, 175, y + 4)
 
     y += 6
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("Total a pagar", 20, y + 4)
     doc.text(`$ ${orderData.total.toLocaleString("es-CO")}`, 175, y + 4)
 
@@ -435,13 +435,13 @@ export async function generateAndUploadOrderPDF(
     doc.setTextColor(255, 255, 255)
     doc.rect(15, y, 180, 6, "F")
     doc.setFontSize(9)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("Observaciones", 20, y + 4)
 
     y += 6
     doc.setDrawColor(200, 200, 200)
     doc.rect(15, y, 180, 15, "S")
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.setTextColor(0, 0, 0)
     doc.text(orderData.observaciones || "", 20, y + 5)
 
@@ -521,7 +521,7 @@ export async function generateAndUploadLoadOrderPDF(orderData: any, ordenCargueI
     // Header with company info
     doc.setFontSize(16)
     doc.setTextColor(200, 16, 46)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text(empresaData.nombre || "EMPRESA", 105, 15, { align: "center" })
 
     if (empresaData.logo) {
@@ -534,7 +534,7 @@ export async function generateAndUploadLoadOrderPDF(orderData: any, ordenCargueI
 
     doc.setFontSize(8)
     doc.setTextColor(0, 0, 0)
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.text(`NIT: ${empresaData.nit || "N/A"}`, 105, 20, { align: "center" })
     doc.text(empresaData.direccion || "N/A", 105, 25, { align: "center" })
     doc.text("Formato Orden de Cargue", 105, 30, { align: "center" })
@@ -567,7 +567,7 @@ export async function generateAndUploadLoadOrderPDF(orderData: any, ordenCargueI
     doc.rect(15, yPos, 180, 6, "F")
 
     doc.setFontSize(8)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("Cliente", 20, yPos + 4)
     doc.text("Destino", 63, yPos + 4)
     doc.text("Producto", 90, yPos + 4)
@@ -575,7 +575,7 @@ export async function generateAndUploadLoadOrderPDF(orderData: any, ordenCargueI
     doc.text("Peso (Ton)", 172, yPos + 4, { align: "center" })
 
     yPos += 6
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.setFontSize(6)
     doc.setTextColor(0, 0, 0)
     doc.setDrawColor(200, 200, 200)
@@ -626,7 +626,7 @@ export async function generateAndUploadLoadOrderPDF(orderData: any, ordenCargueI
     doc.setTextColor(255, 255, 255)
     doc.rect(15, yPos, 110, 6, "F")
     doc.setFontSize(9)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("TOTALES", 20, yPos + 4)
 
     doc.setFillColor(255, 255, 255)
@@ -640,7 +640,7 @@ export async function generateAndUploadLoadOrderPDF(orderData: any, ordenCargueI
 
     // Vehicle details section
     yPos += 12
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.setFillColor(200, 200, 200)
     doc.rect(15, yPos, 85, 6, "F")
     doc.setTextColor(0, 0, 0)
@@ -703,7 +703,7 @@ export async function generateAndUploadLoadOrderPDF(orderData: any, ordenCargueI
     doc.setTextColor(255, 255, 255)
     doc.rect(15, yPos, 180, 6, "F")
     doc.setFontSize(9)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("Observaciones", 20, yPos + 4)
 
     yPos += 6
@@ -852,7 +852,7 @@ export async function generateAndUploadOrderPDF_original(
     doc.setTextColor(255, 255, 255)
     doc.rect(15, y, 180, 7, "F")
     doc.setFontSize(8)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("#", 17, y + 5)
     doc.text("Referencia", 25, y + 5)
     doc.text("Precio unitario", 95, y + 5)
@@ -865,15 +865,15 @@ export async function generateAndUploadOrderPDF_original(
 
     let rowNumber = 1
     doc.setDrawColor(200, 200, 200)
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
 
     // Products grouped by category
     Object.entries(orderData.groupedProducts).forEach(([categoria, categoryProducts]: [string, any]) => {
       doc.setFillColor(245, 245, 245)
       doc.rect(15, y, 180, 6, "FD")
-      doc.setFont(undefined, "bold")
+      doc.setFont(undefined as any, "bold")
       doc.text(categoria, 25, y + 4)
-      doc.setFont(undefined, "normal")
+      doc.setFont(undefined as any, "normal")
       y += 6
 
       categoryProducts.forEach((product: any) => {
@@ -905,7 +905,7 @@ export async function generateAndUploadOrderPDF_original(
     doc.setFillColor(224, 224, 224)
     doc.rect(15, y, 180, 6, "F")
     doc.setFontSize(8)
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.text("Total orden", 20, y + 4)
     doc.text(`$ ${orderData.subtotal.toLocaleString("es-CO")}`, 175, y + 4)
 
@@ -918,7 +918,7 @@ export async function generateAndUploadOrderPDF_original(
     doc.text(`$ 0`, 175, y + 4)
 
     y += 6
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("Total a pagar", 20, y + 4)
     doc.text(`$ ${orderData.total.toLocaleString("es-CO")}`, 175, y + 4)
 
@@ -932,13 +932,13 @@ export async function generateAndUploadOrderPDF_original(
     doc.setTextColor(255, 255, 255)
     doc.rect(15, y, 180, 6, "F")
     doc.setFontSize(9)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("Observaciones", 20, y + 4)
 
     y += 6
     doc.setDrawColor(200, 200, 200)
     doc.rect(15, y, 180, 15, "S")
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.setTextColor(0, 0, 0)
     doc.text(orderData.observaciones || "", 20, y + 5)
 
@@ -1022,7 +1022,7 @@ export async function generateAndUploadLoadOrderPDF_original(
     // Header with company info
     doc.setFontSize(16)
     doc.setTextColor(200, 16, 46)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text(empresaData.nombre || "EMPRESA", 105, 15, { align: "center" })
 
     if (empresaData.logo) {
@@ -1035,7 +1035,7 @@ export async function generateAndUploadLoadOrderPDF_original(
 
     doc.setFontSize(8)
     doc.setTextColor(0, 0, 0)
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.text(`NIT: ${empresaData.nit || "N/A"}`, 105, 20, { align: "center" })
     doc.text(empresaData.direccion || "N/A", 105, 25, { align: "center" })
     doc.text("Formato Orden de Cargue", 105, 30, { align: "center" })
@@ -1068,7 +1068,7 @@ export async function generateAndUploadLoadOrderPDF_original(
     doc.rect(15, yPos, 180, 6, "F")
 
     doc.setFontSize(8)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("Cliente", 20, yPos + 4)
     doc.text("Destino", 63, yPos + 4)
     doc.text("Producto", 90, yPos + 4)
@@ -1076,7 +1076,7 @@ export async function generateAndUploadLoadOrderPDF_original(
     doc.text("Peso (Ton)", 172, yPos + 4, { align: "center" })
 
     yPos += 6
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.setFontSize(6)
     doc.setTextColor(0, 0, 0)
     doc.setDrawColor(200, 200, 200)
@@ -1117,7 +1117,7 @@ export async function generateAndUploadLoadOrderPDF_original(
     doc.setTextColor(255, 255, 255)
     doc.rect(15, yPos, 125, 6, "F")
     doc.setFontSize(9)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("TOTALES", 20, yPos + 4)
 
     doc.setFillColor(255, 255, 255)
@@ -1131,7 +1131,7 @@ export async function generateAndUploadLoadOrderPDF_original(
 
     // Vehicle details section
     yPos += 12
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.setFillColor(200, 200, 200)
     doc.rect(15, yPos, 85, 6, "F")
     doc.setTextColor(0, 0, 0)
@@ -1194,7 +1194,7 @@ export async function generateAndUploadLoadOrderPDF_original(
     doc.setTextColor(255, 255, 255)
     doc.rect(15, yPos, 180, 6, "F")
     doc.setFontSize(9)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("Observaciones", 20, yPos + 4)
 
     yPos += 6
@@ -1245,12 +1245,12 @@ export async function generateAndUploadTransferRequestPDF(transferData: any, idp
     // Header
     doc.setFontSize(16)
     doc.setTextColor(200, 16, 46)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("SOLICITUD DE TRASLADO", 105, 20, { align: "center" })
 
     doc.setFontSize(10)
     doc.setTextColor(0, 0, 0)
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.text(`Código: ${pedidoCode}`, 105, 28, { align: "center" })
     doc.text(`Fecha: ${transferData.fecha}`, 105, 34, { align: "center" })
 
@@ -1262,17 +1262,17 @@ export async function generateAndUploadTransferRequestPDF(transferData: any, idp
 
     doc.setFontSize(9)
     doc.text("Bodega Origen:", 20, y + 6)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text(transferData.bodegaOrigen, 55, y + 6)
 
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.text("Bodega Destino:", 20, y + 14)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text(transferData.bodegaDestino, 55, y + 14)
 
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.text("Ciudad Destino:", 20, y + 22)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text(transferData.ciudadDestino, 55, y + 22)
 
     // Products table header
@@ -1281,7 +1281,7 @@ export async function generateAndUploadTransferRequestPDF(transferData: any, idp
     doc.setTextColor(255, 255, 255)
     doc.rect(15, y, 180, 7, "F")
     doc.setFontSize(8)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("#", 18, y + 5)
     doc.text("Categoría", 30, y + 5)
     doc.text("Producto", 75, y + 5)
@@ -1289,7 +1289,7 @@ export async function generateAndUploadTransferRequestPDF(transferData: any, idp
     doc.text("Peso (kg)", 175, y + 5, { align: "center" })
 
     doc.setTextColor(0, 0, 0)
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.setFontSize(6)
     y += 7
 
@@ -1336,7 +1336,7 @@ export async function generateAndUploadTransferRequestPDF(transferData: any, idp
     doc.setTextColor(255, 255, 255)
     doc.rect(15, y, 125, 6, "F")
     doc.setFontSize(9)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("TOTALES", 20, y + 4)
 
     doc.setFillColor(224, 224, 224)
@@ -1348,7 +1348,7 @@ export async function generateAndUploadTransferRequestPDF(transferData: any, idp
     doc.text(transferData.totalPeso.toFixed(2), 177, y + 4, { align: "center" })
 
     y += 6
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.setFontSize(8)
     doc.text(
       `Peso Total: ${transferData.totalPeso.toFixed(2)} kg (${(transferData.totalPeso / 1000).toFixed(3)} ton)`,
@@ -1416,12 +1416,12 @@ export async function generateAndUploadProductionEntryPDF(productionData: any) {
     // Header
     doc.setFontSize(14)
     doc.setTextColor(200, 16, 46)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("INGRESO DE PRODUCCIÓN", 105, 20, { align: "center" })
 
     doc.setFontSize(9)
     doc.setTextColor(0, 0, 0)
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.text(`Fecha: ${productionData.fecha}`, 105, 27, { align: "center" })
     doc.text(`Hora: ${productionData.hora}`, 105, 32, { align: "center" })
 
@@ -1431,7 +1431,7 @@ export async function generateAndUploadProductionEntryPDF(productionData: any) {
     doc.setTextColor(255, 255, 255)
     doc.rect(10, y, 190, 6, "F")
     doc.setFontSize(6)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("#", 12, y + 4)
     doc.text("Producto", 20, y + 4)
     doc.text("Código", 65, y + 4)
@@ -1442,7 +1442,7 @@ export async function generateAndUploadProductionEntryPDF(productionData: any) {
     doc.text("Cant.", 195, y + 4, { align: "right" })
 
     doc.setTextColor(0, 0, 0)
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.setFontSize(6)
     y += 6
 
@@ -1519,7 +1519,7 @@ export async function generateAndUploadProductionEntryPDF(productionData: any) {
     doc.setTextColor(255, 255, 255)
     doc.rect(10, y, 175, 5, "F")
     doc.setFontSize(8)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("TOTAL DE LÍNEAS", 15, y + 3.5)
 
     doc.setFillColor(224, 224, 224)
@@ -1529,7 +1529,7 @@ export async function generateAndUploadProductionEntryPDF(productionData: any) {
 
     // Signatures section
     y += 15
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.setFontSize(8)
     doc.text("Registrado por:", 30, y)
     doc.text("Aprobado por:", 130, y)
@@ -1588,12 +1588,12 @@ export async function generateAndUploadBatchAssignmentPDF(batchData: any, ordenC
     // Header
     doc.setFontSize(16)
     doc.setTextColor(200, 16, 46)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("ASIGNACIÓN DE LOTES", 105, 20, { align: "center" })
 
     doc.setFontSize(10)
     doc.setTextColor(0, 0, 0)
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.text(`Orden de Cargue: ${ordenCargue}`, 105, 28, { align: "center" })
     doc.text(`Fecha: ${batchData.fecha}`, 105, 34, { align: "center" })
     doc.text(`Hora: ${batchData.hora}`, 105, 40, { align: "center" })
@@ -1605,7 +1605,7 @@ export async function generateAndUploadBatchAssignmentPDF(batchData: any, ordenC
     doc.setTextColor(255, 255, 255)
     doc.rect(15, y, 180, 6, "F")
     doc.setFontSize(6)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("#", 17, y + 4)
     doc.text("Cliente", 24, y + 4)
     doc.text("Producto", 54, y + 4)
@@ -1615,7 +1615,7 @@ export async function generateAndUploadBatchAssignmentPDF(batchData: any, ordenC
     doc.text("Cant", 192, y + 4, { align: "right" })
 
     doc.setTextColor(0, 0, 0)
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.setFontSize(5)
     y += 6
 
@@ -1648,9 +1648,9 @@ export async function generateAndUploadBatchAssignmentPDF(batchData: any, ordenC
       // Lote: si es alterno se imprime el lote seguido de "(lote alterno)".
       if (esAlterno) {
         const loteText = allocation.lote.substring(0, 8)
-        doc.setFont(undefined, "bold")
+        doc.setFont(undefined as any, "bold")
         doc.text(loteText, 148, y + 2.3)
-        doc.setFont(undefined, "normal")
+        doc.setFont(undefined as any, "normal")
         doc.setFontSize(3.2)
         doc.text("(lote alterno)", 148, y + 4.4)
         doc.setFontSize(5)
@@ -1689,7 +1689,7 @@ export async function generateAndUploadBatchAssignmentPDF(batchData: any, ordenC
     doc.setTextColor(255, 255, 255)
     doc.rect(15, y, 164, 5, "F")
     doc.setFontSize(7)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("TOTAL ASIGNACIONES", 20, y + 3.5)
 
     doc.setFillColor(224, 224, 224)
@@ -1699,7 +1699,7 @@ export async function generateAndUploadBatchAssignmentPDF(batchData: any, ordenC
 
     // Signatures section
     y += 20
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.setFontSize(9)
     doc.text("Aprobado por:", 30, y)
     doc.text("Recibido por:", 130, y)
@@ -1777,20 +1777,20 @@ export async function generateAndUploadSanitaryRegistryPDF(sanitaryData: {
     // Header
     doc.setFontSize(16)
     doc.setTextColor(200, 16, 46)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("REGISTRO SANITARIO DE VEHÍCULO", 105, 20, { align: "center" })
 
     // Document info
     doc.setFontSize(10)
     doc.setTextColor(0, 0, 0)
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.text(`Registro No: ${sanitaryData.id}`, 15, 35)
     doc.text(`Fecha: ${sanitaryData.fecha}`, 15, 41)
     doc.text(`Hora: ${sanitaryData.hora}`, 15, 47)
 
     // Status badge
     doc.setFontSize(12)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     if (sanitaryData.aprobacion === "aprobado") {
       doc.setTextColor(0, 128, 0)
       doc.text("APROBADO", 170, 35)
@@ -1799,7 +1799,7 @@ export async function generateAndUploadSanitaryRegistryPDF(sanitaryData: {
       doc.text("RECHAZADO", 165, 35)
     }
     doc.setTextColor(0, 0, 0)
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
 
     let y = 60
 
@@ -1808,12 +1808,12 @@ export async function generateAndUploadSanitaryRegistryPDF(sanitaryData: {
     doc.setTextColor(255, 255, 255)
     doc.rect(15, y, 180, 7, "F")
     doc.setFontSize(10)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("DATOS DEL VEHÍCULO", 20, y + 5)
 
     y += 12
     doc.setTextColor(0, 0, 0)
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.setFontSize(9)
 
     if (!sanitaryData.isVehicleOnly && sanitaryData.ordencargue) {
@@ -1833,12 +1833,12 @@ export async function generateAndUploadSanitaryRegistryPDF(sanitaryData: {
     doc.setTextColor(255, 255, 255)
     doc.rect(15, y, 180, 7, "F")
     doc.setFontSize(10)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("INSPECCIÓN SANITARIA", 20, y + 5)
 
     y += 12
     doc.setTextColor(0, 0, 0)
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.setFontSize(9)
 
     // Checklist items
@@ -1878,12 +1878,12 @@ export async function generateAndUploadSanitaryRegistryPDF(sanitaryData: {
       doc.setTextColor(255, 255, 255)
       doc.rect(15, y, 180, 7, "F")
       doc.setFontSize(10)
-      doc.setFont(undefined, "bold")
+      doc.setFont(undefined as any, "bold")
       doc.text("DETALLES DE FUMIGACIÓN", 20, y + 5)
 
       y += 12
       doc.setTextColor(0, 0, 0)
-      doc.setFont(undefined, "normal")
+      doc.setFont(undefined as any, "normal")
       doc.setFontSize(9)
       doc.text(`Plaguicida Usado: ${sanitaryData.plaguicida || "N/A"}`, 20, y)
       y += 6
@@ -1896,12 +1896,12 @@ export async function generateAndUploadSanitaryRegistryPDF(sanitaryData: {
     doc.setTextColor(255, 255, 255)
     doc.rect(15, y, 180, 7, "F")
     doc.setFontSize(10)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("OBSERVACIONES", 20, y + 5)
 
     y += 12
     doc.setTextColor(0, 0, 0)
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.setFontSize(9)
 
     const observations = sanitaryData.observaciones || "Ninguna"
@@ -1914,18 +1914,18 @@ export async function generateAndUploadSanitaryRegistryPDF(sanitaryData: {
     doc.setTextColor(255, 255, 255)
     doc.rect(15, y, 180, 7, "F")
     doc.setFontSize(10)
-    doc.setFont(undefined, "bold")
+    doc.setFont(undefined as any, "bold")
     doc.text("PERSONAL RESPONSABLE", 20, y + 5)
 
     y += 12
     doc.setTextColor(0, 0, 0)
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.setFontSize(9)
     doc.text(`Auxiliar Logístico: ${sanitaryData.auxiliar}`, 20, y)
 
     // Signatures section
     y += 20
-    doc.setFont(undefined, "normal")
+    doc.setFont(undefined as any, "normal")
     doc.setFontSize(9)
     doc.text("Revisado por:", 30, y)
     doc.text("Conductor:", 130, y)

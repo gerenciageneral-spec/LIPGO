@@ -188,7 +188,7 @@ export async function getLoadOrderProducts(orderId: number, ordenCargue: string)
   return { success: true, data: data || [], message: "Productos cargados exitosamente" }
 }
 
-export async function getCarguDescarguePersonnel(empresaId?: number) {
+export async function getCarguDescarguePersonnel(empresaId?: number | null) {
   const supabase = await createClient()
 
   let finalEmpresaId = empresaId

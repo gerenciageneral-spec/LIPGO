@@ -106,6 +106,8 @@ interface Order {
   tipodespacho?: string | null
   npedido?: string | null
   id_empresa?: number
+  revisioncartera?: string | null
+  revisiongerencia?: string | null
 }
 
 interface ProductLine {
@@ -813,9 +815,9 @@ export function OrdersManagement() {
       Object.entries(orderData.groupedProducts).forEach(([categoria, categoryProducts]) => {
         doc.setFillColor(245, 245, 245)
         doc.rect(15, y, 180, 6, "FD")
-        doc.setFont(undefined, "bold")
+        doc.setFont(undefined as any, "bold")
         doc.text(categoria, 25, y + 4)
-        doc.setFont(undefined, "normal")
+        doc.setFont(undefined as any, "normal")
         y += 6
 
         categoryProducts.forEach((product: any) => {
@@ -844,7 +846,7 @@ export function OrdersManagement() {
       doc.setFillColor(224, 224, 224)
       doc.rect(15, y, 180, 6, "F")
       doc.setFontSize(8)
-      doc.setFont(undefined, "normal")
+      doc.setFont(undefined as any, "normal")
       doc.text("Total orden", 20, y + 4)
       doc.text(`$ ${orderData.totalOrden.toLocaleString("es-CO")}`, 175, y + 4)
 
@@ -857,12 +859,12 @@ export function OrdersManagement() {
       doc.text(`$ ${orderData.descuentoPP.toLocaleString("es-CO")}`, 175, y + 4)
 
       y += 6
-      doc.setFont(undefined, "bold")
+      doc.setFont(undefined as any, "bold")
       doc.text("Total a pagar", 20, y + 4)
       doc.text(`$ ${orderData.totalPagar.toLocaleString("es-CO")}`, 175, y + 4)
 
       y += 6
-      doc.setFont(undefined, "normal")
+      doc.setFont(undefined as any, "normal")
       doc.text("Kg Despacho", 20, y + 4)
       doc.text(Math.round(orderData.kgDespacho).toLocaleString("es-CO"), 155, y + 4)
 
@@ -870,13 +872,13 @@ export function OrdersManagement() {
       doc.setFillColor(44, 82, 130)
       doc.setTextColor(255, 255, 255)
       doc.rect(15, y, 180, 6, "F")
-      doc.setFont(undefined, "bold")
+      doc.setFont(undefined as any, "bold")
       doc.text("Observaciones", 20, y + 4)
 
       y += 6
       doc.setDrawColor(200, 200, 200)
       doc.rect(15, y, 180, 15, "S")
-      doc.setFont(undefined, "normal")
+      doc.setFont(undefined as any, "normal")
       doc.setTextColor(0, 0, 0)
       doc.text(orderData.observaciones || "", 20, y + 5)
 
