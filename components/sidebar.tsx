@@ -19,7 +19,7 @@ import {
 import Image from "next/image"
 import type { GroupKey, Module, Subgroup } from "@/lib/dashboard-data"
 import { groups } from "@/lib/dashboard-data"
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, type CSSProperties } from "react"
 
 interface SidebarProps {
   selectedGroup: GroupKey | null
@@ -33,6 +33,110 @@ interface SidebarProps {
 interface UserModulesResponse {
   protectedModules: string[]
   allowedModules: string[]
+}
+
+/**
+ * Actor del héroe ADAPTATIVO: el glifo animado cambia según el módulo/área
+ * seleccionada, para que la "Torre de Control" hable el idioma del dominio
+ * (Gestión Humana → personas, Finanzas → dinero, Despachos → camión…). El color
+ * lo hereda por CSS (`var(--hero)`) desde el contenedor del héroe. Sin grupo
+ * (Inicio) muestra el camión de marca. Solo presentación: no toca lógica.
+ */
+function HeroActor({ groupKey }: { groupKey: GroupKey | null }) {
+  switch (groupKey) {
+    case "rrhh": // Gestión Humana → persona
+      return (
+        <>
+          <circle cx="11" cy="3.6" r="2.7" className="hero-light" />
+          <path d="M11 6.6 c-3 0-5 2-5 5 v3 h10 v-3 c0-3-2-5-5-5 z" className="hero-light" />
+          <path d="M9 8.4 l2 2 2-2" className="hero-accent-stroke" fill="none" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+        </>
+      )
+    case "financiera": // Financiera → moneda $
+      return (
+        <>
+          <circle cx="12" cy="9" r="7" className="hero-light" />
+          <circle cx="12" cy="9" r="7" fill="none" className="hero-accent-stroke" strokeWidth="1.3" />
+          <text x="12" y="12.4" textAnchor="middle" fontSize="9" fontWeight="800" fontFamily="ui-sans-serif,system-ui,sans-serif" className="hero-accent">$</text>
+        </>
+      )
+    case "inventarios": // Inventarios → caja isométrica
+      return (
+        <>
+          <path d="M12 3 l7.5 3.7 v6.6 l-7.5 3.7 -7.5-3.7 v-6.6 z" className="hero-light" />
+          <path d="M4.5 6.7 l7.5 3.7 7.5-3.7 M12 10.4 v8" fill="none" className="hero-accent-stroke" strokeWidth="1.1" strokeLinejoin="round" />
+        </>
+      )
+    case "pedidos": // Pedidos → carrito
+      return (
+        <g fill="none" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M3 4 h2.6 l2 8 h8.6 l2-6 h-11.8" className="hero-lightstroke" strokeWidth="1.6" />
+          <circle cx="9" cy="14.6" r="1.5" className="hero-accent" fill="currentColor" />
+          <circle cx="15.6" cy="14.6" r="1.5" className="hero-accent" fill="currentColor" />
+        </g>
+      )
+    case "mrp": // MRP / Planeación → engranaje
+    case "produccion": // Producción → engranaje girando
+      return (
+        <g className="lipgo-gear">
+          <g className="hero-lightstroke" strokeWidth="2.3" strokeLinecap="round">
+            <line x1="11" y1="2.4" x2="11" y2="4.6" />
+            <line x1="11" y1="13.4" x2="11" y2="15.6" />
+            <line x1="4.4" y1="9" x2="6.6" y2="9" />
+            <line x1="15.4" y1="9" x2="17.6" y2="9" />
+            <line x1="6.3" y1="4.3" x2="7.9" y2="5.9" />
+            <line x1="14.1" y1="12.1" x2="15.7" y2="13.7" />
+            <line x1="15.7" y1="4.3" x2="14.1" y2="5.9" />
+            <line x1="7.9" y1="12.1" x2="6.3" y2="13.7" />
+          </g>
+          <circle cx="11" cy="9" r="4.1" className="hero-light" />
+          <circle cx="11" cy="9" r="1.9" fill="#0b2138" className="hero-accent-stroke" strokeWidth="1.2" />
+        </g>
+      )
+    case "configuracion": // Configuración → controles / sliders
+      return (
+        <g strokeLinecap="round">
+          <line x1="4" y1="5" x2="18" y2="5" className="hero-lightstroke" strokeWidth="1.5" />
+          <line x1="4" y1="9" x2="18" y2="9" className="hero-lightstroke" strokeWidth="1.5" />
+          <line x1="4" y1="13" x2="18" y2="13" className="hero-lightstroke" strokeWidth="1.5" />
+          <circle cx="9" cy="5" r="2" className="hero-accent" />
+          <circle cx="14" cy="9" r="2" className="hero-accent" />
+          <circle cx="7" cy="13" r="2" className="hero-accent" />
+        </g>
+      )
+    case "certificaciones_lip": // Certificaciones → escudo con check
+      return (
+        <>
+          <path d="M11 2.4 l6 2.1 v4 c0 4-3 6.6-6 8.1 c-3-1.5-6-4.1-6-8.1 v-4 z" className="hero-light" />
+          <path d="M8 8.9 l2.2 2.2 4-4.3" fill="none" className="hero-accent-stroke" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        </>
+      )
+    case "lip": // LIP → energía / rayo
+      return (
+        <>
+          <path d="M13 2 L6 10 h4 l-2 6 8-9 h-4 z" className="hero-accent" />
+          <path d="M13 2 L6 10 h4 l-2 6 8-9 h-4 z" fill="none" className="hero-lightstroke" strokeWidth="0.8" strokeLinejoin="round" />
+        </>
+      )
+    case "integral": // Gestión Integral → barras / indicadores
+      return (
+        <>
+          <rect x="4" y="9" width="3.2" height="6" rx="0.6" className="hero-light" />
+          <rect x="9.4" y="6" width="3.2" height="9" rx="0.6" className="hero-light" />
+          <rect x="14.8" y="3" width="3.2" height="12" rx="0.6" className="hero-accent" />
+        </>
+      )
+    case "despachos": // Despachos → camión (motivo de marca)
+    default: // Inicio / sin grupo → camión logístico
+      return (
+        <>
+          <rect x="6" y="4" width="13" height="9" rx="1.5" className="hero-light" />
+          <path d="M19 7h5l3 3v3h-8z" className="hero-accent" />
+          <circle cx="10.5" cy="14.3" r="1.7" fill="#0b2138" className="hero-lightstroke" strokeWidth="1" />
+          <circle cx="23" cy="14.3" r="1.7" fill="#0b2138" className="hero-lightstroke" strokeWidth="1" />
+        </>
+      )
+  }
 }
 
 export function Sidebar({
@@ -230,6 +334,10 @@ export function Sidebar({
     configuracion: "#9aa6b3",
   }
 
+  // Color del héroe = tinte del área activa (o cian de marca en Inicio). Alimenta
+  // rutas, hub, glow y el actor temático vía la variable CSS --hero.
+  const heroAccent = (selectedGroup ? GROUP_TINT[selectedGroup] : undefined) ?? "#00c2dc"
+
   // Lista plana de todos los modulos visibles, con su grupo, etiqueta del
   // grupo, subgrupo (si aplica) e icono. Sirve para el buscador.
   const allModulesFlat = useMemo(() => {
@@ -300,25 +408,32 @@ export function Sidebar({
         .lipgo-sb nav button{ color:#eaf4ff; }
         .lipgo-sb .bg-primary{ box-shadow:0 0 12px rgba(0,194,220,.65); }
         .lipgo-hero-bg{ background:
-          radial-gradient(120% 90% at 82% 0%, rgba(0,194,220,.30), transparent 58%),
-          radial-gradient(95% 85% at 0% 100%, rgba(28,86,150,.42), transparent 55%); }
+          radial-gradient(120% 90% at 82% 0%, color-mix(in srgb, var(--hero,#00c2dc) 34%, transparent), transparent 58%),
+          radial-gradient(95% 85% at 0% 100%, rgba(28,86,150,.42), transparent 55%);
+          transition: background .5s ease; }
         .lipgo-tag{ font:600 10px/1 ui-sans-serif,system-ui,sans-serif; letter-spacing:.14em; text-transform:uppercase; color:#7fe6f4; display:flex; align-items:center; gap:6px; }
         .lipgo-live{ width:6px; height:6px; border-radius:50%; background:#37f5a0; box-shadow:0 0 8px #37f5a0; }
         .lipgo-logo-mark{ width:30px; height:30px; border-radius:9px; background:linear-gradient(135deg,#0a3f6e,#00c2dc); display:flex; align-items:center; justify-content:center; font:800 15px/1 sans-serif; color:#fff; box-shadow:0 0 14px rgba(0,194,220,.5); }
         .lipgo-word{ font:800 19px/1 sans-serif; letter-spacing:-.02em; color:#fff; }
         .lipgo-tile{ display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; border-radius:8px; background:#123650; border:1px solid #22456a; flex:none; }
-        .lipgo-route{ stroke:rgba(130,200,235,.5); stroke-width:1.6; fill:none; stroke-linecap:round; stroke-dasharray:5 6; }
-        .lipgo-route.b{ stroke:rgba(130,200,235,.22); }
-        .lipgo-node{ fill:#cfeff8; } .lipgo-node.hub{ fill:#00c2dc; }
+        .lipgo-route{ stroke: color-mix(in srgb, var(--hero,#82c8eb) 58%, transparent); stroke-width:1.6; fill:none; stroke-linecap:round; stroke-dasharray:5 6; transition: stroke .5s ease; }
+        .lipgo-route.b{ stroke: color-mix(in srgb, var(--hero,#82c8eb) 26%, transparent); }
+        .lipgo-node{ fill:#cfeff8; } .lipgo-node.hub{ fill: var(--hero,#00c2dc); transition: fill .5s ease; }
+        /* Actor temático del héroe (adaptativo por módulo). El color viene de --hero. */
+        .hero-light{ fill:#dff2fb; } .hero-accent{ fill: var(--hero,#00c2dc); }
+        .hero-lightstroke{ stroke:#dff2fb; } .hero-accent-stroke{ stroke: var(--hero,#00c2dc); }
         .lipgo-sect{ font:700 9.5px/1 sans-serif; letter-spacing:.16em; text-transform:uppercase; color:#5f7c96; padding:13px 14px 5px; }
         @media (prefers-reduced-motion: no-preference){
           .lipgo-route{ animation: lipgo-flow 1.1s linear infinite; }
-          .lipgo-truck{ animation: lipgo-run 6s ease-in-out infinite; }
+          .lipgo-actor{ animation: lipgo-run 6s ease-in-out infinite, lipgo-fadein .5s ease-out; }
+          .lipgo-gear{ transform-box: fill-box; transform-origin: center; animation: lipgo-spin 3.4s linear infinite; }
           .lipgo-hub-ring{ animation: lipgo-ring 2.8s ease-out infinite; }
           .lipgo-live{ animation: lipgo-blink 1.8s ease-in-out infinite; }
         }
         @keyframes lipgo-flow{ to{ stroke-dashoffset:-22; } }
         @keyframes lipgo-run{ 0%{transform:translateX(4px)} 50%{transform:translateX(150px)} 100%{transform:translateX(4px)} }
+        @keyframes lipgo-spin{ to{ transform: rotate(360deg); } }
+        @keyframes lipgo-fadein{ from{ opacity:0 } to{ opacity:1 } }
         @keyframes lipgo-ring{ 0%{ r:3; opacity:.85 } 100%{ r:15; opacity:0 } }
         @keyframes lipgo-blink{ 0%,100%{opacity:1} 50%{opacity:.35} }
       `}</style>
@@ -328,7 +443,10 @@ export function Sidebar({
         className={`lipgo-sb hidden md:flex flex-col h-screen border-r border-border z-20 transition-all duration-300 ${collapsed ? "w-16 lg:w-20" : "w-56 lg:w-64"}`}
       >
         {/* Hero de marca — Torre de Control (red de operación animada) */}
-        <div className={`relative flex-shrink-0 overflow-hidden border-b border-border ${collapsed ? "h-16 lg:h-20" : "h-32"}`}>
+        <div
+          className={`relative flex-shrink-0 overflow-hidden border-b border-border ${collapsed ? "h-16 lg:h-20" : "h-32"}`}
+          style={{ "--hero": heroAccent } as CSSProperties}
+        >
           {!collapsed && (
             <>
               <div className="lipgo-hero-bg absolute inset-0" aria-hidden="true" />
@@ -336,15 +454,14 @@ export function Sidebar({
                 <path className="lipgo-route b" d="M-10 40 C 60 40, 90 96, 170 96 S 260 60, 280 62" />
                 <path className="lipgo-route" d="M-10 92 C 70 92, 95 44, 165 44 S 250 74, 280 30" />
                 <circle className="lipgo-node hub" cx="165" cy="44" r="3.4" />
-                <circle className="lipgo-hub-ring" cx="165" cy="44" r="3" fill="none" stroke="#12e0ff" strokeWidth="1.3" />
+                <circle className="lipgo-hub-ring hero-accent-stroke" cx="165" cy="44" r="3" fill="none" strokeWidth="1.3" />
                 <circle className="lipgo-node" cx="34" cy="86" r="2.6" />
                 <circle className="lipgo-node" cx="238" cy="52" r="2.6" />
                 <g transform="translate(0,72)">
-                  <g className="lipgo-truck">
-                    <rect x="6" y="4" width="13" height="9" rx="1.5" fill="#cfeff8" />
-                    <path d="M19 7h5l3 3v3h-8z" fill="#7fc9e0" />
-                    <circle cx="10.5" cy="14.3" r="1.7" fill="#0b2138" stroke="#cfeff8" strokeWidth="1" />
-                    <circle cx="23" cy="14.3" r="1.7" fill="#0b2138" stroke="#cfeff8" strokeWidth="1" />
+                  {/* Actor adaptativo: cambia de glifo y color según el módulo activo.
+                      key fuerza el remount para reproducir el fundido de entrada. */}
+                  <g className="lipgo-actor" key={selectedGroup ?? "home"}>
+                    <HeroActor groupKey={selectedGroup} />
                   </g>
                 </g>
               </svg>
