@@ -222,7 +222,7 @@ export function Tolva({
 
       // Parse empleados
       const empleados = headerData.auxiliares
-        ? headerData.auxiliares.split(",").map((name) => {
+        ? headerData.auxiliares.split(",").map((name: string) => {
             const employee = employees.find((e) => e.nombreempleado === name.trim())
             return employee || { id: 0, nombreempleado: name.trim() }
           })
@@ -416,7 +416,7 @@ export function Tolva({
           empleados: tolvaData.empleados,
           productos: productosConCantidad.map((p) => ({
             id: p.id,
-            producto: p.producto,
+            producto: p.producto ?? undefined,
             cantidad: p.cantidad,
           })),
         })
@@ -442,7 +442,7 @@ export function Tolva({
           empleados: tolvaData.empleados,
           productos: productosConCantidad.map((p) => ({
             id: p.id,
-            producto: p.producto,
+            producto: p.producto ?? undefined,
             cantidad: p.cantidad,
           })),
         })

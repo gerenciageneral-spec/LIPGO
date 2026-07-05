@@ -259,7 +259,7 @@ export function GenerateDistributionOrders() {
         pesoBascula: orderData.pesoBascula,
         lineas: lineasConProducto.map((line) => ({
           id: line.id,
-          producto: line.producto,
+          producto: line.producto ?? undefined,
           cantidad: line.cantidad,
           pesoBrutoTotal: line.pesoBrutoTotal,
         })),

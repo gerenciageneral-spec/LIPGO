@@ -105,9 +105,9 @@ export function RepositorioISO9001() {
       </div>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-        <Kpi label="Cláusulas con evidencia" value={String(conEvidencia)} />
-        <Kpi label="Cláusulas totales" value={String(rows.length)} />
-        <Kpi label="Capítulos" value={String(capitulos.length)} />
+        <Kpi t="Cláusulas con evidencia" v={String(conEvidencia)} />
+        <Kpi t="Cláusulas totales" v={String(rows.length)} />
+        <Kpi t="Capítulos" v={String(capitulos.length)} />
       </div>
 
       <Card className="p-4">

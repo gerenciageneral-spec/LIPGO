@@ -2212,6 +2212,9 @@ async function generateAndUploadUnloadOrderPDF(data: {
   totalPesoBrutoKgs: number
 }) {
   try {
+    // Import dinámico de jsPDF (mismo patrón que pdf-actions). Antes faltaba y
+    // esta función lanzaría ReferenceError en runtime al generar el PDF.
+    const { default: jsPDF } = await import("jspdf")
     const doc = new jsPDF()
 
     // Header - Title

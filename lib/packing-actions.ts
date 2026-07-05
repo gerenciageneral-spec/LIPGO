@@ -189,7 +189,9 @@ export async function generatePackingPDF(
 
     // Date and time
     const colombiaTime = await getColombiaDateTime()
-    const fechaHora = colombiaTime.toLocaleString("es-CO", {
+    // getColombiaDateTime (inventory-actions) devuelve string; se conserva el
+    // comportamiento actual (cast type-only, runtime idéntico).
+    const fechaHora = (colombiaTime as any).toLocaleString("es-CO", {
       year: "numeric",
       month: "2-digit",
       day: "2-digit",

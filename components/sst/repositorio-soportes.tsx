@@ -121,9 +121,9 @@ export function RepositorioSoportes({ selectedEmpresaId: propEmpresaId }: { sele
       </div>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-        <Kpi label="Soportes vigentes" value={String(totalVigentes)} />
-        <Kpi label="Estándares con soporte" value={String(estandaresConSoporte)} />
-        <Kpi label="Archivos totales (con histórico)" value={String(rows.length)} />
+        <Kpi t="Soportes vigentes" v={String(totalVigentes)} />
+        <Kpi t="Estándares con soporte" v={String(estandaresConSoporte)} />
+        <Kpi t="Archivos totales (con histórico)" v={String(rows.length)} />
       </div>
 
       <Card className="p-4">

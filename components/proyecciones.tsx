@@ -27,6 +27,8 @@ interface Product {
 interface Employee {
   id: number
   nombreempleado: string
+  // Algunos flujos leen `nombre` como alias de nombreempleado.
+  nombre?: string
 }
 
 interface TolvaLine {
@@ -188,7 +190,7 @@ console.log("[v0] Proyecciones: Loading employees for empresa:", selectedEmpresa
 
       // Parse empleados
       const empleados = headerData.auxiliares
-        ? headerData.auxiliares.split(",").map((name) => {
+        ? headerData.auxiliares.split(",").map((name: string) => {
             const employee = employees.find((e) => e.nombreempleado === name.trim())
             return employee || { id: 0, nombreempleado: name.trim() }
           })
@@ -464,7 +466,7 @@ console.log("[v0] Proyecciones: Loading employees for empresa:", selectedEmpresa
           empleados: tolvaData.empleados,
           productos: productosConCantidad.map((p) => ({
             id: p.id,
-            producto: p.producto,
+            producto: p.producto ?? undefined,
             cantidad: p.cantidad,
           })),
         })
@@ -489,10 +491,10 @@ console.log("[v0] Proyecciones: Loading employees for empresa:", selectedEmpresa
         // empresa por defecto de su perfil.
         const result = await saveProyecciones({
           fechaFabricacion: tolvaData.fechaFabricacion,
-          empleados: tolvaData.empleados,
+          empleados: tolvaData.empleados as any,
           productos: productosConCantidad.map((p) => ({
             id: p.id,
-            producto: p.producto,
+            producto: p.producto ?? undefined,
             cantidad: p.cantidad,
           })),
           idempresaSeleccionada:
