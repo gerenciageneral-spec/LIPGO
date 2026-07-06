@@ -339,6 +339,7 @@ export const groups: Group[] = [
           { name: "Análisis de Contexto DOFA", icon: ClipboardCheck, label: "Análisis de Contexto (DOFA)" },
           { name: "Matriz Integrada SIG", icon: ClipboardCheck, label: "Matriz Integrada (ISO 9001·14001·45001)" },
           { name: "Repositorio por Norma SIG", icon: FolderArchive, label: "Repositorio Documental por Norma" },
+          { name: "Repositorio Universal", icon: FolderArchive, label: "Repositorio Universal de Documentos" },
           { name: "Objetivos y Metas SIG", icon: ClipboardList, label: "Objetivos y Metas (6.2)" },
           { name: "No Conformidades SIG", icon: ClipboardList, label: "No Conformidades (10.2)" },
           { name: "Indicadores SIG", icon: Gauge, label: "BSC · Cuadro de Mando Integral" },

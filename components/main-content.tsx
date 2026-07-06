@@ -109,6 +109,7 @@ import { GestionCambio } from "@/components/sst/gestion-cambio"
 import { ActividadesSST } from "@/components/sst/actividades"
 import { MatrizIntegradaSIG } from "@/components/sst/matriz-integrada-sig"
 import { RepositorioSIG } from "@/components/sst/repositorio-sig"
+import RepositorioUniversal from "@/components/sst/repositorio-universal"
 import { DashboardSIG } from "@/components/sst/dashboard-sig"
 import { AspectosAmbientales } from "@/components/sst/aspectos-ambientales"
 import { ObjetivosSIG } from "@/components/sst/objetivos-sig"
@@ -821,6 +822,10 @@ export function MainContent({
           ) : selectedModule === "Repositorio por Norma SIG" ? (
             <PermissionGuard moduleName="Repositorio por Norma SIG">
               <RepositorioSIG />
+            </PermissionGuard>
+          ) : selectedModule === "Repositorio Universal" ? (
+            <PermissionGuard moduleName="Repositorio Universal">
+              <RepositorioUniversal />
             </PermissionGuard>
           ) : selectedModule === "Aspectos e Impactos ISO 14001" ? (
             <PermissionGuard moduleName="Aspectos e Impactos ISO 14001">

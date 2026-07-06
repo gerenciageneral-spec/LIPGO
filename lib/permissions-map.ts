@@ -353,6 +353,7 @@ export const MODULE_PERMISSION_MAP: Record<string, keyof UserPermissions> = {
   "Análisis de Contexto DOFA": "sig_matriz",
   "Matriz Integrada SIG": "sig_matriz",
   "Repositorio por Norma SIG": "sig_matriz",
+  "Repositorio Universal": "sig_matriz",
   "Objetivos y Metas SIG": "sig_matriz",
   "No Conformidades SIG": "sig_matriz",
   "Indicadores SIG": "sig_matriz",
