@@ -250,28 +250,20 @@ export const groups: Group[] = [
     key: "rrhh",
     title: "Gestión Humana",
     icon: Users,
+    // REORG (2026-07-06): navegación ordenada por el CICLO DE VIDA del colaborador.
+    // Se consolidó el subgrupo delgado "Gestión de Contratación" (1 módulo) dentro
+    // de Selección, y "Gestión de Solicitudes" (solicitud de personal) volvió a
+    // Selección desde Bienestar. Todos los módulos CONSERVAN su name/permiso.
     subgroups: [
       {
-        title: "Reclutamiento y Selección",
+        title: "Reclutamiento, Selección y Contratación",
         modules: [
-          // Modulo alterno: aprobacion (RRHH + Operaciones) de solicitudes
-          // de personal. Usa el mismo permiso que "Gestión de Solicitudes".
+          { name: "Gestión de Solicitudes", icon: ClipboardList },
           { name: "Aprobación de Solicitudes de Personal", icon: BadgeCheck },
-          // Banco de hojas de vida. Mismo permiso que "Gestión de Solicitudes".
           { name: "Hojas de Vida", icon: BookOpen },
-          // Antecedentes (Policia, Procuraduria, Contraloria) por candidato.
-          // Mismo permiso que "Gestión de Solicitudes".
           { name: "Antecedentes", icon: ShieldCheck },
-          // NUEVO (Parte D): entrevistas estructuradas.
           { name: "Entrevistas", icon: FileCheck },
-        ],
-      },
-      {
-        title: "Gestión de Contratación",
-        modules: [
           { name: "Gestión de Contratos", icon: FileText },
-          // REORG (2026-07-03): "Dotación de EPP" y "Exámenes Médicos" se movieron
-          // a SST (salud ocupacional / EPP, SG-SST 0312). Conservan sus permisos.
         ],
       },
       {
@@ -284,7 +276,7 @@ export const groups: Group[] = [
         ],
       },
       {
-        title: "Inducción y Desarrollo",
+        title: "Inducción, Formación y Desempeño",
         modules: [
           { name: "Inducciones", icon: GraduationCap },
           { name: "Evidencia de Inducciones", icon: BookOpen },
@@ -294,7 +286,16 @@ export const groups: Group[] = [
         ],
       },
       {
-        title: "Relaciones Laborales",
+        title: "Asistencia, Turnos y Tiempos",
+        modules: [
+          { name: "Tabla Asistencia", icon: ClipboardList, label: "Tabla de Asistencia" },
+          { name: "Visor", icon: Eye, label: "Visor de Asistencia" },
+          { name: "Turnos", icon: Clock, label: "Turnos por Puesto" },
+          { name: "Asignación horas extra", icon: Clock, label: "Asignación de Horas Extra" },
+        ],
+      },
+      {
+        title: "Relaciones Laborales y Ausentismo",
         modules: [
           { name: "Novedades de personal", icon: NotebookPen, label: "Novedades de Personal" },
           // Matriz SST-MAT-06 de ausentismo laboral (EG / AT). Comparte el
@@ -306,28 +307,13 @@ export const groups: Group[] = [
         ],
       },
       {
-        // NUEVO (Parte B): programa de bienestar transversal.
         title: "Bienestar",
         modules: [
           { name: "Programa de Bienestar", icon: HeartHandshake },
           { name: "Participación y Evidencias", icon: ClipboardList },
-          // Movido desde "Reclutamiento y Selección". Conserva su permiso.
-          { name: "Gestión de Solicitudes", icon: ClipboardList },
         ],
       },
       {
-        // REORG (2026-07-03): "Asistencia y Tiempos" trasladado desde el
-        // antiguo grupo "Compensación". Los módulos conservan sus permisos.
-        title: "Asistencia y Tiempos",
-        modules: [
-          { name: "Tabla Asistencia", icon: ClipboardList, label: "Tabla de Asistencia" },
-          { name: "Visor", icon: Eye, label: "Visor de Asistencia" },
-          { name: "Turnos", icon: Clock, label: "Turnos por Puesto" },
-          { name: "Asignación horas extra", icon: Clock, label: "Asignación de Horas Extra" },
-        ],
-      },
-      {
-        // REORG (2026-07-03): "Nómina" trasladado desde "Compensación".
         title: "Nómina",
         modules: [
           { name: "Nominapersonal", icon: Banknote, label: "Nómina de Personal" },
