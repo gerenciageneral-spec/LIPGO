@@ -33,7 +33,6 @@ import { useAuth } from "@/components/auth-provider"
 import {
   getExamenesMedicos,
   deleteExamenMedico,
-  getResumenExamenes,
   getCostoExamenDefault,
   setCostoExamenDefault,
   registrarConceptoExamen,
@@ -98,7 +97,6 @@ export default function ExamenesMedicos() {
   const [examenes, setExamenes] = useState<ExamenMedico[]>([])
   const [candidatos, setCandidatos] = useState<HojaDeVida[]>([])
   const [cedulasEnHeadcount, setCedulasEnHeadcount] = useState<Set<string>>(new Set())
-  const [resumen, setResumen] = useState({ aptos: 0, noAptos: 0, pendientes: 0, costoNegativos: 0, tasaAprobacion: 0 })
   const [costoDefault, setCostoDefaultState] = useState(0)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
@@ -132,17 +130,15 @@ export default function ExamenesMedicos() {
     if (selectedEmpresaId) {
       try { await importarExamenesDesdeHeadcount(selectedEmpresaId) } catch { /* no bloquea la carga */ }
     }
-    const [exRes, hvRes, resRes, cd, hcLite] = await Promise.all([
+    const [exRes, hvRes, cd, hcLite] = await Promise.all([
       getExamenesMedicos(selectedEmpresaId),
       getHojasVida(selectedEmpresaId),
-      getResumenExamenes(selectedEmpresaId),
       getCostoExamenDefault(selectedEmpresaId),
       getColaboradoresLite(selectedEmpresaId),
     ])
     setExamenes(exRes.success ? exRes.data : [])
     setCandidatos(hvRes.success ? hvRes.data : [])
     setCedulasEnHeadcount(new Set((hcLite || []).map((c) => String(c.identificacion || "").trim()).filter(Boolean)))
-    if (resRes.success) setResumen(resRes.data)
     setCostoDefaultState(cd)
     setLoading(false)
   }
@@ -331,6 +327,29 @@ export default function ExamenesMedicos() {
     }
     return { activos, inactivos, candidatos }
   }, [examenes])
+
+  // KPIs calculados en vivo respetando el filtro de estado (Activo/Inactivo/Todos),
+  // para que las tarjetas cambien con el filtro. Solo cuenta el examen vigente.
+  const kpis = useMemo(() => {
+    const base = examenes.filter(
+      (e) => (estadoFiltro === "todos" || (e.estado_persona || "") === estadoFiltro) && e.vigente !== false,
+    )
+    let aptos = 0, noAptos = 0, pendientes = 0, costoNegativos = 0
+    for (const e of base) {
+      if (e.apto === true) aptos++
+      else if (e.apto === false) { noAptos++; costoNegativos += Number(e.costo) || 0 }
+      else pendientes++
+    }
+    const decididos = aptos + noAptos
+    return {
+      total: base.length,
+      aptos,
+      noAptos,
+      pendientes,
+      costoNegativos: Math.round(costoNegativos),
+      tasaAprobacion: decididos > 0 ? Math.round((aptos / decididos) * 1000) / 10 : 0,
+    }
+  }, [examenes, estadoFiltro])
 
   return (
     <div className="space-y-6">
@@ -524,23 +543,23 @@ export default function ExamenesMedicos() {
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         <div className="rounded-lg border border-border bg-card p-3">
           <div className="flex items-center gap-2 text-xs text-muted-foreground"><CheckCircle2 className="h-4 w-4 text-emerald-600" /> Aptos</div>
-          <div className="mt-1 text-2xl font-bold text-emerald-600">{resumen.aptos}</div>
+          <div className="mt-1 text-2xl font-bold text-emerald-600">{kpis.aptos}</div>
         </div>
         <div className="rounded-lg border border-border bg-card p-3">
           <div className="flex items-center gap-2 text-xs text-muted-foreground"><XCircle className="h-4 w-4 text-red-600" /> No aptos</div>
-          <div className="mt-1 text-2xl font-bold text-red-600">{resumen.noAptos}</div>
+          <div className="mt-1 text-2xl font-bold text-red-600">{kpis.noAptos}</div>
         </div>
         <div className="rounded-lg border border-border bg-card p-3">
           <div className="flex items-center gap-2 text-xs text-muted-foreground"><Clock className="h-4 w-4 text-amber-500" /> Pendientes</div>
-          <div className="mt-1 text-2xl font-bold text-amber-500">{resumen.pendientes}</div>
+          <div className="mt-1 text-2xl font-bold text-amber-500">{kpis.pendientes}</div>
         </div>
         <div className="rounded-lg border border-border bg-card p-3">
           <div className="flex items-center gap-2 text-xs text-muted-foreground"><Gavel className="h-4 w-4 text-primary" /> Tasa aprobación</div>
-          <div className="mt-1 text-2xl font-bold text-foreground">{resumen.tasaAprobacion}%</div>
+          <div className="mt-1 text-2xl font-bold text-foreground">{kpis.tasaAprobacion}%</div>
         </div>
         <div className="rounded-lg border border-border bg-card p-3">
           <div className="flex items-center gap-2 text-xs text-muted-foreground"><Wallet className="h-4 w-4 text-red-600" /> Costo negativos</div>
-          <div className="mt-1 text-2xl font-bold text-red-600">{COP(resumen.costoNegativos)}</div>
+          <div className="mt-1 text-2xl font-bold text-red-600">{COP(kpis.costoNegativos)}</div>
         </div>
       </div>
 
