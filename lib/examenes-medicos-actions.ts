@@ -300,11 +300,14 @@ export async function importarExamenesDesdeHeadcount(selectedEmpresaId?: number 
   const empresaId = selectedEmpresaId || (await getCurrentEmpresaIdForInsert())
   if (!empresaId) return { success: false, creados: 0, message: "Sin empresa seleccionada." }
 
+  // TODOS los antiguos ya vinculados en Head Count: por definición ya pasaron sus
+  // exámenes → se importan como APTO histórico. Documento de soporte = examen de
+  // ingreso o, si no, el certificado de evaluación médica; si no hay ninguno, se
+  // registra igual (apto) con soporte en Head Count pero sin archivo adjunto.
   const { data: hc, error } = await admin
     .from("headcount")
-    .select("identificacion,nombre,examenes_ing")
+    .select("identificacion,nombre,examenes_ing,cert_eva_med")
     .eq("idempresa", empresaId)
-    .not("examenes_ing", "is", null)
   if (error) return { success: false, creados: 0, message: error.message }
 
   const { data: exist } = await admin.from("examenes_medicos").select("cedula").eq("idempresa", empresaId).eq("fuente", "headcount")
@@ -313,9 +316,9 @@ export async function importarExamenesDesdeHeadcount(selectedEmpresaId?: number 
 
   const nuevas: any[] = []
   for (const c of hc ?? []) {
-    const url = c.examenes_ing as string
     const ced = c.identificacion ? String(c.identificacion).trim() : ""
-    if (!url || !ced || yaImportadas.has(ced)) continue
+    if (!ced || yaImportadas.has(ced)) continue
+    const url = (c.examenes_ing && String(c.examenes_ing).trim()) || (c.cert_eva_med && String(c.cert_eva_med).trim()) || ""
     nuevas.push({
       idempresa: empresaId,
       cedula: ced,
@@ -328,7 +331,7 @@ export async function importarExamenesDesdeHeadcount(selectedEmpresaId?: number 
       vigente: true,
       costo: 0,
       archivo_url: url,
-      archivo_nombre: "Examen de ingreso (Head Count)",
+      archivo_nombre: url ? "Examen de ingreso (Head Count)" : "Apto histórico (sin documento)",
     })
   }
   if (nuevas.length) {

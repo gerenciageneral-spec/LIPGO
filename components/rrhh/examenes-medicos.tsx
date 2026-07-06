@@ -112,6 +112,11 @@ export default function ExamenesMedicos() {
 
   const loadData = async () => {
     setLoading(true)
+    // Auto-importar los antiguos del Head Count (por empresa del selector) como Apto
+    // histórico. Idempotente: solo crea los que faltan, no duplica.
+    if (selectedEmpresaId) {
+      try { await importarExamenesDesdeHeadcount(selectedEmpresaId) } catch { /* no bloquea la carga */ }
+    }
     const [exRes, hvRes, resRes, cd] = await Promise.all([
       getExamenesMedicos(selectedEmpresaId),
       getHojasVida(selectedEmpresaId),
@@ -554,18 +559,22 @@ export default function ExamenesMedicos() {
                   <TableCell className="text-right text-sm tabular-nums">{e.costo ? COP(e.costo) : "—"}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">{e.fecha_examen || "—"}</TableCell>
                   <TableCell>
-                    <div className="flex gap-1">
-                      <Button variant="outline" size="sm" asChild title="Ver documento">
-                        <a href={e.archivo_url} target="_blank" rel="noopener noreferrer">
-                          <Eye className="h-4 w-4" />
-                        </a>
-                      </Button>
-                      <Button variant="outline" size="sm" asChild title="Descargar">
-                        <a href={e.archivo_url} download={e.archivo_nombre || undefined}>
-                          <Download className="h-4 w-4" />
-                        </a>
-                      </Button>
-                    </div>
+                    {e.archivo_url ? (
+                      <div className="flex gap-1">
+                        <Button variant="outline" size="sm" asChild title="Ver documento">
+                          <a href={e.archivo_url} target="_blank" rel="noopener noreferrer">
+                            <Eye className="h-4 w-4" />
+                          </a>
+                        </Button>
+                        <Button variant="outline" size="sm" asChild title="Descargar">
+                          <a href={e.archivo_url} download={e.archivo_nombre || undefined}>
+                            <Download className="h-4 w-4" />
+                          </a>
+                        </Button>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">Sin documento</span>
+                    )}
                   </TableCell>
                   <TableCell>
                     <div className="flex justify-end gap-1">
