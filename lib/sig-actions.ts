@@ -1661,22 +1661,44 @@ export async function getIndicadoresValores(
       sigImplementacion = totalReq > 0 ? Math.round((avance / totalReq) * 100) : 0
     } catch {}
 
-    // --- SST: accidentalidad (# AT) y días perdidos (severidad), por sitio/proyecto ---
+    // --- SST: accidentalidad (# AT, de las investigaciones formales) ---
     let sstAtCount = 0
-    let sstAtDias = 0
     try {
-      let qAt = supabase
-        .from("sst_incidentes")
-        .select("dias_incapacidad,dias_prorroga,fecha_evento,idempresa")
-        .in("idempresa", clientes)
+      let qAt = supabase.from("sst_incidentes").select("fecha_evento,idempresa").in("idempresa", clientes)
       if (desde) qAt = qAt.gte("fecha_evento", desde)
       if (hasta) qAt = qAt.lte("fecha_evento", hasta)
       const { data: ats } = await qAt
       sstAtCount = (ats ?? []).length
-      sstAtDias = (ats ?? []).reduce(
-        (s: number, r: any) => s + (Number(r.dias_incapacidad) || 0) + (Number(r.dias_prorroga) || 0),
-        0,
-      )
+    } catch {}
+
+    // --- SST: días perdidos por AT (severidad). Los días viven en ausentismosst
+    // (registro SST-MAT-06), donde el AT trae total_dias_incapacidad y costos_arl. ---
+    let sstAtDias = 0
+    try {
+      let qAus = supabase
+        .from("ausentismosst")
+        .select("tipo_evento,total_dias_incapacidad,costos_arl,fecha_inicial,idempresa")
+        .in("idempresa", clientes)
+      if (desde) qAus = qAus.gte("fecha_inicial", desde)
+      if (hasta) qAus = qAus.lte("fecha_inicial", hasta)
+      const { data: aus } = await qAus
+      sstAtDias = (aus ?? [])
+        .filter((r: any) => String(r.tipo_evento || "").toUpperCase().includes("AT") || Number(r.costos_arl) > 0)
+        .reduce((s: number, r: any) => s + (Number(r.total_dias_incapacidad) || 0), 0)
+    } catch {}
+
+    // --- Cumplimiento legal (matriz de requisitos legales del SIG, alcance LIP) ---
+    let legalCumpl = 0
+    try {
+      const { data: leg } = await supabase.from("sig_requisitos_legales").select("cumple")
+      const aplican = (leg ?? []).filter((l: any) => l.cumple !== "no_aplica")
+      if (aplican.length) {
+        const s = aplican.reduce(
+          (acc: number, l: any) => acc + (l.cumple === "cumple" ? 1 : l.cumple === "parcial" ? 0.5 : 0),
+          0,
+        )
+        legalCumpl = Math.round((s / aplican.length) * 100)
+      }
     } catch {}
 
     // --- IPEVR: % promedio de cumplimiento de intervención de peligros (por sitio) ---
@@ -1726,6 +1748,7 @@ export async function getIndicadoresValores(
       sst_at_dias: { valor: sstAtDias, base: "días perdidos por AT" },
       sst_ipevr_cumpl: { valor: sstIpevr, base: "cumplimiento de controles IPEVR" },
       lipgo_registros: { valor: lipgoRegistros, base: "operaciones digitalizadas en LIPgo" },
+      legal_cumplimiento: { valor: legalCumpl, base: "requisitos legales cumplidos" },
     }
     return { success: true, valores }
   } catch (err: any) {
