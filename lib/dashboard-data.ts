@@ -172,6 +172,10 @@ export const groups: Group[] = [
           // operacion logistica.
           { name: "Dashboard Operaciones LIP", icon: LayoutDashboard },
           { name: "Panel LIP Operación", icon: BarChart3, label: "Tablero del Coordinador" },
+          // "Gestión de Facturas" reubicado aquí desde Gestión Financiera: es
+          // función operativa propia del coordinador/líder de LIP. Conserva su
+          // nombre y permiso (gestionfacturas).
+          { name: "Gestión de Facturas", icon: Receipt },
           // El coordinador es responsable de las partes interesadas (conductores
           // y cliente): gestiona aquí satisfacción y PQRSF. Mismo módulo del SIG,
           // permiso propio (satisfaccion_pqrsf).
@@ -218,7 +222,8 @@ export const groups: Group[] = [
           { name: "Indicador de Facturación por Proyectos", icon: BarChart3 },
           { name: "Facturación Proyectos", icon: CreditCard },
           { name: "Tarifas", icon: CreditCard },
-          { name: "Gestión de Facturas", icon: Receipt },
+          // "Gestión de Facturas" se MOVIÓ a Gestión LIP → Operación Lip (función
+          // operativa del coordinador). Conserva su permiso (gestionfacturas).
         ],
       },
       {
