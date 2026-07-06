@@ -40,6 +40,35 @@ export interface HeadcountPerson {
   admin?: boolean | null
 }
 
+// Colaborador "liviano" para AUTOCOMPLETAR expediente (Hojas de Vida / Antecedentes)
+// por cédula, tomando lo que YA existe en Head Count. Evita re-digitar los datos.
+export interface ColaboradorLite {
+  identificacion: string
+  nombre: string
+  cargo?: string | null
+  correo?: string | null
+  celular?: string | null
+  hoja_de_vida?: string | null
+  antecedentes?: string | null
+  estado?: string | null
+}
+
+// Nómina de la empresa SELECCIONADA (para el autocompletar por cédula). Solo
+// lectura de campos básicos; ordenada por nombre.
+export async function getColaboradoresLite(empresaId?: number | null): Promise<ColaboradorLite[]> {
+  const supabase = await createClient()
+  let q = supabase
+    .from("headcount")
+    .select("identificacion,nombre,cargo,correo,celular,hoja_de_vida,antecedentes,estado")
+  if (empresaId) q = q.eq("idempresa", empresaId)
+  const { data, error } = await q.order("nombre", { ascending: true })
+  if (error) {
+    console.error("[v0] getColaboradoresLite:", error.message)
+    return []
+  }
+  return (data ?? []) as ColaboradorLite[]
+}
+
 export async function getHeadcountList() {
   const supabase = await createClient()
   const empresaId = await getCurrentEmpresaIdForInsert()

@@ -21,9 +21,9 @@ import {
 } from "@/components/ui/table"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/components/auth-provider"
-import { getAntecedentes, deleteAntecedente, type Antecedente } from "@/lib/antecedentes-actions"
+import { getAntecedentes, deleteAntecedente, sincronizarAntecedentesDesdeHeadcount, type Antecedente } from "@/lib/antecedentes-actions"
 import { getHojasVida, type HojaDeVida } from "@/lib/hojas-vida-actions"
-import { Plus, Trash2, Eye, Download, Search, ShieldCheck, Loader2, Check } from "lucide-react"
+import { Plus, Trash2, Eye, Download, Search, ShieldCheck, Loader2, Check, Users } from "lucide-react"
 
 // Acceso a los 3 tipos de certificado de forma uniforme.
 const TIPOS = [
@@ -41,6 +41,7 @@ export default function Antecedentes() {
   const [search, setSearch] = useState("")
   const [open, setOpen] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [syncing, setSyncing] = useState(false)
 
   // Candidato seleccionado (desde una hoja de vida) y archivos.
   const [candidato, setCandidato] = useState<HojaDeVida | null>(null)
@@ -58,6 +59,21 @@ export default function Antecedentes() {
     setAntecedentes(antRes.success ? antRes.data : [])
     setHojas(hvRes.success ? hvRes.data : [])
     setLoading(false)
+  }
+
+  const handleSync = async () => {
+    setSyncing(true)
+    const res = await sincronizarAntecedentesDesdeHeadcount(selectedEmpresaId)
+    setSyncing(false)
+    if (res.success) {
+      toast({
+        title: "Sincronizado con Head Count",
+        description: `${res.creadas} traído(s), ${res.actualizadas} actualizado(s).`,
+      })
+      loadData()
+    } else {
+      toast({ title: "No se pudo sincronizar", description: res.message })
+    }
   }
 
   useEffect(() => {
@@ -159,6 +175,11 @@ export default function Antecedentes() {
           </p>
         </div>
 
+        <div className="flex flex-wrap gap-2">
+        <Button variant="outline" onClick={handleSync} disabled={syncing} title="Trae los antecedentes ya cargados en Head Count">
+          {syncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Users className="mr-2 h-4 w-4" />}
+          Sincronizar desde Head Count
+        </Button>
         <Dialog
           open={open}
           onOpenChange={(o) => {
@@ -277,6 +298,7 @@ export default function Antecedentes() {
             </div>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       <div className="relative max-w-sm">

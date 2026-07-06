@@ -38,6 +38,50 @@ export async function getAntecedentes(selectedEmpresaId?: number | null) {
   return { success: true, data: (data || []) as Antecedente[] }
 }
 
+// SINCRONIZAR desde Head Count: los colaboradores antiguos YA tienen su documento
+// de antecedentes cargado en Head Count (columna antecedentes = URL). Esta acción
+// lo trae al submódulo de Antecedentes sin re-subir. Head Count guarda UN documento
+// consolidado → se referencia en el slot principal (policía); los otros dos quedan
+// para carga separada si el cliente maneja certificados independientes.
+// Idempotente por cédula: crea los que faltan y actualiza el documento de los que ya están.
+export async function sincronizarAntecedentesDesdeHeadcount(selectedEmpresaId?: number | null) {
+  const admin: any = await getSupabaseAdmin()
+  const empresaId = selectedEmpresaId || (await getCurrentEmpresaIdForInsert())
+  if (!empresaId) return { success: false, creadas: 0, actualizadas: 0, message: "Sin empresa seleccionada." }
+
+  const { data: hc, error: eHc } = await admin
+    .from("headcount")
+    .select("identificacion,nombre,antecedentes")
+    .eq("idempresa", empresaId)
+    .not("antecedentes", "is", null)
+  if (eHc) return { success: false, creadas: 0, actualizadas: 0, message: eHc.message }
+
+  const { data: exist } = await admin.from("antecedentes").select("id,cedula").eq("idempresa", empresaId)
+  const byCedula = new Map<string, string>()
+  for (const a of exist ?? []) if (a.cedula) byCedula.set(String(a.cedula).trim(), a.id)
+
+  let actualizadas = 0
+  const nuevas: any[] = []
+  for (const c of hc ?? []) {
+    const url = c.antecedentes as string
+    if (!url) continue
+    const ced = c.identificacion ? String(c.identificacion).trim() : ""
+    const existingId = ced ? byCedula.get(ced) : undefined
+    const doc = { policia_url: url, policia_nombre: "Antecedentes (Head Count)" }
+    if (existingId) {
+      const { error } = await admin.from("antecedentes").update(doc).eq("id", existingId)
+      if (!error) actualizadas++
+    } else {
+      nuevas.push({ idempresa: empresaId, hoja_vida_id: null, cedula: ced || null, nombre: c.nombre, ...doc })
+    }
+  }
+  if (nuevas.length) {
+    const { error } = await admin.from("antecedentes").insert(nuevas)
+    if (error) return { success: false, creadas: 0, actualizadas, message: error.message }
+  }
+  return { success: true, creadas: nuevas.length, actualizadas }
+}
+
 // Elimina un antecedente (archivos en Supabase Storage + registro).
 export async function deleteAntecedente(id: string) {
   const supabase = await createClient()

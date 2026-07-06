@@ -33,9 +33,10 @@ import {
   getHojasVida,
   deleteHojaVida,
   updateEstadoHojaVida,
+  sincronizarHojasVidaDesdeHeadcount,
   type HojaDeVida,
 } from "@/lib/hojas-vida-actions"
-import { Plus, Trash2, Eye, Download, Search, FileText, Loader2, Check, X } from "lucide-react"
+import { Plus, Trash2, Eye, Download, Search, FileText, Loader2, Check, X, Users } from "lucide-react"
 
 const ESTADO_BADGE: Record<HojaDeVida["estado"], string> = {
   aceptado: "bg-green-100 text-green-800",
@@ -70,6 +71,7 @@ export default function HojasDeVida() {
   const [estadoFiltro, setEstadoFiltro] = useState<"todos" | HojaDeVida["estado"]>("todos")
   const [open, setOpen] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [syncing, setSyncing] = useState(false)
 
   // Formulario de carga.
   const [form, setForm] = useState({
@@ -97,6 +99,23 @@ export default function HojasDeVida() {
   const resetForm = () => {
     setForm({ nombre_candidato: "", cedula: "", cargo_aspirado: "", correo: "", telefono: "", notas: "" })
     setFile(null)
+  }
+
+  // Trae al Banco las hojas de vida que los colaboradores YA tienen cargadas en
+  // Head Count (datos + documento), sin re-subir. Idempotente por cédula.
+  const handleSync = async () => {
+    setSyncing(true)
+    const res = await sincronizarHojasVidaDesdeHeadcount(selectedEmpresaId)
+    setSyncing(false)
+    if (res.success) {
+      toast({
+        title: "Sincronizado con Head Count",
+        description: `${res.creadas} traída(s), ${res.actualizadas} actualizada(s).`,
+      })
+      loadData()
+    } else {
+      toast({ title: "No se pudo sincronizar", description: res.message })
+    }
   }
 
   const handleUpload = async () => {
@@ -192,6 +211,11 @@ export default function HojasDeVida() {
           </p>
         </div>
 
+        <div className="flex flex-wrap gap-2">
+        <Button variant="outline" onClick={handleSync} disabled={syncing} title="Trae las hojas de vida ya cargadas en Head Count">
+          {syncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Users className="mr-2 h-4 w-4" />}
+          Sincronizar desde Head Count
+        </Button>
         <Dialog
           open={open}
           onOpenChange={(o) => {
@@ -295,6 +319,7 @@ export default function HojasDeVida() {
             </div>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
