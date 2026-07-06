@@ -1606,6 +1606,94 @@ export async function getIndicadoresValores(
       .maybeSingle()
     const sgsst0312 = Number(aeSST?.puntaje_total ?? 0)
 
+    // --- NC cerradas a tiempo (SIG · LIP): cerradas dentro de compromiso / total ---
+    let ncCerradas = 100
+    try {
+      const { data: nc } = await supabase
+        .from("sig_no_conformidades")
+        .select("estado,fecha_cierre,fecha_compromiso,activo")
+      const act = (nc ?? []).filter((n: any) => n.activo !== false)
+      if (act.length) {
+        const okc = act.filter((n: any) => {
+          const cerrada = n.estado && String(n.estado).toLowerCase().includes("cerr")
+          if (!cerrada || !n.fecha_cierre) return false
+          return !n.fecha_compromiso || String(n.fecha_cierre) <= String(n.fecha_compromiso)
+        }).length
+        ncCerradas = Math.round((okc / act.length) * 100)
+      }
+    } catch {}
+
+    // --- Formación: capacitaciones ejecutadas / total (por proyecto/periodo) ---
+    let ghFormacion = 0
+    try {
+      let qCap = supabase.from("capacitaciones").select("ejecutada,fecha,idempresa").in("idempresa", clientes)
+      if (desde) qCap = qCap.gte("fecha", desde)
+      if (hasta) qCap = qCap.lte("fecha", hasta)
+      const { data: caps } = await qCap
+      const tot = (caps ?? []).length
+      const ej = (caps ?? []).filter((c: any) => c.ejecutada === true).length
+      ghFormacion = tot > 0 ? Math.round((ej / tot) * 100) : 0
+    } catch {}
+
+    // --- Implementación del SIG (avance real de la matriz integrada, alcance LIP) ---
+    let sigImplementacion = 0
+    try {
+      const [{ data: rnI }, { data: covI }] = await Promise.all([
+        supabase.from("sig_requisito_norma").select("requisito_id,norma_id,aplica"),
+        supabase.from("sig_documento_cobertura").select("requisito_id,norma_id,estado,soporte_id").eq("idempresa", SIG_EMPRESA_LIP),
+      ])
+      const covMap = new Map<string, any[]>()
+      for (const c of covI ?? []) {
+        const k = `${c.requisito_id}:${c.norma_id}`
+        if (!covMap.has(k)) covMap.set(k, [])
+        covMap.get(k)!.push(c)
+      }
+      let totalReq = 0
+      let avance = 0
+      for (const r of rnI ?? []) {
+        if (!r.aplica) continue
+        totalReq++
+        const cs = covMap.get(`${r.requisito_id}:${r.norma_id}`) ?? []
+        const aprob = cs.some((c: any) => c.estado === "aprobado")
+        const carg = cs.some((c: any) => c.estado === "cargado" || c.soporte_id)
+        avance += aprob ? 1 : carg ? 0.5 : 0
+      }
+      sigImplementacion = totalReq > 0 ? Math.round((avance / totalReq) * 100) : 0
+    } catch {}
+
+    // --- SST: accidentalidad (# AT) y días perdidos (severidad), por sitio/proyecto ---
+    let sstAtCount = 0
+    let sstAtDias = 0
+    try {
+      let qAt = supabase
+        .from("sst_incidentes")
+        .select("dias_incapacidad,dias_prorroga,fecha_evento,idempresa")
+        .in("idempresa", clientes)
+      if (desde) qAt = qAt.gte("fecha_evento", desde)
+      if (hasta) qAt = qAt.lte("fecha_evento", hasta)
+      const { data: ats } = await qAt
+      sstAtCount = (ats ?? []).length
+      sstAtDias = (ats ?? []).reduce(
+        (s: number, r: any) => s + (Number(r.dias_incapacidad) || 0) + (Number(r.dias_prorroga) || 0),
+        0,
+      )
+    } catch {}
+
+    // --- IPEVR: % promedio de cumplimiento de intervención de peligros (por sitio) ---
+    let sstIpevr = 0
+    try {
+      const { data: ip } = await supabase.from("sst_ipevr").select("gc_pct_cumplimiento,idempresa").in("idempresa", clientes)
+      const vals = (ip ?? []).map((r: any) => Number(r.gc_pct_cumplimiento)).filter((n: number) => !Number.isNaN(n))
+      sstIpevr = vals.length ? Math.round(vals.reduce((a: number, b: number) => a + b, 0) / vals.length) : 0
+    } catch {}
+
+    // --- LIPgo: digitalización/trazabilidad de la operación (invtrans + órdenes) ---
+    let lipgoRegistros = totOrdenes
+    try {
+      const { count: invC } = await supabase.from("invtrans").select("*", { count: "exact", head: true }).in("idempresa", clientes)
+      lipgoRegistros = (invC || 0) + totOrdenes
+    } catch {}
+
     const valores: Record<string, SigIndicadorValor> = {
       // Cumplimiento SG-SST (Resolución 0312) — avance real de los 60 estándares.
       sgsst_0312: { valor: Math.round(sgsst0312 * 10) / 10, base: "Autoevaluación 0312 (Art. 27)" },
@@ -1630,6 +1718,14 @@ export async function getIndicadoresValores(
       gh_activos: { valor: activos, base: "" },
       sat_cliente: { valor: satCli.v, base: `${satCli.n} encuestas` },
       sat_conductor: { valor: satCon.v, base: `${satCon.n} encuestas` },
+      // --- Nuevos cableados por área (BSC) ---
+      nc_cerradas: { valor: ncCerradas, base: "NC cerradas dentro del compromiso" },
+      gh_formacion: { valor: ghFormacion, base: "capacitaciones ejecutadas" },
+      sig_implementacion: { valor: sigImplementacion, base: "avance de la matriz integrada" },
+      sst_at_count: { valor: sstAtCount, base: "accidentes de trabajo (periodo)" },
+      sst_at_dias: { valor: sstAtDias, base: "días perdidos por AT" },
+      sst_ipevr_cumpl: { valor: sstIpevr, base: "cumplimiento de controles IPEVR" },
+      lipgo_registros: { valor: lipgoRegistros, base: "operaciones digitalizadas en LIPgo" },
     }
     return { success: true, valores }
   } catch (err: any) {

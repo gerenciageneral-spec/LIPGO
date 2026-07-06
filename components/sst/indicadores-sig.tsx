@@ -46,7 +46,16 @@ const PERSPECTIVAS: { v: string; l: string; desc: string; color: string }[] = [
   { v: "aprendizaje", l: "Aprendizaje y crecimiento", desc: "Personas, tecnología y mejora", color: "#d97706" },
 ]
 
-const AREAS = ["Dirección Estratégica", "Cargue y Descargue", "Almacenamiento e Inventarios", "Gestión Humana y SST", "Tecnología (LIPgo)", "Compras y Proveedores", "Evaluación y Mejora"]
+const AREAS = [
+  "Dirección Estratégica",
+  "Cargue y Descargue",
+  "Almacenamiento e Inventarios",
+  "Gestión Humana",
+  "Seguridad y Salud en el Trabajo (SST)",
+  "Compras y Proveedores",
+  "Evaluación y Mejora",
+  "Tecnología (LIPgo)",
+]
 
 type FormInd = Partial<SigIndicador> & { codigo: string; nombre: string }
 
@@ -268,11 +277,11 @@ export function IndicadoresSIG() {
           value={<>{score.vivos}<span className="text-base text-muted-foreground">/{indicadores.length}</span></>} sub="calculados desde LIPgo" />
       </div>
 
-      <Tabs defaultValue="perspectivas">
+      <Tabs defaultValue="areas">
         <TabsList>
+          <TabsTrigger value="areas">Por área</TabsTrigger>
           <TabsTrigger value="perspectivas">Perspectivas (BSC)</TabsTrigger>
           <TabsTrigger value="objetivos">Por objetivo estratégico</TabsTrigger>
-          <TabsTrigger value="areas">Por área</TabsTrigger>
           <TabsTrigger value="catalogo">Catálogo ({indicadores.length})</TabsTrigger>
         </TabsList>
 
