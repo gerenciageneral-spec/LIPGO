@@ -38,6 +38,7 @@ import {
   setCostoExamenDefault,
   registrarConceptoExamen,
   importarExamenesDesdeHeadcount,
+  revalidarExamenesDesdeDocumento,
   type ExamenMedico,
 } from "@/lib/examenes-medicos-actions"
 import { getHojasVida, type HojaDeVida } from "@/lib/hojas-vida-actions"
@@ -56,6 +57,7 @@ import {
   DownloadCloud,
   Gavel,
   Wallet,
+  ScanSearch,
 } from "lucide-react"
 
 const COP = (n: number) => "$" + (Number(n) || 0).toLocaleString("es-CO")
@@ -104,6 +106,7 @@ export default function ExamenesMedicos() {
   const [open, setOpen] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [importando, setImportando] = useState(false)
+  const [revalidando, setRevalidando] = useState(false)
 
   // Candidato seleccionado (desde Hojas de Vida) y datos del examen.
   const [candidato, setCandidato] = useState<HojaDeVida | null>(null)
@@ -259,6 +262,25 @@ export default function ExamenesMedicos() {
     }
   }
 
+  const handleRevalidar = async () => {
+    if (!confirm("Leer el 'Concepto de aptitud' de cada examen con documento y actualizar apto/no apto automáticamente. ¿Continuar?")) return
+    setRevalidando(true)
+    try {
+      const r = await revalidarExamenesDesdeDocumento(selectedEmpresaId)
+      if (r.success) {
+        toast({
+          title: "Aptitud validada desde documento",
+          description: `${r.leidos} leídos · ${r.aptos} aptos · ${r.noAptos} no aptos · ${r.sinConcepto} sin concepto`,
+        })
+        loadData()
+      } else {
+        toast({ title: "Error", description: r.message || "No se pudo validar." })
+      }
+    } finally {
+      setRevalidando(false)
+    }
+  }
+
   const handleImportar = async () => {
     setImportando(true)
     try {
@@ -330,6 +352,11 @@ export default function ExamenesMedicos() {
           <Button variant="outline" onClick={handleImportar} disabled={importando}>
             {importando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <DownloadCloud className="mr-2 h-4 w-4" />}
             Importar de Head Count
+          </Button>
+
+          <Button variant="outline" onClick={handleRevalidar} disabled={revalidando} title="Leer el concepto de aptitud de cada documento y clasificar apto/no apto">
+            {revalidando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ScanSearch className="mr-2 h-4 w-4" />}
+            Validar aptitud (leer documento)
           </Button>
 
           <Dialog

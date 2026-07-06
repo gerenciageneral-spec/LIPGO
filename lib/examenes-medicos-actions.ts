@@ -386,6 +386,42 @@ export async function importarExamenesDesdeHeadcount(selectedEmpresaId?: number 
   return { success: true, creados: nuevas.length }
 }
 
+// ---------------------------------------------------------------------
+// REVALIDAR APTITUD LEYENDO EL DOCUMENTO — recorre los exámenes con documento
+// de la empresa, lee el "Concepto de aptitud" con Claude (visión) y actualiza la
+// bandera apto + el resultado con el concepto real. No dispara promoción/rechazo
+// (es una revalidación de histórico); solo corrige la clasificación.
+// ---------------------------------------------------------------------
+export async function revalidarExamenesDesdeDocumento(selectedEmpresaId?: number | null) {
+  const { leerConceptoAptitudDesdeUrl } = await import("@/lib/examenes-ocr")
+  const admin: any = await getSupabaseAdmin()
+  const empresaId = selectedEmpresaId || (await getCurrentEmpresaIdForInsert())
+  if (!empresaId) return { success: false, leidos: 0, aptos: 0, noAptos: 0, sinConcepto: 0, message: "Sin empresa seleccionada." }
+
+  const { data: exs, error } = await admin
+    .from("examenes_medicos")
+    .select("id,archivo_url,cedula,nombre")
+    .eq("idempresa", empresaId)
+    .not("archivo_url", "is", null)
+    .neq("archivo_url", "")
+  if (error) return { success: false, leidos: 0, aptos: 0, noAptos: 0, sinConcepto: 0, message: error.message }
+
+  let leidos = 0, aptos = 0, noAptos = 0, sinConcepto = 0
+  for (const e of exs ?? []) {
+    const { concepto, apto } = await leerConceptoAptitudDesdeUrl(e.archivo_url)
+    if (!concepto && apto === null) { sinConcepto++; continue }
+    leidos++
+    if (apto === true) aptos++
+    else if (apto === false) noAptos++
+    else sinConcepto++
+    const upd: Record<string, any> = {}
+    if (concepto) upd.resultado = concepto
+    if (apto !== null) upd.apto = apto
+    if (Object.keys(upd).length) await admin.from("examenes_medicos").update(upd).eq("id", e.id)
+  }
+  return { success: true, leidos, aptos, noAptos, sinConcepto }
+}
+
 // Elimina un examen medico (archivo en Storage + registro).
 export async function deleteExamenMedico(id: string) {
   const supabase = await createClient()

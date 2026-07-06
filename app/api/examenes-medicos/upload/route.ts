@@ -4,6 +4,7 @@ import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getCurrentEmpresaIdForInsert } from "@/lib/user-context"
 import { registrarConceptoExamen } from "@/lib/examenes-medicos-actions"
 import { normalizarAptitud } from "@/lib/examenes-utils"
+import { leerConceptoAptitud } from "@/lib/examenes-ocr"
 
 // Sube el documento del examen medico de un empleado APTO (de la entrevista)
 // a Supabase Storage (bucket "archivos") y guarda sus metadatos.
@@ -21,7 +22,6 @@ export async function POST(request: NextRequest) {
     const observaciones = (formData.get("observaciones") as string) || ""
     const costoRaw = (formData.get("costo") as string) || ""
     const costo = costoRaw ? Number(costoRaw) || 0 : 0
-    const apto = normalizarAptitud(resultado) // true=apto · false=no apto · null=pendiente
 
     if (!nombre.trim()) {
       return NextResponse.json({ error: "Debe seleccionar un empleado" }, { status: 400 })
@@ -54,6 +54,25 @@ export async function POST(request: NextRequest) {
 
     const { data: urlData } = supabaseAdmin.storage.from("archivos").getPublicUrl(filePath)
 
+    // LECTURA AUTOMÁTICA DEL CONCEPTO: siempre se lee el documento para clasificar
+    // apto/no apto por su "Concepto de aptitud". El resultado manual (si vino) es solo
+    // respaldo cuando no se logra leer el concepto.
+    let apto: boolean | null = normalizarAptitud(resultado)
+    let resultadoFinal = resultado.trim()
+    let obsFinal = observaciones.trim()
+    try {
+      const mt = (file.type || "").toLowerCase() || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "")
+      const b64 = Buffer.from(await file.arrayBuffer()).toString("base64")
+      const { concepto, apto: aptoDoc } = await leerConceptoAptitud(b64, mt || "application/pdf")
+      if (concepto) {
+        resultadoFinal = concepto // el concepto leído manda sobre el texto manual
+        if (aptoDoc !== null) apto = aptoDoc
+        obsFinal = obsFinal
+          ? `${obsFinal} · Concepto leído automáticamente: "${concepto}"`
+          : `Concepto leído automáticamente: "${concepto}"`
+      }
+    } catch { /* si falla la lectura, se usa el resultado manual */ }
+
     const supabase = await createClient()
     const { data, error } = await supabase
       .from("examenes_medicos")
@@ -64,9 +83,9 @@ export async function POST(request: NextRequest) {
         cedula: cedula.trim() || null,
         nombre: nombre.trim(),
         tipo_examen: tipoExamen.trim() || null,
-        resultado: resultado.trim() || null,
+        resultado: resultadoFinal || null,
         fecha_examen: fechaExamen || null,
-        observaciones: observaciones.trim() || null,
+        observaciones: obsFinal || null,
         archivo_url: urlData.publicUrl,
         archivo_nombre: file.name,
         apto,
@@ -86,7 +105,7 @@ export async function POST(request: NextRequest) {
     // la hoja de vida y, si es APTO, promover el expediente a Head Count.
     let promocion: any = null
     if (apto !== null && data?.id) {
-      const r = await registrarConceptoExamen({ id: data.id, apto, costo, resultado })
+      const r = await registrarConceptoExamen({ id: data.id, apto, costo, resultado: resultadoFinal })
       promocion = { apto, promovido: r.promovido, message: r.message }
     }
 
