@@ -41,6 +41,7 @@ import {
   type ExamenMedico,
 } from "@/lib/examenes-medicos-actions"
 import { getHojasVida, type HojaDeVida } from "@/lib/hojas-vida-actions"
+import { getColaboradoresLite } from "@/lib/headcount-actions"
 import {
   Plus,
   Trash2,
@@ -85,6 +86,7 @@ export default function ExamenesMedicos() {
   const { toast } = useToast()
   const [examenes, setExamenes] = useState<ExamenMedico[]>([])
   const [candidatos, setCandidatos] = useState<HojaDeVida[]>([])
+  const [cedulasEnHeadcount, setCedulasEnHeadcount] = useState<Set<string>>(new Set())
   const [resumen, setResumen] = useState({ aptos: 0, noAptos: 0, pendientes: 0, costoNegativos: 0, tasaAprobacion: 0 })
   const [costoDefault, setCostoDefaultState] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -117,14 +119,16 @@ export default function ExamenesMedicos() {
     if (selectedEmpresaId) {
       try { await importarExamenesDesdeHeadcount(selectedEmpresaId) } catch { /* no bloquea la carga */ }
     }
-    const [exRes, hvRes, resRes, cd] = await Promise.all([
+    const [exRes, hvRes, resRes, cd, hcLite] = await Promise.all([
       getExamenesMedicos(selectedEmpresaId),
       getHojasVida(selectedEmpresaId),
       getResumenExamenes(selectedEmpresaId),
       getCostoExamenDefault(selectedEmpresaId),
+      getColaboradoresLite(selectedEmpresaId),
     ])
     setExamenes(exRes.success ? exRes.data : [])
     setCandidatos(hvRes.success ? hvRes.data : [])
+    setCedulasEnHeadcount(new Set((hcLite || []).map((c) => String(c.identificacion || "").trim()).filter(Boolean)))
     if (resRes.success) setResumen(resRes.data)
     setCostoDefaultState(cd)
     setLoading(false)
@@ -146,10 +150,13 @@ export default function ExamenesMedicos() {
     setObservaciones("")
   }
 
-  // Candidatos (hojas de vida) que coinciden con la búsqueda (por cédula o nombre).
+  // Candidatos NUEVOS pendientes de examen: hojas de vida que NO están ya en Head
+  // Count (los antiguos ya están vinculados y aptos) y que no fueron rechazadas.
   const candidatosFiltrados = useMemo(() => {
     const q = candidatoSearch.trim().toLowerCase()
-    const base = candidatos.filter((c) => c.estado !== "rechazado")
+    const base = candidatos.filter(
+      (c) => c.estado !== "rechazado" && !cedulasEnHeadcount.has(String(c.cedula || "").trim()),
+    )
     if (!q) return base.slice(0, 25)
     return base
       .filter(
@@ -158,7 +165,7 @@ export default function ExamenesMedicos() {
           (c.cedula?.toLowerCase().includes(q) ?? false),
       )
       .slice(0, 25)
-  }, [candidatos, candidatoSearch])
+  }, [candidatos, candidatoSearch, cedulasEnHeadcount])
 
   const handleUpload = async () => {
     if (!candidato) {
