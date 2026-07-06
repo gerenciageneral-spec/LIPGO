@@ -317,10 +317,12 @@ export async function getContratos(selectedEmpresaId?: number | null) {
 export async function createContrato(contrato: any) {
   const supabase = await createClient()
 
-  // GATE de aptitud médica: el examen es requisito de contratación. Si el examen
-  // VIGENTE de la persona (por cédula = colaborador_id) es NO APTO, se bloquea.
-  // Resiliente: si la tabla no existe o no hay examen, no bloquea (los antiguos ya
-  // vinculados no tienen registro y se respetan; solo un NO APTO explícito frena).
+  // GATE de aptitud médica: el examen es requisito de contratación. Solo se puede
+  // vincular con un examen VIGENTE APTO. Si el examen es NO APTO o queda PENDIENTE
+  // (p. ej. aplazado para manipular alimentos, o sin concepto definitivo), se bloquea:
+  // la persona debe repetir el examen y subir uno nuevo APTO como constancia.
+  // Resiliente: si la tabla no existe o la persona no tiene NINGÚN examen (legado),
+  // no se aplica el gate para no romper renovaciones de antiguos.
   try {
     const ced = String(contrato.colaborador_id || "").trim()
     if (ced) {
@@ -332,11 +334,16 @@ export async function createContrato(contrato: any) {
         .order("created_at", { ascending: false })
         .limit(1)
       const vigente = (ex || [])[0] as any
-      if (vigente && vigente.apto === false) {
+      if (vigente && vigente.apto !== true) {
+        const motivo =
+          vigente.apto === false
+            ? "es NO APTO"
+            : "está PENDIENTE (aplazado / examen sin concepto apto)"
         return {
           success: false,
           message:
-            "Contratación bloqueada: el examen médico de esta persona es NO APTO. No puede vincularse hasta contar con un examen apto.",
+            `Contratación bloqueada: el examen médico de esta persona ${motivo}. ` +
+            "No puede vincularse hasta contar con un examen médico APTO (debe repetirlo y subir la constancia).",
         }
       }
     }
