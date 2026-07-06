@@ -317,6 +317,32 @@ export async function getContratos(selectedEmpresaId?: number | null) {
 export async function createContrato(contrato: any) {
   const supabase = await createClient()
 
+  // GATE de aptitud médica: el examen es requisito de contratación. Si el examen
+  // VIGENTE de la persona (por cédula = colaborador_id) es NO APTO, se bloquea.
+  // Resiliente: si la tabla no existe o no hay examen, no bloquea (los antiguos ya
+  // vinculados no tienen registro y se respetan; solo un NO APTO explícito frena).
+  try {
+    const ced = String(contrato.colaborador_id || "").trim()
+    if (ced) {
+      const { data: ex } = await supabase
+        .from("examenes_medicos")
+        .select("apto,nombre")
+        .eq("cedula", ced)
+        .order("created_at", { ascending: false })
+        .limit(1)
+      const vigente = (ex || [])[0] as any
+      if (vigente && vigente.apto === false) {
+        return {
+          success: false,
+          message:
+            "Contratación bloqueada: el examen médico de esta persona es NO APTO. No puede vincularse hasta contar con un examen apto.",
+        }
+      }
+    }
+  } catch {
+    /* tabla de exámenes aún no disponible → no se aplica el gate */
+  }
+
   const sanitized = {
     colaborador_id: contrato.colaborador_id,
     fecha_inicio: contrato.fecha_inicio || null,

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import { Badge } from "@/components/ui/badge"
 import {
   Dialog,
   DialogContent,
@@ -12,6 +13,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import {
   Table,
   TableBody,
@@ -25,39 +33,95 @@ import { useAuth } from "@/components/auth-provider"
 import {
   getExamenesMedicos,
   deleteExamenMedico,
+  getResumenExamenes,
+  getCostoExamenDefault,
+  setCostoExamenDefault,
+  registrarConceptoExamen,
+  importarExamenesDesdeHeadcount,
   type ExamenMedico,
 } from "@/lib/examenes-medicos-actions"
-import { getEntrevistas, type Entrevista } from "@/lib/entrevistas-actions"
-import { Plus, Trash2, Eye, Download, Search, Stethoscope, Loader2 } from "lucide-react"
+import { getHojasVida, type HojaDeVida } from "@/lib/hojas-vida-actions"
+import {
+  Plus,
+  Trash2,
+  Eye,
+  Download,
+  Search,
+  Stethoscope,
+  Loader2,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  DownloadCloud,
+  Gavel,
+  Wallet,
+} from "lucide-react"
+
+const COP = (n: number) => "$" + (Number(n) || 0).toLocaleString("es-CO")
+
+// Badge de aptitud a partir de la bandera `apto` (true/false/null).
+function AptitudBadge({ apto }: { apto: boolean | null }) {
+  if (apto === true)
+    return (
+      <Badge className="gap-1 bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
+        <CheckCircle2 className="h-3 w-3" /> Apto
+      </Badge>
+    )
+  if (apto === false)
+    return (
+      <Badge className="gap-1 bg-red-100 text-red-700 hover:bg-red-100">
+        <XCircle className="h-3 w-3" /> No apto
+      </Badge>
+    )
+  return (
+    <Badge variant="outline" className="gap-1 text-amber-600 border-amber-300">
+      <Clock className="h-3 w-3" /> Pendiente
+    </Badge>
+  )
+}
 
 export default function ExamenesMedicos() {
   const { selectedEmpresaId } = useAuth()
   const { toast } = useToast()
   const [examenes, setExamenes] = useState<ExamenMedico[]>([])
-  const [aptos, setAptos] = useState<Entrevista[]>([])
+  const [candidatos, setCandidatos] = useState<HojaDeVida[]>([])
+  const [resumen, setResumen] = useState({ aptos: 0, noAptos: 0, pendientes: 0, costoNegativos: 0, tasaAprobacion: 0 })
+  const [costoDefault, setCostoDefaultState] = useState(0)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
   const [open, setOpen] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [importando, setImportando] = useState(false)
 
-  // Empleado seleccionado (entrevista APTA) y datos del examen.
-  const [empleado, setEmpleado] = useState<Entrevista | null>(null)
-  const [empleadoSearch, setEmpleadoSearch] = useState("")
+  // Candidato seleccionado (desde Hojas de Vida) y datos del examen.
+  const [candidato, setCandidato] = useState<HojaDeVida | null>(null)
+  const [candidatoSearch, setCandidatoSearch] = useState("")
   const [file, setFile] = useState<File | null>(null)
-  const [tipoExamen, setTipoExamen] = useState("")
-  const [resultado, setResultado] = useState("")
+  const [tipoExamen, setTipoExamen] = useState("Ingreso")
+  const [resultado, setResultado] = useState<string>("") // "Apto" | "No apto" | "" (pendiente)
+  const [costo, setCosto] = useState<string>("")
   const [fechaExamen, setFechaExamen] = useState("")
   const [observaciones, setObservaciones] = useState("")
 
+  // Dictaminar (para exámenes pendientes ya cargados).
+  const [dictamen, setDictamen] = useState<ExamenMedico | null>(null)
+  const [dictamenApto, setDictamenApto] = useState<string>("")
+  const [dictamenCosto, setDictamenCosto] = useState<string>("")
+  const [dictamenObs, setDictamenObs] = useState<string>("")
+  const [guardandoDictamen, setGuardandoDictamen] = useState(false)
+
   const loadData = async () => {
     setLoading(true)
-    const [exRes, entRes] = await Promise.all([
+    const [exRes, hvRes, resRes, cd] = await Promise.all([
       getExamenesMedicos(selectedEmpresaId),
-      getEntrevistas(selectedEmpresaId),
+      getHojasVida(selectedEmpresaId),
+      getResumenExamenes(selectedEmpresaId),
+      getCostoExamenDefault(selectedEmpresaId),
     ])
     setExamenes(exRes.success ? exRes.data : [])
-    // Solo empleados que aprobaron la entrevista (concepto apto).
-    setAptos(entRes.success ? entRes.data.filter((e) => e.concepto_final === "apto") : [])
+    setCandidatos(hvRes.success ? hvRes.data : [])
+    if (resRes.success) setResumen(resRes.data)
+    setCostoDefaultState(cd)
     setLoading(false)
   }
 
@@ -67,31 +131,33 @@ export default function ExamenesMedicos() {
   }, [selectedEmpresaId])
 
   const resetForm = () => {
-    setEmpleado(null)
-    setEmpleadoSearch("")
+    setCandidato(null)
+    setCandidatoSearch("")
     setFile(null)
-    setTipoExamen("")
+    setTipoExamen("Ingreso")
     setResultado("")
+    setCosto("")
     setFechaExamen("")
     setObservaciones("")
   }
 
-  // Empleados aptos que coinciden con la busqueda (por cedula o nombre).
-  const empleadosFiltrados = useMemo(() => {
-    const q = empleadoSearch.trim().toLowerCase()
-    if (!q) return aptos.slice(0, 25)
-    return aptos
+  // Candidatos (hojas de vida) que coinciden con la búsqueda (por cédula o nombre).
+  const candidatosFiltrados = useMemo(() => {
+    const q = candidatoSearch.trim().toLowerCase()
+    const base = candidatos.filter((c) => c.estado !== "rechazado")
+    if (!q) return base.slice(0, 25)
+    return base
       .filter(
-        (e) =>
-          e.nombre_candidato.toLowerCase().includes(q) ||
-          (e.cedula?.toLowerCase().includes(q) ?? false),
+        (c) =>
+          c.nombre_candidato.toLowerCase().includes(q) ||
+          (c.cedula?.toLowerCase().includes(q) ?? false),
       )
       .slice(0, 25)
-  }, [aptos, empleadoSearch])
+  }, [candidatos, candidatoSearch])
 
   const handleUpload = async () => {
-    if (!empleado) {
-      toast({ title: "Falta el empleado", description: "Selecciona un empleado apto." })
+    if (!candidato) {
+      toast({ title: "Falta el candidato", description: "Selecciona la hoja de vida del candidato." })
       return
     }
     if (!file) {
@@ -103,12 +169,12 @@ export default function ExamenesMedicos() {
     try {
       const fd = new FormData()
       if (selectedEmpresaId) fd.append("empresaId", String(selectedEmpresaId))
-      fd.append("entrevista_id", empleado.id)
-      fd.append("hoja_vida_id", empleado.hoja_vida_id || "")
-      fd.append("cedula", empleado.cedula || "")
-      fd.append("nombre", empleado.nombre_candidato)
+      fd.append("hoja_vida_id", candidato.id)
+      fd.append("cedula", candidato.cedula || "")
+      fd.append("nombre", candidato.nombre_candidato)
       fd.append("tipo_examen", tipoExamen)
-      fd.append("resultado", resultado)
+      fd.append("resultado", resultado) // "Apto" | "No apto" | "" (pendiente)
+      fd.append("costo", costo || String(costoDefault))
       fd.append("fecha_examen", fechaExamen)
       fd.append("observaciones", observaciones)
       fd.append("file", file)
@@ -121,7 +187,13 @@ export default function ExamenesMedicos() {
         return
       }
 
-      toast({ title: "Examen médico guardado" })
+      if (json.promocion?.apto === true) {
+        toast({ title: "Apto ✓", description: "Documentos subidos a Head Count. Contratación habilitada." })
+      } else if (json.promocion?.apto === false) {
+        toast({ title: "No apto", description: "Hoja de vida rechazada. Contratación bloqueada." })
+      } else {
+        toast({ title: "Examen guardado", description: "Queda pendiente de dictamen (apto / no apto)." })
+      }
       setOpen(false)
       resetForm()
       loadData()
@@ -130,6 +202,60 @@ export default function ExamenesMedicos() {
     } finally {
       setUploading(false)
     }
+  }
+
+  const abrirDictamen = (e: ExamenMedico) => {
+    setDictamen(e)
+    setDictamenApto(e.apto === true ? "Apto" : e.apto === false ? "No apto" : "")
+    setDictamenCosto(String(e.costo ?? costoDefault ?? 0))
+    setDictamenObs(e.observaciones || "")
+  }
+
+  const guardarDictamen = async () => {
+    if (!dictamen || !dictamenApto) {
+      toast({ title: "Selecciona el resultado", description: "Marca Apto o No apto." })
+      return
+    }
+    setGuardandoDictamen(true)
+    try {
+      const r = await registrarConceptoExamen({
+        id: dictamen.id,
+        apto: dictamenApto === "Apto",
+        costo: Number(dictamenCosto) || 0,
+        resultado: dictamenApto,
+        observaciones: dictamenObs,
+      })
+      if (!r.success) {
+        toast({ title: "Error", description: r.message || "No se pudo guardar el dictamen." })
+        return
+      }
+      toast({ title: dictamenApto === "Apto" ? "Apto ✓" : "No apto", description: r.message })
+      setDictamen(null)
+      loadData()
+    } finally {
+      setGuardandoDictamen(false)
+    }
+  }
+
+  const handleImportar = async () => {
+    setImportando(true)
+    try {
+      const r = await importarExamenesDesdeHeadcount(selectedEmpresaId)
+      if (r.success) {
+        toast({ title: "Histórico importado", description: `${r.creados} examen(es) de ingreso traídos de Head Count.` })
+        loadData()
+      } else {
+        toast({ title: "Error", description: r.message || "No se pudo importar." })
+      }
+    } finally {
+      setImportando(false)
+    }
+  }
+
+  const guardarCostoDefault = async () => {
+    const r = await setCostoExamenDefault(costoDefault, selectedEmpresaId)
+    if (r.success) toast({ title: "Costo por defecto guardado", description: COP(costoDefault) + " por examen." })
+    else toast({ title: "Error", description: r.message })
   }
 
   const handleDelete = async (id: string) => {
@@ -147,175 +273,243 @@ export default function ExamenesMedicos() {
     const q = search.trim().toLowerCase()
     if (!q) return examenes
     return examenes.filter(
-      (e) =>
-        e.nombre.toLowerCase().includes(q) || (e.cedula?.toLowerCase().includes(q) ?? false),
+      (e) => e.nombre.toLowerCase().includes(q) || (e.cedula?.toLowerCase().includes(q) ?? false),
     )
   }, [examenes, search])
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
             <Stethoscope className="h-6 w-6 text-primary" />
             Exámenes Médicos
           </h1>
-          <p className="text-sm text-muted-foreground">
-            Carga el examen médico de los empleados que aprobaron la entrevista.
+          <p className="text-sm text-muted-foreground max-w-2xl">
+            Requisito de contratación. El candidato llega desde su hoja de vida; si el examen es{" "}
+            <span className="font-medium text-emerald-600">Apto</span> se suben sus documentos a Head Count
+            y se habilita el contrato; si es <span className="font-medium text-red-600">No apto</span> se
+            rechaza y se bloquea la contratación. El histórico se conserva.
           </p>
         </div>
 
-        <Dialog
-          open={open}
-          onOpenChange={(o) => {
-            setOpen(o)
-            if (!o) resetForm()
-          }}
-        >
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="mr-2 h-4 w-4" />
-              Cargar examen médico
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-lg" onInteractOutside={(e) => e.preventDefault()}>
-            <DialogHeader>
-              <DialogTitle>Nuevo examen médico</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
-              {/* Selector de empleado apto (desde entrevistas con concepto apto) */}
-              <div className="space-y-1.5">
-                <Label>
-                  Empleado apto (cédula o nombre) <span className="text-destructive">*</span>
-                </Label>
-                {empleado ? (
-                  <div className="flex items-center justify-between rounded-md border border-border bg-muted/40 px-3 py-2">
-                    <div className="text-sm">
-                      <span className="font-medium text-foreground">{empleado.nombre_candidato}</span>
-                      <span className="text-muted-foreground"> · {empleado.cedula || "sin cédula"}</span>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" onClick={handleImportar} disabled={importando}>
+            {importando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <DownloadCloud className="mr-2 h-4 w-4" />}
+            Importar de Head Count
+          </Button>
+
+          <Dialog
+            open={open}
+            onOpenChange={(o) => {
+              setOpen(o)
+              if (!o) resetForm()
+              if (o && !costo) setCosto(String(costoDefault || ""))
+            }}
+          >
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="mr-2 h-4 w-4" />
+                Cargar examen médico
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-lg" onInteractOutside={(e) => e.preventDefault()}>
+              <DialogHeader>
+                <DialogTitle>Nuevo examen médico</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4">
+                {/* Selector de candidato (desde Hojas de Vida) */}
+                <div className="space-y-1.5">
+                  <Label>
+                    Candidato — hoja de vida (cédula o nombre) <span className="text-destructive">*</span>
+                  </Label>
+                  {candidato ? (
+                    <div className="flex items-center justify-between rounded-md border border-border bg-muted/40 px-3 py-2">
+                      <div className="text-sm">
+                        <span className="font-medium text-foreground">{candidato.nombre_candidato}</span>
+                        <span className="text-muted-foreground"> · {candidato.cedula || "sin cédula"}</span>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setCandidato(null)
+                          setCandidatoSearch("")
+                        }}
+                      >
+                        Cambiar
+                      </Button>
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        setEmpleado(null)
-                        setEmpleadoSearch("")
-                      }}
-                    >
-                      Cambiar
-                    </Button>
+                  ) : (
+                    <>
+                      <div className="relative">
+                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Input
+                          placeholder="Buscar candidato por cédula o nombre..."
+                          value={candidatoSearch}
+                          onChange={(e) => setCandidatoSearch(e.target.value)}
+                          className="pl-8"
+                        />
+                      </div>
+                      <div className="max-h-40 overflow-y-auto rounded-md border border-border">
+                        {candidatosFiltrados.length === 0 ? (
+                          <p className="px-3 py-3 text-center text-xs text-muted-foreground">
+                            No hay hojas de vida que coincidan. Cárgala primero en el submódulo Hojas de Vida.
+                          </p>
+                        ) : (
+                          candidatosFiltrados.map((c) => (
+                            <button
+                              key={c.id}
+                              type="button"
+                              onClick={() => setCandidato(c)}
+                              className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-accent"
+                            >
+                              <span>
+                                <span className="font-medium text-foreground">{c.nombre_candidato}</span>
+                                <span className="text-muted-foreground"> · {c.cedula || "sin cédula"}</span>
+                              </span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="tipo_examen">Tipo de examen</Label>
+                    <Input
+                      id="tipo_examen"
+                      placeholder="Ingreso, periódico, egreso..."
+                      value={tipoExamen}
+                      onChange={(e) => setTipoExamen(e.target.value)}
+                    />
                   </div>
-                ) : (
-                  <>
-                    <div className="relative">
-                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        placeholder="Buscar empleado apto por cédula o nombre..."
-                        value={empleadoSearch}
-                        onChange={(e) => setEmpleadoSearch(e.target.value)}
-                        className="pl-8"
-                      />
-                    </div>
-                    <div className="max-h-40 overflow-y-auto rounded-md border border-border">
-                      {empleadosFiltrados.length === 0 ? (
-                        <p className="px-3 py-3 text-center text-xs text-muted-foreground">
-                          No hay empleados aptos que coincidan.
-                        </p>
-                      ) : (
-                        empleadosFiltrados.map((e) => (
-                          <button
-                            key={e.id}
-                            type="button"
-                            onClick={() => setEmpleado(e)}
-                            className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-accent"
-                          >
-                            <span>
-                              <span className="font-medium text-foreground">{e.nombre_candidato}</span>
-                              <span className="text-muted-foreground"> · {e.cedula || "sin cédula"}</span>
-                            </span>
-                          </button>
-                        ))
-                      )}
-                    </div>
-                  </>
-                )}
-              </div>
+                  <div className="space-y-1.5">
+                    <Label>Resultado</Label>
+                    <Select value={resultado} onValueChange={setResultado}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Pendiente de dictamen" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Apto">Apto</SelectItem>
+                        <SelectItem value="No apto">No apto</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
 
-              <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="costo">Costo del examen</Label>
+                    <Input
+                      id="costo"
+                      type="number"
+                      min={0}
+                      placeholder={String(costoDefault)}
+                      value={costo}
+                      onChange={(e) => setCosto(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="fecha_examen">Fecha del examen</Label>
+                    <Input
+                      id="fecha_examen"
+                      type="date"
+                      value={fechaExamen}
+                      onChange={(e) => setFechaExamen(e.target.value)}
+                    />
+                  </div>
+                </div>
+
                 <div className="space-y-1.5">
-                  <Label htmlFor="tipo_examen">Tipo de examen</Label>
-                  <Input
-                    id="tipo_examen"
-                    placeholder="Ingreso, periódico, egreso..."
-                    value={tipoExamen}
-                    onChange={(e) => setTipoExamen(e.target.value)}
+                  <Label htmlFor="observaciones">Observaciones</Label>
+                  <Textarea
+                    id="observaciones"
+                    rows={2}
+                    value={observaciones}
+                    onChange={(e) => setObservaciones(e.target.value)}
                   />
                 </div>
+
                 <div className="space-y-1.5">
-                  <Label htmlFor="resultado">Resultado</Label>
+                  <Label htmlFor="file">
+                    Documento del examen médico <span className="text-destructive">*</span>
+                  </Label>
                   <Input
-                    id="resultado"
-                    placeholder="Apto, apto con restricciones..."
-                    value={resultado}
-                    onChange={(e) => setResultado(e.target.value)}
+                    id="file"
+                    type="file"
+                    accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
+                    onChange={(e) => setFile(e.target.files?.[0] ?? null)}
                   />
                 </div>
-              </div>
 
-              <div className="space-y-1.5">
-                <Label htmlFor="fecha_examen">Fecha del examen</Label>
-                <Input
-                  id="fecha_examen"
-                  type="date"
-                  value={fechaExamen}
-                  onChange={(e) => setFechaExamen(e.target.value)}
-                />
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button variant="outline" onClick={() => setOpen(false)} disabled={uploading}>
+                    Cancelar
+                  </Button>
+                  <Button onClick={handleUpload} disabled={uploading}>
+                    {uploading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    {uploading ? "Subiendo..." : "Guardar"}
+                  </Button>
+                </div>
               </div>
-
-              <div className="space-y-1.5">
-                <Label htmlFor="observaciones">Observaciones</Label>
-                <Textarea
-                  id="observaciones"
-                  rows={2}
-                  value={observaciones}
-                  onChange={(e) => setObservaciones(e.target.value)}
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label htmlFor="file">
-                  Documento del examen médico <span className="text-destructive">*</span>
-                </Label>
-                <Input
-                  id="file"
-                  type="file"
-                  accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
-                  onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <Button variant="outline" onClick={() => setOpen(false)} disabled={uploading}>
-                  Cancelar
-                </Button>
-                <Button onClick={handleUpload} disabled={uploading}>
-                  {uploading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  {uploading ? "Subiendo..." : "Guardar"}
-                </Button>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
 
-      <div className="relative max-w-sm">
-        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input
-          placeholder="Buscar por nombre o cédula..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="pl-8"
-        />
+      {/* KPIs de aptitud + costo asumido por LIP */}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+        <div className="rounded-lg border border-border bg-card p-3">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground"><CheckCircle2 className="h-4 w-4 text-emerald-600" /> Aptos</div>
+          <div className="mt-1 text-2xl font-bold text-emerald-600">{resumen.aptos}</div>
+        </div>
+        <div className="rounded-lg border border-border bg-card p-3">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground"><XCircle className="h-4 w-4 text-red-600" /> No aptos</div>
+          <div className="mt-1 text-2xl font-bold text-red-600">{resumen.noAptos}</div>
+        </div>
+        <div className="rounded-lg border border-border bg-card p-3">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground"><Clock className="h-4 w-4 text-amber-500" /> Pendientes</div>
+          <div className="mt-1 text-2xl font-bold text-amber-500">{resumen.pendientes}</div>
+        </div>
+        <div className="rounded-lg border border-border bg-card p-3">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground"><Gavel className="h-4 w-4 text-primary" /> Tasa aprobación</div>
+          <div className="mt-1 text-2xl font-bold text-foreground">{resumen.tasaAprobacion}%</div>
+        </div>
+        <div className="rounded-lg border border-border bg-card p-3">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground"><Wallet className="h-4 w-4 text-red-600" /> Costo negativos</div>
+          <div className="mt-1 text-2xl font-bold text-red-600">{COP(resumen.costoNegativos)}</div>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative max-w-sm flex-1">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Buscar por nombre o cédula..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-8"
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <Label htmlFor="costoDef" className="text-xs text-muted-foreground whitespace-nowrap">
+            Costo x examen (config)
+          </Label>
+          <Input
+            id="costoDef"
+            type="number"
+            min={0}
+            value={costoDefault}
+            onChange={(e) => setCostoDefaultState(Number(e.target.value) || 0)}
+            className="w-28"
+          />
+          <Button variant="outline" size="sm" onClick={guardarCostoDefault}>
+            Guardar
+          </Button>
+        </div>
       </div>
 
       <div className="rounded-lg border border-border">
@@ -325,7 +519,8 @@ export default function ExamenesMedicos() {
               <TableHead>Empleado</TableHead>
               <TableHead>Cédula</TableHead>
               <TableHead>Tipo</TableHead>
-              <TableHead>Resultado</TableHead>
+              <TableHead>Aptitud</TableHead>
+              <TableHead className="text-right">Costo</TableHead>
               <TableHead>Fecha</TableHead>
               <TableHead>Documento</TableHead>
               <TableHead className="text-right">Acciones</TableHead>
@@ -334,23 +529,29 @@ export default function ExamenesMedicos() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
+                <TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
                   <Loader2 className="mx-auto h-5 w-5 animate-spin" />
                 </TableCell>
               </TableRow>
             ) : filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
+                <TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
                   No hay exámenes médicos registrados.
                 </TableCell>
               </TableRow>
             ) : (
               filtered.map((e) => (
                 <TableRow key={e.id}>
-                  <TableCell className="font-medium">{e.nombre}</TableCell>
+                  <TableCell className="font-medium">
+                    {e.nombre}
+                    {e.promovido ? (
+                      <span className="ml-2 text-[10px] text-emerald-600">✓ en Head Count</span>
+                    ) : null}
+                  </TableCell>
                   <TableCell className="text-sm text-muted-foreground">{e.cedula || "—"}</TableCell>
                   <TableCell className="text-sm">{e.tipo_examen || "—"}</TableCell>
-                  <TableCell className="text-sm">{e.resultado || "—"}</TableCell>
+                  <TableCell><AptitudBadge apto={e.apto ?? null} /></TableCell>
+                  <TableCell className="text-right text-sm tabular-nums">{e.costo ? COP(e.costo) : "—"}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">{e.fecha_examen || "—"}</TableCell>
                   <TableCell>
                     <div className="flex gap-1">
@@ -367,7 +568,16 @@ export default function ExamenesMedicos() {
                     </div>
                   </TableCell>
                   <TableCell>
-                    <div className="flex justify-end">
+                    <div className="flex justify-end gap-1">
+                      {e.apto === null || e.apto === undefined ? (
+                        <Button variant="default" size="sm" onClick={() => abrirDictamen(e)} title="Dictaminar apto / no apto">
+                          <Gavel className="mr-1 h-4 w-4" /> Dictaminar
+                        </Button>
+                      ) : (
+                        <Button variant="ghost" size="sm" onClick={() => abrirDictamen(e)} title="Cambiar dictamen">
+                          <Gavel className="h-4 w-4" />
+                        </Button>
+                      )}
                       <Button
                         variant="destructive"
                         size="sm"
@@ -384,6 +594,52 @@ export default function ExamenesMedicos() {
           </TableBody>
         </Table>
       </div>
+
+      {/* Dialogo de dictamen (apto / no apto) para exámenes cargados */}
+      <Dialog open={!!dictamen} onOpenChange={(o) => !o && setDictamen(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Dictamen del examen médico</DialogTitle>
+          </DialogHeader>
+          {dictamen && (
+            <div className="space-y-4">
+              <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
+                <span className="font-medium text-foreground">{dictamen.nombre}</span>
+                <span className="text-muted-foreground"> · {dictamen.cedula || "sin cédula"}</span>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Resultado <span className="text-destructive">*</span></Label>
+                <Select value={dictamenApto} onValueChange={setDictamenApto}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecciona apto / no apto" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Apto">Apto — habilita contrato y sube a Head Count</SelectItem>
+                    <SelectItem value="No apto">No apto — rechaza y bloquea contrato</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="dcosto">Costo del examen</Label>
+                <Input id="dcosto" type="number" min={0} value={dictamenCosto} onChange={(e) => setDictamenCosto(e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="dobs">Observaciones</Label>
+                <Textarea id="dobs" rows={2} value={dictamenObs} onChange={(e) => setDictamenObs(e.target.value)} />
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
+                <Button variant="outline" onClick={() => setDictamen(null)} disabled={guardandoDictamen}>
+                  Cancelar
+                </Button>
+                <Button onClick={guardarDictamen} disabled={guardandoDictamen}>
+                  {guardandoDictamen && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Guardar dictamen
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

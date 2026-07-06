@@ -18,6 +18,12 @@ export interface ExamenMedico {
   archivo_url: string
   archivo_nombre: string
   created_at: string
+  // Aptitud, costo y trazabilidad (ver scripts/create_examenes_aptitud.sql).
+  apto: boolean | null // null=pendiente · true=apto · false=no apto
+  costo: number | null
+  promovido: boolean | null
+  fuente: string | null
+  vigente: boolean | null
 }
 
 // Lista los examenes medicos de la empresa seleccionada (o la de sesion).
@@ -37,6 +43,299 @@ export async function getExamenesMedicos(selectedEmpresaId?: number | null) {
   }
 
   return { success: true, data: (data || []) as ExamenMedico[] }
+}
+
+// Resumen de aptitud para KPIs: aprobados vs reprobados + costo asumido por LIP
+// en los exámenes con resultado NEGATIVO (no apto). Solo cuenta el examen VIGENTE
+// por cédula para no inflar (el histórico se conserva pero no se recuenta).
+export async function getResumenExamenes(selectedEmpresaId?: number | null) {
+  const supabase = await createClient()
+  const empresaId = selectedEmpresaId || (await getCurrentEmpresaIdForInsert())
+
+  const { data, error } = await supabase
+    .from("examenes_medicos")
+    .select("cedula,nombre,apto,costo,vigente,created_at")
+    .eq("idempresa", empresaId)
+    .order("created_at", { ascending: false })
+
+  if (error) {
+    console.error("[v0] Error resumen examenes:", error)
+    return {
+      success: false,
+      data: { total: 0, aptos: 0, noAptos: 0, pendientes: 0, costoNegativos: 0, costoTotal: 0, tasaAprobacion: 0 },
+    }
+  }
+
+  const rows = (data || []) as any[]
+  // Vigente por cédula = el más reciente (ya viene ordenado desc). Los sin cédula cuentan sueltos.
+  const vistoCedula = new Set<string>()
+  let aptos = 0, noAptos = 0, pendientes = 0, costoNegativos = 0, costoTotal = 0
+  for (const r of rows) {
+    const ced = (r.cedula || "").trim()
+    if (ced) {
+      if (vistoCedula.has(ced)) continue // ya contamos el vigente de esta cédula
+      vistoCedula.add(ced)
+    }
+    const c = Number(r.costo) || 0
+    costoTotal += c
+    if (r.apto === true) aptos++
+    else if (r.apto === false) { noAptos++; costoNegativos += c }
+    else pendientes++
+  }
+  const decididos = aptos + noAptos
+  const tasaAprobacion = decididos > 0 ? Math.round((aptos / decididos) * 1000) / 10 : 0
+  return {
+    success: true,
+    data: {
+      total: aptos + noAptos + pendientes,
+      aptos,
+      noAptos,
+      pendientes,
+      costoNegativos: Math.round(costoNegativos),
+      costoTotal: Math.round(costoTotal),
+      tasaAprobacion,
+    },
+  }
+}
+
+// Costo por defecto del examen (configurable por empresa en rrhh_config).
+export async function getCostoExamenDefault(selectedEmpresaId?: number | null): Promise<number> {
+  const supabase = await createClient()
+  const empresaId = selectedEmpresaId || (await getCurrentEmpresaIdForInsert())
+  const { data } = await supabase
+    .from("rrhh_config")
+    .select("costo_examen_default")
+    .eq("idempresa", empresaId)
+    .maybeSingle()
+  return Number((data as any)?.costo_examen_default) || 0
+}
+
+// Guarda el costo por defecto del examen para la empresa (upsert).
+export async function setCostoExamenDefault(valor: number, selectedEmpresaId?: number | null) {
+  const admin: any = await getSupabaseAdmin()
+  const empresaId = selectedEmpresaId || (await getCurrentEmpresaIdForInsert())
+  if (!empresaId) return { success: false, message: "Sin empresa seleccionada." }
+  const { error } = await admin
+    .from("rrhh_config")
+    .upsert({ idempresa: empresaId, costo_examen_default: Number(valor) || 0, updated_at: new Date().toISOString() }, { onConflict: "idempresa" })
+  if (error) return { success: false, message: error.message }
+  return { success: true }
+}
+
+// ---------------------------------------------------------------------
+// REGISTRAR CONCEPTO DE APTITUD — es el filtro de contratación.
+//   apto=true  → hoja de vida "aceptado" + se PROMUEVE a Head Count (sube todos
+//                los documentos del candidato por cédula).
+//   apto=false → hoja de vida "rechazado"; NO entra a Head Count; queda el costo
+//                del examen negativo para el reporte de costos asumidos por LIP.
+// El histórico se conserva: al fijar un examen vigente, los anteriores de la misma
+// cédula pasan a vigente=false (los resultados persisten en el tiempo).
+// ---------------------------------------------------------------------
+export async function registrarConceptoExamen(payload: {
+  id: string
+  apto: boolean
+  costo?: number | null
+  resultado?: string | null
+  tipo_examen?: string | null
+  fecha_examen?: string | null
+  observaciones?: string | null
+}) {
+  const admin: any = await getSupabaseAdmin()
+  const { id, apto } = payload
+  if (!id) return { success: false, message: "Falta el examen." }
+
+  const { data: ex, error: eGet } = await admin
+    .from("examenes_medicos")
+    .select("id,idempresa,cedula,nombre,hoja_vida_id")
+    .eq("id", id)
+    .maybeSingle()
+  if (eGet || !ex) return { success: false, message: eGet?.message || "Examen no encontrado." }
+
+  const empresaId = ex.idempresa as number
+  const cedula = (ex.cedula || "").trim()
+
+  // El vigente es este; los otros de la misma cédula dejan de ser vigentes (histórico).
+  if (cedula) {
+    await admin.from("examenes_medicos").update({ vigente: false }).eq("idempresa", empresaId).eq("cedula", cedula)
+  }
+
+  const upd: Record<string, any> = {
+    apto,
+    resultado: payload.resultado?.trim() || (apto ? "Apto" : "No apto"),
+    vigente: true,
+  }
+  if (payload.costo != null) upd.costo = Number(payload.costo) || 0
+  if (payload.tipo_examen != null) upd.tipo_examen = payload.tipo_examen.trim() || null
+  if (payload.fecha_examen != null) upd.fecha_examen = payload.fecha_examen || null
+  if (payload.observaciones != null) upd.observaciones = payload.observaciones.trim() || null
+
+  const { error: eUpd } = await admin.from("examenes_medicos").update(upd).eq("id", id)
+  if (eUpd) return { success: false, message: eUpd.message }
+
+  // Retroalimentar Hoja de Vida por cédula (aceptado / rechazado).
+  let promovido = false
+  let headcountMsg = ""
+  if (cedula) {
+    await admin
+      .from("hojas_de_vida")
+      .update({ estado: apto ? "aceptado" : "rechazado" })
+      .eq("idempresa", empresaId)
+      .eq("cedula", cedula)
+
+    if (apto) {
+      const prom = await promoverAHeadCount(cedula, empresaId)
+      promovido = prom.success
+      headcountMsg = prom.message || ""
+      if (prom.success) await admin.from("examenes_medicos").update({ promovido: true }).eq("id", id)
+    }
+  }
+
+  return {
+    success: true,
+    apto,
+    promovido,
+    message: apto
+      ? (promovido ? `Apto — documentos subidos a Head Count. ${headcountMsg}` : "Apto registrado.")
+      : "No apto — hoja de vida rechazada, contratación bloqueada.",
+  }
+}
+
+// ---------------------------------------------------------------------
+// PROMOVER A HEAD COUNT — cuando el examen es APTO, sube al maestro (headcount)
+// todos los documentos del candidato reunidos por cédula: hoja de vida,
+// antecedentes y examen médico, más los datos básicos (nombre/cargo/correo/celular).
+// Idempotente por (idempresa, identificación): si ya está, completa lo que falte;
+// si no, lo crea como personal activo. NO toca a los antiguos ya vinculados.
+// ---------------------------------------------------------------------
+export async function promoverAHeadCount(cedula: string, empresaId: number) {
+  const admin: any = await getSupabaseAdmin()
+  const ced = (cedula || "").trim()
+  if (!ced || !empresaId) return { success: false, message: "Falta cédula o empresa." }
+
+  // Reunir el expediente del candidato por cédula.
+  const [{ data: hv }, { data: ant }, { data: exs }] = await Promise.all([
+    admin.from("hojas_de_vida").select("nombre_candidato,cargo_aspirado,correo,telefono,archivo_url").eq("idempresa", empresaId).eq("cedula", ced).order("created_at", { ascending: false }).limit(1),
+    admin.from("antecedentes").select("nombre,policia_url").eq("idempresa", empresaId).eq("cedula", ced).order("created_at", { ascending: false }).limit(1),
+    admin.from("examenes_medicos").select("nombre,archivo_url,apto,created_at").eq("idempresa", empresaId).eq("cedula", ced).eq("apto", true).order("created_at", { ascending: false }).limit(1),
+  ])
+  const hoja = (hv || [])[0]
+  const antec = (ant || [])[0]
+  const examen = (exs || [])[0]
+  const nombre = hoja?.nombre_candidato || antec?.nombre || examen?.nombre || null
+
+  // Documentos disponibles → columnas de headcount.
+  const docs: Record<string, any> = {}
+  if (hoja?.archivo_url) docs.hoja_de_vida = hoja.archivo_url
+  if (antec?.policia_url) docs.antecedentes = antec.policia_url
+  if (examen?.archivo_url) docs.examenes_ing = examen.archivo_url
+
+  const { data: existente } = await admin
+    .from("headcount")
+    .select("id,hoja_de_vida,antecedentes,examenes_ing")
+    .eq("idempresa", empresaId)
+    .eq("identificacion", ced)
+    .maybeSingle()
+
+  if (existente) {
+    // Completar solo lo que falte (no pisar documentos ya cargados).
+    const patch: Record<string, any> = {}
+    if (!existente.hoja_de_vida && docs.hoja_de_vida) patch.hoja_de_vida = docs.hoja_de_vida
+    if (!existente.antecedentes && docs.antecedentes) patch.antecedentes = docs.antecedentes
+    if (!existente.examenes_ing && docs.examenes_ing) patch.examenes_ing = docs.examenes_ing
+    if (Object.keys(patch).length) {
+      const { error } = await admin.from("headcount").update(patch).eq("id", existente.id)
+      if (error) return { success: false, message: error.message }
+      return { success: true, message: `Expediente completado en Head Count (${Object.keys(patch).length} doc).` }
+    }
+    return { success: true, message: "Ya estaba en Head Count con su expediente." }
+  }
+
+  // Crear el registro en Head Count (nuevo vinculado).
+  const nuevo: Record<string, any> = {
+    idempresa: empresaId,
+    identificacion: ced,
+    nombre: nombre || ced,
+    estado: "activo",
+    cargo: hoja?.cargo_aspirado || null,
+    correo: hoja?.correo || null,
+    celular: hoja?.telefono || null,
+    ...docs,
+  }
+  const { error } = await admin.from("headcount").insert(nuevo)
+  if (error) return { success: false, message: error.message }
+  return { success: true, message: "Persona vinculada a Head Count con su expediente." }
+}
+
+// ---------------------------------------------------------------------
+// APTITUD POR CÉDULA — para el gate de contratación. Devuelve el estado del
+// examen VIGENTE de la persona: 'apto' | 'no_apto' | 'pendiente' | 'sin_examen'.
+// ---------------------------------------------------------------------
+export async function getAptitudPorCedula(cedula: string, selectedEmpresaId?: number | null) {
+  const supabase = await createClient()
+  const empresaId = selectedEmpresaId || (await getCurrentEmpresaIdForInsert())
+  const ced = (cedula || "").trim()
+  if (!ced) return "sin_examen" as const
+  const { data } = await supabase
+    .from("examenes_medicos")
+    .select("apto,vigente,created_at")
+    .eq("idempresa", empresaId)
+    .eq("cedula", ced)
+    .order("created_at", { ascending: false })
+    .limit(1)
+  const row = (data || [])[0] as any
+  if (!row) return "sin_examen" as const
+  if (row.apto === true) return "apto" as const
+  if (row.apto === false) return "no_apto" as const
+  return "pendiente" as const
+}
+
+// ---------------------------------------------------------------------
+// IMPORTAR HISTÓRICO desde Head Count — los antiguos ya vinculados tienen su
+// examen de ingreso en headcount.examenes_ing. Esto lo trae al submódulo como
+// examen APTO histórico (fuente 'headcount'), sin re-subir, para que el record
+// de aptitud quede completo. Idempotente por cédula (no duplica).
+// ---------------------------------------------------------------------
+export async function importarExamenesDesdeHeadcount(selectedEmpresaId?: number | null) {
+  const admin: any = await getSupabaseAdmin()
+  const empresaId = selectedEmpresaId || (await getCurrentEmpresaIdForInsert())
+  if (!empresaId) return { success: false, creados: 0, message: "Sin empresa seleccionada." }
+
+  const { data: hc, error } = await admin
+    .from("headcount")
+    .select("identificacion,nombre,examenes_ing")
+    .eq("idempresa", empresaId)
+    .not("examenes_ing", "is", null)
+  if (error) return { success: false, creados: 0, message: error.message }
+
+  const { data: exist } = await admin.from("examenes_medicos").select("cedula").eq("idempresa", empresaId).eq("fuente", "headcount")
+  const yaImportadas = new Set<string>()
+  for (const e of exist ?? []) if (e.cedula) yaImportadas.add(String(e.cedula).trim())
+
+  const nuevas: any[] = []
+  for (const c of hc ?? []) {
+    const url = c.examenes_ing as string
+    const ced = c.identificacion ? String(c.identificacion).trim() : ""
+    if (!url || !ced || yaImportadas.has(ced)) continue
+    nuevas.push({
+      idempresa: empresaId,
+      cedula: ced,
+      nombre: c.nombre || ced,
+      tipo_examen: "Ingreso",
+      resultado: "Apto",
+      apto: true,
+      promovido: true, // ya está en Head Count
+      fuente: "headcount",
+      vigente: true,
+      costo: 0,
+      archivo_url: url,
+      archivo_nombre: "Examen de ingreso (Head Count)",
+    })
+  }
+  if (nuevas.length) {
+    const { error: eIns } = await admin.from("examenes_medicos").insert(nuevas)
+    if (eIns) return { success: false, creados: 0, message: eIns.message }
+  }
+  return { success: true, creados: nuevas.length }
 }
 
 // Elimina un examen medico (archivo en Storage + registro).
