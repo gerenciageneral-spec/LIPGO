@@ -185,11 +185,10 @@ export function ModulesView({ groupKey, onBack, onSelectModule }: ModulesViewPro
         </span>
         <div className="min-w-0">
           <h1 className="text-xl font-bold leading-tight text-foreground sm:text-2xl">{group.title}</h1>
-          <p className="text-[13px] text-muted-foreground">Selecciona un módulo para continuar</p>
+          <p className="text-[13px] text-muted-foreground">
+            Selecciona un módulo para continuar · {totalModules} módulo{totalModules !== 1 ? "s" : ""}
+          </p>
         </div>
-        <span className="ml-auto flex-none rounded-full border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground">
-          {totalModules} módulo{totalModules !== 1 ? "s" : ""}
-        </span>
       </div>
 
       {/* Atención del día — tareas en riesgo/urgentes del área (KPIs bajo meta) */}

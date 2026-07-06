@@ -44,7 +44,7 @@ export function LipbotDock({
   return (
     <>
       <style>{`
-        .lipbot-fab{ position:fixed; right:20px; bottom:84px; z-index:60; display:flex; align-items:center; gap:9px;
+        .lipbot-fab{ position:fixed; right:18px; top:12px; z-index:60; display:flex; align-items:center; gap:9px;
           padding:11px 16px 11px 12px; border-radius:999px; color:#04222a; font-weight:800; font-size:13.5px;
           background:linear-gradient(135deg,#3fe0ee,#00c2dc); border:0; cursor:pointer;
           box-shadow:0 10px 30px rgba(0,194,220,.45), 0 4px 14px rgba(0,0,0,.3); transition:transform .15s, box-shadow .15s; }
@@ -58,16 +58,16 @@ export function LipbotDock({
         .lipbot-badge{ position:absolute; top:-6px; right:-4px; min-width:20px; height:20px; padding:0 5px; border-radius:999px;
           background:#ff5a5f; color:#fff; font-size:11px; font-weight:800; display:flex; align-items:center; justify-content:center;
           border:2px solid #eafcff; box-shadow:0 2px 8px rgba(0,0,0,.35); }
-        .lipbot-panel{ position:fixed; right:20px; bottom:84px; z-index:61; width:min(384px, calc(100vw - 32px));
-          max-height:min(80vh, 660px); display:flex; flex-direction:column; animation:lipbot-pop .18s ease-out; }
-        @keyframes lipbot-pop{ from{ opacity:0; transform:translateY(12px) scale(.98) } to{ opacity:1; transform:none } }
+        .lipbot-panel{ position:fixed; right:18px; top:12px; z-index:61; width:min(384px, calc(100vw - 32px));
+          max-height:min(86vh, 680px); display:flex; flex-direction:column; animation:lipbot-pop .18s ease-out; }
+        @keyframes lipbot-pop{ from{ opacity:0; transform:translateY(-10px) scale(.98) } to{ opacity:1; transform:none } }
         .lipbot-closebar{ display:flex; justify-content:flex-end; margin-bottom:6px; }
         .lipbot-cx{ width:30px; height:30px; border-radius:10px; display:flex; align-items:center; justify-content:center;
           background:rgba(10,26,48,.9); color:#cfe6f0; border:1px solid rgba(150,210,240,.28); cursor:pointer; box-shadow:0 6px 16px rgba(0,0,0,.3); }
         .lipbot-cx:hover{ background:rgba(16,44,74,.95); }
         .lipbot-scroll{ overflow-y:auto; }
         @media (prefers-reduced-motion:reduce){ .lipbot-fab::before{ animation:none } .lipbot-panel{ animation:none } }
-        @media (min-width:768px){ .lipbot-fab, .lipbot-panel{ bottom:20px; } }
+        @media (min-width:768px){ .lipbot-fab, .lipbot-panel{ top:16px; right:24px; } }
       `}</style>
 
       {!open ? (
