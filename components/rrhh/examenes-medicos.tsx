@@ -334,10 +334,12 @@ export default function ExamenesMedicos() {
     const base = examenes.filter(
       (e) => (estadoFiltro === "todos" || (e.estado_persona || "") === estadoFiltro) && e.vigente !== false,
     )
-    let aptos = 0, noAptos = 0, pendientes = 0, costoNegativos = 0
+    let aptos = 0, noAptos = 0, pendientes = 0, costoNegativos = 0, costoTotal = 0
     for (const e of base) {
+      const c = Number(e.costo) || 0
+      costoTotal += c // el examen cuesta lo mismo apruebe o no: es costo de la empresa
       if (e.apto === true) aptos++
-      else if (e.apto === false) { noAptos++; costoNegativos += Number(e.costo) || 0 }
+      else if (e.apto === false) { noAptos++; costoNegativos += c }
       else pendientes++
     }
     const decididos = aptos + noAptos
@@ -347,6 +349,7 @@ export default function ExamenesMedicos() {
       noAptos,
       pendientes,
       costoNegativos: Math.round(costoNegativos),
+      costoTotal: Math.round(costoTotal),
       tasaAprobacion: decididos > 0 ? Math.round((aptos / decididos) * 1000) / 10 : 0,
     }
   }, [examenes, estadoFiltro])
@@ -558,8 +561,9 @@ export default function ExamenesMedicos() {
           <div className="mt-1 text-2xl font-bold text-foreground">{kpis.tasaAprobacion}%</div>
         </div>
         <div className="rounded-lg border border-border bg-card p-3">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground"><Wallet className="h-4 w-4 text-red-600" /> Costo negativos</div>
-          <div className="mt-1 text-2xl font-bold text-red-600">{COP(kpis.costoNegativos)}</div>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground"><Wallet className="h-4 w-4 text-foreground" /> Costo exámenes</div>
+          <div className="mt-1 text-2xl font-bold text-foreground">{COP(kpis.costoTotal)}</div>
+          <div className="mt-0.5 text-[11px] text-red-600">No aptos: {COP(kpis.costoNegativos)}</div>
         </div>
       </div>
 
