@@ -31,7 +31,9 @@ export interface ExamenMedico {
 
 // Lista los examenes medicos de la empresa seleccionada (o la de sesion).
 export async function getExamenesMedicos(selectedEmpresaId?: number | null) {
-  const supabase = await createClient()
+  // Lectura con service role (server action): la tabla es nueva y la app usa el
+  // cliente de servidor para verla, sin depender de permisos/políticas de la BD.
+  const supabase: any = await getSupabaseAdmin()
   const empresaId = selectedEmpresaId || (await getCurrentEmpresaIdForInsert())
 
   const { data, error } = await supabase
@@ -67,7 +69,7 @@ export async function getExamenesMedicos(selectedEmpresaId?: number | null) {
 // en los exámenes con resultado NEGATIVO (no apto). Solo cuenta el examen VIGENTE
 // por cédula para no inflar (el histórico se conserva pero no se recuenta).
 export async function getResumenExamenes(selectedEmpresaId?: number | null) {
-  const supabase = await createClient()
+  const supabase: any = await getSupabaseAdmin()
   const empresaId = selectedEmpresaId || (await getCurrentEmpresaIdForInsert())
 
   const { data, error } = await supabase
@@ -118,7 +120,7 @@ export async function getResumenExamenes(selectedEmpresaId?: number | null) {
 
 // Costo por defecto del examen (configurable por empresa en rrhh_config).
 export async function getCostoExamenDefault(selectedEmpresaId?: number | null): Promise<number> {
-  const supabase = await createClient()
+  const supabase: any = await getSupabaseAdmin()
   const empresaId = selectedEmpresaId || (await getCurrentEmpresaIdForInsert())
   const { data } = await supabase
     .from("rrhh_config")
@@ -289,7 +291,7 @@ export async function promoverAHeadCount(cedula: string, empresaId: number) {
 // examen VIGENTE de la persona: 'apto' | 'no_apto' | 'pendiente' | 'sin_examen'.
 // ---------------------------------------------------------------------
 export async function getAptitudPorCedula(cedula: string, selectedEmpresaId?: number | null) {
-  const supabase = await createClient()
+  const supabase: any = await getSupabaseAdmin()
   const empresaId = selectedEmpresaId || (await getCurrentEmpresaIdForInsert())
   const ced = (cedula || "").trim()
   if (!ced) return "sin_examen" as const

@@ -324,7 +324,8 @@ export async function createContrato(contrato: any) {
   try {
     const ced = String(contrato.colaborador_id || "").trim()
     if (ced) {
-      const { data: ex } = await supabase
+      const admin: any = await getSupabaseAdmin()
+      const { data: ex } = await admin
         .from("examenes_medicos")
         .select("apto,nombre")
         .eq("cedula", ced)
