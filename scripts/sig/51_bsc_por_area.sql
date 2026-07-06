@@ -15,6 +15,8 @@ update sig_indicadores set calculo_auto = 'gh_formacion'       where idempresa =
 update sig_indicadores set calculo_auto = 'sig_implementacion' where idempresa = 100 and codigo = 'IND-G-04';
 -- Revisión módulo a módulo: cumplimiento legal en vivo (matriz de requisitos legales).
 update sig_indicadores set calculo_auto = 'legal_cumplimiento' where idempresa = 100 and codigo = 'IND-DE-01';
+-- ERI físico del almacén: automático por el CRUCE MENSUAL (libro vs stock vivo), no manual.
+update sig_indicadores set calculo_auto = 'inv_eri' where idempresa = 100 and codigo = 'IND-AI-03';
 
 -- 2) RE-ETIQUETAR áreas: GH y SST como áreas separadas (como en el menú).
 update sig_indicadores set area = 'Gestión Humana'

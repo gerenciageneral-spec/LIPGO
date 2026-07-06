@@ -1716,6 +1716,36 @@ export async function getIndicadoresValores(
       lipgoRegistros = (invC || 0) + totOrdenes
     } catch {}
 
+    // --- ERI: exactitud del inventario físico (Almacén) — AUTOMÁTICO por el CRUCE MENSUAL ---
+    // No es un conteo manual: sale de conciliar el libro (ingresos por aprobación de
+    // producción + descargue/devolución; salidas SOLO por órdenes de cargue + reproceso)
+    // contra el stock vivo (saldoinvdetalle = verdad física). El faltante de kardex frente
+    // al físico es la inexactitud → ERI = 1 − |faltante| / físico. Cuadra 100% si no hay
+    // diferencias sin explicar. Reutiliza getConciliacionMensualInventario (una por sitio).
+    let invEri = 100
+    let eriBase = "sin lotes para conciliar"
+    try {
+      let exactosTot = 0
+      let evaluadosTot = 0
+      let lotesRevisarTot = 0
+      for (const cli of clientes) {
+        const r = await getConciliacionMensualInventario(cli, null)
+        if (r.success && r.data?.resumen) {
+          exactosTot += Number(r.data.resumen.lotesExactos) || 0
+          evaluadosTot += Number(r.data.resumen.lotesEvaluados) || 0
+          lotesRevisarTot += Number(r.data.resumen.lotesRevisar) || 0
+        }
+      }
+      if (evaluadosTot > 0) {
+        // ERI consolidado = Σ lotes exactos / Σ lotes evaluados (no promedio de sitios).
+        invEri = Math.round((exactosTot / evaluadosTot) * 1000) / 10
+        const desc = evaluadosTot - exactosTot
+        eriBase = desc > 0
+          ? `${exactosTot}/${evaluadosTot} lotes exactos · ${desc} con diferencia (${lotesRevisarTot} a revisar)`
+          : `${exactosTot}/${evaluadosTot} lotes exactos`
+      }
+    } catch {}
+
     const valores: Record<string, SigIndicadorValor> = {
       // Cumplimiento SG-SST (Resolución 0312) — avance real de los 60 estándares.
       sgsst_0312: { valor: Math.round(sgsst0312 * 10) / 10, base: "Autoevaluación 0312 (Art. 27)" },
@@ -1737,6 +1767,8 @@ export async function getIndicadoresValores(
       vehiculos_atendidos: { valor: vehiculos, base: "" },
       inv_exactitud: { valor: pct(aprobInv, totInv), base: `${aprobInv}/${totInv}` },
       inv_rechazos: { valor: rechInv, base: "" },
+      // ERI físico del almacén — automático por el cruce mensual (libro vs stock vivo).
+      inv_eri: { valor: invEri, base: eriBase },
       gh_activos: { valor: activos, base: "" },
       sat_cliente: { valor: satCli.v, base: `${satCli.n} encuestas` },
       sat_conductor: { valor: satCon.v, base: `${satCon.n} encuestas` },
@@ -1912,10 +1944,27 @@ export async function getPanelInventarioLIP(
       const { data: cuad } = await supabase.from("sig_inventario_cuadre").select("items,items_con_diferencia").eq("activo", true).in("proyecto_id", clientes)
       for (const r of cuad ?? []) { itemsContados += Number(r.items) || 0; itemsConDif += Number(r.items_con_diferencia) || 0 }
     } catch { /* tablas de cuadre aún no creadas */ }
-    // ERI: si hay conteos, % de ítems sin diferencia; si no, se infiere por faltante/stock.
-    const eri = itemsContados > 0
-      ? Math.round((1 - itemsConDif / itemsContados) * 1000) / 10
-      : (saldoFisico > 0 ? Math.round((1 - faltante / saldoFisico) * 1000) / 10 : 100)
+    // ERI: 1) si hay conteos físicos reales, % de ítems sin diferencia (máxima fidelidad);
+    //      2) si no, ERI AUTOMÁTICO del CRUCE MENSUAL (lotes exactos / evaluados) — misma
+    //         verdad que la BSC (IND-AI-03), no un 100% inflado por tabla de cuadre vacía.
+    let eri: number
+    if (itemsContados > 0) {
+      eri = Math.round((1 - itemsConDif / itemsContados) * 1000) / 10
+    } else {
+      let exCruce = 0, evCruce = 0
+      try {
+        for (const cli of clientes) {
+          const rc = await getConciliacionMensualInventario(cli, null)
+          if (rc.success && rc.data?.resumen) {
+            exCruce += Number(rc.data.resumen.lotesExactos) || 0
+            evCruce += Number(rc.data.resumen.lotesEvaluados) || 0
+          }
+        }
+      } catch { /* si el cruce falla, se usa la inferencia por faltante */ }
+      eri = evCruce > 0
+        ? Math.round((exCruce / evCruce) * 1000) / 10
+        : (saldoFisico > 0 ? Math.round((1 - faltante / saldoFisico) * 1000) / 10 : 100)
+    }
 
     const NOMBRE_MES = ["", "Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
     const porMes = Object.entries(meses)
@@ -3735,6 +3784,8 @@ export async function getConciliacionMensualInventario(
     const keys = new Set([...Object.keys(book), ...Object.keys(saldoLote)])
     let sobrante = 0
     let faltante = 0
+    let lotesEvaluados = 0 // (producto|lote) con actividad — universo del ERI
+    let lotesExactos = 0   // lotes cuyo libro cuadra EXACTO con el físico (d = 0)
     const difMes: Record<string, number> = {} // diferencia física atribuida por mes del lote
     const revisar: any[] = []
     for (const k of keys) {
@@ -3742,12 +3793,17 @@ export async function getConciliacionMensualInventario(
       // registrado sobre un lote ya en 0) es un artefacto → se pisa en 0, igual que la vista.
       const libroLote = Math.max(0, Math.round(book[k] || 0))
       const d = libroLote - Math.round(saldoLote[k] || 0)
+      lotesEvaluados++
+      if (d === 0) lotesExactos++
       if (d > 0) sobrante += d
       else faltante += d
       const lm = loteMes(loteDe[k] || "")
       if (lm) difMes[lm] = (difMes[lm] || 0) + d
       if (Math.abs(d) > 100) revisar.push({ producto: nombre[k] || "?", lote: loteDe[k] || "", libro: libroLote, saldo: Math.round(saldoLote[k] || 0), diferencia: d })
     }
+    // ERI (Exactitud del Registro de Inventario) = lotes exactos / lotes evaluados.
+    // Es la exactitud física estándar de la norma: automática por el cruce mensual.
+    const eri = lotesEvaluados > 0 ? Math.round((lotesExactos / lotesEvaluados) * 1000) / 10 : 100
     revisar.sort((a, b) => Math.abs(b.diferencia) - Math.abs(a.diferencia))
 
     // ============================================================
@@ -3820,6 +3876,9 @@ export async function getConciliacionMensualInventario(
       sobranteKardex: Math.round(sobrante),
       faltanteKardex: Math.round(Math.abs(faltante)),
       lotesRevisar: revisar.length,
+      lotesEvaluados,   // universo del ERI (lotes con actividad)
+      lotesExactos,     // lotes que cuadran exacto libro-vs-físico
+      eri,              // Exactitud del Registro de Inventario (%)
     }
 
     let cierres: SigInventarioCierreMes[] = []

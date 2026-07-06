@@ -379,7 +379,7 @@ export function PanelInventarioLIP() {
 
           {/* KPIs de gestión de almacén (alto nivel) */}
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-            <KPI label="ERI — Exactitud de registro" valor={k.eri} unidad="%" Icon={Boxes} color={colorExact(k.eri)} sub="físico vs libro (conteo)" />
+            <KPI label="ERI — Exactitud de registro" valor={k.eri} unidad="%" Icon={Boxes} color={colorExact(k.eri)} sub="lotes exactos / evaluados (cruce)" />
             <KPI label="Rotación de inventario" valor={k.rotacion} unidad="x" Icon={RefreshCw} color={SST_TOKENS.navy} sub="despacho / stock" />
             <KPI label="Días de inventario" valor={fmt(k.diasInventario)} unidad="días" Icon={CalendarClock} color={k.diasInventario > 60 ? SST_TOKENS.warn : SST_TOKENS.ok} sub="cobertura de stock" />
             <KPI label="Stock (libro)" valor={fmt(k.saldoFisico)} unidad="und" Icon={Boxes} color={SST_TOKENS.navy} sub={`${fmt(k.skusConStock)} SKUs con stock`} />
