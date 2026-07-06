@@ -66,3 +66,11 @@ create table if not exists public.rrhh_config (
 insert into public.rrhh_config (idempresa, costo_examen_default) values
   (100, 80000), (1, 80000), (2, 80000), (3, 80000), (4, 80000)
 on conflict (idempresa) do nothing;
+
+-- 5) PERMISOS: la app usa el rol anon/authenticated (como el resto de tablas
+--    operativas). Sin esto las tablas nuevas quedan invisibles para la app aunque
+--    tengan datos. Se replica el patrón del resto del esquema (sin RLS).
+alter table public.examenes_medicos disable row level security;
+alter table public.rrhh_config disable row level security;
+grant all on public.examenes_medicos to anon, authenticated, service_role;
+grant all on public.rrhh_config to anon, authenticated, service_role;

@@ -24,6 +24,9 @@ export interface ExamenMedico {
   promovido: boolean | null
   fuente: string | null
   vigente: boolean | null
+  // Estado de la persona en Head Count (enriquecido por cédula): "Activo" | "Inactivo"
+  // | null (candidato aún no vinculado). No se persiste: se resuelve en vivo.
+  estado_persona?: string | null
 }
 
 // Lista los examenes medicos de la empresa seleccionada (o la de sesion).
@@ -42,7 +45,22 @@ export async function getExamenesMedicos(selectedEmpresaId?: number | null) {
     return { success: false, data: [] as ExamenMedico[], message: error.message }
   }
 
-  return { success: true, data: (data || []) as ExamenMedico[] }
+  // Enriquecer con el estado de la persona en Head Count (Activo/Inactivo) por cédula.
+  const { data: hc } = await supabase
+    .from("headcount")
+    .select("identificacion,estado")
+    .eq("idempresa", empresaId)
+  const estadoPorCedula = new Map<string, string>()
+  for (const p of hc ?? []) {
+    const ced = String((p as any).identificacion || "").trim()
+    if (ced) estadoPorCedula.set(ced, (p as any).estado || null)
+  }
+  const enriquecidos = (data || []).map((e: any) => ({
+    ...e,
+    estado_persona: e.cedula ? estadoPorCedula.get(String(e.cedula).trim()) ?? null : null,
+  }))
+
+  return { success: true, data: enriquecidos as ExamenMedico[] }
 }
 
 // Resumen de aptitud para KPIs: aprobados vs reprobados + costo asumido por LIP

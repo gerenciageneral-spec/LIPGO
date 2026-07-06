@@ -81,6 +81,15 @@ function AptitudBadge({ apto }: { apto: boolean | null }) {
   )
 }
 
+// Badge del estado de la persona en Head Count (Activo / Inactivo / Candidato nuevo).
+function EstadoBadge({ estado }: { estado: string | null | undefined }) {
+  if (estado === "Activo")
+    return <Badge className="bg-sky-100 text-sky-700 hover:bg-sky-100">Activo</Badge>
+  if (estado === "Inactivo")
+    return <Badge className="bg-slate-200 text-slate-600 hover:bg-slate-200">Inactivo</Badge>
+  return <Badge variant="outline" className="text-violet-600 border-violet-300">Candidato</Badge>
+}
+
 export default function ExamenesMedicos() {
   const { selectedEmpresaId } = useAuth()
   const { toast } = useToast()
@@ -91,6 +100,7 @@ export default function ExamenesMedicos() {
   const [costoDefault, setCostoDefaultState] = useState(0)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
+  const [estadoFiltro, setEstadoFiltro] = useState<"todos" | "Activo" | "Inactivo">("todos")
   const [open, setOpen] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [importando, setImportando] = useState(false)
@@ -283,11 +293,22 @@ export default function ExamenesMedicos() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
-    if (!q) return examenes
-    return examenes.filter(
-      (e) => e.nombre.toLowerCase().includes(q) || (e.cedula?.toLowerCase().includes(q) ?? false),
-    )
-  }, [examenes, search])
+    return examenes.filter((e) => {
+      if (estadoFiltro !== "todos" && (e.estado_persona || "") !== estadoFiltro) return false
+      if (!q) return true
+      return e.nombre.toLowerCase().includes(q) || (e.cedula?.toLowerCase().includes(q) ?? false)
+    })
+  }, [examenes, search, estadoFiltro])
+
+  const conteoEstado = useMemo(() => {
+    let activos = 0, inactivos = 0, candidatos = 0
+    for (const e of examenes) {
+      if (e.estado_persona === "Activo") activos++
+      else if (e.estado_persona === "Inactivo") inactivos++
+      else candidatos++
+    }
+    return { activos, inactivos, candidatos }
+  }, [examenes])
 
   return (
     <div className="space-y-6">
@@ -497,14 +518,36 @@ export default function ExamenesMedicos() {
       </div>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="relative max-w-sm flex-1">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Buscar por nombre o cédula..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-8"
-          />
+        <div className="flex flex-1 flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="relative max-w-sm flex-1">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Buscar por nombre o cédula..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-8"
+            />
+          </div>
+          {/* Filtro por estado del personal (Activo / Inactivo) */}
+          <div className="inline-flex rounded-md border border-border p-0.5 text-xs">
+            {([
+              ["todos", `Todos (${examenes.length})`],
+              ["Activo", `Activos (${conteoEstado.activos})`],
+              ["Inactivo", `Inactivos (${conteoEstado.inactivos})`],
+            ] as const).map(([val, label]) => (
+              <button
+                key={val}
+                type="button"
+                onClick={() => setEstadoFiltro(val)}
+                className={
+                  "rounded px-2.5 py-1 transition-colors " +
+                  (estadoFiltro === val ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent")
+                }
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <Label htmlFor="costoDef" className="text-xs text-muted-foreground whitespace-nowrap">
@@ -530,6 +573,7 @@ export default function ExamenesMedicos() {
             <TableRow>
               <TableHead>Empleado</TableHead>
               <TableHead>Cédula</TableHead>
+              <TableHead>Estado</TableHead>
               <TableHead>Tipo</TableHead>
               <TableHead>Aptitud</TableHead>
               <TableHead className="text-right">Costo</TableHead>
@@ -541,13 +585,13 @@ export default function ExamenesMedicos() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
+                <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
                   <Loader2 className="mx-auto h-5 w-5 animate-spin" />
                 </TableCell>
               </TableRow>
             ) : filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
+                <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
                   No hay exámenes médicos registrados.
                 </TableCell>
               </TableRow>
@@ -561,6 +605,7 @@ export default function ExamenesMedicos() {
                     ) : null}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">{e.cedula || "—"}</TableCell>
+                  <TableCell><EstadoBadge estado={e.estado_persona} /></TableCell>
                   <TableCell className="text-sm">{e.tipo_examen || "—"}</TableCell>
                   <TableCell><AptitudBadge apto={e.apto ?? null} /></TableCell>
                   <TableCell className="text-right text-sm tabular-nums">{e.costo ? COP(e.costo) : "—"}</TableCell>
