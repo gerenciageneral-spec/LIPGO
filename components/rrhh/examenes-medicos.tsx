@@ -603,6 +603,7 @@ export default function ExamenesMedicos() {
               <TableHead>Estado</TableHead>
               <TableHead>Tipo</TableHead>
               <TableHead>Aptitud</TableHead>
+              <TableHead>Concepto</TableHead>
               <TableHead className="text-right">Costo</TableHead>
               <TableHead>Fecha</TableHead>
               <TableHead>Documento</TableHead>
@@ -612,13 +613,13 @@ export default function ExamenesMedicos() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
+                <TableCell colSpan={10} className="py-10 text-center text-muted-foreground">
                   <Loader2 className="mx-auto h-5 w-5 animate-spin" />
                 </TableCell>
               </TableRow>
             ) : filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
+                <TableCell colSpan={10} className="py-10 text-center text-muted-foreground">
                   No hay exámenes médicos registrados.
                 </TableCell>
               </TableRow>
@@ -635,6 +636,11 @@ export default function ExamenesMedicos() {
                   <TableCell><EstadoBadge estado={e.estado_persona} /></TableCell>
                   <TableCell className="text-sm">{e.tipo_examen || "—"}</TableCell>
                   <TableCell><AptitudBadge apto={e.apto ?? null} /></TableCell>
+                  <TableCell className="max-w-[220px] text-xs text-muted-foreground">
+                    <span className="line-clamp-2" title={e.resultado || undefined}>
+                      {(e.resultado || "—").replace(/\s*\n\s*/g, " · ")}
+                    </span>
+                  </TableCell>
                   <TableCell className="text-right text-sm tabular-nums">{e.costo ? COP(e.costo) : "—"}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">{e.fecha_examen || "—"}</TableCell>
                   <TableCell>
