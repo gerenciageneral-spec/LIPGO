@@ -23,6 +23,7 @@ export const TINT: Record<string, string> = {
   financiera: "#2f9b64",
   rrhh: "#c65893",
   certificaciones_lip: "#c8492f",
+  sst: "#d84a3e",
   configuracion: "#6b7683",
 }
 

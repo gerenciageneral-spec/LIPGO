@@ -15,6 +15,7 @@ import {
   Wallet,
   BadgeCheck,
   Layers,
+  ShieldCheck,
 } from "lucide-react"
 import Image from "next/image"
 import type { GroupKey, Module, Subgroup } from "@/lib/dashboard-data"
@@ -109,6 +110,15 @@ function HeroActor({ groupKey }: { groupKey: GroupKey | null }) {
         <>
           <path d="M11 2.4 l6 2.1 v4 c0 4-3 6.6-6 8.1 c-3-1.5-6-4.1-6-8.1 v-4 z" className="hero-light" />
           <path d="M8 8.9 l2.2 2.2 4-4.3" fill="none" className="hero-accent-stroke" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        </>
+      )
+    case "sst": // SST → casco de seguridad
+      return (
+        <>
+          <path d="M4.5 13.5 h13 v1.8 h-13 z" className="hero-light" />
+          <path d="M6 13.5 c0-4.4 2.4-6.7 5-6.7 s5 2.3 5 6.7 z" className="hero-light" />
+          <rect x="10.2" y="4.6" width="1.6" height="3" rx="0.6" className="hero-accent" />
+          <path d="M8 11 h6" className="hero-accent-stroke" strokeWidth="1.2" strokeLinecap="round" />
         </>
       )
     case "lip": // LIP → energía / rayo
@@ -308,6 +318,7 @@ export function Sidebar({
     { key: "financiera" as GroupKey, label: "Gestión Financiera", icon: Wallet },
     { key: "rrhh" as GroupKey, label: "Gestión Humana", icon: Users },
     { key: "certificaciones_lip" as GroupKey, label: "Certificaciones · SIG", icon: BadgeCheck },
+    { key: "sst" as GroupKey, label: "Seguridad y Salud (SST)", icon: ShieldCheck },
     { key: "configuracion" as GroupKey, label: "Configuración", icon: Settings },
   ]
 
@@ -331,6 +342,7 @@ export function Sidebar({
     financiera: "#5fd398",
     rrhh: "#ed94c2",
     certificaciones_lip: "#f0876a",
+    sst: "#e0564e",
     configuracion: "#9aa6b3",
   }
 

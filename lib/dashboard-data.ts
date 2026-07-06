@@ -29,6 +29,7 @@ export type GroupKey =
   | "lip"
   | "rrhh"
   | "certificaciones_lip"
+  | "sst"
   | "configuracion"
   | "despachos"
   | "mrp"
@@ -373,31 +374,56 @@ export const groups: Group[] = [
           { name: "Matriz Legal Ambiental", icon: ClipboardCheck, label: "Matriz Legal Ambiental" },
         ],
       },
+    ],
+  },
+  {
+    // REORG: SST deja de ser un subgrupo dentro de Certificaciones y pasa a ser
+    // su PROPIO módulo (grupo), para que sea un área calificable por sí misma y
+    // conectada al BSC por área. Los submódulos CONSERVAN su `name` y permiso
+    // (sst_auditoria, sst_autoevaluacion, sst_epp, sst_incidentes, sst_medevac…),
+    // así que los accesos ya otorgados no cambian. Certificaciones conserva el
+    // SIG transversal + ISO 9001 + ISO 14001.
+    key: "sst",
+    title: "Seguridad y Salud en el Trabajo (SST)",
+    icon: ShieldCheck,
+    subgroups: [
       {
-        title: "ISO 45001:2018 · SST (SG-SST Dec. 0312)",
+        title: "Autoevaluación y Mejora (Dec. 0312)",
         modules: [
           { name: "Auditoría 0312", icon: ShieldCheck, label: "Auditoría 0312" },
           { name: "Matriz de Estándares", icon: ClipboardCheck, label: "Matriz 60 Estándares" },
           { name: "Repositorio de Soportes", icon: FolderArchive, label: "Repositorio de Soportes (Matriz)" },
+          { name: "Plan de Mejoramiento", icon: ClipboardList, label: "Plan de Mejoramiento" },
+          { name: "Indicadores SST", icon: BarChart3, label: "Indicadores SG-SST" },
+        ],
+      },
+      {
+        title: "Peligros, Riesgos y Operación Segura",
+        modules: [
+          { name: "IPEVR", icon: Gauge, label: "IPEVR (GTC 45)" },
+          { name: "Registro Preoperacional", icon: ClipboardCheck },
+          { name: "Equipos y Mantenimiento", icon: Settings, label: "Equipos y Mantenimiento" },
+          { name: "Entrega de EPP", icon: ShieldCheck, label: "Entrega de EPP" },
+          { name: "Gestión de Dotación EPP", icon: Package, label: "Dotación de EPP" },
+        ],
+      },
+      {
+        title: "Accidentalidad y Salud en el Trabajo",
+        modules: [
           { name: "Investigación AT", icon: Activity, label: "Investigación de AT (SST-FOR-21)" },
           { name: "Alertas de AT", icon: AlertTriangle, label: "Alertas de AT (Ausentismo)" },
           { name: "Investigaciones Realizadas", icon: FolderArchive, label: "Repositorio de Investigaciones" },
-          { name: "IPEVR", icon: Gauge, label: "IPEVR (GTC 45)" },
-          { name: "Plan de Mejoramiento", icon: ClipboardList, label: "Plan de Mejoramiento" },
-          { name: "Indicadores SST", icon: BarChart3, label: "Indicadores SG-SST" },
-          { name: "Entrega de EPP", icon: ShieldCheck, label: "Entrega de EPP" },
-          { name: "Equipos y Mantenimiento", icon: Settings, label: "Equipos y Mantenimiento" },
+          { name: "Examenes Médicos", icon: Stethoscope },
+          { name: "MEDEVAC", icon: Stethoscope, label: "MEDEVAC (Plan de Emergencias Médicas)" },
+          { name: "Perfil Sociodemográfico", icon: Users, label: "Perfil Sociodemográfico (SST-FOR-32)" },
+        ],
+      },
+      {
+        title: "Comunicación, Cambio y Cultura",
+        modules: [
           { name: "Comunicación SST", icon: NotebookPen, label: "Comunicación / Autorreporte / PQRSF" },
           { name: "Gestión del Cambio", icon: ArrowRightLeft, label: "Gestión del Cambio" },
           { name: "Actividades y Comités", icon: GraduationCap, label: "Actividades y Comités" },
-          { name: "MEDEVAC", icon: Stethoscope, label: "MEDEVAC (Plan de Emergencias Médicas)" },
-          { name: "Perfil Sociodemográfico", icon: Users, label: "Perfil Sociodemográfico (SST-FOR-32)" },
-          // REORG (2026-07-03): salud ocupacional y seguridad operativa (SG-SST
-          // 0312) consolidadas en SST. Vienen de RRHH·Contratación y Operación LIP.
-          // Conservan sus `name`/permisos originales.
-          { name: "Examenes Médicos", icon: Stethoscope },
-          { name: "Gestión de Dotación EPP", icon: Package, label: "Dotación de EPP" },
-          { name: "Registro Preoperacional", icon: ClipboardCheck },
         ],
       },
     ],
