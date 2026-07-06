@@ -48,10 +48,11 @@ export async function getExamenesMedicos(selectedEmpresaId?: number | null) {
   }
 
   // Enriquecer con el estado de la persona en Head Count (Activo/Inactivo) por cédula.
+  // Global por cédula (sin filtrar por empresa): así una persona trasladada a otro
+  // proyecto conserva su estado real y no aparece como "Candidato".
   const { data: hc } = await supabase
     .from("headcount")
     .select("identificacion,estado")
-    .eq("idempresa", empresaId)
   const estadoPorCedula = new Map<string, string>()
   for (const p of hc ?? []) {
     const ced = String((p as any).identificacion || "").trim()
@@ -320,33 +321,57 @@ export async function importarExamenesDesdeHeadcount(selectedEmpresaId?: number 
   const empresaId = selectedEmpresaId || (await getCurrentEmpresaIdForInsert())
   if (!empresaId) return { success: false, creados: 0, message: "Sin empresa seleccionada." }
 
-  // TODOS los antiguos ya vinculados en Head Count: por definición ya pasaron sus
-  // exámenes → se importan como APTO histórico. Documento de soporte = examen de
-  // ingreso o, si no, el certificado de evaluación médica; si no hay ninguno, se
-  // registra igual (apto) con soporte en Head Count pero sin archivo adjunto.
-  const { data: hc, error } = await admin
-    .from("headcount")
-    .select("identificacion,nombre,examenes_ing,cert_eva_med")
-    .eq("idempresa", empresaId)
-  if (error) return { success: false, creados: 0, message: error.message }
+  // Los antiguos ya vinculados en Head Count ya pasaron sus exámenes → se importan
+  // como APTO histórico. IMPORTANTE: para exámenes, la persona pertenece a su proyecto
+  // de MATRÍCULA (donde se creó su hoja de vida), NO al proyecto actual del headcount
+  // (que puede cambiar por un traslado, temporal para nómina). Por eso el examen se
+  // ancla a la empresa de la hoja de vida; si no tiene hoja, a la del headcount.
+  const [{ data: allHc, error: eHc }, { data: allHv }, { data: exist }] = await Promise.all([
+    admin.from("headcount").select("identificacion,nombre,idempresa,examenes_ing,cert_eva_med"),
+    admin.from("hojas_de_vida").select("cedula,nombre_candidato,idempresa,created_at").order("created_at", { ascending: true }),
+    admin.from("examenes_medicos").select("cedula").eq("fuente", "headcount"), // dedup GLOBAL por cédula
+  ])
+  if (eHc) return { success: false, creados: 0, message: eHc.message }
 
-  const { data: exist } = await admin.from("examenes_medicos").select("cedula").eq("idempresa", empresaId).eq("fuente", "headcount")
+  // Matrícula por cédula = empresa de la hoja de vida (la primera creada).
+  const matriculaPorCedula = new Map<string, number>()
+  for (const h of allHv ?? []) {
+    const ced = String(h.cedula || "").trim()
+    if (ced && !matriculaPorCedula.has(ced)) matriculaPorCedula.set(ced, h.idempresa)
+  }
+  // Documento y datos por cédula desde el headcount (esté en el proyecto que esté).
+  const hcPorCedula = new Map<string, any>()
+  for (const c of allHc ?? []) {
+    const ced = String(c.identificacion || "").trim()
+    if (ced && !hcPorCedula.has(ced)) hcPorCedula.set(ced, c)
+  }
   const yaImportadas = new Set<string>()
   for (const e of exist ?? []) if (e.cedula) yaImportadas.add(String(e.cedula).trim())
 
+  // Población de esta empresa = personas cuya MATRÍCULA es esta empresa:
+  //   (a) tienen hoja de vida en esta empresa, o
+  //   (b) están en headcount de esta empresa y no tienen hoja en ninguna (matrícula = actual).
+  const cedulasEmpresa = new Set<string>()
+  for (const [ced, emp] of matriculaPorCedula) if (emp === empresaId) cedulasEmpresa.add(ced)
+  for (const c of allHc ?? []) {
+    const ced = String(c.identificacion || "").trim()
+    if (ced && c.idempresa === empresaId && !matriculaPorCedula.has(ced)) cedulasEmpresa.add(ced)
+  }
+
   const nuevas: any[] = []
-  for (const c of hc ?? []) {
-    const ced = c.identificacion ? String(c.identificacion).trim() : ""
-    if (!ced || yaImportadas.has(ced)) continue
+  for (const ced of cedulasEmpresa) {
+    if (yaImportadas.has(ced)) continue
+    const c = hcPorCedula.get(ced)
+    if (!c) continue // matriculado sin registro en headcount aún (no hay examen que importar)
     const url = (c.examenes_ing && String(c.examenes_ing).trim()) || (c.cert_eva_med && String(c.cert_eva_med).trim()) || ""
     nuevas.push({
-      idempresa: empresaId,
+      idempresa: empresaId, // ancla a la MATRÍCULA, no al proyecto actual del headcount
       cedula: ced,
       nombre: c.nombre || ced,
       tipo_examen: "Ingreso",
       resultado: "Apto",
       apto: true,
-      promovido: true, // ya está en Head Count
+      promovido: true,
       fuente: "headcount",
       vigente: true,
       costo: 0,
