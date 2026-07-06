@@ -53,10 +53,19 @@ export async function getExamenesMedicos(selectedEmpresaId?: number | null) {
   const { data: hc } = await supabase
     .from("headcount")
     .select("identificacion,estado")
-  const estadoPorCedula = new Map<string, string>()
+  // Normaliza el estado a "Activo" / "Inactivo" exacto (tolerante a mayúsculas/espacios)
+  // para que el filtro de la tabla compare de forma confiable.
+  const normEstado = (s: any): string | null => {
+    const t = String(s || "").trim().toLowerCase()
+    if (!t) return null
+    if (t.startsWith("inactiv")) return "Inactivo"
+    if (t.startsWith("activ")) return "Activo"
+    return String(s).trim()
+  }
+  const estadoPorCedula = new Map<string, string | null>()
   for (const p of hc ?? []) {
     const ced = String((p as any).identificacion || "").trim()
-    if (ced) estadoPorCedula.set(ced, (p as any).estado || null)
+    if (ced) estadoPorCedula.set(ced, normEstado((p as any).estado))
   }
   const enriquecidos = (data || []).map((e: any) => ({
     ...e,
