@@ -188,8 +188,11 @@ CONFIDENCIALIDAD Y SEGURIDAD (REGLA DE ORO ABSOLUTA, SIN EXCEPCIÓN):
 ${contexto ? `
 CONTEXTO ACTUAL (dónde está el usuario):
 
-    - El usuario está en el módulo/área "${contexto}". Prioriza ayudarle con temas de ESA área.
-    - Si te pregunta algo que claramente pertenece a OTRO módulo (ej. le preguntan por pedidos o toneladas estando en Gestión Humana), respóndele breve y con amabilidad indicándole el MÓDULO correcto donde ver/gestionar esa información, y ofrécele abrirlo (usa abrir_modulo o abrir_submodulo). No mezcles áreas que no tienen que ver.
+    - El usuario está en el módulo/área "${contexto}".
+    - REGLA CLAVE (responder vs. direccionar):
+        • Si la pregunta es sobre lo que ESTE módulo mide o gestiona (sus indicadores, KPIs, datos o registros propios) → RESPÓNDELA TÚ MISMO con el dato real, consultando la base con tus herramientas. NO te limites a "llevarlo" al módulo donde YA está. Ej.: si está en Operaciones LIP / Tablero del Coordinador y pregunta por el SLA de tiempos, el cumplimiento de cargues, las toneladas del proyecto o la satisfacción del conductor → son indicadores de ESE módulo: entrega el número/análisis. Igual en cada área: su ausentismo (Gestión Humana), su exactitud de inventario (Almacenamiento), su cumplimiento SG-SST (Certificaciones), etc.
+        • SOLO cuando la pregunta pertenece claramente a OTRO módulo (ej. le preguntan por pedidos o toneladas estando en Gestión Humana) → respóndele breve indicándole el MÓDULO correcto y ofrécele abrirlo (abrir_modulo / abrir_submodulo). No mezcles áreas que no tienen que ver.
+    - Navegar es una AYUDA, no un reemplazo de responder: si puedes contestar con datos, contesta primero; abrir un módulo es solo cuando el usuario lo pide o cuando la información es de otra área.
 ` : ""}
 FUENTE DE VERDAD (INQUEBRANTABLE):
 
@@ -201,6 +204,7 @@ FUENTE DE VERDAD (INQUEBRANTABLE):
         4) Construye la consulta con esos filtros y ejecútala.
         5) Responde SOLO con el dato real devuelto. Si el número parece raro, revisa si te faltó un filtro (ej. tipooperacion) y vuelve a consultar.
     - Si la pregunta es ambigua, elige la interpretación más razonable y acláralo en una frase, o haz una pregunta corta. Jamás inventes datos.
+    - INDICADORES / KPIs / metas / desempeño (SLA de tiempos, cumplimiento de cargues, toneladas, satisfacción de cliente/conductor, ausentismo, cobertura de planta, exactitud de inventario, facturación, cumplimiento SG-SST 0312, etc.): usa la herramienta 'consultar_indicadores'. Devuelve el VALOR real, la META y la unidad, ya filtrado por el proyecto seleccionado. Es la forma correcta de responder "¿cómo va X?" o "¿cuál es el/la X?" en CUALQUIER módulo. Da el número y compáralo con la meta; no lo inventes ni lo estimes.
 
 CONTEXTO TEMPORAL:
 
@@ -662,6 +666,64 @@ export async function POST(req: Request) {
                   err?.message ||
                   "Error desconocido al consultar la base de datos.",
               }
+            }
+          },
+        }),
+        // Indicadores / KPIs del proyecto seleccionado (BSC). Permite RESPONDER
+        // preguntas sobre desempeño/metas de CUALQUIER módulo (SLA, cumplimiento,
+        // toneladas, satisfacción, ausentismo, exactitud de inventario, facturación,
+        // SG-SST 0312…), no solo navegar. Calcula en vivo, filtrado por la empresa.
+        consultar_indicadores: tool({
+          description:
+            "Devuelve los INDICADORES / KPIs del proyecto seleccionado con su VALOR real, META y unidad: SLA de tiempos, cumplimiento de cargues, toneladas y meta de tonelaje, satisfacción de cliente y de conductor, ausentismo médico, cobertura de planta, exactitud de inventario, facturación gestionada, cumplimiento SG-SST 0312, etc. Úsala SIEMPRE que pregunten CÓMO VA un indicador, KPI, meta o el desempeño de un área (ej. '¿cuál es el SLA?', '¿cómo va el cumplimiento?', '¿el ausentismo del mes?', '¿la satisfacción del conductor?'). Opcional: 'filtro' para acotar por palabra clave.",
+          inputSchema: z.object({
+            filtro: z
+              .string()
+              .optional()
+              .describe(
+                "Palabra(s) clave para acotar por indicador o área (ej. 'sla', 'ausentismo', 'inventario', 'satisfaccion', 'facturacion', 'sst', 'toneladas'). Omite para traer todos.",
+              ),
+          }),
+          execute: async ({ filtro }: { filtro?: string }) => {
+            try {
+              const { getIndicadoresValores } = await import("@/lib/sig-actions")
+              const empresaNum =
+                typeof idEmpresa === "number" ? idEmpresa : parseInt(String(idEmpresa), 10)
+              const r = await getIndicadoresValores(Number.isNaN(empresaNum) ? null : empresaNum)
+              if (!r || !r.success) {
+                return { ok: false, mensaje: "No pude leer los indicadores en este momento." }
+              }
+              const admin: any = await getSupabaseAdmin()
+              const { data: metaRows } = await admin
+                .from("sig_indicadores")
+                .select("codigo,nombre,calculo_auto,meta,unidad,area,sentido")
+              const byCode = new Map<string, any>(
+                (metaRows ?? []).map((m: any) => [m.calculo_auto, m]),
+              )
+              let out = Object.entries(r.valores).map(([code, v]: [string, any]) => {
+                const m = byCode.get(code)
+                return {
+                  indicador: m?.nombre ?? code,
+                  area: m?.area ?? null,
+                  valor: v?.valor ?? null,
+                  unidad: m?.unidad ?? null,
+                  meta: m?.meta ?? null,
+                  sentido: m?.sentido ?? null,
+                  detalle: v?.base ?? null,
+                  codigo: code,
+                }
+              })
+              if (filtro && filtro.trim()) {
+                const terms = filtro.toLowerCase().split(/\s+/).filter(Boolean)
+                out = out.filter((o) =>
+                  terms.some((t) =>
+                    `${o.indicador} ${o.area ?? ""} ${o.codigo}`.toLowerCase().includes(t),
+                  ),
+                )
+              }
+              return { ok: true, indicadores: out }
+            } catch {
+              return { ok: false, mensaje: "No pude leer los indicadores." }
             }
           },
         }),

@@ -56,8 +56,11 @@ export const REGISTRO_ACCIONES: Record<string, AccionTabla> = {
   tarifas: { colEmpresa: "idempresa", permisos: ["tarifas"], insert: true, update: true },
 
   // ── SIG / BSC ──
-  sig_indicadores: { colEmpresa: "idempresa", permisos: ["sig_matriz"], insert: true, update: true },
-  sig_objetivos: { colEmpresa: "idempresa", permisos: ["sig_matriz"], insert: true, update: true },
+  // BSC gerencial: CONSULTA abierta a todos (herramienta de solo lectura
+  // consultar_indicadores). MODIFICAR indicadores/objetivos gerenciales es solo
+  // de ADMINISTRADORES (permiso gestion_usuarios), no del permiso general del SIG.
+  sig_indicadores: { colEmpresa: "idempresa", permisos: ["gestion_usuarios"], insert: true, update: true },
+  sig_objetivos: { colEmpresa: "idempresa", permisos: ["gestion_usuarios"], insert: true, update: true },
   sig_documento_cobertura: { colEmpresa: "idempresa", permisos: ["sig_matriz"], insert: true, update: true },
   sig_nc_catalogo: { colEmpresa: "idempresa", permisos: ["sig_matriz"], insert: true, update: true },
   sig_no_conformidades: { colEmpresa: "idempresa", permisos: ["sig_matriz"], insert: true, update: true },

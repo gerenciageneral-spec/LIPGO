@@ -96,6 +96,15 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
   }, [isBar])
+
+  // Auto-crecer del campo: se agranda mientras escribes (o dictas por voz) para
+  // que SIEMPRE se vea lo que escribes; vuelve a su alto mínimo al enviar/limpiar.
+  useEffect(() => {
+    const el = taRef.current
+    if (!el) return
+    el.style.height = "0px"
+    el.style.height = `${Math.min(el.scrollHeight, 150)}px`
+  }, [input])
   // Voz conversacional: si la pregunta se hizo por voz, la respuesta se lee en
   // voz alta (TTS) y, si la IA repregunta, se reabre el micrófono.
   const speakNextRef = useRef(false)
@@ -284,7 +293,7 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
         .lipai-live{ width:6px; height:6px; border-radius:50%; background:#37f5a0; box-shadow:0 0 8px #37f5a0; animation:lipai-blink 1.8s ease-in-out infinite; }
         @keyframes lipai-blink{ 0%,100%{opacity:1} 50%{opacity:.35} }
         .lipai-sug:hover{ background:rgba(0,194,220,.16) !important; border-color:rgba(0,194,220,.5) !important; }
-        .lipai-ta{ background:transparent; border:0; outline:none; resize:none; color:#eaf7fb; font-size:14px; line-height:20px; width:100%; max-height:96px; }
+        .lipai-ta{ background:transparent; border:0; outline:none; resize:none; color:#eaf7fb; font-size:14.5px; line-height:21px; width:100%; min-height:40px; max-height:150px; overflow-y:auto; }
         .lipai-ta::placeholder{ color:#7fbdcf; }
         .lipai-mic-on{ animation:lipai-mic 1.1s ease-in-out infinite; }
         @keyframes lipai-mic{ 0%,100%{box-shadow:0 0 0 0 rgba(255,90,90,.5)} 50%{box-shadow:0 0 0 6px rgba(255,90,90,0)} }
@@ -383,7 +392,7 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
 
         {/* Composer: (orbe en modo barra) + escribir + micrófono + Preguntar */}
         <div
-          className="lipai-composer relative z-[2] mt-3.5 flex items-center gap-2.5 rounded-xl px-3 py-2"
+          className="lipai-composer relative z-[2] mt-3.5 flex items-end gap-2.5 rounded-xl px-3 py-2"
           style={{ background: "rgba(255,255,255,.06)", border: "1px solid rgba(150,210,240,.2)" }}
           onClick={() => {
             if (isBar) taRef.current?.focus()
