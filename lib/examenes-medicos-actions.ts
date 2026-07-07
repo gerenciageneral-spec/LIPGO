@@ -439,12 +439,39 @@ export async function revalidarExamenesDesdeDocumento(selectedEmpresaId?: number
 // ---------------------------------------------------------------------
 // Costo del examen médico PERIÓDICO por sede (solo la línea "Médico ingreso/
 // periódico/retiro" de TARIFAS LIP - CIUDADES 2026), no el paquete completo.
+// Estos son los valores POR DEFECTO; el costo real es configurable por empresa
+// en rrhh_config.costo_periodico (ver getCostoPeriodico / setCostoPeriodico).
 const COSTO_PERIODICO: Record<number, number> = {
   1: 28000, // Harinera Indupan · Bogotá
   2: 29000, // Avimol · Barranquilla
   3: 35000, // Cedi Funza
   4: 35000, // Cedi Medellín
   5: 0, // Demogistics · no aplica
+}
+
+// Costo periódico configurable por empresa. Resiliente: si la columna aún no existe
+// (falta correr el SQL), cae al valor por defecto de COSTO_PERIODICO.
+export async function getCostoPeriodico(selectedEmpresaId?: number | null): Promise<number> {
+  const sb: any = await getSupabaseAdmin()
+  const empresaId = selectedEmpresaId || (await getCurrentEmpresaIdForInsert())
+  try {
+    const { data, error } = await sb.from("rrhh_config").select("costo_periodico").eq("idempresa", empresaId).maybeSingle()
+    if (!error && data && data.costo_periodico !== null && data.costo_periodico !== undefined) {
+      return Number(data.costo_periodico) || 0
+    }
+  } catch { /* columna aún no creada → default */ }
+  return COSTO_PERIODICO[Number(empresaId)] ?? 0
+}
+
+export async function setCostoPeriodico(valor: number, selectedEmpresaId?: number | null) {
+  const sb: any = await getSupabaseAdmin()
+  const empresaId = selectedEmpresaId || (await getCurrentEmpresaIdForInsert())
+  if (!empresaId) return { success: false, message: "Sin empresa seleccionada." }
+  const { error } = await sb
+    .from("rrhh_config")
+    .upsert({ idempresa: empresaId, costo_periodico: Number(valor) || 0, updated_at: new Date().toISOString() }, { onConflict: "idempresa" })
+  if (error) return { success: false, message: "Falta correr el SQL de costo periódico en Supabase. " + error.message }
+  return { success: true }
 }
 
 export interface ExamenPeriodico {
@@ -462,7 +489,7 @@ export interface ExamenPeriodico {
 export async function getExamenesPeriodicos(selectedEmpresaId?: number | null) {
   const sb: any = await getSupabaseAdmin()
   const empresaId = selectedEmpresaId || (await getCurrentEmpresaIdForInsert())
-  const costoUnit = COSTO_PERIODICO[Number(empresaId)] ?? 0
+  const costoUnit = await getCostoPeriodico(empresaId)
 
   // Personal ACTIVO de la empresa (los inactivos no requieren periódico).
   const { data: hc, error } = await sb

@@ -11,8 +11,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { Button } from "@/components/ui/button"
+import { Label } from "@/components/ui/label"
+import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/components/auth-provider"
-import { getExamenesPeriodicos, type ExamenPeriodico } from "@/lib/examenes-medicos-actions"
+import { getExamenesPeriodicos, getCostoPeriodico, setCostoPeriodico, type ExamenPeriodico } from "@/lib/examenes-medicos-actions"
 import { Search, Loader2, AlertTriangle, CalendarClock, CheckCircle2, Wallet, Users } from "lucide-react"
 
 const COP = (n: number) => "$" + (Number(n) || 0).toLocaleString("es-CO")
@@ -28,18 +31,34 @@ function EstadoPeriodico({ dias, vencido }: { dias: number; vencido: boolean }) 
 
 export default function ExamenesPeriodicos() {
   const { selectedEmpresaId } = useAuth()
+  const { toast } = useToast()
   const [filas, setFilas] = useState<ExamenPeriodico[]>([])
   const [resumen, setResumen] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [q, setQ] = useState("")
   const [soloAlerta, setSoloAlerta] = useState(false)
+  const [costoConfig, setCostoConfig] = useState(0)
 
   const cargar = async () => {
     setLoading(true)
-    const r = await getExamenesPeriodicos(selectedEmpresaId)
+    const [r, cp] = await Promise.all([
+      getExamenesPeriodicos(selectedEmpresaId),
+      getCostoPeriodico(selectedEmpresaId),
+    ])
     setFilas(r.success ? r.data : [])
     setResumen(r.resumen)
+    setCostoConfig(cp)
     setLoading(false)
+  }
+
+  const guardarCosto = async () => {
+    const res = await setCostoPeriodico(costoConfig, selectedEmpresaId)
+    if (res.success) {
+      toast({ title: "Costo periódico guardado", description: COP(costoConfig) + " por examen." })
+      cargar()
+    } else {
+      toast({ title: "Error", description: res.message })
+    }
   }
 
   useEffect(() => {
@@ -115,6 +134,11 @@ export default function ExamenesPeriodicos() {
         >
           {soloAlerta ? "Mostrando solo alertas" : "Ver solo alertas (vencidos + ≤30 d)"}
         </button>
+        <div className="ml-auto flex items-center gap-2">
+          <Label htmlFor="costoPer" className="text-xs text-muted-foreground whitespace-nowrap">Costo periódico (config)</Label>
+          <Input id="costoPer" type="number" min={0} value={costoConfig} onChange={(e) => setCostoConfig(Number(e.target.value) || 0)} className="w-28" />
+          <Button variant="outline" size="sm" onClick={guardarCosto}>Guardar</Button>
+        </div>
       </div>
 
       {/* Tabla */}
