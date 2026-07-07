@@ -23,10 +23,19 @@ export function DespachoKpiStrip() {
     return () => { cancel = true }
   }, [selectedEmpresaId])
 
-  if (loading || !k) return null
+  if (loading && !k) {
+    return (
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="h-[110px] animate-pulse rounded-xl border border-border/60 bg-muted/40" />
+        ))}
+      </div>
+    )
+  }
+  if (!k) return null
 
   return (
-    <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
       <KpiCard
         label="Órdenes de hoy"
         value={String(k.ordenesHoy)}

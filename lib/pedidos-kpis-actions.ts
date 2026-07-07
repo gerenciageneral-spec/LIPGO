@@ -4,13 +4,12 @@ import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getCurrentEmpresaIdForInsert } from "@/lib/user-context"
 
 // KPIs de gestión del cliente para el módulo de Pedidos, alineados a los objetivos
-// del área (cumplimiento de entregas). Reutiliza la MISMA definición del Dashboard
-// Pedidos (components/orders/dashboard-pedidos/calculations.ts:136-183):
+// del área (cumplimiento de entregas). Misma definición del Dashboard Pedidos:
 //   - Universo: pedido con fecha_programada (promesa) y SIN fechaordencargue (no
-//     entregado aún). Se excluyen los anulados.
-//   - Vencido  = fecha_programada < hoy (America/Bogota)
-//   - Vence hoy = fecha_programada == hoy
-//   - Por vencer = fecha_programada en los próximos días.
+//     entregado aún). Se excluyen anulados.
+//   - Vencido = fecha_programada < hoy (America/Bogota) · Vence hoy = == hoy
+//   - Por vencer = fecha_programada en los próximos 7 días.
+// Optimizado: se usan CONSULTAS DE CONTEO en paralelo (no se traen todas las filas).
 
 export interface PedidosKpis {
   total: number
@@ -20,81 +19,72 @@ export interface PedidosKpis {
   porVencer7: number
   entregados: number
   valorVencido: number
-  cumplimientoPct: number // entregados a tiempo / con promesa vencida-o-hoy
 }
 
-function hoyBogotaMs(): number {
+// Fecha de hoy en Bogotá + a 7 días, en formato YYYY-MM-DD (las columnas son texto de fecha).
+function fechasBogota() {
   const b = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }))
-  b.setHours(0, 0, 0, 0)
-  return b.getTime()
-}
-const diaMs = 86400000
-function fechaMs(v: any): number | null {
-  if (!v) return null
-  const s = String(v).slice(0, 10)
-  const t = new Date(s + "T00:00:00").getTime()
-  return isNaN(t) ? null : t
+  const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+  const b7 = new Date(b)
+  b7.setDate(b.getDate() + 7)
+  return { hoyStr: ymd(b), en7Str: ymd(b7) }
 }
 
 export async function getPedidosKpis(selectedEmpresaId?: number | null): Promise<PedidosKpis> {
-  const empty: PedidosKpis = { total: 0, pendientes: 0, vencidos: 0, venceHoy: 0, porVencer7: 0, entregados: 0, valorVencido: 0, cumplimientoPct: 0 }
+  const empty: PedidosKpis = { total: 0, pendientes: 0, vencidos: 0, venceHoy: 0, porVencer7: 0, entregados: 0, valorVencido: 0 }
   const sb: any = await getSupabaseAdmin()
   const empresaId = selectedEmpresaId || (await getCurrentEmpresaIdForInsert())
   if (!empresaId) return empty
+  const { hoyStr, en7Str } = fechasBogota()
 
-  const rows: any[] = []
-  let from = 0
-  while (true) {
-    const { data, error } = await sb
+  // Base: pedidos de la empresa, excluyendo anulados (misma condición del dashboard).
+  const base = () =>
+    sb.from("pedidoscabecera").select("*", { count: "exact", head: true }).eq("id_empresa", empresaId).or("estado.is.null,estado.not.ilike.%anulado%")
+  // Pendiente = con promesa (fecha_programada) y sin entregar (fechaordencargue null).
+  const pend = () => base().not("fecha_programada", "is", null).is("fechaordencargue", null)
+
+  const [rTotal, rPend, rVenc, rHoy, rProx, rEntreg] = await Promise.all([
+    base(),
+    pend(),
+    pend().lt("fecha_programada", hoyStr),
+    pend().eq("fecha_programada", hoyStr),
+    pend().gt("fecha_programada", hoyStr).lte("fecha_programada", en7Str),
+    base().not("fechaordencargue", "is", null),
+  ])
+
+  // Valor de lo vencido: solo esas filas (pocas) para sumar total_pagar.
+  let valorVencido = 0
+  try {
+    const { data } = await sb
       .from("pedidoscabecera")
-      .select("estado,fecha_programada,fechaordencargue,total_pagar")
+      .select("total_pagar")
       .eq("id_empresa", empresaId)
-      .range(from, from + 999)
-    if (error) return empty
-    rows.push(...(data ?? []))
-    if (!data || data.length < 1000) break
-    from += 1000
-    if (from > 100000) break
-  }
+      .or("estado.is.null,estado.not.ilike.%anulado%")
+      .not("fecha_programada", "is", null)
+      .is("fechaordencargue", null)
+      .lt("fecha_programada", hoyStr)
+    for (const r of data ?? []) valorVencido += Number(r.total_pagar) || 0
+  } catch {}
 
-  const hoy = hoyBogotaMs()
-  let total = 0, pendientes = 0, vencidos = 0, venceHoy = 0, porVencer7 = 0, entregados = 0, valorVencido = 0
-  let promesaVencidaOHoy = 0, entregadasATiempo = 0
-  for (const r of rows) {
-    if (String(r.estado || "").toLowerCase().includes("anulad")) continue // se excluyen anulados
-    total++
-    const entregado = !!(r.fechaordencargue && String(r.fechaordencargue).trim())
-    const prog = fechaMs(r.fecha_programada)
-    if (entregado) {
-      entregados++
-      // OTIF simple: entregado (fechaordencargue) <= promesa (fecha_programada)
-      if (prog !== null) {
-        promesaVencidaOHoy++
-        const ent = fechaMs(r.fechaordencargue)
-        if (ent !== null && ent <= prog) entregadasATiempo++
-      }
-      continue
-    }
-    if (prog === null) continue // pendiente sin promesa → no entra a vencidos
-    pendientes++
-    const dias = Math.round((prog - hoy) / diaMs)
-    if (dias < 0) { vencidos++; valorVencido += Number(r.total_pagar) || 0 }
-    else if (dias === 0) venceHoy++
-    else if (dias <= 7) porVencer7++
+  return {
+    total: rTotal.count || 0,
+    pendientes: rPend.count || 0,
+    vencidos: rVenc.count || 0,
+    venceHoy: rHoy.count || 0,
+    porVencer7: rProx.count || 0,
+    entregados: rEntreg.count || 0,
+    valorVencido: Math.round(valorVencido),
   }
-  const cumplimientoPct = promesaVencidaOHoy > 0 ? Math.round((entregadasATiempo / promesaVencidaOHoy) * 1000) / 10 : 0
-  return { total, pendientes, vencidos, venceHoy, porVencer7, entregados, valorVencido: Math.round(valorVencido), cumplimientoPct }
 }
 
-// KPIs de gestión del cliente para DESPACHO (Gestión de Órdenes). Operativo del día
-// desde cabeceraoc (órdenes sin cerrar / de hoy) + eficiencia desde la vista del
-// dashboard de recepción (tiempos de operación). Alineado a objetivos del área.
+// KPIs de DESPACHO (Gestión de Órdenes): operativo del día desde cabeceraoc + eficiencia
+// desde la vista del dashboard de recepción. Optimizado con conteos en paralelo.
 export interface DespachoKpis {
   ordenesHoy: number
   sinCerrar: number // iniciadas y aún sin fincargue (en proceso, requieren cierre)
   finalizadasHoy: number
-  tiempoPromOperacion: number // min promedio (vista)
-  operacionesMedidas: number // # de operaciones con tiempo medido
+  tiempoPromOperacion: number
+  operacionesMedidas: number
 }
 
 export async function getDespachoKpis(selectedEmpresaId?: number | null): Promise<DespachoKpis> {
@@ -102,56 +92,31 @@ export async function getDespachoKpis(selectedEmpresaId?: number | null): Promis
   const sb: any = await getSupabaseAdmin()
   const empresaId = selectedEmpresaId || (await getCurrentEmpresaIdForInsert())
   if (!empresaId) return empty
+  const { hoyStr } = fechasBogota()
 
-  // Hoy Bogotá en formato YYYY-MM-DD (fechacargue es texto de fecha).
-  const b = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }))
-  const hoyStr = `${b.getFullYear()}-${String(b.getMonth() + 1).padStart(2, "0")}-${String(b.getDate()).padStart(2, "0")}`
+  const oc = () => sb.from("cabeceraoc").select("*", { count: "exact", head: true }).eq("idempresa", empresaId)
+  const [rHoy, rSinCerrar, rFinHoy, vTiempo] = await Promise.all([
+    oc().eq("fechacargue", hoyStr),
+    oc().not("iniciocargue", "is", null).is("fincargue", null),
+    oc().eq("fechacargue", hoyStr).not("fincargue", "is", null),
+    sb.from("dashboardoperacionesgerencia").select("tiempo_total_operacion_min").eq("idempresa", empresaId).not("tiempo_total_operacion_min", "is", null).limit(5000),
+  ])
 
-  const rows: any[] = []
-  let from = 0
-  while (true) {
-    const { data, error } = await sb
-      .from("cabeceraoc")
-      .select("iniciocargue,fincargue,fechacargue")
-      .eq("idempresa", empresaId)
-      .range(from, from + 999)
-    if (error) break
-    rows.push(...(data ?? []))
-    if (!data || data.length < 1000) break
-    from += 1000
-    if (from > 100000) break
-  }
-  let ordenesHoy = 0, sinCerrar = 0, finalizadasHoy = 0
-  for (const r of rows) {
-    const inicio = !!(r.iniciocargue && String(r.iniciocargue).trim())
-    const fin = !!(r.fincargue && String(r.fincargue).trim())
-    if (inicio && !fin) sinCerrar++
-    if (r.fechacargue === hoyStr) {
-      ordenesHoy++
-      if (fin) finalizadasHoy++
-    }
-  }
-
-  // Tiempo promedio de operación desde la vista del dashboard de recepción.
   let tiempoPromOperacion = 0, operacionesMedidas = 0
-  try {
-    const { data: v } = await sb
-      .from("dashboardoperacionesgerencia")
-      .select("tiempo_total_operacion_min")
-      .eq("idempresa", empresaId)
-      .not("tiempo_total_operacion_min", "is", null)
-      .limit(5000)
-    const vals = (v ?? []).map((r: any) => Number(r.tiempo_total_operacion_min)).filter((n: number) => !isNaN(n) && n > 0)
-    operacionesMedidas = vals.length
-    if (vals.length) tiempoPromOperacion = Math.round(vals.reduce((a: number, x: number) => a + x, 0) / vals.length)
-  } catch { /* vista no disponible */ }
+  const vals = (vTiempo.data ?? []).map((r: any) => Number(r.tiempo_total_operacion_min)).filter((n: number) => !isNaN(n) && n > 0)
+  operacionesMedidas = vals.length
+  if (vals.length) tiempoPromOperacion = Math.round(vals.reduce((a: number, x: number) => a + x, 0) / vals.length)
 
-  return { ordenesHoy, sinCerrar, finalizadasHoy, tiempoPromOperacion, operacionesMedidas }
+  return {
+    ordenesHoy: rHoy.count || 0,
+    sinCerrar: rSinCerrar.count || 0,
+    finalizadasHoy: rFinHoy.count || 0,
+    tiempoPromOperacion,
+    operacionesMedidas,
+  }
 }
 
-// Vehículos NO PROCESADOS (sin cerrar): citasvehiculos con estatus IS NULL. Es el
-// mismo predicado que usa la app para "registro abierto / por distribuir"
-// (lib/vehicle-actions.ts:290-313). Sirve para que el cliente sepa cuáles cerrar.
+// Vehículos NO PROCESADOS (sin cerrar): citasvehiculos con estatus IS NULL.
 export interface VehiculosKpis {
   noProcesados: number
   placas: string[]

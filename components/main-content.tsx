@@ -110,6 +110,7 @@ import { ActividadesSST } from "@/components/sst/actividades"
 import { MatrizIntegradaSIG } from "@/components/sst/matriz-integrada-sig"
 import { RepositorioSIG } from "@/components/sst/repositorio-sig"
 import RepositorioUniversal from "@/components/sst/repositorio-universal"
+import { PedidosKpiStrip } from "@/components/orders/pedidos-kpi-strip"
 import { DashboardSIG } from "@/components/sst/dashboard-sig"
 import { AspectosAmbientales } from "@/components/sst/aspectos-ambientales"
 import { ObjetivosSIG } from "@/components/sst/objetivos-sig"
@@ -413,6 +414,10 @@ export function MainContent({
             </>
           ) : selectedModule === "Entrada de pedidos" ? (
             <PermissionGuard moduleName="Entrada de pedidos">
+              <div className="mb-5">
+                <div className="mb-1 text-sm font-semibold text-foreground">Cumplimiento de entregas</div>
+                <PedidosKpiStrip />
+              </div>
               <OrderEntryForm onNavigateToManageOrders={() => onSelectModule("Gestionar pedidos")} />
             </PermissionGuard>
           ) : selectedModule === "Gestionar pedidos" ? (

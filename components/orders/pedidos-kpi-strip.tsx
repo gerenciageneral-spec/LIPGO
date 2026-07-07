@@ -4,13 +4,22 @@ import { useEffect, useState } from "react"
 import { useAuth } from "@/components/auth-provider"
 import { KpiCard } from "@/components/orders/dashboard-pedidos/kpi-card"
 import { getPedidosKpis, type PedidosKpis } from "@/lib/pedidos-kpis-actions"
-import { AlertTriangle, CalendarClock, Clock, PackageOpen, CheckCircle2 } from "lucide-react"
+import { AlertTriangle, CalendarClock, Clock, PackageOpen, PackageCheck } from "lucide-react"
 
 const COP = (n: number) => "$" + (Number(n) || 0).toLocaleString("es-CO")
 
-// Tira de KPIs de gestión del cliente para el módulo de Pedidos: cumplimiento de
-// entregas (vencidos, por vencer), no solo conteos básicos. Misma definición del
-// Dashboard Pedidos (fecha_programada vs hoy, sin fechaordencargue).
+function Skeleton() {
+  return (
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
+      {Array.from({ length: 5 }).map((_, i) => (
+        <div key={i} className="h-[110px] animate-pulse rounded-xl border border-border/60 bg-muted/40" />
+      ))}
+    </div>
+  )
+}
+
+// Tira de KPIs de gestión del cliente para Pedidos: cumplimiento de entregas
+// (vencidos, por vencer), no solo conteos básicos. Misma definición del Dashboard.
 export function PedidosKpiStrip() {
   const { selectedEmpresaId } = useAuth()
   const [k, setK] = useState<PedidosKpis | null>(null)
@@ -26,10 +35,11 @@ export function PedidosKpiStrip() {
     return () => { cancel = true }
   }, [selectedEmpresaId])
 
-  if (loading || !k) return null
+  if (loading && !k) return <Skeleton />
+  if (!k) return null
 
   return (
-    <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
       <KpiCard
         label="Pedidos vencidos"
         value={String(k.vencidos)}
@@ -37,34 +47,10 @@ export function PedidosKpiStrip() {
         icon={AlertTriangle}
         variant="danger"
       />
-      <KpiCard
-        label="Vence hoy"
-        value={String(k.venceHoy)}
-        subtext="entregar hoy"
-        icon={CalendarClock}
-        variant="warning"
-      />
-      <KpiCard
-        label="Por vencer (7 días)"
-        value={String(k.porVencer7)}
-        subtext="promesa próxima"
-        icon={Clock}
-        variant="warning"
-      />
-      <KpiCard
-        label="Pendientes de entrega"
-        value={String(k.pendientes)}
-        subtext={`de ${k.total} pedidos`}
-        icon={PackageOpen}
-        variant="primary"
-      />
-      <KpiCard
-        label="Cumplimiento entregas"
-        value={`${k.cumplimientoPct}%`}
-        subtext="entregadas a tiempo"
-        icon={CheckCircle2}
-        variant="success"
-      />
+      <KpiCard label="Vence hoy" value={String(k.venceHoy)} subtext="entregar hoy" icon={CalendarClock} variant="warning" />
+      <KpiCard label="Por vencer (7 días)" value={String(k.porVencer7)} subtext="promesa próxima" icon={Clock} variant="warning" />
+      <KpiCard label="Pendientes de entrega" value={String(k.pendientes)} subtext={`de ${k.total} pedidos`} icon={PackageOpen} variant="primary" />
+      <KpiCard label="Entregados" value={String(k.entregados)} subtext="con orden de cargue" icon={PackageCheck} variant="success" />
     </div>
   )
 }
