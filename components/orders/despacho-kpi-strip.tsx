@@ -27,7 +27,7 @@ export function DespachoKpiStrip() {
     return (
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="h-[110px] animate-pulse rounded-xl border border-border/60 bg-muted/40" />
+          <div key={i} className="h-[74px] animate-pulse rounded-xl border border-border/60 bg-muted/40" />
         ))}
       </div>
     )

@@ -88,7 +88,7 @@ export function VehiculosNoProcesadosCard() {
   }
 
   if (loading && !k) {
-    return <div className="h-[110px] animate-pulse rounded-xl border border-border/60 bg-muted/40" />
+    return <div className="h-[74px] animate-pulse rounded-xl border border-border/60 bg-muted/40" />
   }
   if (!k) return null
 

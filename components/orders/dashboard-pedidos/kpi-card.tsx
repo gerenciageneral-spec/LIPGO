@@ -65,39 +65,36 @@ export function KpiCard({
   const styles = VARIANT_STYLES[variant]
 
   return (
-    <Card className="border-border/60">
-      <CardContent className="p-5 flex flex-col gap-3">
-        <div className="flex items-start justify-between gap-2">
-          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+    <Card className="border-border/60 shadow-none transition-colors hover:border-border">
+      <CardContent className="flex flex-col p-3">
+        {/* Fila superior: etiqueta compacta + icono pequeño tintado por variante. */}
+        <div className="flex items-center justify-between gap-2">
+          <p className="min-w-0 truncate text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground">
             {label}
           </p>
           <span
             className={cn(
-              "flex h-9 w-9 items-center justify-center rounded-lg",
+              "flex h-6 w-6 flex-none items-center justify-center rounded-md",
               styles.iconBg,
             )}
           >
-            <Icon className={cn("h-4 w-4", styles.iconText)} />
+            <Icon className={cn("h-3.5 w-3.5", styles.iconText)} />
           </span>
         </div>
-        {/* Tamaños reducidos y escalonados por breakpoint para que valores
-            largos (p.ej. "$98.500.000") no se desborden de la card. Se
-            agrega `min-w-0` y `break-words` para que, si el ancho de la
-            card es muy reducido, el numero corte en lugar de empujar
-            horizontalmente al icono. `tabular-nums` mantiene los digitos
-            alineados. */}
+        {/* Número protagonista. `break-words`/`min-w-0` evitan desbordes en valores
+            largos (p. ej. "$1.096.586.746"); escalonado por breakpoint. */}
         <p
           className={cn(
-            "font-bold tabular-nums leading-tight text-xl sm:text-2xl xl:text-3xl min-w-0 break-words",
+            "mt-1.5 min-w-0 break-words text-lg font-bold leading-none tabular-nums sm:text-xl xl:text-[1.6rem]",
             styles.valueText,
           )}
         >
           {value}
         </p>
         {subtext ? (
-          <p className="text-xs text-muted-foreground">{subtext}</p>
+          <p className="mt-1 truncate text-[11px] leading-tight text-muted-foreground">{subtext}</p>
         ) : null}
-        {footer}
+        {footer ? <div className="mt-1.5">{footer}</div> : null}
       </CardContent>
     </Card>
   )

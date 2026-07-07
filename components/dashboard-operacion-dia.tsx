@@ -1638,7 +1638,7 @@ function VehiculosEnPatioPanel({
           <span className="text-xs text-slate-500 font-medium">en cola de atención</span>
         </div>
 
-        <div className="flex-1 min-h-[110px] max-h-[160px] overflow-y-auto custom-scrollbar pr-1 space-y-1.5">
+        <div className="flex-1 min-h-[74px] max-h-[160px] overflow-y-auto custom-scrollbar pr-1 space-y-1.5">
           {items.length > 0 ? (
             items.map((v, i) => (
               <div
@@ -1723,7 +1723,7 @@ function ClientesEnProcesoPanel({
           </span>
         </div>
 
-        <div className="flex-1 min-h-[110px] max-h-[160px] overflow-y-auto custom-scrollbar pr-1 space-y-1.5">
+        <div className="flex-1 min-h-[74px] max-h-[160px] overflow-y-auto custom-scrollbar pr-1 space-y-1.5">
           {items.length > 0 ? (
             items.map((c, i) => {
               const min = parseTiempoEnMinutos(c.tiempo_en_proceso)
