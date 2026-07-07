@@ -24,12 +24,6 @@ function colombiaHour(): number {
   return new Date(now.toLocaleString("en-US", { timeZone: "America/Bogota" })).getHours()
 }
 
-function firstOfMonth(): string {
-  const now = new Date()
-  const t = new Date(now.toLocaleString("en-US", { timeZone: "America/Bogota" }))
-  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-01`
-}
-
 /**
  * Calcula lo que "requiere atención hoy" para la empresa seleccionada (cookie
  * del selector global). Defensivo: cualquier fallo devuelve lista vacía y la
@@ -59,20 +53,10 @@ export async function getAtencionDelDia(userId?: string): Promise<{ success: boo
       })
     }
 
-    // 2) Facturas por solicitar del mes (estadofactura null).
-    const { count: facturas } = await supabase
-      .from("cabeceraoc")
-      .select("ordendecargue", { count: "exact", head: true })
-      .eq("idempresa", empresaId)
-      .is("estadofactura", null)
-      .gte("fechacargue", firstOfMonth())
-    if (facturas && facturas > 0) {
-      items.push({
-        label: `${facturas} factura${facturas !== 1 ? "s" : ""} por solicitar`,
-        sev: "warn",
-        modulo: "Gestión de Facturas",
-      })
-    }
+    // NOTA: la alerta de "facturas por solicitar" NO se emite aquí (banner global del
+    // home). Es una tarea/KPI PROPIA del Coordinador en el módulo Operaciones LIP y
+    // vive dentro de ese panel (panel-operacion-lip · "Facturación pendiente por
+    // solicitar"). Así LIPbot no la muestra fuera de su módulo.
 
     // GATE por área: cada tarea pertenece a un módulo/KPI de un área (p. ej. las
     // facturas por solicitar son del Coordinador de LIP). Se muestra SOLO a quien
