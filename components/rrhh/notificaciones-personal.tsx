@@ -25,6 +25,9 @@ interface Destinatario {
   puesto?: string | null
   fecha?: string | null
   placa?: string | null
+  horario?: string | null
+  horaEntrada?: string | null
+  horaSalida?: string | null
   fuenteCelular?: "headcount" | "hoja_vida"
 }
 
@@ -43,7 +46,7 @@ interface RegistroHistorial {
 const PLANTILLA_ALERTA_DEFAULT =
   "Hola {nombre}, te informamos desde LIP: "
 const PLANTILLA_TURNO_DEFAULT =
-  "Hola {nombre}, tu programacion para el {fecha}: puesto {puesto}. LIP."
+  "Hola {nombre}, tu programacion para el {fecha}: puesto {puesto}, horario {horario}. LIP."
 const PLANTILLA_CONDUCTOR_DEFAULT =
   "Hola {nombre} (placa {placa}), le informamos desde LIP: "
 
@@ -64,12 +67,15 @@ function hoyBogota(): string {
 
 function renderPreview(plantilla: string, d?: Destinatario): string {
   const base: Partial<Destinatario> =
-    d ?? { nombre: "Juan Perez", puesto: "Cargue", fecha: hoyBogota(), placa: "ABC123" }
+    d ?? { nombre: "Juan Perez", puesto: "Cargue", fecha: hoyBogota(), placa: "ABC123", horario: "06:00 a 15:00", horaEntrada: "06:00", horaSalida: "15:00" }
   return plantilla
     .replace(/\{nombre\}/gi, base.nombre ?? "")
     .replace(/\{puesto\}/gi, base.puesto ?? "")
     .replace(/\{fecha\}/gi, base.fecha ?? "")
     .replace(/\{placa\}/gi, base.placa ?? "")
+    .replace(/\{horario\}/gi, base.horario ?? "")
+    .replace(/\{hora_entrada\}/gi, base.horaEntrada ?? "")
+    .replace(/\{hora_salida\}/gi, base.horaSalida ?? "")
     .trim()
 }
 
@@ -186,6 +192,9 @@ export default function NotificacionesPersonal() {
           puesto: d.puesto ?? null,
           placa: d.placa ?? null,
           fecha: d.fecha ?? (usaFecha ? fecha : null),
+          horario: d.horario ?? null,
+          horaEntrada: d.horaEntrada ?? null,
+          horaSalida: d.horaSalida ?? null,
         })),
       }
       const res = await fetch("/api/notificaciones/enviar", {
@@ -303,7 +312,8 @@ export default function NotificacionesPersonal() {
                     {tipo === "turno" && (
                       <>
                         , <code className="rounded bg-muted px-1">{"{puesto}"}</code>,{" "}
-                        <code className="rounded bg-muted px-1">{"{fecha}"}</code>
+                        <code className="rounded bg-muted px-1">{"{fecha}"}</code>,{" "}
+                        <code className="rounded bg-muted px-1">{"{horario}"}</code>
                       </>
                     )}
                     {tipo === "conductor" && (
@@ -372,6 +382,7 @@ export default function NotificacionesPersonal() {
                             <p className="truncate text-xs text-muted-foreground">
                               {d.cargo ?? "—"}
                               {tipo === "turno" && d.puesto ? ` · Puesto: ${d.puesto}` : ""}
+                              {tipo === "turno" && d.horario ? ` · Horario: ${d.horario}` : ""}
                               {tipo === "conductor" && d.placa ? ` · Placa: ${d.placa}` : ""}
                             </p>
                           </div>

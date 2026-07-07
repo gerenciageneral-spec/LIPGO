@@ -17,6 +17,10 @@ export interface Destinatario {
   // Solo en modo turno:
   puesto?: string | null
   fecha?: string | null
+  // Horario programado del turno (de Programación de Turnos → registroasistencia).
+  horaEntrada?: string | null
+  horaSalida?: string | null
+  horario?: string | null
   // Solo en modo conductor:
   placa?: string | null
   // De donde salio el celular: 'headcount' (fuente principal) o
@@ -194,9 +198,11 @@ export async function GET(request: NextRequest) {
     }
 
     // ---- MODO TURNO: solo los programados para la fecha ----
+    // El horario programado (horaentradaprogramada / horasalidaprogramada) lo escribe
+    // el módulo "Programación de Turnos" en registroasistencia.
     const { data: turnos, error: errTurnos } = await supabase
       .from("registroasistencia")
-      .select("identificacion, nombre, puesto, fecha, idempresa")
+      .select("identificacion, nombre, puesto, fecha, idempresa, horaentradaprogramada, horasalidaprogramada")
       .eq("idempresa", Number(empresaId))
       .eq("fecha", filterDate)
       .not("puesto", "is", null)
@@ -206,11 +212,22 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Error al cargar la programacion" }, { status: 500 })
     }
 
+    // "06:00:00" → "06:00" (quita los segundos para el mensaje).
+    const hhmm = (t: any): string | null => {
+      const s = String(t ?? "").trim()
+      if (!s) return null
+      const m = s.match(/^(\d{1,2}):(\d{2})/)
+      return m ? `${m[1].padStart(2, "0")}:${m[2]}` : s
+    }
+
     const destinatarios: Destinatario[] = (turnos ?? []).map((t) => {
       const doc = String(t.identificacion ?? "").trim()
       const persona = porDoc.get(doc)
       const nombre = persona ? String(persona.nombre ?? "").trim() : String(t.nombre ?? "")
       const r = resolverCelular(nombre, persona?.celular ?? null)
+      const he = hhmm(t.horaentradaprogramada)
+      const hs = hhmm(t.horasalidaprogramada)
+      const horario = he && hs ? `${he} a ${hs}` : he || hs || null
       return {
         documento: doc,
         nombre,
@@ -220,6 +237,9 @@ export async function GET(request: NextRequest) {
         fuenteCelular: r.fuenteCelular,
         puesto: t.puesto ?? null,
         fecha: t.fecha ?? filterDate,
+        horaEntrada: he,
+        horaSalida: hs,
+        horario,
       }
     })
     destinatarios.sort((a, b) => a.nombre.localeCompare(b.nombre))

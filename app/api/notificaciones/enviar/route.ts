@@ -12,6 +12,10 @@ interface DestinatarioEntrada {
   puesto?: string | null
   fecha?: string | null
   placa?: string | null
+  // Horario programado del turno (de Programación de Turnos).
+  horario?: string | null
+  horaEntrada?: string | null
+  horaSalida?: string | null
 }
 
 interface CuerpoEnvio {
@@ -25,13 +29,17 @@ interface CuerpoEnvio {
   destinatarios: DestinatarioEntrada[]
 }
 
-// Reemplaza {nombre}, {puesto}, {fecha}, {placa} en la plantilla.
+// Reemplaza {nombre}, {puesto}, {fecha}, {placa}, {horario}, {hora_entrada},
+// {hora_salida} en la plantilla.
 function renderMensaje(plantilla: string, d: DestinatarioEntrada): string {
   return plantilla
     .replace(/\{nombre\}/gi, d.nombre ?? "")
     .replace(/\{puesto\}/gi, d.puesto ?? "")
     .replace(/\{fecha\}/gi, d.fecha ?? "")
     .replace(/\{placa\}/gi, d.placa ?? "")
+    .replace(/\{horario\}/gi, d.horario ?? "")
+    .replace(/\{hora_entrada\}/gi, d.horaEntrada ?? "")
+    .replace(/\{hora_salida\}/gi, d.horaSalida ?? "")
     .trim()
 }
 
@@ -87,7 +95,7 @@ export async function POST(request: NextRequest) {
         destinatario_celular: d.celular ?? null,
         plantilla: plantilla ?? "texto_libre",
         mensaje: textoRenderizado,
-        variables: { nombre: d.nombre ?? null, puesto: d.puesto ?? null, fecha: d.fecha ?? null, placa: d.placa ?? null },
+        variables: { nombre: d.nombre ?? null, puesto: d.puesto ?? null, fecha: d.fecha ?? null, placa: d.placa ?? null, horario: d.horario ?? null },
         estado: res.estado,
         proveedor_msg_id: res.proveedorMsgId ?? null,
         error: res.error ?? null,
