@@ -110,9 +110,6 @@ import { ActividadesSST } from "@/components/sst/actividades"
 import { MatrizIntegradaSIG } from "@/components/sst/matriz-integrada-sig"
 import { RepositorioSIG } from "@/components/sst/repositorio-sig"
 import RepositorioUniversal from "@/components/sst/repositorio-universal"
-import { PedidosKpiStrip } from "@/components/orders/pedidos-kpi-strip"
-import { DespachoKpiStrip } from "@/components/orders/despacho-kpi-strip"
-import { VehiculosNoProcesadosCard } from "@/components/vehiculos-no-procesados-card"
 import { DashboardSIG } from "@/components/sst/dashboard-sig"
 import { AspectosAmbientales } from "@/components/sst/aspectos-ambientales"
 import { ObjetivosSIG } from "@/components/sst/objetivos-sig"
@@ -420,12 +417,10 @@ export function MainContent({
             </PermissionGuard>
           ) : selectedModule === "Gestionar pedidos" ? (
             <PermissionGuard moduleName="Gestionar pedidos">
-              <PedidosKpiStrip />
               <OrdersManagement onEditOrder={(orderId) => setEditingOrderId(orderId)} />
             </PermissionGuard>
           ) : selectedModule === "Gestión integral de pedidos" ? (
             <PermissionGuard moduleName="Gestión integral de pedidos">
-              <PedidosKpiStrip />
               <ComprehensiveOrdersManagement />
             </PermissionGuard>
           ) : selectedModule === "Dashboard Pedidos" ? (
@@ -446,7 +441,6 @@ export function MainContent({
             </PermissionGuard>
           ) : selectedModule === "Gestión de Ordenes" ? (
             <PermissionGuard moduleName="Gestión de Ordenes">
-              <DespachoKpiStrip />
               <LoadOrdersManagement />
             </PermissionGuard>
           ) : selectedModule === "Dashboard Despachos/Recepción" ? (
@@ -647,7 +641,6 @@ export function MainContent({
             </PermissionGuard>
           ) : selectedModule === "Ver Vehículos" ? (
             <PermissionGuard moduleName="Ver Vehículos">
-              <VehiculosNoProcesadosCard />
               <GenericCrudTable moduleDef={configModules["citas_vehiculos"]} hideNewButton={true} />
             </PermissionGuard>
           ) : selectedModule === "Ver historial de Inspección" ? (

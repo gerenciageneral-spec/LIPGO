@@ -197,18 +197,22 @@ export function ModulesView({ groupKey, onBack, onSelectModule }: ModulesViewPro
       {/* Atención del día — tareas en riesgo/urgentes del área (KPIs bajo meta) */}
       <AtencionBanner alertas={alertas} />
 
-      {/* Indicadores del área leídos del BSC (por empresa, en vivo) */}
-      <AreaKpis groupKey={groupKey} valores={valores} loading={loading} />
-
-      {/* KPIs de gestión del cliente alineados a los objetivos del área:
-          Pedidos → cumplimiento de entregas (vencidos, por vencer).
-          Despacho → operativo del día + eficiencia y vehículos por cerrar. */}
-      {groupKey === "pedidos" && <PedidosKpiStrip />}
-      {groupKey === "despachos" && (
-        <>
+      {/* KPIs del área. Para Pedidos/Despacho se muestran los KPIs de gestión del
+          cliente alineados a objetivos (vencidos, por vencer, vehículos por cerrar)
+          en vez de solo conteos básicos. El resto de grupos usa el set del BSC. */}
+      {groupKey === "pedidos" ? (
+        <div className="space-y-1">
+          <div className="text-sm font-semibold text-foreground">Cumplimiento de entregas</div>
+          <PedidosKpiStrip />
+        </div>
+      ) : groupKey === "despachos" ? (
+        <div className="space-y-3">
+          <div className="text-sm font-semibold text-foreground">Operación y despacho del día</div>
           <DespachoKpiStrip />
           <VehiculosNoProcesadosCard />
-        </>
+        </div>
+      ) : (
+        <AreaKpis groupKey={groupKey} valores={valores} loading={loading} />
       )}
 
       {/* Módulos directos */}
