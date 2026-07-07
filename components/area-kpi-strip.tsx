@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react"
 import { useAuth } from "@/components/auth-provider"
 import { KpiCard } from "@/components/orders/dashboard-pedidos/kpi-card"
-import { getAreaKpisRapidas, tituloAreaKpis, type AreaKpiItem } from "@/lib/area-kpis-rapidas-actions"
+import { getAreaKpisRapidas } from "@/lib/area-kpis-rapidas-actions"
+import { tituloAreaKpis, type AreaKpiItem } from "@/lib/area-kpis-util"
 import {
   AlertTriangle,
   Clock,

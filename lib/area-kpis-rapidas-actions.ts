@@ -4,32 +4,11 @@ import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getCurrentEmpresaIdForInsert } from "@/lib/user-context"
 import { getUserPermissions } from "@/lib/permissions-actions"
 import { getResumenExamenes, getExamenesPeriodicos } from "@/lib/examenes-medicos-actions"
+import { AREA_KPI_TITULOS, type AreaKpiItem } from "@/lib/area-kpis-util"
 
 // Tira de KPIs RÁPIDOS de "tareas pendientes / a revisar" por área. Usa conteos en
 // paralelo (count:head) — NO el BSC (getIndicadoresValores, que es lento). El ícono es
 // una CLAVE (string) que el cliente mapea a lucide (no se pasan componentes desde server).
-export type AreaKpiVariant = "primary" | "success" | "warning" | "danger"
-export interface AreaKpiItem {
-  label: string
-  value: string
-  subtext?: string
-  variant: AreaKpiVariant
-  icon: string
-}
-
-// Título de la sección por grupo.
-const TITULOS: Record<string, string> = {
-  inventarios: "Almacenamiento — a revisar",
-  lip: "Operación LIP — pendientes",
-  rrhh: "Gestión Humana — pendientes",
-  sst: "SST — a revisar",
-  financiera: "Gestión Financiera — pendientes",
-  certificaciones_lip: "SIG — a revisar",
-}
-
-export function tituloAreaKpis(groupKey: string): string {
-  return TITULOS[groupKey] || ""
-}
 
 function hoyBogota(): string {
   const b = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }))
@@ -43,7 +22,7 @@ export async function getAreaKpisRapidas(
 ): Promise<{ items: AreaKpiItem[] }> {
   const sb: any = await getSupabaseAdmin()
   const empresaId = selectedEmpresaId || (await getCurrentEmpresaIdForInsert())
-  if (!empresaId || !TITULOS[groupKey]) return { items: [] }
+  if (!empresaId || !AREA_KPI_TITULOS[groupKey]) return { items: [] }
   const cnt = async (build: () => any): Promise<number> => {
     try {
       const { count, error } = await build()
