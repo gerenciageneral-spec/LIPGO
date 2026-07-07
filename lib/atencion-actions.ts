@@ -2,6 +2,8 @@
 
 import { createClient } from "@/lib/supabase-client"
 import { getCurrentEmpresaId } from "@/lib/company-filter"
+import { getUserPermissions } from "@/lib/permissions-actions"
+import { MODULE_PERMISSION_MAP } from "@/lib/permissions-map"
 
 // Ítem de "atención del día" que la IA prioriza. Datos REALES por empresa.
 export interface AtencionRow {
@@ -33,7 +35,7 @@ function firstOfMonth(): string {
  * del selector global). Defensivo: cualquier fallo devuelve lista vacía y la
  * tarjeta de IA simplemente no muestra el bloque.
  */
-export async function getAtencionDelDia(): Promise<{ success: boolean; items: AtencionRow[] }> {
+export async function getAtencionDelDia(userId?: string): Promise<{ success: boolean; items: AtencionRow[] }> {
   try {
     const supabase = await createClient()
     const empresaId = await getCurrentEmpresaId()
@@ -72,17 +74,36 @@ export async function getAtencionDelDia(): Promise<{ success: boolean; items: At
       })
     }
 
+    // GATE por área: cada tarea pertenece a un módulo/KPI de un área (p. ej. las
+    // facturas por solicitar son del Coordinador de LIP). Se muestra SOLO a quien
+    // tiene el permiso de ese módulo, para que LIPbot no exhiba tareas ajenas al
+    // rol. Si no hay registro de permisos (p. ej. gerencia/admin), no se oculta.
+    let permisos: any = null
+    try {
+      permisos = await getUserPermissions(userId)
+    } catch {
+      permisos = null
+    }
+    const permitido = (it: AtencionRow): boolean => {
+      if (!it.modulo) return true
+      const key = MODULE_PERMISSION_MAP[it.modulo]
+      if (!key) return true
+      if (!permisos) return true
+      return !!permisos[key]
+    }
+    const visibles = items.filter(permitido)
+
     // "Vida propia" de la IA: si hay pendientes y ya es tarde (>= 3pm Colombia),
     // escala una alerta de CUMPLIMIENTO al frente — no se están atendiendo a
     // tiempo. Así el asistente insiste en el cierre del día.
-    if (items.length > 0 && colombiaHour() >= 15) {
-      items.unshift({
+    if (visibles.length > 0 && colombiaHour() >= 15) {
+      visibles.unshift({
         label: "⚠ Cumplimiento: atiende los pendientes antes del cierre del día",
         sev: "crit",
       })
     }
 
-    return { success: true, items }
+    return { success: true, items: visibles }
   } catch (e) {
     console.error("[atencion] error:", e)
     return { success: false, items: [] }

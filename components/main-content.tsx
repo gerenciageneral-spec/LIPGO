@@ -176,7 +176,7 @@ export function MainContent({
   React.useEffect(() => {
     if (!selectedEmpresaId) return
     let cancel = false
-    getAtencionDelDia()
+    getAtencionDelDia(profile?.id)
       .then((r) => {
         if (!cancel && r.success) setHomeAlertas(r.items as AtencionItem[])
       })
@@ -184,7 +184,7 @@ export function MainContent({
     return () => {
       cancel = true
     }
-  }, [selectedEmpresaId])
+  }, [selectedEmpresaId, profile?.id])
   React.useEffect(() => {
     const d = new Date()
     const h = d.getHours()
