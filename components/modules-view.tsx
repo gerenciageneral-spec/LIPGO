@@ -7,6 +7,9 @@ import type { AtencionItem } from "@/components/lip-ai-assistant"
 import { AtencionBanner } from "@/components/atencion-banner"
 import { TINT } from "@/components/module-cards"
 import { AreaKpis, type ValorBsc } from "@/components/area-kpis"
+import { PedidosKpiStrip } from "@/components/orders/pedidos-kpi-strip"
+import { DespachoKpiStrip } from "@/components/orders/despacho-kpi-strip"
+import { VehiculosNoProcesadosCard } from "@/components/vehiculos-no-procesados-card"
 import { useAuth } from "@/components/auth-provider"
 import { getIndicadoresValores } from "@/lib/sig-actions"
 import { AREA_KPIS, KPI_DEFS, formatKpi, kpiSev } from "@/lib/kpis-area"
@@ -196,6 +199,17 @@ export function ModulesView({ groupKey, onBack, onSelectModule }: ModulesViewPro
 
       {/* Indicadores del área leídos del BSC (por empresa, en vivo) */}
       <AreaKpis groupKey={groupKey} valores={valores} loading={loading} />
+
+      {/* KPIs de gestión del cliente alineados a los objetivos del área:
+          Pedidos → cumplimiento de entregas (vencidos, por vencer).
+          Despacho → operativo del día + eficiencia y vehículos por cerrar. */}
+      {groupKey === "pedidos" && <PedidosKpiStrip />}
+      {groupKey === "despachos" && (
+        <>
+          <DespachoKpiStrip />
+          <VehiculosNoProcesadosCard />
+        </>
+      )}
 
       {/* Módulos directos */}
       {group.modules && group.modules.length > 0 && (
