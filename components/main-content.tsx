@@ -111,6 +111,7 @@ import { MatrizIntegradaSIG } from "@/components/sst/matriz-integrada-sig"
 import { RepositorioSIG } from "@/components/sst/repositorio-sig"
 import RepositorioUniversal from "@/components/sst/repositorio-universal"
 import { PedidosKpiStrip } from "@/components/orders/pedidos-kpi-strip"
+import { DespachoKpiStrip } from "@/components/orders/despacho-kpi-strip"
 import { VehiculosNoProcesadosCard } from "@/components/vehiculos-no-procesados-card"
 import { DashboardSIG } from "@/components/sst/dashboard-sig"
 import { AspectosAmbientales } from "@/components/sst/aspectos-ambientales"
@@ -445,6 +446,7 @@ export function MainContent({
             </PermissionGuard>
           ) : selectedModule === "Gestión de Ordenes" ? (
             <PermissionGuard moduleName="Gestión de Ordenes">
+              <DespachoKpiStrip />
               <LoadOrdersManagement />
             </PermissionGuard>
           ) : selectedModule === "Dashboard Despachos/Recepción" ? (

@@ -86,6 +86,69 @@ export async function getPedidosKpis(selectedEmpresaId?: number | null): Promise
   return { total, pendientes, vencidos, venceHoy, porVencer7, entregados, valorVencido: Math.round(valorVencido), cumplimientoPct }
 }
 
+// KPIs de gestión del cliente para DESPACHO (Gestión de Órdenes). Operativo del día
+// desde cabeceraoc (órdenes sin cerrar / de hoy) + eficiencia desde la vista del
+// dashboard de recepción (tiempos de operación). Alineado a objetivos del área.
+export interface DespachoKpis {
+  ordenesHoy: number
+  sinCerrar: number // iniciadas y aún sin fincargue (en proceso, requieren cierre)
+  finalizadasHoy: number
+  tiempoPromOperacion: number // min promedio (vista)
+  operacionesMedidas: number // # de operaciones con tiempo medido
+}
+
+export async function getDespachoKpis(selectedEmpresaId?: number | null): Promise<DespachoKpis> {
+  const empty: DespachoKpis = { ordenesHoy: 0, sinCerrar: 0, finalizadasHoy: 0, tiempoPromOperacion: 0, operacionesMedidas: 0 }
+  const sb: any = await getSupabaseAdmin()
+  const empresaId = selectedEmpresaId || (await getCurrentEmpresaIdForInsert())
+  if (!empresaId) return empty
+
+  // Hoy Bogotá en formato YYYY-MM-DD (fechacargue es texto de fecha).
+  const b = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }))
+  const hoyStr = `${b.getFullYear()}-${String(b.getMonth() + 1).padStart(2, "0")}-${String(b.getDate()).padStart(2, "0")}`
+
+  const rows: any[] = []
+  let from = 0
+  while (true) {
+    const { data, error } = await sb
+      .from("cabeceraoc")
+      .select("iniciocargue,fincargue,fechacargue")
+      .eq("idempresa", empresaId)
+      .range(from, from + 999)
+    if (error) break
+    rows.push(...(data ?? []))
+    if (!data || data.length < 1000) break
+    from += 1000
+    if (from > 100000) break
+  }
+  let ordenesHoy = 0, sinCerrar = 0, finalizadasHoy = 0
+  for (const r of rows) {
+    const inicio = !!(r.iniciocargue && String(r.iniciocargue).trim())
+    const fin = !!(r.fincargue && String(r.fincargue).trim())
+    if (inicio && !fin) sinCerrar++
+    if (r.fechacargue === hoyStr) {
+      ordenesHoy++
+      if (fin) finalizadasHoy++
+    }
+  }
+
+  // Tiempo promedio de operación desde la vista del dashboard de recepción.
+  let tiempoPromOperacion = 0, operacionesMedidas = 0
+  try {
+    const { data: v } = await sb
+      .from("dashboardoperacionesgerencia")
+      .select("tiempo_total_operacion_min")
+      .eq("idempresa", empresaId)
+      .not("tiempo_total_operacion_min", "is", null)
+      .limit(5000)
+    const vals = (v ?? []).map((r: any) => Number(r.tiempo_total_operacion_min)).filter((n: number) => !isNaN(n) && n > 0)
+    operacionesMedidas = vals.length
+    if (vals.length) tiempoPromOperacion = Math.round(vals.reduce((a: number, x: number) => a + x, 0) / vals.length)
+  } catch { /* vista no disponible */ }
+
+  return { ordenesHoy, sinCerrar, finalizadasHoy, tiempoPromOperacion, operacionesMedidas }
+}
+
 // Vehículos NO PROCESADOS (sin cerrar): citasvehiculos con estatus IS NULL. Es el
 // mismo predicado que usa la app para "registro abierto / por distribuir"
 // (lib/vehicle-actions.ts:290-313). Sirve para que el cliente sepa cuáles cerrar.
