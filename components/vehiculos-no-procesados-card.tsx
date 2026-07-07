@@ -20,6 +20,7 @@ import {
   type VehiculosKpis,
   type VehiculoPendiente,
 } from "@/lib/pedidos-kpis-actions"
+import { emitTablaChanged, tablaChangedEvent } from "@/lib/sync-events"
 import { Car, CheckCircle2, Truck, Trash2, Loader2 } from "lucide-react"
 
 export function VehiculosNoProcesadosCard() {
@@ -45,6 +46,16 @@ export function VehiculosNoProcesadosCard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedEmpresaId])
 
+  // Sincronización con la tabla "Ver Vehículos" (misma tabla citasvehiculos): si allá
+  // se edita/elimina un vehículo, esta tarjeta se recarga al instante, y viceversa.
+  useEffect(() => {
+    const ev = tablaChangedEvent("citasvehiculos")
+    const handler = () => { cargar() }
+    window.addEventListener(ev, handler)
+    return () => window.removeEventListener(ev, handler)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedEmpresaId])
+
   const abrirCerrar = async (v: VehiculoPendiente) => {
     setCerrar(v)
     setOcSel("")
@@ -63,6 +74,7 @@ export function VehiculosNoProcesadosCard() {
         toast({ title: "Vehículo cerrado", description: `${cerrar.placa} → orden ${ocSel}` })
         setCerrar(null)
         cargar()
+        emitTablaChanged("citasvehiculos")
       } else {
         toast({ title: "Error", description: r.message })
       }
@@ -79,6 +91,7 @@ export function VehiculosNoProcesadosCard() {
       if (r.success) {
         toast({ title: "Registro eliminado", description: v.placa })
         cargar()
+        emitTablaChanged("citasvehiculos")
       } else {
         toast({ title: "Error", description: r.message })
       }

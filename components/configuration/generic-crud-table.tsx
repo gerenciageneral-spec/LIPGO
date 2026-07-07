@@ -30,6 +30,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { useAuth } from "@/components/auth-provider"
+import { emitTablaChanged, tablaChangedEvent } from "@/lib/sync-events"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { CalendarIcon } from "lucide-react"
@@ -80,6 +81,16 @@ export function GenericCrudTable({ moduleDef, hideNewButton = false }: GenericCr
       loadData()
       loadSelectOptions()
     }
+  }, [moduleDef.tableName, selectedEmpresaId])
+
+  // Sincronización: si otro componente muta esta misma tabla (p. ej. la tarjeta de
+  // vehículos no procesados al cerrar/eliminar), se recarga esta tabla al instante.
+  useEffect(() => {
+    const ev = tablaChangedEvent(moduleDef.tableName)
+    const handler = () => { loadData() }
+    window.addEventListener(ev, handler)
+    return () => window.removeEventListener(ev, handler)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [moduleDef.tableName, selectedEmpresaId])
 
   const loadData = async () => {
@@ -428,6 +439,7 @@ export function GenericCrudTable({ moduleDef, hideNewButton = false }: GenericCr
           description: "Registro eliminado correctamente.",
         })
         await loadData()
+        emitTablaChanged(moduleDef.tableName)
         setDeleteDialogOpen(false)
         setRecordToDelete(null)
         setDeletePassword("")
@@ -699,6 +711,7 @@ if (moduleDef.tableName === "almacenes" && selectedEmpresaId) {
         setValidationErrors({})
         setFormData({})
         await loadData()
+        emitTablaChanged(moduleDef.tableName)
       } else {
         toast({
           title: "Error",
