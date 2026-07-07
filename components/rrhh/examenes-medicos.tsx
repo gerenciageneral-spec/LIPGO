@@ -42,6 +42,8 @@ import {
 } from "@/lib/examenes-medicos-actions"
 import { getHojasVida, type HojaDeVida } from "@/lib/hojas-vida-actions"
 import { getColaboradoresLite } from "@/lib/headcount-actions"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import ExamenesPeriodicos from "@/components/rrhh/examenes-periodicos"
 import {
   Plus,
   Trash2,
@@ -355,6 +357,12 @@ export default function ExamenesMedicos() {
   }, [examenes, estadoFiltro])
 
   return (
+    <Tabs defaultValue="gestion" className="space-y-4">
+      <TabsList>
+        <TabsTrigger value="gestion">Gestión de exámenes</TabsTrigger>
+        <TabsTrigger value="periodicos">Exámenes periódicos</TabsTrigger>
+      </TabsList>
+      <TabsContent value="gestion">
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
@@ -758,5 +766,10 @@ export default function ExamenesMedicos() {
         </DialogContent>
       </Dialog>
     </div>
+      </TabsContent>
+      <TabsContent value="periodicos">
+        <ExamenesPeriodicos />
+      </TabsContent>
+    </Tabs>
   )
 }

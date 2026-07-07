@@ -431,6 +431,102 @@ export async function revalidarExamenesDesdeDocumento(selectedEmpresaId?: number
   return { success: true, leidos, aptos, noAptos, sinConcepto }
 }
 
+// ---------------------------------------------------------------------
+// EXÁMENES PERIÓDICOS — quién debe hacerse el examen médico periódico (anual).
+// Base: fecha de ingreso (headcount.fechainicio; respaldo contratos.fecha_inicio).
+// Próximo periódico = ingreso + 1 año. Si ya pasó → VENCIDO (alerta). Se calcula el
+// costo con la línea "Médico ingreso/periódico/retiro" por sede para provisionar.
+// ---------------------------------------------------------------------
+// Costo del examen médico PERIÓDICO por sede (solo la línea "Médico ingreso/
+// periódico/retiro" de TARIFAS LIP - CIUDADES 2026), no el paquete completo.
+const COSTO_PERIODICO: Record<number, number> = {
+  1: 28000, // Harinera Indupan · Bogotá
+  2: 29000, // Avimol · Barranquilla
+  3: 35000, // Cedi Funza
+  4: 35000, // Cedi Medellín
+  5: 0, // Demogistics · no aplica
+}
+
+export interface ExamenPeriodico {
+  cedula: string
+  nombre: string
+  cargo: string | null
+  estado: string | null
+  fecha_ingreso: string
+  proximo_periodico: string
+  dias_restantes: number // negativo = vencido
+  vencido: boolean
+  costo: number
+}
+
+export async function getExamenesPeriodicos(selectedEmpresaId?: number | null) {
+  const sb: any = await getSupabaseAdmin()
+  const empresaId = selectedEmpresaId || (await getCurrentEmpresaIdForInsert())
+  const costoUnit = COSTO_PERIODICO[Number(empresaId)] ?? 0
+
+  // Personal ACTIVO de la empresa (los inactivos no requieren periódico).
+  const { data: hc, error } = await sb
+    .from("headcount")
+    .select("identificacion,nombre,cargo,estado,fechainicio")
+    .eq("idempresa", empresaId)
+    .ilike("estado", "activo")
+  if (error) {
+    return { success: false, data: [] as ExamenPeriodico[], resumen: null, message: error.message }
+  }
+
+  // Respaldo de fecha de ingreso desde contratos (por cédula).
+  const { data: con } = await sb.from("contratos").select("colaborador_id,fecha_inicio").eq("idempresa", empresaId).not("fecha_inicio", "is", null)
+  const fechaContrato = new Map<string, string>()
+  for (const c of con ?? []) {
+    const ced = String(c.colaborador_id || "").trim()
+    if (ced && !fechaContrato.has(ced)) fechaContrato.set(ced, c.fecha_inicio)
+  }
+
+  const hoy = new Date()
+  hoy.setHours(0, 0, 0, 0)
+  const MS_DIA = 86400000
+
+  const filas: ExamenPeriodico[] = []
+  let sinFecha = 0
+  for (const p of hc ?? []) {
+    const ced = String(p.identificacion || "").trim()
+    const raw = (p.fechainicio && String(p.fechainicio).trim()) || fechaContrato.get(ced) || ""
+    if (!raw) { sinFecha++; continue }
+    const ingreso = new Date(String(raw).slice(0, 10) + "T00:00:00")
+    if (isNaN(ingreso.getTime())) { sinFecha++; continue }
+    // Próximo periódico = ingreso + 1 año (primer periódico anual).
+    const prox = new Date(ingreso)
+    prox.setFullYear(ingreso.getFullYear() + 1)
+    const dias = Math.round((prox.getTime() - hoy.getTime()) / MS_DIA)
+    filas.push({
+      cedula: ced,
+      nombre: p.nombre || ced,
+      cargo: p.cargo || null,
+      estado: p.estado || null,
+      fecha_ingreso: String(raw).slice(0, 10),
+      proximo_periodico: prox.toISOString().slice(0, 10),
+      dias_restantes: dias,
+      vencido: dias < 0,
+      costo: costoUnit,
+    })
+  }
+  filas.sort((a, b) => a.dias_restantes - b.dias_restantes)
+
+  const vencidos = filas.filter((f) => f.vencido)
+  const proximos30 = filas.filter((f) => !f.vencido && f.dias_restantes <= 30)
+  const alerta = filas.filter((f) => f.dias_restantes <= 30) // vencidos + por vencer
+  const resumen = {
+    activos: filas.length,
+    sinFecha,
+    vencidos: vencidos.length,
+    proximos30: proximos30.length,
+    costoUnit,
+    costoAlerta: alerta.reduce((s, f) => s + f.costo, 0), // a provisionar ya
+    costoAnual: filas.reduce((s, f) => s + f.costo, 0), // provisión anual (todos)
+  }
+  return { success: true, data: filas, resumen }
+}
+
 // Elimina un examen medico (archivo en Storage + registro).
 export async function deleteExamenMedico(id: string) {
   const supabase = await createClient()
