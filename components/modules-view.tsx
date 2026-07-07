@@ -1,10 +1,8 @@
 "use client"
 
-import { useEffect, useMemo, useState, type CSSProperties } from "react"
+import { useEffect, useState, type CSSProperties } from "react"
 import { groups, type GroupKey, type Module } from "@/lib/dashboard-data"
 import { ArrowLeft, ArrowRight } from "lucide-react"
-import type { AtencionItem } from "@/components/lip-ai-assistant"
-import { AtencionBanner } from "@/components/atencion-banner"
 import { TINT } from "@/components/module-cards"
 import { AreaKpis, type ValorBsc } from "@/components/area-kpis"
 import { PedidosKpiStrip } from "@/components/orders/pedidos-kpi-strip"
@@ -13,7 +11,7 @@ import { VehiculosNoProcesadosCard } from "@/components/vehiculos-no-procesados-
 import { AreaKpiStrip } from "@/components/area-kpi-strip"
 import { useAuth } from "@/components/auth-provider"
 import { getIndicadoresValores } from "@/lib/sig-actions"
-import { AREA_KPIS, KPI_DEFS, formatKpi, kpiSev } from "@/lib/kpis-area"
+import { AREA_KPIS } from "@/lib/kpis-area"
 
 interface ModulesViewProps {
   groupKey: GroupKey
@@ -35,31 +33,6 @@ function monthRange() {
   return { desde: `${y}-${m}-01`, hasta: `${y}-${m}-${day}` }
 }
 
-/**
- * Deriva las "tareas del día" del submódulo a partir de SUS PROPIOS KPIs del
- * BSC: los indicadores del área que están por debajo de meta (crit/warn) se
- * convierten en focos de atención. Así cada submódulo muestra tareas distintas
- * y siempre alineadas con los KPIs que se ven arriba. Crit primero.
- */
-function alertasDesdeKpis(groupKey: GroupKey, valores: Record<string, ValorBsc>): AtencionItem[] {
-  const keys = AREA_KPIS[groupKey] ?? []
-  const items = keys
-    .map((k) => {
-      const def = KPI_DEFS[k]
-      const v = valores[k]
-      if (!def || !v) return null
-      const sev = kpiSev(def, v.valor)
-      if (sev !== "crit" && sev !== "warn") return null
-      const metaTxt = def.meta != null ? ` · meta ${formatKpi(def, def.meta)}` : ""
-      return {
-        label: `${def.nombre}: ${formatKpi(def, v.valor)}${metaTxt}`,
-        sev: sev === "crit" ? ("crit" as const) : ("warn" as const),
-      }
-    })
-    .filter((x): x is { label: string; sev: "crit" | "warn" } => x !== null)
-  // Crit primero, luego warn.
-  return items.sort((a, b) => (a.sev === "crit" ? -1 : 1) - (b.sev === "crit" ? -1 : 1))
-}
 
 // Tarjeta de submódulo VIVA: mismo lenguaje que el launcher de Inicio. Toma el
 // color de dominio del grupo (`--tint`) y, en hover, florece — glow del color,
@@ -127,9 +100,6 @@ export function ModulesView({ groupKey, onBack, onSelectModule }: ModulesViewPro
     }
   }, [groupKey, selectedEmpresaId])
 
-  // Tareas del día = KPIs del área bajo meta (crit/warn). Se muestran en el banner.
-  const alertas = useMemo(() => alertasDesdeKpis(groupKey, valores), [groupKey, valores])
-
   if (!group) return null
 
   const GroupIcon = group.icon
@@ -194,9 +164,6 @@ export function ModulesView({ groupKey, onBack, onSelectModule }: ModulesViewPro
           </p>
         </div>
       </div>
-
-      {/* Atención del día — tareas en riesgo/urgentes del área (KPIs bajo meta) */}
-      <AtencionBanner alertas={alertas} />
 
       {/* KPIs del área. Para Pedidos/Despacho se muestran los KPIs de gestión del
           cliente alineados a objetivos (vencidos, por vencer, vehículos por cerrar)
