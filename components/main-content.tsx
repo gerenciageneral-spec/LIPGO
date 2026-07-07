@@ -111,6 +111,8 @@ import { MatrizIntegradaSIG } from "@/components/sst/matriz-integrada-sig"
 import { RepositorioSIG } from "@/components/sst/repositorio-sig"
 import RepositorioUniversal from "@/components/sst/repositorio-universal"
 import { PedidosKpiStrip } from "@/components/orders/pedidos-kpi-strip"
+import { DespachoKpiStrip } from "@/components/orders/despacho-kpi-strip"
+import { VehiculosNoProcesadosCard } from "@/components/vehiculos-no-procesados-card"
 import { DashboardSIG } from "@/components/sst/dashboard-sig"
 import { AspectosAmbientales } from "@/components/sst/aspectos-ambientales"
 import { ObjetivosSIG } from "@/components/sst/objetivos-sig"
@@ -642,6 +644,11 @@ export function MainContent({
             </PermissionGuard>
           ) : selectedModule === "Registrar Vehículos" ? (
             <PermissionGuard moduleName="Registrar Vehículos">
+              <div className="mb-5 space-y-3">
+                <div className="text-sm font-semibold text-foreground">Operación y despacho del día</div>
+                <DespachoKpiStrip />
+                <VehiculosNoProcesadosCard />
+              </div>
               <VehicleAppointmentsForm />
             </PermissionGuard>
           ) : selectedModule === "Ver Vehículos" ? (

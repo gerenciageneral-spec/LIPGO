@@ -117,24 +117,88 @@ export async function getDespachoKpis(selectedEmpresaId?: number | null): Promis
 }
 
 // Vehículos NO PROCESADOS (sin cerrar): citasvehiculos con estatus IS NULL.
+export interface VehiculoPendiente {
+  id: number
+  placa: string
+  conductor: string | null
+  transporte: string | null
+  tipovehiculo: string | null
+  fechallegada: string | null
+}
 export interface VehiculosKpis {
   noProcesados: number
-  placas: string[]
+  vehiculos: VehiculoPendiente[]
 }
 
 export async function getVehiculosNoProcesados(selectedEmpresaId?: number | null): Promise<VehiculosKpis> {
   const sb: any = await getSupabaseAdmin()
   const empresaId = selectedEmpresaId || (await getCurrentEmpresaIdForInsert())
-  if (!empresaId) return { noProcesados: 0, placas: [] }
+  if (!empresaId) return { noProcesados: 0, vehiculos: [] }
   const { data, count } = await sb
     .from("citasvehiculos")
-    .select("placa,fechallegada", { count: "exact" })
+    .select("id,placa,nombreconductor,transporte,tipovehiculo,fechallegada", { count: "exact" })
     .eq("idempresa", empresaId)
     .is("estatus", null)
     .order("fechallegada", { ascending: true })
-    .limit(20)
-  return {
-    noProcesados: count || (data?.length ?? 0),
-    placas: (data ?? []).map((r: any) => r.placa).filter(Boolean),
-  }
+    .limit(50)
+  const vehiculos: VehiculoPendiente[] = (data ?? []).map((r: any) => ({
+    id: r.id,
+    placa: r.placa,
+    conductor: r.nombreconductor || null,
+    transporte: r.transporte || null,
+    tipovehiculo: r.tipovehiculo || null,
+    fechallegada: r.fechallegada || null,
+  }))
+  return { noProcesados: count || vehiculos.length, vehiculos }
+}
+
+// Órdenes de cargue RECIENTES para sugerir al cerrar un vehículo contra una orden.
+// Solo lectura de cabeceraoc; el usuario puede además escribir la orden libremente.
+export async function getOrdenesRecientes(selectedEmpresaId?: number | null): Promise<{ ordendecargue: string; fechaorden: string | null }[]> {
+  const sb: any = await getSupabaseAdmin()
+  const empresaId = selectedEmpresaId || (await getCurrentEmpresaIdForInsert())
+  if (!empresaId) return []
+  const { data } = await sb
+    .from("cabeceraoc")
+    .select("ordendecargue,fechaorden")
+    .eq("idempresa", empresaId)
+    .not("ordendecargue", "is", null)
+    .order("fechaorden", { ascending: false })
+    .limit(150)
+  return (data ?? [])
+    .filter((r: any) => r.ordendecargue && String(r.ordendecargue).trim())
+    .map((r: any) => ({ ordendecargue: r.ordendecargue, fechaorden: r.fechaorden || null }))
+}
+
+// Cerrar un vehículo asociándolo a una orden de cargue: marca estatus=Procesado y
+// registra el ocargue en el propio vehículo (no toca cabeceraoc). Mantiene el
+// indicador de "no procesados" al día.
+export async function cerrarVehiculoConOrden(vehicleId: number, ordendecargue: string, selectedEmpresaId?: number | null) {
+  const sb: any = await getSupabaseAdmin()
+  const empresaId = selectedEmpresaId || (await getCurrentEmpresaIdForInsert())
+  if (!vehicleId || !empresaId) return { success: false, message: "Datos incompletos." }
+  const { error } = await sb
+    .from("citasvehiculos")
+    .update({ estatus: "Procesado", ocargue: ordendecargue || null })
+    .eq("id", vehicleId)
+    .eq("idempresa", empresaId)
+    .is("estatus", null)
+  if (error) return { success: false, message: error.message }
+  return { success: true }
+}
+
+// Eliminar un registro de vehículo NO procesado (por error / no se va a usar).
+export async function eliminarVehiculoNoProcesado(vehicleId: number, selectedEmpresaId?: number | null) {
+  const sb: any = await getSupabaseAdmin()
+  const empresaId = selectedEmpresaId || (await getCurrentEmpresaIdForInsert())
+  if (!vehicleId || !empresaId) return { success: false, message: "Datos incompletos." }
+  // Seguridad: solo borra si sigue sin procesar (estatus null).
+  const { error } = await sb
+    .from("citasvehiculos")
+    .delete()
+    .eq("id", vehicleId)
+    .eq("idempresa", empresaId)
+    .is("estatus", null)
+  if (error) return { success: false, message: error.message }
+  return { success: true }
 }
