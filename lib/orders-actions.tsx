@@ -195,8 +195,9 @@ export async function getAllOrders() {
       query = query.in("empresafactura", accessibleOwners)
     }
 
-    // Exclude orders with tipooperacion = "proyeccion"
-    query = query.neq("tipooperacion", "proyeccion")
+    // Nota: "proyeccion" es un concepto de cabeceraoc (órdenes), NO de pedidoscabecera.
+    // pedidoscabecera no tiene columna tipooperacion, así que no se filtra aquí
+    // (antes esto rompía la consulta con error 42703).
 
     const { data, error } = await query
 
