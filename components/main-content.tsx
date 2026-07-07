@@ -110,9 +110,7 @@ import { ActividadesSST } from "@/components/sst/actividades"
 import { MatrizIntegradaSIG } from "@/components/sst/matriz-integrada-sig"
 import { RepositorioSIG } from "@/components/sst/repositorio-sig"
 import RepositorioUniversal from "@/components/sst/repositorio-universal"
-import { PedidosKpiStrip } from "@/components/orders/pedidos-kpi-strip"
-import { DespachoKpiStrip } from "@/components/orders/despacho-kpi-strip"
-import { VehiculosNoProcesadosCard } from "@/components/vehiculos-no-procesados-card"
+import { ModuleKpiHeader } from "@/components/module-kpi-header"
 import { DashboardSIG } from "@/components/sst/dashboard-sig"
 import { AspectosAmbientales } from "@/components/sst/aspectos-ambientales"
 import { ObjetivosSIG } from "@/components/sst/objetivos-sig"
@@ -316,6 +314,9 @@ export function MainContent({
               : "w-full max-w-full px-2 sm:px-4 lg:px-8 xl:px-12 py-2 sm:py-4 lg:py-6"
           }
         >
+          {/* KPIs del módulo, presentes en CUALQUIER submódulo del módulo (self-gated:
+              solo pinta en submódulos de grupos con KPIs; null en home/portada). */}
+          {selectedGroup && selectedModule ? <ModuleKpiHeader selectedModule={selectedModule} /> : null}
           {editingOrderId ? (
             <OrderEditPage {...({ orderId: editingOrderId, onBack: () => setEditingOrderId(null) } as any)} />
           ) : !selectedGroup ? (
@@ -416,10 +417,6 @@ export function MainContent({
             </>
           ) : selectedModule === "Entrada de pedidos" ? (
             <PermissionGuard moduleName="Entrada de pedidos">
-              <div className="mb-5">
-                <div className="mb-1 text-sm font-semibold text-foreground">Cumplimiento de entregas</div>
-                <PedidosKpiStrip />
-              </div>
               <OrderEntryForm onNavigateToManageOrders={() => onSelectModule("Gestionar pedidos")} />
             </PermissionGuard>
           ) : selectedModule === "Gestionar pedidos" ? (
@@ -644,11 +641,6 @@ export function MainContent({
             </PermissionGuard>
           ) : selectedModule === "Registrar Vehículos" ? (
             <PermissionGuard moduleName="Registrar Vehículos">
-              <div className="mb-5 space-y-3">
-                <div className="text-sm font-semibold text-foreground">Operación y despacho del día</div>
-                <DespachoKpiStrip />
-                <VehiculosNoProcesadosCard />
-              </div>
               <VehicleAppointmentsForm />
             </PermissionGuard>
           ) : selectedModule === "Ver Vehículos" ? (
