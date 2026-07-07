@@ -4,6 +4,7 @@ import { groups } from "@/lib/dashboard-data"
 import { PedidosKpiStrip } from "@/components/orders/pedidos-kpi-strip"
 import { DespachoKpiStrip } from "@/components/orders/despacho-kpi-strip"
 import { VehiculosNoProcesadosCard } from "@/components/vehiculos-no-procesados-card"
+import { AreaKpiStrip } from "@/components/area-kpi-strip"
 
 // Encabezado de KPIs del MÓDULO: se muestra en CUALQUIER submódulo del módulo, para
 // que el usuario vea siempre las tareas pendientes / indicadores que ameritan revisión
@@ -40,5 +41,7 @@ export function ModuleKpiHeader({ selectedModule }: { selectedModule: string | n
       </div>
     )
   }
+  // Resto de módulos operativos: tira rápida de "a revisar" (self-null si no aplica).
+  if (gk) return <AreaKpiStrip groupKey={gk} />
   return null
 }

@@ -10,6 +10,7 @@ import { AreaKpis, type ValorBsc } from "@/components/area-kpis"
 import { PedidosKpiStrip } from "@/components/orders/pedidos-kpi-strip"
 import { DespachoKpiStrip } from "@/components/orders/despacho-kpi-strip"
 import { VehiculosNoProcesadosCard } from "@/components/vehiculos-no-procesados-card"
+import { AreaKpiStrip } from "@/components/area-kpi-strip"
 import { useAuth } from "@/components/auth-provider"
 import { getIndicadoresValores } from "@/lib/sig-actions"
 import { AREA_KPIS, KPI_DEFS, formatKpi, kpiSev } from "@/lib/kpis-area"
@@ -212,7 +213,11 @@ export function ModulesView({ groupKey, onBack, onSelectModule }: ModulesViewPro
           <VehiculosNoProcesadosCard />
         </div>
       ) : (
-        <AreaKpis groupKey={groupKey} valores={valores} loading={loading} />
+        <>
+          <AreaKpis groupKey={groupKey} valores={valores} loading={loading} />
+          {/* Tira rápida de "a revisar" del área (conteos), además del BSC. */}
+          <AreaKpiStrip groupKey={groupKey} />
+        </>
       )}
 
       {/* Módulos directos */}
