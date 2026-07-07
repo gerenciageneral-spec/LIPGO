@@ -1397,11 +1397,20 @@ export async function eliminarIndicador(id: number): Promise<{ success: boolean;
  * rango de fechas opcional. Devuelve un mapa clave (calculo_auto) -> valor.
  * Es lo que hace que el tablero 9.1 muestre "resultados por sitio".
  */
+// Cache en memoria del BSC: el cálculo es pesado (~30 indicadores en vivo, ~10s).
+// Se cachea por empresa+fechas unos minutos para que la portada no lo recalcule en
+// cada visita. TTL corto (los KPIs no cambian segundo a segundo).
+const _ivCache = new Map<string, { value: any; exp: number }>()
+const IV_TTL_MS = 3 * 60 * 1000 // 3 minutos
+
 export async function getIndicadoresValores(
   proyectoId?: number | null,
   desde?: string | null,
   hasta?: string | null,
 ): Promise<{ success: boolean; valores: Record<string, SigIndicadorValor>; error?: string }> {
+  const _ivKey = `${proyectoId ?? "all"}|${desde ?? ""}|${hasta ?? ""}`
+  const _ivHit = _ivCache.get(_ivKey)
+  if (_ivHit && _ivHit.exp > Date.now()) return _ivHit.value
   try {
     const supabase: any = await getSupabaseAdmin()
     // IDs de cliente sobre los que se calcula (solo clientes ACTIVOS del SIG).
@@ -1782,7 +1791,9 @@ export async function getIndicadoresValores(
       lipgo_registros: { valor: lipgoRegistros, base: "operaciones digitalizadas en LIPgo" },
       legal_cumplimiento: { valor: legalCumpl, base: "requisitos legales cumplidos" },
     }
-    return { success: true, valores }
+    const _ivRes = { success: true, valores }
+    _ivCache.set(_ivKey, { value: _ivRes, exp: Date.now() + IV_TTL_MS })
+    return _ivRes
   } catch (err: any) {
     return { success: false, valores: {}, error: err?.message || "Error desconocido" }
   }
