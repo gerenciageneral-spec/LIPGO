@@ -110,6 +110,7 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
   const speakNextRef = useRef(false)
   const spokenRef = useRef<Set<string>>(new Set())
   const finalVozRef = useRef("")
+  const utterRef = useRef<SpeechSynthesisUtterance | null>(null)
 
   // Preguntas sugeridas PROPIAS del módulo/área actual (no fuera de contexto).
   const sugs = sugerenciasDe(groupKey)
@@ -229,14 +230,54 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
     try {
       const synth = window.speechSynthesis
       if (!synth) return
-      synth.cancel()
-      const u = new SpeechSynthesisUtterance(limpiarParaVoz(texto))
-      u.lang = "es-CO"
-      u.rate = 1.02
-      u.onend = () => {
-        if (/\?/.test(texto)) iniciarVoz() // repreguntó -> te escucha por voz
+      const clean = limpiarParaVoz(texto)
+      if (!clean) return
+
+      let lanzado = false
+      const doSpeak = () => {
+        if (lanzado) return
+        lanzado = true
+        try {
+          synth.cancel() // limpia cualquier cola previa
+          const u = new SpeechSynthesisUtterance(clean)
+          // Elige una voz en español si el sistema la tiene; si no, deja la
+          // por defecto (forzar es-CO sin voz instalada hace que no suene).
+          const voces = synth.getVoices()
+          const esVoz =
+            voces.find((v) => /^es[-_]co/i.test(v.lang)) ||
+            voces.find((v) => /^es/i.test(v.lang))
+          if (esVoz) {
+            u.voice = esVoz
+            u.lang = esVoz.lang
+          } else {
+            u.lang = "es-CO"
+          }
+          u.rate = 1.02
+          u.onend = () => {
+            if (/\?/.test(texto)) iniciarVoz() // repreguntó -> te escucha por voz
+          }
+          utterRef.current = u // mantener referencia: Chrome corta la voz si se recolecta
+          // Chrome a veces "pierde" el speak justo tras cancel; un microdelay + resume lo estabiliza.
+          setTimeout(() => {
+            try {
+              synth.speak(u)
+              synth.resume()
+            } catch {}
+          }, 60)
+        } catch {}
       }
-      synth.speak(u)
+
+      // Las voces pueden no estar cargadas la primera vez; espera el evento (con respaldo).
+      if (synth.getVoices().length === 0) {
+        const onVoces = () => {
+          synth.removeEventListener("voiceschanged", onVoces)
+          doSpeak()
+        }
+        synth.addEventListener("voiceschanged", onVoces)
+        setTimeout(doSpeak, 350) // respaldo por si 'voiceschanged' no llega
+      } else {
+        doSpeak()
+      }
     } catch {}
   }
 
