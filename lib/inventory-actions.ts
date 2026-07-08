@@ -2391,12 +2391,14 @@ export interface WarehouseCapacity {
   bodegaNombre: string | null
 }
 
-export async function getWarehouseCapacities(): Promise<WarehouseCapacity[]> {
+export async function getWarehouseCapacities(selectedEmpresaId?: number | null): Promise<WarehouseCapacity[]> {
   try {
     console.log("[v0] Starting getWarehouseCapacities")
     const supabase = await createClient()
 
-    const empresaId = await getCurrentEmpresaId()
+    // Respeta el selector global: usa la empresa que manda el cliente; si no
+    // llegó, cae a la empresa de sesión (cookie).
+    const empresaId = selectedEmpresaId || (await getCurrentEmpresaId())
     console.log("[v0] Filtering locations by empresaId:", empresaId)
 
     // Orden compuesto: PRIMERO alfabetico ascendente por `letra`

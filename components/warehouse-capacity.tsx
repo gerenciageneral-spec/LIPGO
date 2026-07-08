@@ -14,6 +14,7 @@ import {
   Layers,
 } from "lucide-react"
 import { getWarehouseCapacities, type WarehouseCapacity } from "@/lib/inventory-actions"
+import { useAuth } from "@/components/auth-provider"
 
 /**
  * Token bucket usado para clasificar localizaciones.
@@ -46,6 +47,7 @@ type AlmacenSummary = {
 }
 
 export function WarehouseCapacityComponent() {
+  const { selectedEmpresaId } = useAuth()
   const [capacities, setCapacities] = useState<WarehouseCapacity[]>([])
   const [loading, setLoading] = useState(true)
   // Filtro 1 (ambito): "Todos" o una key de almacen.
@@ -59,12 +61,13 @@ export function WarehouseCapacityComponent() {
 
   useEffect(() => {
     loadCapacities()
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedEmpresaId])
 
   const loadCapacities = async () => {
     setLoading(true)
     try {
-      const data = await getWarehouseCapacities()
+      const data = await getWarehouseCapacities(selectedEmpresaId)
       setCapacities(data)
     } catch (error) {
       console.error("Error loading warehouse capacities:", error)
