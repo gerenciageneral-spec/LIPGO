@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useRef } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { Button } from "@/components/ui/button"
@@ -58,6 +58,9 @@ export function WarehouseCapacityComponent() {
   const [bucketSeleccionado, setBucketSeleccionado] = useState<Bucket | null>(
     null,
   )
+  // Token de petición: si el usuario cambia de empresa rápido, se descarta el
+  // resultado de una petición anterior (más lenta) para que no pise a la nueva.
+  const reqIdRef = useRef(0)
 
   useEffect(() => {
     loadCapacities()
@@ -65,14 +68,16 @@ export function WarehouseCapacityComponent() {
   }, [selectedEmpresaId])
 
   const loadCapacities = async () => {
+    const myId = ++reqIdRef.current
     setLoading(true)
     try {
       const data = await getWarehouseCapacities(selectedEmpresaId)
+      if (myId !== reqIdRef.current) return // llegó una petición más nueva → descartar
       setCapacities(data)
     } catch (error) {
       console.error("Error loading warehouse capacities:", error)
     } finally {
-      setLoading(false)
+      if (myId === reqIdRef.current) setLoading(false)
     }
   }
 

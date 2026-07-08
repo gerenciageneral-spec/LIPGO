@@ -2468,53 +2468,45 @@ export async function getWarehouseCapacities(selectedEmpresaId?: number | null):
       }
     }
 
-    // Get stock data from saldoinvdetalle for each location
-    const capacities: WarehouseCapacity[] = []
-
-    for (const location of uniqueLocations) {
-      // Filtramos `saldoinvdetalle` por la empresa activa del filtro
-      // dinamico (la misma que usamos para `locations` arriba). Antes
-      // este query NO aplicaba el filtro de empresa, asi que cuando una
-      // misma `location.codigo` existia en varias empresas, sumabamos
-      // stock cruzado y el % de utilizacion salia inflado en el
-      // dashboard. Con `.eq("idempresa", empresaId)` cada empresa ve
-      // EXCLUSIVAMENTE el stock de sus localizaciones.
-      const { data: stockData, error: stockError } = await supabase
-        .from("saldoinvdetalle")
-        .select("stock_actual")
-        .eq("location", location.codigo)
-        .eq("idempresa", empresaId)
-
-      if (stockError) {
-        console.error(`[v0] Error fetching stock for location ${location.codigo}:`, stockError)
-        continue
+    // Stock por localización en UNA sola consulta (antes se hacía UNA query por
+    // cada localización → N+1: con 140 localizaciones tardaba ~10s). Traemos todo
+    // el saldo de la empresa para esas localizaciones y sumamos en memoria. Se
+    // filtra por `idempresa` para que cada empresa vea SOLO su stock (no cruzado).
+    const codigos = uniqueLocations.map((l) => l.codigo)
+    const stockPorLocation = new Map<string, number>()
+    {
+      let from = 0
+      while (true) {
+        const { data: rows, error: stockErr } = await supabase
+          .from("saldoinvdetalle")
+          .select("location, stock_actual")
+          .eq("idempresa", empresaId)
+          .in("location", codigos)
+          .range(from, from + 999)
+        if (stockErr) {
+          console.error("[v0] Error fetching stock (batch):", stockErr)
+          break
+        }
+        for (const r of rows ?? []) {
+          const loc = String((r as any).location)
+          stockPorLocation.set(loc, (stockPorLocation.get(loc) || 0) + (Number((r as any).stock_actual) || 0))
+        }
+        if (!rows || rows.length < 1000) break
+        from += 1000
+        if (from > 100000) break
       }
-
-      // Sum all stock_actual values for this location
-      const stockActual = stockData?.reduce((sum, item) => sum + (item.stock_actual || 0), 0) || 0
-
-      // Calculate percentage utilization
-      const capacidad = location.capacidad || 0
-      const porcentajeUtilizacion = capacidad > 0 ? (stockActual / capacidad) * 100 : 0
-
-      const bodegaId = location.bodega ?? null
-      const bodegaNombre = bodegaId != null ? almacenMap.get(bodegaId) ?? null : null
-
-      console.log(
-        `[v0] Location ${location.codigo}: capacidad=${capacidad}, stockActual=${stockActual}, utilization=${porcentajeUtilizacion}%, bodega=${bodegaNombre}`,
-      )
-
-      capacities.push({
-        codigo: location.codigo,
-        capacidad,
-        stockActual,
-        porcentajeUtilizacion,
-        bodegaId,
-        bodegaNombre,
-      })
     }
 
-    console.log("[v0] Returning capacities:", capacities)
+    const capacities: WarehouseCapacity[] = uniqueLocations.map((location) => {
+      const stockActual = stockPorLocation.get(location.codigo) || 0
+      const capacidad = location.capacidad || 0
+      const porcentajeUtilizacion = capacidad > 0 ? (stockActual / capacidad) * 100 : 0
+      const bodegaId = location.bodega ?? null
+      const bodegaNombre = bodegaId != null ? almacenMap.get(bodegaId) ?? null : null
+      return { codigo: location.codigo, capacidad, stockActual, porcentajeUtilizacion, bodegaId, bodegaNombre }
+    })
+
+    console.log("[v0] Returning capacities:", capacities.length)
     return capacities
   } catch (error) {
     console.error("[v0] Unexpected error in getWarehouseCapacities:", error)
