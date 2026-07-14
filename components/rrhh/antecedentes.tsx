@@ -21,11 +21,11 @@ import {
 } from "@/components/ui/table"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/components/auth-provider"
-import { getAntecedentes, deleteAntecedente, sincronizarAntecedentesDesdeHeadcount, type Antecedente } from "@/lib/antecedentes-actions"
+import { getAntecedentes, deleteAntecedente, decidirAntecedente, sincronizarAntecedentesDesdeHeadcount, type Antecedente } from "@/lib/antecedentes-actions"
 import { getHojasVida, type HojaDeVida } from "@/lib/hojas-vida-actions"
 import { Badge } from "@/components/ui/badge"
 import { RadialBar, RadialBarChart, ResponsiveContainer, PolarAngleAxis } from "recharts"
-import { Plus, Trash2, Eye, Download, Search, ShieldCheck, Loader2, Check, Users, AlertTriangle, ShieldAlert, FileText } from "lucide-react"
+import { Plus, Trash2, Eye, Download, Search, ShieldCheck, Loader2, Check, Users, AlertTriangle, ShieldAlert, FileText, Ban } from "lucide-react"
 
 // Acceso a los 3 tipos de certificado de forma uniforme.
 const TIPOS = [
@@ -104,6 +104,8 @@ export default function Antecedentes() {
   const [consultando, setConsultando] = useState(false)
   const [consultaResult, setConsultaResult] = useState<any | null>(null)
   const [consultaError, setConsultaError] = useState<string | null>(null)
+  const [decidiendo, setDecidiendo] = useState<null | "aceptado" | "rechazado">(null)
+  const [decision, setDecision] = useState<null | "aceptado" | "rechazado">(null)
 
   const loadData = async () => {
     setLoading(true)
@@ -223,6 +225,7 @@ export default function Antecedentes() {
     setConsultando(true)
     setConsultaError(null)
     setConsultaResult(null)
+    setDecision(null)
     try {
       // Si la cédula coincide con una hoja de vida, enlazamos y autollenamos nombre.
       const hoja = hojas.find((h) => (h.cedula || "").trim() === ced)
@@ -249,6 +252,46 @@ export default function Antecedentes() {
       setConsultaError("Ocurrió un error de red al consultar. Intenta de nuevo.")
     } finally {
       setConsultando(false)
+    }
+  }
+
+  const handleDecidir = async (estado: "aceptado" | "rechazado") => {
+    const c = consultaResult?.consolidado
+    if (!c) return
+    const ced = String(c.datoConsultado || consultaCedula).trim()
+    const hoja = hojas.find((h) => (h.cedula || "").trim() === ced)
+    setDecidiendo(estado)
+    try {
+      const res = await decidirAntecedente({
+        empresaId: selectedEmpresaId,
+        cedula: ced,
+        nombre: c.nombre,
+        hojaVidaId: hoja?.id || null,
+        idDatoConsultado: c.idDatoConsultado ?? null,
+        scoreRiesgo: consultaResult?.score?.scoreRiesgo ?? null,
+        presentaRiesgo: c.presentaRiesgo ?? null,
+        pep: c.pep ?? null,
+        pdfUrl: consultaResult?.pdfUrl ?? null,
+        pdfNombre: `Antecedentes ${ced}.pdf`,
+        estado,
+      })
+      if (res.success) {
+        setDecision(estado)
+        toast({
+          title: estado === "aceptado" ? "Persona aceptada" : "Persona rechazada",
+          description:
+            estado === "aceptado"
+              ? "Antecedentes registrados y enviados a la hoja de vida."
+              : "Antecedentes rechazados; la contratación queda bloqueada.",
+        })
+        loadData()
+      } else {
+        toast({ title: "No se pudo guardar la decisión", description: res.message })
+      }
+    } catch {
+      toast({ title: "Error", description: "Ocurrió un error al guardar la decisión." })
+    } finally {
+      setDecidiendo(null)
     }
   }
 
@@ -423,19 +466,20 @@ export default function Antecedentes() {
               <TableHead>Policía</TableHead>
               <TableHead>Procuraduría</TableHead>
               <TableHead>Contraloría</TableHead>
+              <TableHead>Verificación</TableHead>
               <TableHead className="text-right">Acciones</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
+                <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
                   <Loader2 className="mx-auto h-5 w-5 animate-spin" />
                 </TableCell>
               </TableRow>
             ) : filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
+                <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
                   No hay antecedentes registrados.
                 </TableCell>
               </TableRow>
@@ -478,6 +522,41 @@ export default function Antecedentes() {
                         </TableCell>
                       )
                     })}
+                    <TableCell className="text-sm">
+                      {a.estado && a.estado !== "pendiente" ? (
+                        <div className="space-y-1">
+                          <Badge
+                            style={{ background: a.estado === "aceptado" ? "#16a34a" : "#dc2626", color: "white" }}
+                            className="gap-1"
+                          >
+                            {a.estado === "aceptado" ? <Check className="h-3 w-3" /> : <Ban className="h-3 w-3" />}
+                            {a.estado === "aceptado" ? "Aceptado" : "Rechazado"}
+                          </Badge>
+                          <div className="flex items-center gap-2">
+                            {typeof a.score_riesgo === "number" && (
+                              <span
+                                className="font-mono text-[10px]"
+                                style={{ color: a.score_riesgo <= 50 ? "#dc2626" : a.score_riesgo <= 84 ? "#f59e0b" : "#16a34a" }}
+                              >
+                                score {a.score_riesgo}
+                              </span>
+                            )}
+                            {a.compliance_pdf_url && (
+                              <a
+                                href={a.compliance_pdf_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-0.5 text-[11px] text-primary hover:underline"
+                              >
+                                <FileText className="h-3 w-3" /> PDF
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
                     <TableCell>
                       <div className="flex justify-end">
                         <Button
@@ -583,6 +662,31 @@ export default function Antecedentes() {
                       <Badge variant="outline" className="text-destructive">{c.totalFuentesConError} con error</Badge>
                     )}
                   </div>
+                </div>
+
+                {/* Decisión: aceptar / rechazar */}
+                <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/40 p-3">
+                  <span className="text-sm font-medium text-foreground">Decisión:</span>
+                  {decision ? (
+                    <Badge style={{ background: decision === "aceptado" ? "#16a34a" : "#dc2626", color: "white" }} className="gap-1">
+                      {decision === "aceptado" ? <Check className="h-3.5 w-3.5" /> : <Ban className="h-3.5 w-3.5" />}
+                      {decision === "aceptado" ? "Aceptada" : "Rechazada"}
+                    </Badge>
+                  ) : (
+                    <>
+                      <Button size="sm" onClick={() => handleDecidir("aceptado")} disabled={!!decidiendo} className="bg-green-600 text-white hover:bg-green-700">
+                        {decidiendo === "aceptado" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}
+                        Aceptar
+                      </Button>
+                      <Button size="sm" variant="destructive" onClick={() => handleDecidir("rechazado")} disabled={!!decidiendo}>
+                        {decidiendo === "rechazado" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Ban className="mr-2 h-4 w-4" />}
+                        Rechazar
+                      </Button>
+                    </>
+                  )}
+                  <span className="ml-auto hidden text-xs text-muted-foreground sm:inline">
+                    Genera el registro, guarda el PDF y lo envía a la hoja de vida.
+                  </span>
                 </div>
 
                 {/* Score de riesgo */}

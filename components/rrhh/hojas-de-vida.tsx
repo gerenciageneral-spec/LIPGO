@@ -353,6 +353,7 @@ export default function HojasDeVida() {
               <TableHead>Cargo aspirado</TableHead>
               <TableHead>Contacto</TableHead>
               <TableHead>Archivo</TableHead>
+              <TableHead>Antecedentes</TableHead>
               <TableHead>Estado</TableHead>
               <TableHead className="text-right">Acciones</TableHead>
             </TableRow>
@@ -360,13 +361,13 @@ export default function HojasDeVida() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
+                <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
                   <Loader2 className="mx-auto h-5 w-5 animate-spin" />
                 </TableCell>
               </TableRow>
             ) : filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
+                <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
                   No hay hojas de vida registradas.
                 </TableCell>
               </TableRow>
@@ -386,6 +387,40 @@ export default function HojasDeVida() {
                     <span className="text-xs text-muted-foreground">
                       {formatBytes(h.archivo_tamano)}
                     </span>
+                  </TableCell>
+                  <TableCell className="text-sm">
+                    {h.antecedentes_url ? (
+                      <div className="space-y-1">
+                        <a
+                          href={h.antecedentes_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-primary hover:underline"
+                        >
+                          <FileText className="h-3.5 w-3.5" /> Ver PDF
+                        </a>
+                        <div className="flex items-center gap-1.5">
+                          {h.antecedentes_estado && (
+                            <span
+                              className="rounded-full px-1.5 py-0.5 text-[10px] font-medium text-white"
+                              style={{ background: h.antecedentes_estado === "aceptado" ? "#16a34a" : "#dc2626" }}
+                            >
+                              {h.antecedentes_estado === "aceptado" ? "Aceptado" : "Rechazado"}
+                            </span>
+                          )}
+                          {typeof h.antecedentes_score === "number" && (
+                            <span
+                              className="font-mono text-[10px]"
+                              style={{ color: h.antecedentes_score <= 50 ? "#dc2626" : h.antecedentes_score <= 84 ? "#f59e0b" : "#16a34a" }}
+                            >
+                              score {h.antecedentes_score}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
                   </TableCell>
                   <TableCell>
                     <span

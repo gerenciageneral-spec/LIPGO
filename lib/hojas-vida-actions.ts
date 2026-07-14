@@ -19,6 +19,12 @@ export interface HojaDeVida {
   archivo_tamano: number | null
   estado: "pendiente" | "aceptado" | "rechazado"
   created_at: string
+  // PDF de antecedentes (Compliance) propagado desde la consulta. Columnas nuevas
+  // (ver add_antecedentes_decision.sql). No pisan el CV (archivo_url).
+  antecedentes_url?: string | null
+  antecedentes_nombre?: string | null
+  antecedentes_estado?: string | null
+  antecedentes_score?: number | null
 }
 
 // Lista las hojas de vida de la empresa seleccionada (o la de sesion).

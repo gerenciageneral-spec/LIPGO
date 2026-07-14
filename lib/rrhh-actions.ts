@@ -351,6 +351,33 @@ export async function createContrato(contrato: any) {
     /* tabla de exámenes aún no disponible → no se aplica el gate */
   }
 
+  // GATE de antecedentes: si la persona fue RECHAZADA en la verificación de
+  // antecedentes, se bloquea la contratación. Resiliente: si la columna/tabla
+  // no existe o no hay registro, no se aplica.
+  try {
+    const ced = String(contrato.colaborador_id || "").trim()
+    if (ced) {
+      const admin: any = await getSupabaseAdmin()
+      const { data: ant } = await admin
+        .from("antecedentes")
+        .select("estado")
+        .eq("cedula", ced)
+        .order("created_at", { ascending: false })
+        .limit(1)
+      const a = (ant || [])[0] as any
+      if (a && a.estado === "rechazado") {
+        return {
+          success: false,
+          message:
+            "Contratación bloqueada: la persona fue RECHAZADA en la verificación de antecedentes. " +
+            "No puede vincularse hasta que su antecedente sea aceptado.",
+        }
+      }
+    }
+  } catch {
+    /* columna/tabla de antecedentes aún no disponible → no se aplica el gate */
+  }
+
   const sanitized = {
     colaborador_id: contrato.colaborador_id,
     fecha_inicio: contrato.fecha_inicio || null,
@@ -372,6 +399,40 @@ export async function createContrato(contrato: any) {
   if (error) {
     console.error("[v0] Error creating contrato:", error)
     return { success: false, message: error.message }
+  }
+
+  // Al CONTRATAR: llevar el PDF de antecedentes al EXPEDIENTE (headcount.antecedentes),
+  // reutilizando la URL pública ya guardada (no copia el archivo). No pisa si el
+  // expediente ya tiene el documento. No crítico: si falla, no interrumpe el contrato.
+  try {
+    const ced = String(contrato.colaborador_id || "").trim()
+    if (ced) {
+      const admin: any = await getSupabaseAdmin()
+      const empresaId = await getCurrentEmpresaIdForInsert()
+      const { data: ant } = await admin
+        .from("antecedentes")
+        .select("compliance_pdf_url,policia_url")
+        .eq("idempresa", empresaId)
+        .eq("cedula", ced)
+        .order("created_at", { ascending: false })
+        .limit(1)
+      const a = (ant || [])[0] as any
+      const url = a?.compliance_pdf_url || a?.policia_url
+      if (url) {
+        const { data: hc } = await admin
+          .from("headcount")
+          .select("id,antecedentes")
+          .eq("idempresa", empresaId)
+          .eq("identificacion", ced)
+          .limit(1)
+        const person = (hc || [])[0] as any
+        if (person && !person.antecedentes) {
+          await admin.from("headcount").update({ antecedentes: url }).eq("id", person.id)
+        }
+      }
+    }
+  } catch {
+    /* propagación al expediente no crítica */
   }
 
   return { success: true, data: data?.[0] }
