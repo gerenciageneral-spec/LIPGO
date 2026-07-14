@@ -280,7 +280,7 @@ export interface SigPQRSF {
 // Catálogo de tipos de movimiento de inventario (nomenclatura SAP ↔ LIPgo).
 export interface SigTipoMovimiento {
   id: number
-  codigo: string | null
+  codigo_sap: string | null // código con el que se asocia el movimiento en Supabase (invtrans.cod_movimiento)
   nombre: string
   clase: string // entrada | salida | traslado | ajuste | merma | inicial
   origen_lipgo: string | null

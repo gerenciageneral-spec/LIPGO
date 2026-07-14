@@ -733,11 +733,12 @@ export function CuadreInventario() {
               {tiposMov.map((t) => (
                 <div key={t.id} className="rounded-md border p-2">
                   <div className="flex items-center gap-2">
-                    <Badge style={{ background: SST_TOKENS.navy, color: "white" }}>{t.codigo}</Badge>
+                    <Badge style={{ background: SST_TOKENS.navy, color: "white" }}>{t.codigo_sap}</Badge>
                     <span className="font-medium">{t.nombre}</span>
                     <span className="text-[11px] uppercase text-muted-foreground">{t.clase}</span>
                   </div>
                   <div className="mt-1 text-xs text-muted-foreground">{t.descripcion}</div>
+                  <div className="mt-0.5 text-[11px] text-muted-foreground"><b>En LIPgo:</b> {t.origen_lipgo}</div>
                 </div>
               ))}
             </div>
