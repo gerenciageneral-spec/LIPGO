@@ -13,12 +13,15 @@ import {
   Calendar,
   Download,
   FileText,
+  Frown,
   Gauge,
   Layers,
   MapPin,
+  Meh,
   Package2,
   Radio,
   Search,
+  Smile,
   Target,
   Timer,
   TrendingUp,
@@ -84,6 +87,15 @@ interface VwAgrupada10mRow {
   bultos_arrume: number | null
 }
 
+// `historial_intervalos`: lectura cada 2 min del contador de la maquina.
+// `bultos_dia_acumulado` = contador acumulado del dia; `produccion_2min` =
+// unidades producidas en ese intervalo (0 = maquina parada).
+interface HistorialRow {
+  fecha_hora: string
+  bultos_dia_acumulado: number | null
+  produccion_2min: number | null
+}
+
 // Mostramos la hora EXACTA almacenada en los timestamptz sin convertir a
 // la zona de Colombia: formateamos en UTC para que los digitos coincidan
 // con los del valor guardado (sin restar las 5 horas).
@@ -98,17 +110,18 @@ const HORA_FMT = new Intl.DateTimeFormat("es-CO", {
 // inactividad entra en estado critico (rojo).
 const DOWNTIME_THRESHOLD_MIN = 45
 
-// Ventana del turno (en hora UTC literal, igual que el resto del tablero).
-const SHIFT_START_HOUR = 6
-const SHIFT_END_HOUR = 20
+// Turno POR DEFECTO (respaldo). El turno real del dia se lee de
+// registroasistencia (puesto "Auxiliar Mixto") y es dinamico.
+const DEFAULT_SHIFT_START_HOUR = 6
+const DEFAULT_SHIFT_END_HOUR = 20
 
-// Tamanio de la cubeta del eje de cobertura de 10 min.
-const BUCKET_MIN = 10
+// Cada celda de cobertura = 1 intervalo de 2 min del contador de la maquina.
+const BUCKET_MIN = 2
 
-// Reglas de ritmo (pacing): meta fija por hora y meta total del dia.
+// Reglas de ritmo: meta de bultos por hora y meta de velocidad por
+// intervalo de 2 min (unidades producidas en cada lectura del contador).
 const META_POR_HORA = 240
-const HORAS_TURNO = SHIFT_END_HOUR - SHIFT_START_HOUR // 14 horas
-const META_DIA = META_POR_HORA * HORAS_TURNO // 3360 bultos
+const META_2MIN = 10
 
 // Colores (variables CSS del tema) para los estados de pacing.
 const PACE_COLOR: Record<"good" | "warn" | "bad", string> = {
@@ -196,6 +209,13 @@ function bogotaWallAsUtcMs(d: Date) {
 
 function pad2(n: number) {
   return String(n).padStart(2, "0")
+}
+
+// Formatea minutos como "Xh YYm" (o "Ym" si es menos de una hora).
+function fmtMinutos(min: number) {
+  const m = Math.max(0, Math.round(min))
+  const h = Math.floor(m / 60)
+  return h > 0 ? `${h}h ${pad2(m % 60)}m` : `${m}m`
 }
 
 // Parseo robusto de un timestamptz de Supabase a Date (instante UTC).
@@ -351,15 +371,21 @@ export default function ControlPiso() {
 function LiveTab() {
   const [dashRows, setDashRows] = useState<VwDashboardRow[]>([])
   const [aggRows, setAggRows] = useState<VwAgrupada10mRow[]>([])
+  const [histRows, setHistRows] = useState<HistorialRow[]>([])
   const [loading, setLoading] = useState(true)
   const [realtimeOk, setRealtimeOk] = useState(false)
   // Dia seleccionado (YYYY-MM-DD en hora literal/UTC). Por defecto HOY.
   // Permite navegar hacia atras para ver el tablero de dias anteriores.
   const [selectedDate, setSelectedDate] = useState<string>(() => utcDateStr())
   const isToday = selectedDate === utcDateStr()
-  // Reloj de alta frecuencia (cada segundo) para el cronometro de
-  // inactividad, que debe mostrar minutos y segundos vivos.
+  // Reloj de alta frecuencia (cada segundo) para los cronometros vivos.
   const [now, setNow] = useState<Date>(() => new Date())
+  // Turno DINAMICO leido de registroasistencia (puesto "Auxiliar Mixto").
+  // Respaldo a los defaults si el dia no tiene turno programado valido.
+  const [shiftStart, setShiftStart] = useState<number>(DEFAULT_SHIFT_START_HOUR)
+  const [shiftEnd, setShiftEnd] = useState<number>(DEFAULT_SHIFT_END_HOUR)
+  const horasTurno = Math.max(shiftEnd - shiftStart, 0)
+  const metaDia = META_POR_HORA * horasTurno
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000)
@@ -410,9 +436,85 @@ function LiveTab() {
     }
   }, [loadViews])
 
-  // Realtime: ante un INSERT en la tabla base, re-leemos las vistas para
-  // obtener los agregados y banderas recalculados por SQL. Solo tiene
-  // sentido cuando se mira HOY; en dias pasados no hay nuevos INSERTs.
+  // Contador de la maquina cada 2 min (historial_intervalos). OJO: el rango
+  // se arma en hora REAL de Colombia (-05:00); las etiquetas/agrupaciones
+  // luego usan la hora literal (UTC) de fecha_hora para coincidir digitos.
+  const loadHistorial = useCallback(async () => {
+    try {
+      const desde = `${selectedDate}T00:00:00-05:00`
+      const hasta = `${nextDateStr(selectedDate)}T00:00:00-05:00`
+      const { data, error } = await supabase
+        .from("historial_intervalos")
+        .select("fecha_hora, bultos_dia_acumulado, produccion_2min")
+        .gte("fecha_hora", desde)
+        .lt("fecha_hora", hasta)
+        .order("fecha_hora", { ascending: true })
+      if (error) console.log("[v0] Control Piso historial error:", error.message)
+      setHistRows(((data as HistorialRow[]) || []).filter(Boolean))
+    } catch (e: any) {
+      console.log("[v0] Control Piso historial exception:", e?.message)
+    }
+  }, [selectedDate])
+
+  useEffect(() => {
+    let active = true
+    loadHistorial()
+    // Solo refresca en vivo (cada 30 s) cuando se mira HOY.
+    if (!isToday) {
+      return () => {
+        active = false
+      }
+    }
+    const t = setInterval(() => {
+      if (active) loadHistorial()
+    }, 30000)
+    return () => {
+      active = false
+      clearInterval(t)
+    }
+  }, [loadHistorial, isToday])
+
+  // Turno dinamico: primer registro de registroasistencia del dia con puesto
+  // "Auxiliar Mixto". Si no hay o es invalido, se usan los defaults (6-20).
+  useEffect(() => {
+    let active = true
+    ;(async () => {
+      try {
+        const { data, error } = await supabase
+          .from("registroasistencia")
+          .select("horaentradaprogramada, horasalidaprogramada")
+          .eq("fecha", selectedDate)
+          .eq("puesto", "Auxiliar Mixto")
+          .order("id", { ascending: true })
+          .limit(1)
+          .maybeSingle()
+        if (!active) return
+        const parseHora = (v: any): number | null => {
+          const m = String(v ?? "").match(/^(\d{1,2}):/)
+          if (!m) return null
+          const h = Number(m[1])
+          return h >= 0 && h <= 23 ? h : null
+        }
+        const ini = error ? null : parseHora(data?.horaentradaprogramada)
+        const fin = error ? null : parseHora(data?.horasalidaprogramada)
+        if (ini != null && fin != null && fin > ini) {
+          setShiftStart(ini)
+          setShiftEnd(fin)
+        } else {
+          setShiftStart(DEFAULT_SHIFT_START_HOUR)
+          setShiftEnd(DEFAULT_SHIFT_END_HOUR)
+        }
+      } catch (e: any) {
+        console.log("[v0] Control Piso turno exception:", e?.message)
+      }
+    })()
+    return () => {
+      active = false
+    }
+  }, [selectedDate])
+
+  // Realtime: ante un INSERT en la tabla base, re-leemos las vistas y el
+  // historial. Solo tiene sentido cuando se mira HOY.
   useEffect(() => {
     if (!isToday) {
       setRealtimeOk(false)
@@ -425,6 +527,7 @@ function LiveTab() {
         { event: "INSERT", schema: "public", table: "produccion" },
         () => {
           loadViews()
+          loadHistorial()
         },
       )
       .subscribe((status) => {
@@ -433,7 +536,7 @@ function LiveTab() {
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [loadViews, isToday])
+  }, [loadViews, loadHistorial, isToday])
 
   // KPIs del dia: suma de la vista agrupada de 10 min.
   const metrics = useMemo(() => {
@@ -450,6 +553,14 @@ function LiveTab() {
     return { totalBultos, estibas, arrume, averias }
   }, [aggRows])
 
+  // Ultimo registro del contador de la maquina y total mostrado del dia:
+  // el acumulado del contador si existe, si no la suma de la vista agrupada.
+  const ultimoHist = histRows.length ? histRows[histRows.length - 1] : null
+  const totalBultosDisplay =
+    ultimoHist && ultimoHist.bultos_dia_acumulado != null
+      ? ultimoHist.bultos_dia_acumulado
+      : metrics.totalBultos
+
   // Cronometro de inactividad: tiempo transcurrido desde el ultimo
   // registro (max fecha_hora) hasta el reloj actual, en min + seg.
   const inactividad = useMemo(() => {
@@ -463,6 +574,22 @@ function LiveTab() {
     const totalSeg = Math.max(0, Math.floor((bogotaWallAsUtcMs(now) - ultimo.getTime()) / 1000))
     return { hayDatos: true, totalSeg, min: Math.floor(totalSeg / 60), seg: totalSeg % 60, ultimo }
   }, [dashRows, now])
+
+  // Estado de la maquina (solo HOY y con historial): PARADA cuando el ultimo
+  // intervalo de 2 min produjo 0. El cronometro corre desde ese instante real.
+  const maquina = useMemo(() => {
+    if (!isToday || !ultimoHist) return null
+    const parada = (ultimoHist.produccion_2min || 0) === 0
+    const instante = parseTs(ultimoHist.fecha_hora)
+    const totalSeg = Math.max(0, Math.floor((bogotaWallAsUtcMs(now) - instante.getTime()) / 1000))
+    return {
+      parada,
+      estado: parada ? "PARADA" : "PRODUCIENDO",
+      min: Math.floor(totalSeg / 60),
+      seg: totalSeg % 60,
+      ultima: instante,
+    }
+  }, [isToday, ultimoHist, now])
 
   // Resumen del dia agregado por producto: total de bultos, averias y
   // desglose de bultos segun empaque (Estiba vs Arrume). Ordenado de
@@ -486,79 +613,113 @@ function LiveTab() {
     return [...map.values()].sort((a, b) => b.bultos - a.bultos)
   }, [dashRows])
 
-  // Meta dinamica (pacing): horas transcurridas desde las 06:00 (en
-  // fracciones) multiplicadas por la meta por hora, topadas a la meta del
-  // dia. Usamos la hora de pared de Bogota reinterpretada como UTC para
-  // alinearnos con el resto del tablero (hora literal).
+  // Meta dinamica (pacing): horas transcurridas del turno x meta por hora.
+  // El turno (shiftStart/shiftEnd) es dinamico y los procesados usan el
+  // acumulado del contador de la maquina cuando esta disponible.
   const pacing = useMemo(() => {
-    const inicio = new Date(`${selectedDate}T${pad2(SHIFT_START_HOUR)}:00:00Z`).getTime()
-    // Para HOY usamos la hora de pared actual; para dias pasados el turno
-    // ya termino, asi que la meta es la del dia completo.
+    const inicio = new Date(`${selectedDate}T${pad2(shiftStart)}:00:00Z`).getTime()
     const nowMs = isToday
       ? bogotaWallAsUtcMs(now)
-      : new Date(`${selectedDate}T${pad2(SHIFT_END_HOUR)}:00:00Z`).getTime()
-    const horasTranscurridas = Math.min(
-      Math.max((nowMs - inicio) / 3_600_000, 0),
-      HORAS_TURNO,
-    )
+      : new Date(`${selectedDate}T${pad2(shiftEnd)}:00:00Z`).getTime()
+    const horasTranscurridas = Math.min(Math.max((nowMs - inicio) / 3_600_000, 0), horasTurno)
     const metaActual = Math.round(horasTranscurridas * META_POR_HORA)
-    const procesados = metrics.totalBultos
+    const procesados = totalBultosDisplay
     const pct = metaActual > 0 ? (procesados / metaActual) * 100 : procesados > 0 ? 100 : 0
-    // Estado de color segun el % de cumplimiento de la meta actual.
     const estado: "good" | "warn" | "bad" = pct >= 95 ? "good" : pct >= 80 ? "warn" : "bad"
     return { metaActual, procesados, pct, estado, horasTranscurridas }
-  }, [now, metrics.totalBultos, selectedDate, isToday])
+  }, [now, totalBultosDisplay, selectedDate, isToday, shiftStart, shiftEnd, horasTurno])
 
-  // Cumplimiento hora a hora: agrupa los bultos por hora del turno
-  // (06:00-20:00) usando la hora literal del intervalo de la vista.
+  // Cumplimiento hora a hora: fuente primaria el historial (produccion_2min
+  // por hora literal); si no hay historial, respaldo a la vista agrupada.
   const hourly = useMemo(() => {
     const buckets = new Map<number, number>()
-    for (let h = SHIFT_START_HOUR; h < SHIFT_END_HOUR; h++) buckets.set(h, 0)
-    for (const a of aggRows) {
-      const h = parseTs(a.intervalo).getUTCHours()
-      if (buckets.has(h)) buckets.set(h, (buckets.get(h) || 0) + (a.total_bultos || 0))
-    }
-    return [...buckets.entries()].map(([h, bultos]) => ({
-      hora: `${pad2(h)}:00`,
-      bultos,
-    }))
-  }, [aggRows])
-
-  // Eje de cobertura del turno: una celda por cubeta de 10 min entre
-  // SHIFT_START_HOUR y SHIFT_END_HOUR. Verde = hubo produccion en esa
-  // ventana (segun vw_produccion_agrupada_10m), rojo = ventana ya
-  // transcurrida sin produccion (maquina parada), gris = aun por venir.
-  const coverage = useMemo(() => {
-    // Set de marcas de tiempo (epoch) de los intervalos con bultos > 0,
-    // normalizadas al inicio de su bloque de 10 min.
-    const activos = new Set<number>()
-    for (const a of aggRows) {
-      if ((a.total_bultos || 0) > 0) {
-        const t = parseTs(a.intervalo).getTime()
-        activos.add(t - (t % (BUCKET_MIN * 60000)))
+    for (let h = shiftStart; h < shiftEnd; h++) buckets.set(h, 0)
+    if (histRows.length > 0) {
+      for (const h of histRows) {
+        const hora = parseTs(h.fecha_hora).getUTCHours()
+        if (buckets.has(hora)) buckets.set(hora, (buckets.get(hora) || 0) + (h.produccion_2min || 0))
+      }
+    } else {
+      for (const a of aggRows) {
+        const hora = parseTs(a.intervalo).getUTCHours()
+        if (buckets.has(hora)) buckets.set(hora, (buckets.get(hora) || 0) + (a.total_bultos || 0))
       }
     }
+    return [...buckets.entries()].map(([h, bultos]) => ({ hora: `${pad2(h)}:00`, bultos }))
+  }, [histRows, aggRows, shiftStart, shiftEnd])
 
-    const base = new Date(`${selectedDate}T${pad2(SHIFT_START_HOUR)}:00:00Z`).getTime()
-    const totalBuckets = ((SHIFT_END_HOUR - SHIFT_START_HOUR) * 60) / BUCKET_MIN
-    // El corte de "ahora" usa la hora de pared de Bogota reinterpretada
-    // como UTC para no marcar como parada las cubetas que aun no ocurren.
-    // En dias pasados el turno ya termino: el corte es el fin del turno.
+  // Cobertura del turno: una celda por cubeta de 2 min entre shiftStart y
+  // shiftEnd. Fuente: el contador (historial_intervalos) sumado por bucket
+  // con el instante literal. Corte de "ahora" = instante del ultimo registro
+  // (o fin de turno en dias pasados). Verde = produjo, rojo = parada, gris =
+  // aun por venir.
+  const coverage = useMemo(() => {
+    const bucketMs = BUCKET_MIN * 60000
+    const prodPorBucket = new Map<number, number>()
+    for (const h of histRows) {
+      const t = parseTs(h.fecha_hora).getTime()
+      const start = t - (t % bucketMs)
+      prodPorBucket.set(start, (prodPorBucket.get(start) || 0) + (h.produccion_2min || 0))
+    }
+    const base = new Date(`${selectedDate}T${pad2(shiftStart)}:00:00Z`).getTime()
+    const totalBuckets = Math.max(0, ((shiftEnd - shiftStart) * 60) / BUCKET_MIN)
+    const ultimoInst = histRows.length
+      ? parseTs(histRows[histRows.length - 1].fecha_hora).getTime()
+      : null
     const nowMs = isToday
-      ? bogotaWallAsUtcMs(now)
-      : new Date(`${selectedDate}T${pad2(SHIFT_END_HOUR)}:00:00Z`).getTime()
+      ? ultimoInst ?? bogotaWallAsUtcMs(now)
+      : new Date(`${selectedDate}T${pad2(shiftEnd)}:00:00Z`).getTime()
     const cells: { start: number; label: string; status: "active" | "down" | "future" }[] = []
     for (let i = 0; i < totalBuckets; i++) {
-      const start = base + i * BUCKET_MIN * 60000
-      const end = start + BUCKET_MIN * 60000
+      const start = base + i * bucketMs
       let status: "active" | "down" | "future"
-      if (activos.has(start)) status = "active"
-      else if (end > nowMs) status = "future"
+      if (start > nowMs) status = "future"
+      else if ((prodPorBucket.get(start) || 0) > 0) status = "active"
       else status = "down"
       cells.push({ start, label: HORA_FMT.format(new Date(start)), status })
     }
     return cells
-  }, [aggRows, now, selectedDate, isToday])
+  }, [histRows, now, selectedDate, isToday, shiftStart, shiftEnd])
+
+  // Velocidad de produccion: un punto por lectura de 2 min del contador.
+  const velocidad = useMemo(() => {
+    const puntos = histRows.map((h) => ({
+      hora: HORA_FMT.format(parseTs(h.fecha_hora)),
+      unidades: h.produccion_2min || 0,
+    }))
+    const cumplidos = puntos.filter((p) => p.unidades >= META_2MIN).length
+    return { puntos, cumplidos, total: puntos.length }
+  }, [histRows])
+
+  // Disponibilidad = tiempo trabajando vs parado (cada celda = 2 min).
+  const disponibilidad = useMemo(() => {
+    let activas = 0
+    let down = 0
+    for (const c of coverage) {
+      if (c.status === "active") activas++
+      else if (c.status === "down") down++
+    }
+    const minTrabajando = activas * BUCKET_MIN
+    const minParada = down * BUCKET_MIN
+    const minProgramado = minTrabajando + minParada
+    const pct = minProgramado > 0 ? (minTrabajando / minProgramado) * 100 : 0
+    const estado: "good" | "warn" | "bad" = pct >= 90 ? "good" : pct >= 75 ? "warn" : "bad"
+    return { minTrabajando, minParada, minProgramado, pct, estado }
+  }, [coverage])
+
+  // OEE = Disponibilidad x Rendimiento x Calidad.
+  const oee = useMemo(() => {
+    const disp = disponibilidad.pct
+    const rend = Math.min(pacing.pct, 100)
+    const calidad =
+      metrics.totalBultos + metrics.averias > 0
+        ? (metrics.totalBultos / (metrics.totalBultos + metrics.averias)) * 100
+        : 100
+    const valor = (disp / 100) * (rend / 100) * (calidad / 100) * 100
+    const cara: "happy" | "neutral" | "angry" = valor >= 80 ? "happy" : valor >= 60 ? "neutral" : "angry"
+    const estado: "good" | "warn" | "bad" = valor >= 80 ? "good" : valor >= 60 ? "warn" : "bad"
+    return { disp, rend, calidad, valor, cara, estado }
+  }, [disponibilidad.pct, pacing.pct, metrics.totalBultos, metrics.averias])
 
   const relojTexto = new Intl.DateTimeFormat("es-CO", {
     hour: "2-digit",
@@ -568,7 +729,7 @@ function LiveTab() {
     timeZone: "America/Bogota",
   }).format(now)
 
-  const inactCritico = inactividad.min >= DOWNTIME_THRESHOLD_MIN
+  const inactCritico = maquina ? maquina.parada : inactividad.min >= DOWNTIME_THRESHOLD_MIN
 
   return (
     <div className="space-y-6">
@@ -618,13 +779,270 @@ function LiveTab() {
         </div>
       </div>
 
-      {/* Eje de cobertura del turno (cubetas de 10 min) — primero arriba */}
+      {/* Franja OEE en vivo (solo HOY): estado de maquina + KPIs embebidos */}
+      {isToday && (
+        <section
+          className={`overflow-hidden rounded-xl border ${
+            inactCritico
+              ? "border-destructive/60"
+              : maquina && !maquina.parada
+                ? "border-chart-3/50"
+                : "border-border"
+          }`}
+        >
+          <div
+            className={`flex flex-col items-center justify-between gap-3 p-5 sm:flex-row ${
+              inactCritico
+                ? "bg-destructive/10"
+                : maquina && !maquina.parada
+                  ? "bg-chart-3/10"
+                  : "bg-card"
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <div
+                className={`flex h-12 w-12 items-center justify-center rounded-lg ring-1 ${
+                  inactCritico
+                    ? "bg-destructive/15 text-destructive ring-destructive/40"
+                    : "bg-chart-3/15 text-chart-3 ring-chart-3/40"
+                }`}
+              >
+                <Timer className="h-6 w-6" />
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Estado de Máquina
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {maquina
+                    ? `Última actualización: ${HORA_FMT.format(maquina.ultima)}`
+                    : loading
+                      ? "Cargando señal de máquina..."
+                      : "Sin señal de máquina hoy"}
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-col items-center sm:items-end">
+              <span
+                className={`text-3xl font-bold sm:text-4xl ${
+                  inactCritico
+                    ? "animate-pulse text-destructive"
+                    : maquina && !maquina.parada
+                      ? "text-chart-3"
+                      : "text-muted-foreground"
+                }`}
+              >
+                {maquina ? maquina.estado : "—"}
+              </span>
+              {maquina && (
+                <span className="font-mono text-sm tabular-nums text-muted-foreground">
+                  {maquina.min} min, {pad2(maquina.seg)} seg sin cambios
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-px bg-border lg:grid-cols-4">
+            <KpiTile
+              title="Total Bultos"
+              value={totalBultosDisplay.toLocaleString("es-CO")}
+              sub="Throughput acumulado hoy"
+              icon={<Boxes className="h-5 w-5" />}
+              accent="info"
+            />
+            <KpiTile
+              title="Estibas Despachadas"
+              value={metrics.estibas.toLocaleString("es-CO")}
+              sub="Registros tipo Estiba"
+              icon={<Layers className="h-5 w-5" />}
+              accent="info"
+            />
+            <KpiTile
+              title="Bultos en Arrume"
+              value={metrics.arrume.toLocaleString("es-CO")}
+              sub="Unidades sin estibar"
+              icon={<Package2 className="h-5 w-5" />}
+              accent="info"
+            />
+            <KpiTile
+              title="Total Averías"
+              value={metrics.averias.toLocaleString("es-CO")}
+              sub="Unidades con defecto"
+              icon={<AlertTriangle className="h-5 w-5" />}
+              accent={metrics.averias > 0 ? "bad" : "good"}
+            />
+          </div>
+        </section>
+      )}
+
+      {/* KPIs para vista historica (dias pasados, sin banner en vivo) */}
+      {!isToday && (
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <KpiCard
+            title="Total Bultos"
+            value={totalBultosDisplay.toLocaleString("es-CO")}
+            sub="Throughput del día"
+            icon={<Boxes className="h-5 w-5" />}
+            accent="info"
+          />
+          <KpiCard
+            title="Estibas Despachadas"
+            value={metrics.estibas.toLocaleString("es-CO")}
+            sub="Registros tipo Estiba"
+            icon={<Layers className="h-5 w-5" />}
+            accent="info"
+          />
+          <KpiCard
+            title="Bultos en Arrume"
+            value={metrics.arrume.toLocaleString("es-CO")}
+            sub="Unidades sin estibar"
+            icon={<Package2 className="h-5 w-5" />}
+            accent="info"
+          />
+          <KpiCard
+            title="Total Averías"
+            value={metrics.averias.toLocaleString("es-CO")}
+            sub="Unidades con defecto"
+            icon={<AlertTriangle className="h-5 w-5" />}
+            accent={metrics.averias > 0 ? "bad" : "good"}
+          />
+        </div>
+      )}
+
+      {/* Tarjeta OEE global (Disponibilidad x Rendimiento x Calidad) */}
+      <section
+        className={`rounded-xl border p-5 ${
+          oee.estado === "good"
+            ? "border-chart-3/40 bg-chart-3/10"
+            : oee.estado === "warn"
+              ? "border-chart-4/40 bg-chart-4/10"
+              : "border-destructive/40 bg-destructive/10"
+        }`}
+      >
+        <div className="grid grid-cols-1 items-center gap-5 lg:grid-cols-2">
+          <div className="flex items-center gap-4">
+            {oee.cara === "happy" ? (
+              <Smile className="h-16 w-16 text-chart-3" aria-hidden="true" />
+            ) : oee.cara === "neutral" ? (
+              <Meh className="h-16 w-16 text-chart-4" aria-hidden="true" />
+            ) : (
+              <Frown className="h-16 w-16 text-destructive" aria-hidden="true" />
+            )}
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Eficiencia General (OEE)
+              </p>
+              <p className="text-5xl font-bold tabular-nums sm:text-6xl" style={{ color: PACE_COLOR[oee.estado] }}>
+                {oee.valor.toFixed(1)}
+                <span className="text-2xl">%</span>
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {oee.valor >= 80
+                  ? "Excelente: por encima del 80%"
+                  : oee.valor >= 60
+                    ? "Aceptable: entre 60% y 80%"
+                    : "Crítico: por debajo del 60%"}
+              </p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <OeeFactor label="Disponibilidad" value={oee.disp} icon={<Gauge className="h-3.5 w-3.5" />} />
+            <OeeFactor label="Rendimiento" value={oee.rend} icon={<Target className="h-3.5 w-3.5" />} />
+            <OeeFactor label="Calidad" value={oee.calidad} icon={<Award className="h-3.5 w-3.5" />} />
+          </div>
+        </div>
+      </section>
+
+      {/* Disponibilidad de maquina */}
+      <section className="rounded-xl border border-border bg-card p-4">
+        <div className="mb-3 flex items-center gap-2">
+          <Gauge className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-sm font-semibold text-card-foreground">
+            Disponibilidad de Máquina ({pad2(shiftStart)}:00 - {pad2(shiftEnd)}:00)
+          </h2>
+        </div>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+          <div className="shrink-0 text-center sm:w-40">
+            <span className="text-4xl font-bold tabular-nums" style={{ color: PACE_COLOR[disponibilidad.estado] }}>
+              {disponibilidad.pct.toFixed(1)}%
+            </span>
+            <p className="text-xs text-muted-foreground">del tiempo programado</p>
+          </div>
+          <div className="flex-1">
+            <div className="flex h-6 w-full overflow-hidden rounded-md bg-muted">
+              <div className="h-full bg-chart-3" style={{ width: `${disponibilidad.pct}%` }} title="Trabajando" />
+              <div className="h-full flex-1 bg-destructive" title="Parada" />
+            </div>
+            <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+              <div>
+                <p className="text-xs text-muted-foreground">Trabajando</p>
+                <p className="font-mono text-sm font-semibold text-chart-3">{fmtMinutos(disponibilidad.minTrabajando)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Parada</p>
+                <p className="font-mono text-sm font-semibold text-destructive">{fmtMinutos(disponibilidad.minParada)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Tiempo programado</p>
+                <p className="font-mono text-sm font-semibold text-card-foreground">{fmtMinutos(disponibilidad.minProgramado)}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Velocidad de produccion cada 2 min (historial_intervalos) */}
+      <section className="rounded-xl border border-border bg-card p-4">
+        <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2">
+            <TrendingUp className="h-4 w-4 text-muted-foreground" />
+            <h2 className="text-sm font-semibold text-card-foreground">Velocidad de Producción cada 2 min</h2>
+          </div>
+          <span className="text-xs text-muted-foreground">
+            {velocidad.cumplidos.toLocaleString("es-CO")}/{velocidad.total.toLocaleString("es-CO")} intervalos en meta
+          </span>
+        </div>
+        {loading ? (
+          <EmptyState loading text="" />
+        ) : velocidad.total === 0 ? (
+          <EmptyState loading={false} text="Sin lecturas del contador para este día" />
+        ) : (
+          <div className="h-64 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={velocidad.puntos} margin={{ top: 16, right: 8, left: -8, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                <XAxis dataKey="hora" stroke="var(--muted-foreground)" fontSize={11} tickLine={false} minTickGap={24} />
+                <YAxis stroke="var(--muted-foreground)" fontSize={11} allowDecimals={false} />
+                <Tooltip
+                  cursor={{ stroke: "var(--muted-foreground)", strokeWidth: 1 }}
+                  contentStyle={{
+                    background: "var(--popover)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 8,
+                    color: "var(--popover-foreground)",
+                    fontSize: 12,
+                  }}
+                  formatter={(v: number) => [`${v.toLocaleString("es-CO")} u`, "Producción 2 min"]}
+                />
+                <ReferenceLine
+                  y={META_2MIN}
+                  stroke="var(--primary)"
+                  strokeDasharray="4 4"
+                  label={{ value: `Meta ${META_2MIN}/2min`, position: "insideTopRight", fill: "var(--primary)", fontSize: 11 }}
+                />
+                <Line type="monotone" dataKey="unidades" stroke="var(--chart-1)" strokeWidth={2} dot={false} isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </section>
+
+      {/* Cobertura del turno cada 2 min (barra continua, sin gaps) */}
       <section className="rounded-xl border border-border bg-card p-4">
         <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2">
             <Activity className="h-4 w-4 text-muted-foreground" />
             <h2 className="text-sm font-semibold text-card-foreground">
-              Cobertura del Turno cada 10 min ({pad2(SHIFT_START_HOUR)}:00 - {pad2(SHIFT_END_HOUR)}:00)
+              Cobertura del Turno cada 2 min ({pad2(shiftStart)}:00 - {pad2(shiftEnd)}:00)
             </h2>
           </div>
           <div className="flex items-center gap-4 text-xs text-muted-foreground">
@@ -639,97 +1057,25 @@ function LiveTab() {
             </span>
           </div>
         </div>
-        <div className="flex h-7 w-full gap-px overflow-hidden rounded-sm">
+        <div className="flex h-7 w-full overflow-hidden rounded-sm">
           {coverage.map((c) => (
             <div
               key={c.start}
               title={`${c.label} — ${
                 c.status === "active" ? "Trabajando" : c.status === "down" ? "Máquina parada" : "Pendiente"
               }`}
-              className={`h-full min-w-0 flex-1 transition-colors ${
+              className={`h-full min-w-0 flex-1 ${
                 c.status === "active" ? "bg-chart-3" : c.status === "down" ? "bg-destructive" : "bg-muted"
               }`}
             />
           ))}
         </div>
         <div className="mt-2 flex justify-between font-mono text-[10px] text-muted-foreground">
-          <span>{pad2(SHIFT_START_HOUR)}:00</span>
-          <span>{pad2(Math.floor((SHIFT_START_HOUR + SHIFT_END_HOUR) / 2))}:00</span>
-          <span>{pad2(SHIFT_END_HOUR)}:00</span>
+          <span>{pad2(shiftStart)}:00</span>
+          <span>{pad2(Math.floor((shiftStart + shiftEnd) / 2))}:00</span>
+          <span>{pad2(shiftEnd)}:00</span>
         </div>
       </section>
-
-      {/* Cronometro de inactividad (alta visibilidad, segundos vivos) — solo HOY */}
-      {isToday && (
-      <section
-        className={`flex flex-col items-center justify-between gap-3 rounded-xl border p-5 sm:flex-row ${
-          inactCritico ? "animate-pulse border-destructive/60 bg-destructive/10" : "border-border bg-card"
-        }`}
-      >
-        <div className="flex items-center gap-3">
-          <div
-            className={`flex h-12 w-12 items-center justify-center rounded-lg ring-1 ${
-              inactCritico
-                ? "bg-destructive/15 text-destructive ring-destructive/40"
-                : "bg-chart-3/15 text-chart-3 ring-chart-3/40"
-            }`}
-          >
-            <Timer className="h-6 w-6" />
-          </div>
-          <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Tiempo Inactivo</p>
-            <p className="text-sm text-muted-foreground">
-              {inactividad.hayDatos && inactividad.ultimo
-                ? `Última señal: ${HORA_FMT.format(inactividad.ultimo)}`
-                : loading
-                  ? "Cargando señal de máquina..."
-                  : "Sin señal de máquina hoy"}
-            </p>
-          </div>
-        </div>
-        <div
-          className={`font-mono text-3xl font-bold tabular-nums sm:text-4xl ${
-            inactCritico ? "text-destructive" : "text-chart-3"
-          }`}
-        >
-          {inactividad.hayDatos
-            ? `${inactividad.min} min, ${pad2(inactividad.seg)} seg`
-            : "—"}
-        </div>
-      </section>
-      )}
-
-      {/* KPI Matrix (desde vw_produccion_agrupada_10m) */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <KpiCard
-          title="Total Bultos"
-          value={metrics.totalBultos.toLocaleString("es-CO")}
-          sub="Throughput acumulado hoy"
-          icon={<Boxes className="h-5 w-5" />}
-          accent="info"
-        />
-        <KpiCard
-          title="Estibas Despachadas"
-          value={metrics.estibas.toLocaleString("es-CO")}
-          sub="Registros tipo Estiba"
-          icon={<Layers className="h-5 w-5" />}
-          accent="info"
-        />
-        <KpiCard
-          title="Bultos en Arrume"
-          value={metrics.arrume.toLocaleString("es-CO")}
-          sub="Unidades sin estibar"
-          icon={<Package2 className="h-5 w-5" />}
-          accent="info"
-        />
-        <KpiCard
-          title="Total Averías"
-          value={metrics.averias.toLocaleString("es-CO")}
-          sub="Unidades con defecto"
-          icon={<AlertTriangle className="h-5 w-5" />}
-          accent={metrics.averias > 0 ? "bad" : "good"}
-        />
-      </div>
 
       {/* Rendimiento dinamico (donut) + cumplimiento hora a hora */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -790,7 +1136,7 @@ function LiveTab() {
                 <Target className="h-3.5 w-3.5" /> Meta Final del Día
               </span>
               <span className="font-mono font-semibold text-primary">
-                {META_DIA.toLocaleString("es-CO")}
+                {metaDia.toLocaleString("es-CO")}
               </span>
             </div>
           </div>
@@ -802,7 +1148,7 @@ function LiveTab() {
             <div className="flex items-center gap-2">
               <Activity className="h-4 w-4 text-muted-foreground" />
               <h2 className="text-sm font-semibold text-card-foreground">
-                Cumplimiento Hora a Hora ({pad2(SHIFT_START_HOUR)}:00 - {pad2(SHIFT_END_HOUR)}:00)
+                Cumplimiento Hora a Hora ({pad2(shiftStart)}:00 - {pad2(shiftEnd)}:00)
               </h2>
             </div>
             <div className="flex items-center gap-3 text-xs text-muted-foreground">
@@ -1887,6 +2233,79 @@ function KpiCard({
       </div>
       <p className={`mt-2 text-2xl font-bold tabular-nums ${accentClass}`}>{value}</p>
       {sub && <p className="mt-0.5 truncate text-xs text-muted-foreground">{sub}</p>}
+    </div>
+  )
+}
+
+// Variante de KpiCard SIN borde, para vivir dentro de un grid `gap-px bg-border`
+// (la rejilla dibuja las lineas divisorias). Misma jerarquia visual.
+function KpiTile({
+  title,
+  value,
+  sub,
+  icon,
+  accent = "neutral",
+}: {
+  title: string
+  value: string
+  sub?: string
+  icon: React.ReactNode
+  accent?: "neutral" | "good" | "warn" | "bad" | "info"
+}) {
+  const accentClass =
+    accent === "good"
+      ? "text-chart-3"
+      : accent === "warn"
+        ? "text-chart-4"
+        : accent === "bad"
+          ? "text-destructive"
+          : accent === "info"
+            ? "text-primary"
+            : "text-card-foreground"
+  const ring =
+    accent === "good"
+      ? "ring-chart-3/30 bg-chart-3/10"
+      : accent === "warn"
+        ? "ring-chart-4/30 bg-chart-4/10"
+        : accent === "bad"
+          ? "ring-destructive/30 bg-destructive/10"
+          : accent === "info"
+            ? "ring-primary/30 bg-primary/10"
+            : "ring-border bg-muted"
+  return (
+    <div className="bg-card p-4">
+      <div className="flex items-center justify-between gap-3">
+        <p className="truncate text-xs font-medium uppercase tracking-wide text-muted-foreground">{title}</p>
+        <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ring-1 ${ring} ${accentClass}`}>
+          {icon}
+        </div>
+      </div>
+      <p className={`mt-2 text-2xl font-bold tabular-nums ${accentClass}`}>{value}</p>
+      {sub && <p className="mt-0.5 truncate text-xs text-muted-foreground">{sub}</p>}
+    </div>
+  )
+}
+
+// Factor del OEE: etiqueta + % + mini barra de progreso coloreada por umbral.
+function OeeFactor({ label, value, icon }: { label: string; value: number; icon: React.ReactNode }) {
+  const color = value >= 90 ? "var(--chart-3)" : value >= 75 ? "var(--chart-4)" : "var(--destructive)"
+  return (
+    <div className="rounded-lg border border-border bg-card p-3">
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+          {icon}
+          {label}
+        </span>
+        <span className="font-mono text-sm font-bold tabular-nums" style={{ color }}>
+          {value.toFixed(1)}%
+        </span>
+      </div>
+      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+        <div
+          className="h-full rounded-full"
+          style={{ width: `${Math.min(Math.max(value, 0), 100)}%`, background: color }}
+        />
+      </div>
     </div>
   )
 }
