@@ -23,7 +23,9 @@ import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/components/auth-provider"
 import { getAntecedentes, deleteAntecedente, sincronizarAntecedentesDesdeHeadcount, type Antecedente } from "@/lib/antecedentes-actions"
 import { getHojasVida, type HojaDeVida } from "@/lib/hojas-vida-actions"
-import { Plus, Trash2, Eye, Download, Search, ShieldCheck, Loader2, Check, Users } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
+import { RadialBar, RadialBarChart, ResponsiveContainer, PolarAngleAxis } from "recharts"
+import { Plus, Trash2, Eye, Download, Search, ShieldCheck, Loader2, Check, Users, AlertTriangle, ShieldAlert, FileText } from "lucide-react"
 
 // Acceso a los 3 tipos de certificado de forma uniforme.
 const TIPOS = [
@@ -31,6 +33,50 @@ const TIPOS = [
   { key: "procuraduria", label: "Procuraduría" },
   { key: "contraloria", label: "Contraloría" },
 ] as const
+
+// Tipos de documento soportados por Compliance (los más usados).
+const TIPOS_DOC = [
+  { v: "cc", l: "Cédula de ciudadanía" },
+  { v: "ce", l: "Cédula de extranjería" },
+  { v: "ti", l: "Tarjeta de identidad" },
+  { v: "nit", l: "NIT" },
+  { v: "pas", l: "Pasaporte" },
+] as const
+
+// Score de riesgo: 0-50 rojo (riesgo), 51-84 amarillo (advertencia),
+// 85-100 verde (sin novedad).
+function colorScore(v: number): string {
+  return v <= 50 ? "#dc2626" : v <= 84 ? "#f59e0b" : "#16a34a"
+}
+
+function ScoreGauge({ score }: { score: number }) {
+  const fill = colorScore(score)
+  return (
+    <div className="flex flex-col items-center">
+      <div className="relative">
+        <ResponsiveContainer width={170} height={110}>
+          <RadialBarChart cx="50%" cy="85%" innerRadius="72%" outerRadius="100%" startAngle={180} endAngle={0} data={[{ value: score }]} barSize={16}>
+            <PolarAngleAxis type="number" domain={[0, 100]} angleAxisId={0} tick={false} />
+            <RadialBar background={{ fill: "var(--muted)" }} dataKey="value" cornerRadius={8} angleAxisId={0} fill={fill} />
+          </RadialBarChart>
+        </ResponsiveContainer>
+        <div className="pointer-events-none absolute inset-x-0 bottom-1 text-center">
+          <span className="text-3xl font-bold tabular-nums" style={{ color: fill }}>{score}</span>
+          <span className="text-sm text-muted-foreground">/100</span>
+        </div>
+      </div>
+      <span className="text-xs font-medium" style={{ color: fill }}>
+        {score <= 50 ? "Presenta riesgo" : score <= 84 ? "Advertencia" : "Sin novedad"}
+      </span>
+    </div>
+  )
+}
+
+// Los strings de "descripcion" traen columnas separadas por "|" y filas por "\n".
+function limpiarDescripcion(desc?: string[]): string[] {
+  if (!desc || !desc.length) return []
+  return desc.flatMap((d) => String(d).split(/\n/).map((l) => l.trim()).filter(Boolean))
+}
 
 export default function Antecedentes() {
   const { selectedEmpresaId } = useAuth()
@@ -49,6 +95,15 @@ export default function Antecedentes() {
   const [policia, setPolicia] = useState<File | null>(null)
   const [procuraduria, setProcuraduria] = useState<File | null>(null)
   const [contraloria, setContraloria] = useState<File | null>(null)
+
+  // Consultar antecedentes (API Compliance).
+  const [consultaOpen, setConsultaOpen] = useState(false)
+  const [consultaCedula, setConsultaCedula] = useState("")
+  const [consultaNombre, setConsultaNombre] = useState("")
+  const [consultaTipoDoc, setConsultaTipoDoc] = useState("cc")
+  const [consultando, setConsultando] = useState(false)
+  const [consultaResult, setConsultaResult] = useState<any | null>(null)
+  const [consultaError, setConsultaError] = useState<string | null>(null)
 
   const loadData = async () => {
     setLoading(true)
@@ -153,6 +208,50 @@ export default function Antecedentes() {
     }
   }
 
+  const abrirConsulta = () => {
+    setConsultaResult(null)
+    setConsultaError(null)
+    setConsultaOpen(true)
+  }
+
+  const handleConsultar = async () => {
+    const ced = consultaCedula.trim()
+    if (!ced) {
+      toast({ title: "Falta el documento", description: "Escribe el número de documento a consultar." })
+      return
+    }
+    setConsultando(true)
+    setConsultaError(null)
+    setConsultaResult(null)
+    try {
+      // Si la cédula coincide con una hoja de vida, enlazamos y autollenamos nombre.
+      const hoja = hojas.find((h) => (h.cedula || "").trim() === ced)
+      const res = await fetch("/api/antecedentes/consultar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cedula: ced,
+          nombre: consultaNombre.trim() || hoja?.nombre_candidato || undefined,
+          tipoDocumento: consultaTipoDoc,
+          empresaId: selectedEmpresaId || undefined,
+          hojaVidaId: hoja?.id || undefined,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        setConsultaError(json.error || "No se pudo realizar la consulta.")
+        return
+      }
+      setConsultaResult(json)
+      if (json.aviso) toast({ title: "Consulta realizada", description: json.aviso })
+      loadData()
+    } catch (err) {
+      setConsultaError("Ocurrió un error de red al consultar. Intenta de nuevo.")
+    } finally {
+      setConsultando(false)
+    }
+  }
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     if (!q) return antecedentes
@@ -176,6 +275,10 @@ export default function Antecedentes() {
         </div>
 
         <div className="flex flex-wrap gap-2">
+        <Button onClick={abrirConsulta} title="Consulta antecedentes en línea por número de documento">
+          <Search className="mr-2 h-4 w-4" />
+          Consultar antecedentes
+        </Button>
         <Button variant="outline" onClick={handleSync} disabled={syncing} title="Trae los antecedentes ya cargados en Head Count">
           {syncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Users className="mr-2 h-4 w-4" />}
           Sincronizar desde Head Count
@@ -394,6 +497,181 @@ export default function Antecedentes() {
           </TableBody>
         </Table>
       </div>
+
+      {/* CONSULTAR ANTECEDENTES (API Compliance) */}
+      <Dialog open={consultaOpen} onOpenChange={setConsultaOpen}>
+        <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Search className="h-5 w-5 text-primary" /> Consultar antecedentes
+            </DialogTitle>
+          </DialogHeader>
+
+          {/* Formulario */}
+          <div className="grid gap-3 sm:grid-cols-[160px_1fr_1fr]">
+            <div className="space-y-1.5">
+              <Label htmlFor="c-tipo">Tipo de documento</Label>
+              <select
+                id="c-tipo"
+                value={consultaTipoDoc}
+                onChange={(e) => setConsultaTipoDoc(e.target.value)}
+                className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+              >
+                {TIPOS_DOC.map((t) => (
+                  <option key={t.v} value={t.v}>{t.l}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="c-ced">Número de documento</Label>
+              <Input
+                id="c-ced"
+                inputMode="numeric"
+                placeholder="Ej. 19123402"
+                value={consultaCedula}
+                onChange={(e) => setConsultaCedula(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && !consultando) handleConsultar() }}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="c-nom">Nombre (opcional)</Label>
+              <Input
+                id="c-nom"
+                placeholder="Se autollenará si la cédula está en Hojas de Vida"
+                value={consultaNombre}
+                onChange={(e) => setConsultaNombre(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <Button onClick={handleConsultar} disabled={consultando}>
+              {consultando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
+              {consultando ? "Consultando..." : "Consultar"}
+            </Button>
+            {consultando && <span className="text-xs text-muted-foreground">La consulta puede tardar; consultamos ~46 fuentes.</span>}
+          </div>
+
+          {consultaError && (
+            <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{consultaError}</span>
+            </div>
+          )}
+
+          {/* Resultado */}
+          {consultaResult?.consolidado && (() => {
+            const c = consultaResult.consolidado
+            const score = consultaResult.score
+            const pdfUrl: string | null = consultaResult.pdfUrl
+            const idDato = c.idDatoConsultado
+            return (
+              <div className="space-y-4 border-t border-border pt-4">
+                {/* Cabecera + badges */}
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-lg font-semibold text-foreground">{c.nombre || "Sin nombre"}</p>
+                    <p className="text-sm text-muted-foreground">{c.tipoDocumento?.toUpperCase()} {c.datoConsultado}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    <Badge style={{ background: c.presentaRiesgo ? "#dc2626" : "#16a34a", color: "white" }}>
+                      {c.presentaRiesgo ? "Presenta riesgo" : "Sin riesgo"}
+                    </Badge>
+                    {c.pep && <Badge style={{ background: "#f59e0b", color: "white" }}>PEP</Badge>}
+                    {c.isMenorEdad && <Badge variant="outline">Menor de edad</Badge>}
+                    <Badge variant="secondary">{c.totalFuentesConsultadas ?? 0} fuentes</Badge>
+                    {(c.totalFuentesConError ?? 0) > 0 && (
+                      <Badge variant="outline" className="text-destructive">{c.totalFuentesConError} con error</Badge>
+                    )}
+                  </div>
+                </div>
+
+                {/* Score de riesgo */}
+                {score?.mostrarScore ? (
+                  <div className="flex flex-col items-center gap-4 rounded-lg border border-border bg-card p-4 sm:flex-row sm:items-center">
+                    <ScoreGauge score={Number(score.scoreRiesgo) || 0} />
+                    <div className="grid flex-1 gap-2">
+                      {([["Operacional", "%RO"], ["LAFT", "%LAFT"], ["Reputacional", "%RR"]] as const).map(([lbl, key]) => {
+                        const v = Number((score as any)[key]) || 0
+                        return (
+                          <div key={key} className="flex items-center gap-2">
+                            <span className="w-24 text-xs text-muted-foreground">{lbl}</span>
+                            <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+                              <div className="h-full rounded-full bg-primary" style={{ width: `${Math.min(Math.max(v, 0), 100)}%` }} />
+                            </div>
+                            <span className="w-12 text-right text-xs font-mono tabular-nums">{v}%</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Este documento no tiene score de riesgo disponible.</p>
+                )}
+
+                {/* Descarga de PDF */}
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" asChild>
+                    <a href={pdfUrl || `/api/antecedentes/reporte-pdf?id=${idDato}&tipo=completo`} target="_blank" rel="noopener noreferrer">
+                      <FileText className="mr-2 h-4 w-4" /> PDF Completo
+                    </a>
+                  </Button>
+                  <Button size="sm" variant="outline" asChild>
+                    <a href={`/api/antecedentes/reporte-pdf?id=${idDato}&tipo=resumido`}>
+                      <Download className="mr-2 h-4 w-4" /> Resumido
+                    </a>
+                  </Button>
+                  <Button size="sm" variant="outline" asChild>
+                    <a href={`/api/antecedentes/reporte-pdf?id=${idDato}&tipo=analista`}>
+                      <Download className="mr-2 h-4 w-4" /> Analista básico
+                    </a>
+                  </Button>
+                </div>
+
+                {/* Fuentes consultadas */}
+                <div className="space-y-2">
+                  <p className="text-sm font-semibold text-foreground">Fuentes consultadas ({(c.resultados || []).length})</p>
+                  {(c.resultados || []).length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No hay resultados con riesgo para este documento.</p>
+                  ) : (
+                    (c.resultados as any[]).map((r, i) => {
+                      const lineas = limpiarDescripcion(r.descripcion)
+                      return (
+                        <div key={i} className="rounded-md border border-border p-2.5">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-medium text-foreground">{r.lista}</span>
+                            {r.tipo && <span className="text-[11px] uppercase text-muted-foreground">{r.tipo}</span>}
+                            {r.presentaRiesgo && (
+                              <Badge style={{ background: "#dc2626", color: "white" }} className="gap-1">
+                                <ShieldAlert className="h-3 w-3" /> Riesgo
+                              </Badge>
+                            )}
+                            {r.presentaAdvertencia && <Badge style={{ background: "#f59e0b", color: "white" }}>Advertencia</Badge>}
+                            {r.deshabilitada && <Badge variant="outline">Deshabilitada</Badge>}
+                          </div>
+                          {r.error && <p className="mt-1 text-xs text-destructive">{r.error}</p>}
+                          {lineas.length > 0 && (
+                            <ul className="mt-1.5 space-y-1 text-xs text-muted-foreground">
+                              {lineas.map((l, j) => (
+                                <li key={j} className="leading-snug">{l.replace(/\|/g, " · ")}</li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      )
+                    })
+                  )}
+                </div>
+
+                {consultaResult.guardado && (
+                  <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <Check className="h-3.5 w-3.5 text-primary" /> Consulta guardada en el historial.
+                  </p>
+                )}
+              </div>
+            )
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
