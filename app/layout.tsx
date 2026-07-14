@@ -26,6 +26,13 @@ export const metadata: Metadata = {
     title: "LIPgo",
     statusBarStyle: "default",
   },
+  // iOS/Safari necesita el meta legacy `apple-mobile-web-app-capable=yes` para
+  // que "Añadir a pantalla de inicio" abra la app en modo standalone (pantalla
+  // completa, como app) y no como un simple acceso directo a Safari. Next solo
+  // emite el estándar `mobile-web-app-capable`, así que lo agregamos explícito.
+  other: {
+    "apple-mobile-web-app-capable": "yes",
+  },
   icons: {
     icon: [
       {
