@@ -245,6 +245,8 @@ export const MODULE_PERMISSION_MAP: Record<string, keyof UserPermissions> = {
   "Ver ingresos de producción": "ver_ingresos_produccion",
   "Aprobación de ingreso de producción": "aprobacion_produccion",
   "Dashboard de Producción": "controlpiso",
+  // Reporte de Paros: módulo hermano del dashboard, mismo permiso.
+  "Reporte de Paros": "controlpiso",
   // Alias legacy: antes este modulo se llamaba "Control piso".
   "Control piso": "controlpiso",
   "Asignación de Lotes": "asignacion_lotes",

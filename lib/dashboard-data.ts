@@ -138,6 +138,7 @@ export const groups: Group[] = [
       { name: "Ver ingresos de producción", icon: Eye },
       { name: "Aprobación de ingreso de producción", icon: CheckCircle },
       { name: "Dashboard de Producción", icon: Activity },
+      { name: "Reporte de Paros", icon: AlertTriangle },
       { name: "Historial Aprobaciones", icon: History },
       { name: "Reprocesos", icon: ArrowRightLeft },
       { name: "Servicios Adicionales", icon: Clock },

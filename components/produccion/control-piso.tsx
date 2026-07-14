@@ -3,6 +3,9 @@
 import type React from "react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { supabase } from "@/lib/supabase"
+import { useAuth } from "@/components/auth-provider"
+import { getParos, type ParoComentario } from "@/lib/paros-actions"
+import { detectarParos } from "@/lib/paros-produccion"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Activity,
@@ -386,6 +389,9 @@ function LiveTab() {
   const [shiftEnd, setShiftEnd] = useState<number>(DEFAULT_SHIFT_END_HOUR)
   const horasTurno = Math.max(shiftEnd - shiftStart, 0)
   const metaDia = META_POR_HORA * horasTurno
+  // Paros comentados (desde el módulo Reporte de Paros) para reflejarlos aquí.
+  const { selectedEmpresaId } = useAuth()
+  const [parosComentados, setParosComentados] = useState<Record<string, ParoComentario>>({})
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000)
@@ -473,6 +479,20 @@ function LiveTab() {
       clearInterval(t)
     }
   }, [loadHistorial, isToday])
+
+  // Paros comentados del día (Reporte de Paros) para reflejarlos en la cobertura.
+  useEffect(() => {
+    let active = true
+    getParos(selectedEmpresaId ?? null, selectedDate).then((r) => {
+      if (!active) return
+      const map: Record<string, ParoComentario> = {}
+      if (r.success) for (const c of r.data) map[c.inicio] = c
+      setParosComentados(map)
+    })
+    return () => {
+      active = false
+    }
+  }, [selectedDate, selectedEmpresaId])
 
   // Turno dinamico: primer registro de registroasistencia del dia con puesto
   // "Auxiliar Mixto". Si no hay o es invalido, se usan los defaults (6-20).
@@ -680,6 +700,35 @@ function LiveTab() {
     }
     return cells
   }, [histRows, now, selectedDate, isToday, shiftStart, shiftEnd])
+
+  // Overlay de paros comentados: marca de tiempo (bucket) → justificada + motivo.
+  const { comentadoStarts, motivoPorStart } = useMemo(() => {
+    const starts = new Set<number>()
+    const motivos = new Map<number, string>()
+    const bucketMs = BUCKET_MIN * 60000
+    for (const c of Object.values(parosComentados)) {
+      if (!c.motivo || !c.inicio || !c.fin) continue
+      const ini = parseTs(c.inicio).getTime()
+      const fin = parseTs(c.fin).getTime()
+      for (let t = ini; t < fin; t += bucketMs) {
+        starts.add(t)
+        motivos.set(t, c.motivo)
+      }
+    }
+    return { comentadoStarts: starts, motivoPorStart: motivos }
+  }, [parosComentados])
+
+  // Resumen de paros del turno: total vs comentados / sin comentar.
+  const parosResumen = useMemo(() => {
+    const ultimoInst = histRows.length ? parseTs(histRows[histRows.length - 1].fecha_hora).getTime() : null
+    const nowMs = isToday
+      ? ultimoInst ?? bogotaWallAsUtcMs(now)
+      : new Date(`${selectedDate}T${pad2(shiftEnd)}:00:00Z`).getTime()
+    const lista = detectarParos(histRows, selectedDate, shiftStart, shiftEnd, nowMs)
+    let comentados = 0
+    for (const p of lista) if (parosComentados[p.inicioISO]?.motivo) comentados++
+    return { total: lista.length, comentados, sinComentar: lista.length - comentados }
+  }, [histRows, now, isToday, selectedDate, shiftStart, shiftEnd, parosComentados])
 
   // Velocidad de produccion: un punto por lectura de 2 min del contador.
   const velocidad = useMemo(() => {
@@ -1045,12 +1094,15 @@ function LiveTab() {
               Cobertura del Turno cada 2 min ({pad2(shiftStart)}:00 - {pad2(shiftEnd)}:00)
             </h2>
           </div>
-          <div className="flex items-center gap-4 text-xs text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
             <span className="flex items-center gap-1.5">
               <span className="h-2.5 w-2.5 rounded-sm bg-chart-3" /> Trabajando
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-sm bg-destructive" /> Parada
+              <span className="h-2.5 w-2.5 rounded-sm bg-chart-4" /> Justificada
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="h-2.5 w-2.5 rounded-sm bg-destructive" /> Sin justificar
             </span>
             <span className="flex items-center gap-1.5">
               <span className="h-2.5 w-2.5 rounded-sm bg-muted" /> Pendiente
@@ -1058,21 +1110,42 @@ function LiveTab() {
           </div>
         </div>
         <div className="flex h-7 w-full overflow-hidden rounded-sm">
-          {coverage.map((c) => (
-            <div
-              key={c.start}
-              title={`${c.label} — ${
-                c.status === "active" ? "Trabajando" : c.status === "down" ? "Máquina parada" : "Pendiente"
-              }`}
-              className={`h-full min-w-0 flex-1 ${
-                c.status === "active" ? "bg-chart-3" : c.status === "down" ? "bg-destructive" : "bg-muted"
-              }`}
-            />
-          ))}
+          {coverage.map((c) => {
+            const justificada = c.status === "down" && comentadoStarts.has(c.start)
+            return (
+              <div
+                key={c.start}
+                title={`${c.label} — ${
+                  c.status === "active"
+                    ? "Trabajando"
+                    : c.status === "down"
+                      ? justificada
+                        ? `Justificada: ${motivoPorStart.get(c.start) || ""}`
+                        : "Máquina parada (sin justificar)"
+                      : "Pendiente"
+                }`}
+                className={`h-full min-w-0 flex-1 ${
+                  c.status === "active"
+                    ? "bg-chart-3"
+                    : c.status === "down"
+                      ? justificada
+                        ? "bg-chart-4"
+                        : "bg-destructive"
+                      : "bg-muted"
+                }`}
+              />
+            )
+          })}
         </div>
-        <div className="mt-2 flex justify-between font-mono text-[10px] text-muted-foreground">
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 font-mono text-[10px] text-muted-foreground">
           <span>{pad2(shiftStart)}:00</span>
-          <span>{pad2(Math.floor((shiftStart + shiftEnd) / 2))}:00</span>
+          {parosResumen.total > 0 && (
+            <span className="font-sans text-xs">
+              <strong className="text-foreground">{parosResumen.total}</strong> paros ·{" "}
+              <strong className="text-chart-4">{parosResumen.comentados}</strong> justificados ·{" "}
+              <strong className="text-destructive">{parosResumen.sinComentar}</strong> sin justificar
+            </span>
+          )}
           <span>{pad2(shiftEnd)}:00</span>
         </div>
       </section>

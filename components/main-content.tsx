@@ -33,6 +33,7 @@ import { ReprocesosManagement } from "@/components/reprocesos-management"
 import { LoadOrdersManagement } from "@/components/load-orders-management"
 import { ProductionApproval } from "@/components/production-approval"
 import ControlPiso from "@/components/produccion/control-piso"
+import ReporteParos from "@/components/produccion/reporte-paros"
 import { InventoryTransactionsManagement } from "@/components/inventory-transactions-management"
 import { SanitaryRegistryForm } from "@/components/sanitary-registry-form"
 import { ProductTransferForm } from "@/components/product-transfer-form"
@@ -486,6 +487,10 @@ export function MainContent({
           ) : selectedModule === "Dashboard de Producción" ? (
             <PermissionGuard moduleName="Dashboard de Producción">
               <ControlPiso />
+            </PermissionGuard>
+          ) : selectedModule === "Reporte de Paros" ? (
+            <PermissionGuard moduleName="Reporte de Paros">
+              <ReporteParos />
             </PermissionGuard>
           ) : selectedModule === "Saldos de inventario" ? (
             <PermissionGuard moduleName="Saldos de inventario">
