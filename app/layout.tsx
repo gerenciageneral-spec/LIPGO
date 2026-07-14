@@ -1,20 +1,31 @@
 import type React from "react"
-import type { Metadata } from "next"
+import type { Metadata, Viewport } from "next"
 import { Geist, Geist_Mono } from "next/font/google"
 import { Analytics } from "@vercel/analytics/next"
 import Script from "next/script"
 import { AuthProvider } from "@/components/auth-provider"
 import GlobalLocationScheduler from "@/components/global-location-scheduler"
+import { PwaInstallPrompt } from "@/components/pwa-install-prompt"
 import { Toaster } from "@/components/ui/toaster"
 import "./globals.css"
 
 const _geist = Geist({ subsets: ["latin"] })
 const _geistMono = Geist_Mono({ subsets: ["latin"] })
 
+export const viewport: Viewport = {
+  themeColor: "#5bc0de",
+}
+
 export const metadata: Metadata = {
   title: "LiPGO - Centro de Operaciones",
   description: "Aplicación web de logística y operaciones",
   generator: "v0.app",
+  applicationName: "LIPgo",
+  appleWebApp: {
+    capable: true,
+    title: "LIPgo",
+    statusBarStyle: "default",
+  },
   icons: {
     icon: [
       {
@@ -42,6 +53,11 @@ export default function RootLayout({
   return (
     <html lang="es">
       <body className={`font-sans antialiased`}>
+        {/* Captura temprana del evento de instalacion (puede dispararse antes
+            de montar React); el banner PWA lo consume desde window.__lipgoBIP. */}
+        <Script id="pwa-bip-capture" strategy="beforeInteractive">
+          {`window.__lipgoBIP=null;window.addEventListener('beforeinstallprompt',function(e){e.preventDefault();window.__lipgoBIP=e;window.dispatchEvent(new Event('lipgo-bip'));});`}
+        </Script>
         <AuthProvider>
           {/* Scheduler invisible: captura ubicacion a las 08:00, 14:00 y 17:00
               hora de Colombia (ver components/global-location-scheduler.tsx) */}
@@ -50,6 +66,8 @@ export default function RootLayout({
           {/* Necesario para que useToast muestre feedback en toda la app. */}
           <Toaster />
         </AuthProvider>
+        {/* Banner "¿Quieres instalar LIPgo?" (PWA) en escritorio y movil. */}
+        <PwaInstallPrompt />
         <Analytics />
         <Script
           src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"
