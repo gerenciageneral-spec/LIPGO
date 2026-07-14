@@ -21,11 +21,11 @@ import {
 } from "@/components/ui/table"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/components/auth-provider"
-import { getAntecedentes, deleteAntecedente, decidirAntecedente, sincronizarAntecedentesDesdeHeadcount, type Antecedente } from "@/lib/antecedentes-actions"
+import { getAntecedentes, deleteAntecedente, decidirAntecedente, verificarCodigoCompliance, sincronizarAntecedentesDesdeHeadcount, type Antecedente } from "@/lib/antecedentes-actions"
 import { getHojasVida, type HojaDeVida } from "@/lib/hojas-vida-actions"
 import { Badge } from "@/components/ui/badge"
 import { RadialBar, RadialBarChart, ResponsiveContainer, PolarAngleAxis } from "recharts"
-import { Plus, Trash2, Eye, Download, Search, ShieldCheck, Loader2, Check, Users, AlertTriangle, ShieldAlert, FileText, Ban } from "lucide-react"
+import { Plus, Trash2, Eye, Download, Search, ShieldCheck, Loader2, Check, Users, AlertTriangle, ShieldAlert, FileText, Ban, Lock } from "lucide-react"
 
 // Acceso a los 3 tipos de certificado de forma uniforme.
 const TIPOS = [
@@ -106,6 +106,11 @@ export default function Antecedentes() {
   const [consultaError, setConsultaError] = useState<string | null>(null)
   const [decidiendo, setDecidiendo] = useState<null | "aceptado" | "rechazado">(null)
   const [decision, setDecision] = useState<null | "aceptado" | "rechazado">(null)
+  // Código de acceso que protege la investigación.
+  const [codigoAcceso, setCodigoAcceso] = useState("")
+  const [desbloqueado, setDesbloqueado] = useState(false)
+  const [verificandoCodigo, setVerificandoCodigo] = useState(false)
+  const [codigoError, setCodigoError] = useState<string | null>(null)
 
   const loadData = async () => {
     setLoading(true)
@@ -213,7 +218,31 @@ export default function Antecedentes() {
   const abrirConsulta = () => {
     setConsultaResult(null)
     setConsultaError(null)
+    setDesbloqueado(false)
+    setCodigoAcceso("")
+    setCodigoError(null)
     setConsultaOpen(true)
+  }
+
+  const handleDesbloquear = async () => {
+    if (!codigoAcceso.trim()) {
+      setCodigoError("Ingresa el código de acceso.")
+      return
+    }
+    setVerificandoCodigo(true)
+    setCodigoError(null)
+    try {
+      const res = await verificarCodigoCompliance(codigoAcceso)
+      if (res.ok) {
+        setDesbloqueado(true)
+      } else {
+        setCodigoError("Código incorrecto.")
+      }
+    } catch {
+      setCodigoError("No se pudo verificar el código.")
+    } finally {
+      setVerificandoCodigo(false)
+    }
   }
 
   const handleConsultar = async () => {
@@ -238,6 +267,7 @@ export default function Antecedentes() {
           tipoDocumento: consultaTipoDoc,
           empresaId: selectedEmpresaId || undefined,
           hojaVidaId: hoja?.id || undefined,
+          codigo: codigoAcceso,
         }),
       })
       const json = await res.json()
@@ -318,9 +348,9 @@ export default function Antecedentes() {
         </div>
 
         <div className="flex flex-wrap gap-2">
-        <Button onClick={abrirConsulta} title="Consulta antecedentes en línea por número de documento">
+        <Button onClick={abrirConsulta} title="Investigación en Compliance por número de documento (protegida por código)">
           <Search className="mr-2 h-4 w-4" />
-          Consultar antecedentes
+          Investigación en Compliance
         </Button>
         <Button variant="outline" onClick={handleSync} disabled={syncing} title="Trae los antecedentes ya cargados en Head Count">
           {syncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Users className="mr-2 h-4 w-4" />}
@@ -582,10 +612,41 @@ export default function Antecedentes() {
         <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Search className="h-5 w-5 text-primary" /> Consultar antecedentes
+              <Search className="h-5 w-5 text-primary" /> Investigación en Compliance
             </DialogTitle>
           </DialogHeader>
 
+          {!desbloqueado ? (
+            <div className="space-y-3 py-2">
+              <div className="flex items-start gap-2 rounded-md border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
+                <Lock className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                <span>Función protegida. Ingresa el código de acceso para hacer la investigación en Compliance.</span>
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                <div className="flex-1 space-y-1.5">
+                  <Label htmlFor="c-codigo">Código de acceso</Label>
+                  <Input
+                    id="c-codigo"
+                    type="password"
+                    value={codigoAcceso}
+                    onChange={(e) => setCodigoAcceso(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter" && !verificandoCodigo) handleDesbloquear() }}
+                    placeholder="••••••••"
+                  />
+                </div>
+                <Button onClick={handleDesbloquear} disabled={verificandoCodigo}>
+                  {verificandoCodigo ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Lock className="mr-2 h-4 w-4" />}
+                  Ingresar
+                </Button>
+              </div>
+              {codigoError && (
+                <p className="flex items-center gap-1.5 text-sm text-destructive">
+                  <AlertTriangle className="h-4 w-4" /> {codigoError}
+                </p>
+              )}
+            </div>
+          ) : (
+          <>
           {/* Formulario */}
           <div className="grid gap-3 sm:grid-cols-[160px_1fr_1fr]">
             <div className="space-y-1.5">
@@ -774,6 +835,8 @@ export default function Antecedentes() {
               </div>
             )
           })()}
+          </>
+          )}
         </DialogContent>
       </Dialog>
     </div>

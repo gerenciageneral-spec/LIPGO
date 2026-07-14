@@ -92,6 +92,13 @@ export async function sincronizarAntecedentesDesdeHeadcount(selectedEmpresaId?: 
   return { success: true, creadas: nuevas.length, actualizadas }
 }
 
+// Verifica el código de acceso que protege la Investigación en Compliance.
+// El código vive solo en el servidor (process.env.COMPLIANCE_ACCESS_CODE).
+export async function verificarCodigoCompliance(codigo: string): Promise<{ ok: boolean }> {
+  const expected = process.env.COMPLIANCE_ACCESS_CODE
+  return { ok: !!expected && String(codigo || "") === expected }
+}
+
 // DECISIÓN de antecedentes (aceptar/rechazar) tras la consulta Compliance.
 // - Genera/actualiza el registro en `antecedentes` (por idempresa+cédula) con el
 //   PDF Completo y el score de la consulta.

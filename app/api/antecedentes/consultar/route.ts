@@ -19,6 +19,14 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json().catch(() => ({}))
+
+    // Código de acceso que protege la investigación (validación autoritativa).
+    const codigo = String(body?.codigo || "")
+    const expected = process.env.COMPLIANCE_ACCESS_CODE
+    if (!expected || codigo !== expected) {
+      return NextResponse.json({ error: "Código de acceso incorrecto." }, { status: 403 })
+    }
+
     const cedula = String(body?.cedula || "").trim()
     const nombre = String(body?.nombre || "").trim()
     const tipoDocumento = String(body?.tipoDocumento || "cc").trim() || "cc"
