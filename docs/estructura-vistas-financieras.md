@@ -118,13 +118,18 @@ Construye un **calendario persona×día** (rango min/max de `cabeceraoc.fechacar
 `registroasistencia.fecha`) y para cada celda liquida el día:
 - **Producción (destajo):** explota `cabeceraoc.auxiliares` (CSV) y reparte el peso
   (`pesoorden` para empresas 3/4, si no `pesovascula`) entre los auxiliares × `tarifaspersonal`.
-- **Turnos/especialidad:** `registroasistencia` × `tarifasturnos` → `base_turno` y valor
-  de recargos (`hed/hedf/hen/hef/hn`).
+- **Turnos/especialidad:** los recargos y `base_turno` se **calculan POR PERSONA** desde el
+  salario de contrato (`headcount.salario`) y los parámetros de `parametros_legales_anio`
+  (`dias_calendario`, `jornada_horas`, `pct_*`). El auxilio de transporte **NO entra en la base**
+  (norma CO). `HOD = salario/(dias×jornada)`; `hed/hen/hedf/hef = cant × HOD × (1+%/100)` (hora
+  completa) y `hn = cant × HOD × %/100` (recargo puro). El JOIN a `tarifasturnos` se conserva solo
+  como **registro de qué puestos son de turno** (vigencia/`especialidad`); sus columnas de dinero
+  (`base/hed/…`) ya **no se leen**. Ver `scripts/extend_parametros_nomina.sql`.
 - **Valor base día:** `salario/30` (o 58.364 por defecto) según asistencia/novedad;
   incapacidades (100/66/50%), vacaciones, descansos y festivos con sus reglas.
 - **Domingo:** paga solo si la semana previa (ventana 6 días) no tuvo faltas, vacíos ni
-  novedades bloqueantes y no hay compensatorio posterior; `recargodominical` = 0.8×día para
-  especialidad sin toneladas.
+  novedades bloqueantes y no hay compensatorio posterior; `recargodominical` =
+  `pct_recargo_dominical/100 × día` (hoy 90%, era 0.8) para especialidad sin toneladas.
 - **Bono destajo:** excedente (pago_produccion − valor_diario_ley) partido en
   `bonif_prestacional` (tope 9.948) y `bonif_no_prestacional` (resto).
 - **Salida:** una fila por persona×día con `total_liquidado_dia`. Filtra `fecha <= CURRENT_DATE`.

@@ -152,15 +152,20 @@ export function CuadroMandoNomina() {
             </div>
           </div>
           <div className="flex items-baseline justify-between rounded-md bg-muted/50 px-3 py-2">
-            <span className="text-xs text-muted-foreground">SMMLV (salario + auxilio)</span>
-            <span className="text-lg font-bold tabular-nums text-foreground">{money(calc.smmlv)}</span>
+            <span className="text-xs text-muted-foreground">Base de recargos (salario)</span>
+            <span className="text-lg font-bold tabular-nums text-foreground">{money(calc.base)}</span>
+          </div>
+          <div className="flex items-baseline justify-between px-3 text-xs text-muted-foreground">
+            <span>Ingreso total con auxilio (informativo)</span>
+            <span className="tabular-nums">{money(calc.ingresoTotal)}</span>
           </div>
           <div className="flex items-start gap-2 text-xs text-muted-foreground">
             <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
             <p>
-              En producción, para cada persona se usa <strong>su salario de contrato</strong>{" "}
-              (<code>headcount.salario</code>) + este auxilio. El SMLV de arriba es el mínimo legal
-              (salario de prueba del preview y fallback cuando no hay salario).
+              La base de recargos/horas extra es el <strong>salario</strong>; el auxilio de transporte{" "}
+              <strong>no entra en la base</strong> (se paga aparte). En producción, para cada persona se
+              usa <strong>su salario de contrato</strong> (<code>headcount.salario</code>); el SMLV de
+              arriba es el mínimo legal (salario de prueba del preview y fallback cuando no hay salario).
             </p>
           </div>
         </Card>
@@ -194,11 +199,11 @@ export function CuadroMandoNomina() {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="rounded-md border border-border px-3 py-2">
-              <p className="text-xs text-muted-foreground">Valor día (SMMLV ÷ {num(params.diasCalendario)})</p>
+              <p className="text-xs text-muted-foreground">Valor día (salario ÷ {num(params.diasCalendario)})</p>
               <p className="text-base font-bold tabular-nums text-foreground">{money(calc.valorDia)}</p>
             </div>
             <div className="rounded-md border border-border px-3 py-2">
-              <p className="text-xs text-muted-foreground">Hora ordinaria HOD (SMMLV ÷ {num(divisorMensual)})</p>
+              <p className="text-xs text-muted-foreground">Hora ordinaria HOD (salario ÷ {num(divisorMensual)})</p>
               <p className="text-base font-bold tabular-nums text-foreground">{money(calc.hod)}</p>
             </div>
           </div>

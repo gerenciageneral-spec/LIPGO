@@ -4,6 +4,9 @@
 // la vista pagonomina (ver scripts/vistas_financieras.sql, CTE calculo_turnos).
 //
 // Convenciones (confirmadas contra las vistas reales):
+//   - La base de los recargos/horas extra es el SALARIO (el auxilio de transporte
+//     NO entra en la base de horas extra; se paga aparte). ingresoTotal es solo
+//     informativo (salario + auxilio).
 //   - hed/hen/hedf/hef guardan la HORA COMPLETA  = HOD × (1 + %/100)
 //   - hn (recargo nocturno) guarda SOLO EL RECARGO = HOD × (%/100)
 //   - recargo dominical se aplica sobre el VALOR DÍA (no sobre la HOD)
@@ -37,9 +40,10 @@ export const PARAMS_NOMINA_DEFAULTS: Omit<ParametrosNomina, "anio" | "smlv" | "a
 }
 
 export interface RecargosCalculados {
-  smmlv: number // salario + auxilio
-  valorDia: number // SMMLV / dias
-  hod: number // hora ordinaria = SMMLV / (dias × jornada)
+  base: number // salario (base de recargos; SIN auxilio)
+  ingresoTotal: number // salario + auxilio (solo informativo)
+  valorDia: number // salario / dias
+  hod: number // hora ordinaria = salario / (dias × jornada)
   hed: number
   hen: number
   hn: number
@@ -50,21 +54,24 @@ export interface RecargosCalculados {
 }
 
 /**
- * Calcula el valor $/hora de cada recargo a partir del salario básico + auxilio y
- * los parámetros del año. En el preview del cuadro, `salario` = SMLV del año; en
- * producción, `salario` = headcount.salario (contrato) de cada persona.
+ * Calcula el valor $/hora de cada recargo a partir del salario y los parámetros
+ * del año. El auxilio NO entra en la base (norma CO); se recibe solo para exponer
+ * el ingreso total informativo. En el preview del cuadro, `salario` = SMLV del año;
+ * en producción, `salario` = headcount.salario (contrato) de cada persona.
  */
 export function calcularRecargos(salario: number, aux: number, p: ParametrosNomina): RecargosCalculados {
-  const smmlv = (Number(salario) || 0) + (Number(aux) || 0)
+  const base = Number(salario) || 0 // base de recargos = salario (sin auxilio)
+  const ingresoTotal = base + (Number(aux) || 0)
   const dias = Number(p.diasCalendario) || 0
   const jornada = Number(p.jornadaHoras) || 0
   const divisorMensual = dias * jornada
 
-  const valorDia = dias > 0 ? smmlv / dias : 0
-  const hod = divisorMensual > 0 ? smmlv / divisorMensual : 0
+  const valorDia = dias > 0 ? base / dias : 0
+  const hod = divisorMensual > 0 ? base / divisorMensual : 0
 
   return {
-    smmlv,
+    base,
+    ingresoTotal,
     valorDia,
     hod,
     hed: hod * (1 + p.pctHed / 100),

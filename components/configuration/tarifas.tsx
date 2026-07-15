@@ -72,10 +72,12 @@ const TABS: TabDef[] = [
     table: "tarifasturnos",
     desc: (
       <>
-        Tarifa de <strong>nómina de turnos de especialidad</strong>: <code>base</code> (valor del turno) y los
-        recargos por hora (<code>hed/hedf/hen/hef/hn</code>). Alimenta <code>pagonomina</code>:{" "}
-        <code>base_turno + Σ(horas × recargo)</code>. <strong>Impacta la liquidación de nómina</strong> del
-        personal de especialidad.
+        Registro de <strong>qué puestos son de turno de especialidad</strong> y su vigencia. Desde el{" "}
+        <strong>Cuadro de mando</strong>, <code>pagonomina</code> ya calcula <code>base_turno</code> y los
+        recargos (<code>hed/hedf/hen/hef/hn</code>) <strong>por persona</strong> desde el salario de
+        contrato; las columnas de dinero de esta tabla (<code>base/hed/…</code>) <strong>ya no se leen</strong>{" "}
+        (se conservan por compatibilidad). Lo que sí importa aquí: <code>puesto</code>,{" "}
+        <code>especialidad</code> y las fechas de vigencia.
       </>
     ),
   },

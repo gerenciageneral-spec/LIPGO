@@ -67,22 +67,41 @@ create or replace view public.pagonomina as
                 END AS bloquea_domingo
            FROM registroasistencia
         ), calculo_turnos AS (
+         -- Recargos y base del turno calculados POR PERSONA desde el salario de
+         -- contrato (headcount.salario), sin auxilio en la base (norma CO). Se
+         -- conserva el JOIN a tarifasturnos como registro de "puestos de turno".
          SELECT a.fecha,
             a.persona,
-            tt.base AS base_turno,
+            COALESCE(calc.valor_dia, (0)::numeric) AS base_turno,
             a.cant_hed,
             a.cant_hedf,
             a.cant_hen,
             a.cant_hef,
             a.cant_hn,
-            (a.cant_hed * COALESCE(tt.hed, (0)::numeric)) AS val_hed,
-            (a.cant_hedf * COALESCE(tt.hedf, (0)::numeric)) AS val_hedf,
-            (a.cant_hen * COALESCE(tt.hen, (0)::numeric)) AS val_hen,
-            (a.cant_hef * COALESCE(tt.hef, (0)::numeric)) AS val_hef,
-            (a.cant_hn * COALESCE(tt.hn, (0)::numeric)) AS val_hn,
-            (((((a.cant_hed * COALESCE(tt.hed, (0)::numeric)) + (a.cant_hedf * COALESCE(tt.hedf, (0)::numeric))) + (a.cant_hen * COALESCE(tt.hen, (0)::numeric))) + (a.cant_hef * COALESCE(tt.hef, (0)::numeric))) + (a.cant_hn * COALESCE(tt.hn, (0)::numeric))) AS total_recargos
-           FROM (datos_asistencia a
+            (a.cant_hed  * COALESCE(calc.hod, (0)::numeric) * ((1)::numeric + (COALESCE(pa.pct_hed,  (25)::numeric)  / 100.0))) AS val_hed,
+            (a.cant_hedf * COALESCE(calc.hod, (0)::numeric) * ((1)::numeric + (COALESCE(pa.pct_hedf, (115)::numeric) / 100.0))) AS val_hedf,
+            (a.cant_hen  * COALESCE(calc.hod, (0)::numeric) * ((1)::numeric + (COALESCE(pa.pct_hen,  (75)::numeric)  / 100.0))) AS val_hen,
+            (a.cant_hef  * COALESCE(calc.hod, (0)::numeric) * ((1)::numeric + (COALESCE(pa.pct_hef,  (165)::numeric) / 100.0))) AS val_hef,
+            (a.cant_hn   * COALESCE(calc.hod, (0)::numeric) * (COALESCE(pa.pct_hn, (35)::numeric) / 100.0)) AS val_hn,
+            (
+                (a.cant_hed  * COALESCE(calc.hod, (0)::numeric) * ((1)::numeric + (COALESCE(pa.pct_hed,  (25)::numeric)  / 100.0)))
+              + (a.cant_hedf * COALESCE(calc.hod, (0)::numeric) * ((1)::numeric + (COALESCE(pa.pct_hedf, (115)::numeric) / 100.0)))
+              + (a.cant_hen  * COALESCE(calc.hod, (0)::numeric) * ((1)::numeric + (COALESCE(pa.pct_hen,  (75)::numeric)  / 100.0)))
+              + (a.cant_hef  * COALESCE(calc.hod, (0)::numeric) * ((1)::numeric + (COALESCE(pa.pct_hef,  (165)::numeric) / 100.0)))
+              + (a.cant_hn   * COALESCE(calc.hod, (0)::numeric) * (COALESCE(pa.pct_hn, (35)::numeric) / 100.0))
+            ) AS total_recargos
+           FROM (((datos_asistencia a
              JOIN tarifasturnos tt ON ((((a.fecha >= tt.fechaini) AND (a.fecha <= tt.fechafin)) AND (TRIM(BOTH FROM a.puesto) = TRIM(BOTH FROM tt.puesto)))))
+             LEFT JOIN headcount h2 ON ((TRIM(BOTH FROM h2.nombre) = a.persona)))
+             LEFT JOIN parametros_legales_anio pa ON ((pa.anio = (EXTRACT(year FROM a.fecha))::integer)))
+             CROSS JOIN LATERAL (
+                 SELECT (s.base_pers / NULLIF(s.dias_p, (0)::numeric)) AS valor_dia,
+                        (s.base_pers / NULLIF((s.dias_p * s.jornada_p), (0)::numeric)) AS hod
+                   FROM ( SELECT (COALESCE(h2.salario, pa.smlv))::numeric AS base_pers,  -- base = SALARIO (auxilio NO entra en la base de recargos)
+                                 COALESCE(pa.dias_calendario, (30)::numeric) AS dias_p,
+                                 COALESCE(pa.jornada_horas, (7)::numeric) AS jornada_p
+                        ) s
+             ) calc
         ), rango_fechas AS (
          SELECT min(tf.fecha) AS fecha_inicio,
             max(tf.fecha) AS fecha_fin
@@ -112,6 +131,7 @@ create or replace view public.pagonomina as
             a.especialidad,
             h.salario,
             COALESCE((h.salario / (30)::numeric), (58364)::numeric) AS valor_diario_ley,
+            COALESCE(pa2.pct_recargo_dominical, (90)::numeric) AS pct_recargo_dominical,
             COALESCE(p.toneladas_dia, (0)::numeric) AS toneladas,
             COALESCE(p.pago_produccion_dia, (0)::numeric) AS pago_produccion,
             ct.base_turno,
@@ -149,12 +169,13 @@ create or replace view public.pagonomina as
                     WHEN (f.fecha IS NOT NULL) THEN 1
                     ELSE 0
                 END AS es_festivo
-           FROM (((((calendario_base c
+           FROM ((((((calendario_base c
              LEFT JOIN produccion_diaria p ON (((c.fecha = p.fecha) AND (c.persona = p.persona))))
              LEFT JOIN datos_asistencia a ON (((c.fecha = a.fecha) AND (c.persona = a.persona))))
              LEFT JOIN calculo_turnos ct ON (((c.fecha = ct.fecha) AND (c.persona = ct.persona))))
              LEFT JOIN festivos f ON ((c.fecha = f.fecha)))
              LEFT JOIN headcount h ON ((h.nombre = c.persona)))
+             LEFT JOIN parametros_legales_anio pa2 ON ((pa2.anio = (EXTRACT(year FROM c.fecha))::integer)))
         ), calculo_nomina_base AS (
          SELECT consolidado_completo.fecha,
             consolidado_completo.persona,
@@ -164,6 +185,7 @@ create or replace view public.pagonomina as
             consolidado_completo.especialidad,
             consolidado_completo.salario,
             consolidado_completo.valor_diario_ley,
+            consolidado_completo.pct_recargo_dominical,
             consolidado_completo.toneladas,
             consolidado_completo.pago_produccion,
             consolidado_completo.base_turno,
@@ -258,7 +280,7 @@ create or replace view public.pagonomina as
                     ELSE (0)::numeric
                 END AS excedente_bruto_destajo,
                 CASE
-                    WHEN ((calculo_nomina_base.dia_semana = (0)::numeric) AND (calculo_nomina_base.asistio_ok = 1) AND (calculo_nomina_base.especialidad = true) AND (COALESCE(calculo_nomina_base.toneladas, (0)::numeric) = (0)::numeric)) THEN (calculo_nomina_base.valor_diario_ley * 0.8)
+                    WHEN ((calculo_nomina_base.dia_semana = (0)::numeric) AND (calculo_nomina_base.asistio_ok = 1) AND (calculo_nomina_base.especialidad = true) AND (COALESCE(calculo_nomina_base.toneladas, (0)::numeric) = (0)::numeric)) THEN (calculo_nomina_base.valor_diario_ley * (calculo_nomina_base.pct_recargo_dominical / 100.0))
                     ELSE (0)::numeric
                 END AS recargodominical
            FROM calculo_nomina_base
