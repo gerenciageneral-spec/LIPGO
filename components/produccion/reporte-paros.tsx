@@ -13,7 +13,9 @@ import { useToast } from "@/hooks/use-toast"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card } from "@/components/ui/card"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { AlertTriangle, Calendar, Check, Loader2, Save, Trash2, MessageSquare } from "lucide-react"
+import { HistorialParos } from "./historial-paros"
 import {
   detectarParos,
   utcDateStr,
@@ -236,32 +238,38 @@ export default function ReporteParos() {
   return (
     <div className="space-y-6">
       {/* Encabezado */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="flex items-center gap-2 text-2xl font-bold text-foreground">
-            <AlertTriangle className="h-6 w-6 text-primary" />
-            Reporte de Paros
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Justifica los tiempos en que la máquina estuvo detenida. Lo comentado se refleja en el Dashboard de Producción.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Calendar className="h-4 w-4 text-muted-foreground" />
-          <input
-            type="date"
-            value={selectedDate}
-            max={utcDateStr()}
-            onChange={(e) => setSelectedDate(e.target.value || utcDateStr())}
-            className="rounded-md border border-border bg-card px-3 py-1.5 text-sm text-card-foreground outline-none focus:ring-2 focus:ring-primary"
-          />
-          {!isToday && (
-            <Button variant="outline" size="sm" onClick={() => setSelectedDate(utcDateStr())}>
-              Hoy
-            </Button>
-          )}
-        </div>
+      <div>
+        <h1 className="flex items-center gap-2 text-2xl font-bold text-foreground">
+          <AlertTriangle className="h-6 w-6 text-primary" />
+          Reporte de Paros
+        </h1>
+        <p className="text-sm text-muted-foreground">
+          Justifica los tiempos en que la máquina estuvo detenida. Lo comentado se refleja en el Dashboard de Producción.
+        </p>
       </div>
+
+      <Tabs defaultValue="reportar" className="w-full">
+        <TabsList className="flex h-auto flex-wrap justify-start gap-1">
+          <TabsTrigger value="reportar">Reportar del día</TabsTrigger>
+          <TabsTrigger value="historial">Historial y análisis</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="reportar" className="mt-4 space-y-6">
+          <div className="flex items-center justify-end gap-2">
+            <Calendar className="h-4 w-4 text-muted-foreground" />
+            <input
+              type="date"
+              value={selectedDate}
+              max={utcDateStr()}
+              onChange={(e) => setSelectedDate(e.target.value || utcDateStr())}
+              className="rounded-md border border-border bg-card px-3 py-1.5 text-sm text-card-foreground outline-none focus:ring-2 focus:ring-primary"
+            />
+            {!isToday && (
+              <Button variant="outline" size="sm" onClick={() => setSelectedDate(utcDateStr())}>
+                Hoy
+              </Button>
+            )}
+          </div>
 
       {/* KPIs */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -417,6 +425,12 @@ export default function ReporteParos() {
           </div>
         )}
       </Card>
+        </TabsContent>
+
+        <TabsContent value="historial" className="mt-4">
+          <HistorialParos />
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

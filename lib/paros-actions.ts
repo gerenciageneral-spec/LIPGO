@@ -78,6 +78,55 @@ export async function guardarParo(payload: {
   return { success: true }
 }
 
+export interface HistorialParos {
+  rows: ParoComentario[]
+  porCategoria: { categoria: string; count: number; minutos: number }[]
+  porDia: { fecha: string; count: number; minutos: number }[]
+  total: number
+  totalMinutos: number
+}
+
+// Historial de paros justificados en un rango de fechas, con agregados por
+// categoría (cuál se repite más) y por día.
+export async function getHistorialParos(
+  empresaId: number | null | undefined,
+  desde?: string | null,
+  hasta?: string | null,
+): Promise<{ success: boolean; data?: HistorialParos; message?: string }> {
+  const admin: any = await getSupabaseAdmin()
+  const emp = empresaId || (await getCurrentEmpresaIdForInsert())
+  if (!emp) return { success: true, data: { rows: [], porCategoria: [], porDia: [], total: 0, totalMinutos: 0 } }
+  try {
+    let q = admin.from("paros_produccion").select("*").eq("idempresa", emp)
+    if (desde) q = q.gte("fecha", desde)
+    if (hasta) q = q.lte("fecha", hasta)
+    const { data, error } = await q.order("fecha", { ascending: false }).order("inicio", { ascending: true })
+    if (error) return { success: false, message: error.message }
+    const rows = (data || []) as ParoComentario[]
+    const catMap = new Map<string, { categoria: string; count: number; minutos: number }>()
+    const diaMap = new Map<string, { fecha: string; count: number; minutos: number }>()
+    let totalMinutos = 0
+    for (const r of rows) {
+      const min = Number(r.minutos) || 0
+      totalMinutos += min
+      const cat = r.categoria || ""
+      const c = catMap.get(cat) || { categoria: cat, count: 0, minutos: 0 }
+      c.count++
+      c.minutos += min
+      catMap.set(cat, c)
+      const d = diaMap.get(r.fecha) || { fecha: r.fecha, count: 0, minutos: 0 }
+      d.count++
+      d.minutos += min
+      diaMap.set(r.fecha, d)
+    }
+    const porCategoria = [...catMap.values()].sort((a, b) => b.count - a.count || b.minutos - a.minutos)
+    const porDia = [...diaMap.values()].sort((a, b) => b.fecha.localeCompare(a.fecha))
+    return { success: true, data: { rows, porCategoria, porDia, total: rows.length, totalMinutos } }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al cargar el historial." }
+  }
+}
+
 // Elimina el comentario de una franja (vuelve a "sin comentar").
 export async function eliminarParo(payload: { empresaId?: number | null; fecha: string; inicio: string }) {
   const admin: any = await getSupabaseAdmin()
