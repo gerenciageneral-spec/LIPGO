@@ -96,16 +96,64 @@ La función [`calcular_y_asignar_horas_extras`](../scripts/fn_calcular_y_asignar
 especialidad (regla de 30 min de tolerancia, jornada base 7.3333h + 1h descanso, truncado
 a 2 decimales, domingo→`hedf`). Estas columnas fluyen hacia `pagonomina` y `facturacionturnos`.
 
-## Definiciones SQL (pendientes de traer)
-Este documento describe **columnas y uso**; la lógica exacta de cada vista (los `SELECT`
-que las definen) está en Supabase. Para completarla:
-1. Corre [`scripts/dump_vistas_financieras.sql`](../scripts/dump_vistas_financieras.sql) en el SQL Editor.
-2. Comparte el resultado y lo pego aquí, en un bloque por vista:
+## Definiciones SQL (DDL)
+El **DDL real** (los `CREATE OR REPLACE VIEW`) está versionado en
+[`scripts/vistas_financieras.sql`](../scripts/vistas_financieras.sql). Las 5 son
+**vistas** (no tablas). Orden de dependencias:
 
 ```
--- pagonomina  → (pendiente: pegar CREATE VIEW)
--- archivoplano → (pendiente)
--- facturacion → (pendiente)
--- facturacionturnos → (pendiente)
--- toneladasauxiliarespago → (tabla, ver create_toneladasauxilirespago_table.sql)
+cabeceraoc, detalleoc, productos ─┐
+tarifaspersonal ──────────────────┼─► pagonomina ──► archivoplano
+registroasistencia, tarifasturnos ┘        │
+festivos, headcount ───────────────────────┘
+tarifasoperacion ─► facturacion
+tarifasfacturacionturnos, registroasistencia ─► facturacionturnos
+cabeceraoc, tarifaspersonal ─► toneladasauxiliarespago
 ```
+
+## Dependencias y lógica de negocio
+
+### `pagonomina` (la vista núcleo)
+Construye un **calendario persona×día** (rango min/max de `cabeceraoc.fechacargue` y
+`registroasistencia.fecha`) y para cada celda liquida el día:
+- **Producción (destajo):** explota `cabeceraoc.auxiliares` (CSV) y reparte el peso
+  (`pesoorden` para empresas 3/4, si no `pesovascula`) entre los auxiliares × `tarifaspersonal`.
+- **Turnos/especialidad:** `registroasistencia` × `tarifasturnos` → `base_turno` y valor
+  de recargos (`hed/hedf/hen/hef/hn`).
+- **Valor base día:** `salario/30` (o 58.364 por defecto) según asistencia/novedad;
+  incapacidades (100/66/50%), vacaciones, descansos y festivos con sus reglas.
+- **Domingo:** paga solo si la semana previa (ventana 6 días) no tuvo faltas, vacíos ni
+  novedades bloqueantes y no hay compensatorio posterior; `recargodominical` = 0.8×día para
+  especialidad sin toneladas.
+- **Bono destajo:** excedente (pago_produccion − valor_diario_ley) partido en
+  `bonif_prestacional` (tope 9.948) y `bonif_no_prestacional` (resto).
+- **Salida:** una fila por persona×día con `total_liquidado_dia`. Filtra `fecha <= CURRENT_DATE`.
+
+### `archivoplano`
+Se construye **sobre `pagonomina`** (+ `headcount` por nombre→identificación/contrato).
+Agrupa por **quincena** (día ≤15 → 1, si no 2) y **nivela** bonos vs déficit del período.
+Emite un `UNION ALL` de novedades para el archivo plano de nómina (SIIGO): bonificación de
+ajuste de toneladas, novedades reportadas (días), HED niveladas, HEDF, HEN, HEF, recargo
+nocturno y recargos dominicales/festivos (con códigos tipo `10-`, `11-`, `25-`, etc.).
+
+### `facturacion`
+`detalleoc` × `productos` × `cabeceraoc`; `owner` se mapea desde `productos.id_empresa`
+(1→INDUPAN, 2→AVIMOL, 3/4→Molinos del Atlántico, 6→INDUPAN). LEFT JOIN a `tarifasoperacion`
+por empresa+operación con reglas por producto/`empresafactura`/transporte (caso especial
+empresa 6 y TOLVA). `valor_a_facturar = tarifa × toneladas` (texto; `'SIN TARIFA EN MAESTRO'`
+si no hay match).
+
+### `facturacionturnos`
+`registroasistencia` × `tarifasfacturacionturnos` (por `puesto` y `fecha` dentro de
+`[fechainicio, fechafin]`). A las horas extra se les **resta 0.66** antes de valorizar.
+`facturacion_total = tarifaturno + tarifahoraextra×hed`; también `costo_total` y `utilidad`.
+Dos ramas `UNION ALL`: puestos "de planta" (Estibado PT, Salvado, Montacargas, Cargue/
+Descargue, Auxiliar Mixto, Tolva…) y el resto. `estado_tarifa` = `SIN TARIFA` si no hay match.
+
+### `toneladasauxiliarespago`
+Misma explosión de `cabeceraoc.auxiliares` × `tarifaspersonal` que `pagonomina`, pero
+**agregada** por `fechacargue`+`idempresa`+auxiliar → `total_toneladas_dia`,
+`total_pago_dia`, `total_operaciones_realizadas`.
+
+> Para volver a extraer/actualizar estas definiciones desde Supabase:
+> [`scripts/dump_vistas_financieras.sql`](../scripts/dump_vistas_financieras.sql).
