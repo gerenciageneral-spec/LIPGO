@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Button } from "@/components/ui/button"
+import { Building2, Tags } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/hooks/use-auth"
 import {
@@ -202,6 +203,22 @@ export function UserAccessModule() {
             <CardDescription>Marca las empresas a las que cada usuario tiene acceso</CardDescription>
           </CardHeader>
           <CardContent>
+            <div className="mb-4 flex items-start gap-2 rounded-lg border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
+              <Building2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+              <div className="space-y-1 leading-relaxed">
+                <p>
+                  <strong className="text-foreground">Es el permiso maestro.</strong> Define qué empresas ve el
+                  usuario en el <strong>selector global</strong> y, con ello, qué datos puede ver y gestionar en{" "}
+                  <strong>casi todo el sistema</strong>: Recepción/Despacho, Pedidos, Inventarios, Producción,
+                  Operación LIP, Financiera, Gestión Humana, SST, SIG/Certificaciones y MRP. Cada módulo filtra por
+                  la empresa seleccionada.
+                </p>
+                <p className="text-xs">
+                  SIG: lo transversal usa la empresa <strong>100 (LIP)</strong> y el desglose por sitio las empresas
+                  1–4. Detalle: <code>docs/mapeo-acceso-empresa-owner.md</code>.
+                </p>
+              </div>
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
@@ -257,6 +274,24 @@ export function UserAccessModule() {
             <CardDescription>Marca los owners a los que cada usuario tiene acceso</CardDescription>
           </CardHeader>
           <CardContent>
+            <div className="mb-4 flex items-start gap-2 rounded-lg border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
+              <Tags className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+              <div className="space-y-1 leading-relaxed">
+                <p>
+                  <strong className="text-foreground">Filtro adicional solo para Pedidos.</strong> Restringe la{" "}
+                  <strong>Gestión de Pedidos</strong> y el <strong>Dashboard de Pedidos</strong> por la razón social
+                  que factura (<code>empresafactura</code>). <strong>Solo aplica si el usuario tiene owners
+                  asignados</strong>; si no tiene ninguno, no se restringe por owner. No cambia el selector de
+                  empresa ni afecta los demás módulos.
+                </p>
+                <p className="text-xs">
+                  Un owner agrupa varias empresas: <strong>INDUPAN</strong> = Indupan/Precocidos (1, 6) ·{" "}
+                  <strong>AVIMOL</strong> = Avimol (2) · <strong>Molinos del Atlántico</strong> = Cedi Funza/Medellín
+                  (3, 4). Para ver los pedidos de una razón social suele necesitarse acceso a la empresa del sitio{" "}
+                  <em>y</em> a su owner.
+                </p>
+              </div>
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
