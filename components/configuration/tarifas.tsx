@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
 import { Copy, Info } from "lucide-react"
 import { DuplicarTarifasDialog } from "./duplicar-tarifas-dialog"
+import { CuadroMandoNomina } from "./cuadro-mando-nomina"
 
 type TabDef = {
   v: string
@@ -19,9 +20,23 @@ type TabDef = {
   key: string
   table?: string // tabla real (para duplicar); ausente = no duplicable
   desc?: React.ReactNode // texto de impacto
+  custom?: boolean // render propio (no GenericCrudTable) y sin duplicar
 }
 
 const TABS: TabDef[] = [
+  {
+    v: "parametros",
+    l: "Cuadro de mando",
+    key: "",
+    custom: true,
+    desc: (
+      <>
+        <strong>Parámetros legales de nómina</strong> (SMLV, auxilio, días, jornada y % de recargos) por año.
+        De aquí se derivan los recargos/horas extra por persona: <code>HOD = (salario + auxilio) ÷ (días × jornada)</code>.
+        Es la <strong>fuente de las tarifas de turno</strong> (reemplaza la edición manual).
+      </>
+    ),
+  },
   {
     v: "operacion",
     l: "Operación",
@@ -91,7 +106,7 @@ export function Tarifas() {
 
   return (
     <div className="space-y-4">
-      <Tabs defaultValue="operacion" className="w-full">
+      <Tabs defaultValue="parametros" className="w-full">
         <TabsList className="flex h-auto flex-wrap justify-start gap-1">
           {TABS.map((t) => (
             <TabsTrigger key={t.v} value={t.v}>
@@ -119,7 +134,7 @@ export function Tarifas() {
               </div>
             )}
 
-            <GenericCrudTable moduleDef={configModules[t.key]} />
+            {t.custom ? <CuadroMandoNomina /> : <GenericCrudTable moduleDef={configModules[t.key]} />}
           </TabsContent>
         ))}
       </Tabs>
