@@ -69,8 +69,10 @@ export default function ReporteParos() {
 
   const cargar = useCallback(async () => {
     setLoading(true)
-    const desde = `${selectedDate}T00:00:00-05:00`
-    const hasta = `${nextDateStr(selectedDate)}T00:00:00-05:00`
+    // Día en HORA LITERAL (UTC), igual que se almacena fecha_hora y que el
+    // dashboard, para que ambos vean exactamente el mismo día y los mismos paros.
+    const desde = `${selectedDate}T00:00:00Z`
+    const hasta = `${nextDateStr(selectedDate)}T00:00:00Z`
     const [histRes, turnoRes, comRes] = await Promise.all([
       supabase
         .from("historial_intervalos")

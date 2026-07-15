@@ -442,13 +442,14 @@ function LiveTab() {
     }
   }, [loadViews])
 
-  // Contador de la maquina cada 2 min (historial_intervalos). OJO: el rango
-  // se arma en hora REAL de Colombia (-05:00); las etiquetas/agrupaciones
-  // luego usan la hora literal (UTC) de fecha_hora para coincidir digitos.
+  // Contador de la maquina cada 2 min (historial_intervalos). El rango se arma
+  // en HORA LITERAL (UTC), igual que se almacena fecha_hora (hora de pared de
+  // Colombia etiquetada como UTC). Así capturamos exactamente el día calendario
+  // sin arrastrar registros de la madrugada del día siguiente.
   const loadHistorial = useCallback(async () => {
     try {
-      const desde = `${selectedDate}T00:00:00-05:00`
-      const hasta = `${nextDateStr(selectedDate)}T00:00:00-05:00`
+      const desde = `${selectedDate}T00:00:00Z`
+      const hasta = `${nextDateStr(selectedDate)}T00:00:00Z`
       const { data, error } = await supabase
         .from("historial_intervalos")
         .select("fecha_hora, bultos_dia_acumulado, produccion_2min")
@@ -573,13 +574,15 @@ function LiveTab() {
     return { totalBultos, estibas, arrume, averias }
   }, [aggRows])
 
-  // Ultimo registro del contador de la maquina y total mostrado del dia:
-  // el acumulado del contador si existe, si no la suma de la vista agrupada.
+  // Ultimo registro del contador (para el estado de maquina en vivo).
   const ultimoHist = histRows.length ? histRows[histRows.length - 1] : null
-  const totalBultosDisplay =
-    ultimoHist && ultimoHist.bultos_dia_acumulado != null
-      ? ultimoHist.bultos_dia_acumulado
-      : metrics.totalBultos
+  // Total producido del dia: el contador `bultos_dia_acumulado` sube durante el
+  // dia y se REINICIA a 0 al cierre, por lo que NO se puede usar el ULTIMO
+  // registro (al ver un dia ya cerrado quedaria en 0 y el rendimiento/OEE en 0).
+  // Usamos el MAXIMO del dia (el pico = total producido); si no hay historial,
+  // caemos a la suma de la vista agrupada.
+  const maxAcumHist = histRows.reduce((m, h) => Math.max(m, h.bultos_dia_acumulado || 0), 0)
+  const totalBultosDisplay = maxAcumHist > 0 ? maxAcumHist : metrics.totalBultos
 
   // Cronometro de inactividad: tiempo transcurrido desde el ultimo
   // registro (max fecha_hora) hasta el reloj actual, en min + seg.
