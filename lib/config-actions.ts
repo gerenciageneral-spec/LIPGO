@@ -199,6 +199,20 @@ export async function fetchConfigData(tableName: string, selectedEmpresaId?: num
       return { success: true, data }
     }
 
+    // Tarifas: estas tablas NO tienen columna `activo`; se ordenan por id. El
+    // filtro por empresa se aplica según EMPRESA_ID_FIELDS/EXCLUDED_TABLES
+    // (tarifasfacturacionturnos es global → no se filtra).
+    if (["tarifasoperacion", "tarifaspersonal", "tarifasturnos", "tarifasfacturacionturnos"].includes(tableName)) {
+      let tq = supabase.from(tableName).select("*").order("id", { ascending: true }).range(0, 10000)
+      if (empresaId && (await shouldFilterByEmpresa(tableName))) {
+        const f = await getEmpresaIdFieldName(tableName)
+        if (f) tq = tq.eq(f, empresaId)
+      }
+      const { data, error } = await tq
+      if (error) throw error
+      return { success: true, data }
+    }
+
     let query = supabase.from(tableName).select("*", { count: "exact" }).order("activo", { ascending: false }).range(0, 10000)
 
     if (empresaId && (await shouldFilterByEmpresa(tableName))) {

@@ -25,6 +25,10 @@ export const EMPRESA_ID_FIELDS: Record<string, string> = {
   entradasproduccion: "id_empresa",
   balanceinventario: "id_empresa",
   vendedores: "id_empresa",
+  // Tarifas: la columna de empresa varía por tabla.
+  tarifasoperacion: "empresaid",
+  tarifaspersonal: "empresaid",
+  tarifasturnos: "idempresa",
 }
 
 export const EXCLUDED_TABLES = [
@@ -34,4 +38,7 @@ export const EXCLUDED_TABLES = [
   "transportes",
   "tiposvehiculos",
   "condicionespago",
+  // Tarifas de facturación por turnos: catálogo global (su idempresa está en su
+  // mayoría sin asignar); no se filtra por el selector para no ocultar filas.
+  "tarifasfacturacionturnos",
 ]
