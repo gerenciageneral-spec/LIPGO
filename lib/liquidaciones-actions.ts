@@ -311,17 +311,22 @@ export async function getLiquidaciones(
           prima = (pr2.dev + (pp.incluyeAux ? (auxMensual / 30) * pr2.dias : 0)) * (pp.pctPrima / 100)
         }
 
-        // Vacaciones: causadas (% sobre devengado, sin auxilio) MENOS las ya
-        // DISFRUTADAS ("31- Vacaciones disfrutadas" ya pagadas). Solo lo pendiente.
-        const vacCausadas = (ce.dev + fillMonto) * (pp.pctVacaciones / 100)
-        const diasDisfrutados = rows.filter(
-          (r: any) =>
-            String(r.fecha) >= cesDesde &&
-            String(r.fecha) <= (info.fecha_retiro as string) &&
-            /vacaciones\s+disfrutad/i.test(String(r.novedad_reportada || "")),
+        // Vacaciones: se ACUMULAN de forma continua durante TODO el vínculo (no se
+        // reinician cada año). Días causados = pctVacaciones × días de vínculo (≈15/año,
+        // desde la fecha de ingreso) MENOS los días ya disfrutados. Se paga lo
+        // pendiente al salario básico/día. Ej: si ya disfrutó su año pero siguió
+        // laborando, quedan las pocas causadas después.
+        const inicioVinculo =
+          info.fechainicio && String(info.fechainicio) < info.fecha_retiro ? String(info.fechainicio) : cesDesde
+        const diasVinculo = Math.max(
+          0,
+          Math.round((Date.parse(info.fecha_retiro) - Date.parse(inicioVinculo)) / 86_400_000),
+        )
+        const vacCausadasDias = (pp.pctVacaciones / 100) * diasVinculo
+        const diasDisfrutados = rows.filter((r: any) =>
+          /vacaciones\s+disfrutad/i.test(String(r.novedad_reportada || "")),
         ).length
-        const vacDisfrutadas = diasDisfrutados * salarioDia
-        vacaciones = Math.max(0, vacCausadas - vacDisfrutadas)
+        vacaciones = Math.max(0, vacCausadasDias - diasDisfrutados) * salarioDia
       }
       const prestaciones = prima + cesantias + intereses + vacaciones
 
