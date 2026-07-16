@@ -81,6 +81,21 @@ async function leerParametrosPrestaciones(admin: any): Promise<ParametrosPrestac
   }
 }
 
+// "Pagado hasta" por defecto = corte de la última quincena YA pagada (el pago es
+// quincenal: 1–15 y 16–fin). Así la nómina pendiente es solo la quincena en curso.
+//   - retiro después del 15 → pagada la 1a quincena → pendiente 16..retiro.
+//   - retiro el 15 o antes  → pagado hasta fin del mes anterior → pendiente 1..retiro.
+function defaultPagadoHasta(fechaRetiro: string): string {
+  const y = Number(fechaRetiro.slice(0, 4))
+  const m = Number(fechaRetiro.slice(5, 7))
+  const d = Number(fechaRetiro.slice(8, 10))
+  if (d > 15) return `${fechaRetiro.slice(0, 7)}-15`
+  const prev = new Date(Date.UTC(y, m - 1, 0)) // último día del mes anterior
+  const mm = String(prev.getUTCMonth() + 1).padStart(2, "0")
+  const dd = String(prev.getUTCDate()).padStart(2, "0")
+  return `${prev.getUTCFullYear()}-${mm}-${dd}`
+}
+
 // Suma el devengado (total_liquidado_dia) y cuenta los días con pago dentro del
 // rango [desde, hasta] (fechas 'YYYY-MM-DD', comparación lexicográfica).
 function sumaPeriodo(rows: any[], desde: string, hasta: string): { dev: number; dias: number } {
@@ -198,7 +213,10 @@ export async function getLiquidaciones(
     const data: LiquidacionPersona[] = []
     for (const [nombre, info] of infoPorNombre) {
       const est = estadoPorCedula.get(info.identificacion)
-      const pagado_hasta = est?.pagado_hasta ?? null
+      // "Pagado hasta": el guardado manualmente, o por defecto el corte de la
+      // última quincena pagada (para que la nómina pendiente sea solo la quincena).
+      const pagado_hasta =
+        (est?.pagado_hasta ?? null) || (info.fecha_retiro ? defaultPagadoHasta(info.fecha_retiro) : null)
       const rows = rowsPorNombre.get(nombre) || []
 
       // Nómina PENDIENTE: fecha > pagado_hasta (y <= retiro, ya filtrado).
