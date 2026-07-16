@@ -249,9 +249,15 @@ export async function getLiquidaciones(
       let vacaciones = 0
       if (info.fecha_retiro) {
         const anio = Number(info.fecha_retiro.slice(0, 4))
-        const mes = Number(info.fecha_retiro.slice(5, 7))
         const cesDesde = `${anio}-01-01`
-        const primaDesde = mes <= 6 ? `${anio}-01-01` : `${anio}-07-01`
+        // Prima: causa desde el ÚLTIMO pago de prima (15-jun 1er semestre / 15-dic
+        // 2do semestre). Ej: retiro después del 15-jun → prima pendiente desde el 15-jun.
+        const primaDesde =
+          info.fecha_retiro >= `${anio}-12-15`
+            ? `${anio}-12-15`
+            : info.fecha_retiro >= `${anio}-06-15`
+              ? `${anio}-06-15`
+              : `${anio}-01-01`
         const auxMensual = auxPorAnio.get(anio) ?? 0
 
         const pr = sumaPeriodo(rows, primaDesde, info.fecha_retiro)
