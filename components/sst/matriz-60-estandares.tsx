@@ -654,7 +654,11 @@ function EnlaceExamenesMedicos() {
     }
     setClave("")
     setAbierto(false)
-    toast({ title: "Abriendo Exámenes Médicos…", description: "Clave correcta." })
+    // DIAGNÓSTICO temporal: el aviso dice qué vía de navegación se usó.
+    toast({
+      title: "Abriendo Exámenes Médicos…",
+      description: navegar ? "Clave OK · callback directo" : "Clave OK · callback NO llegó, uso evento",
+    })
     // Navega al submódulo. 1) Directo por el callback del padre (síncrono, siempre
     // vigente). 2) Respaldo por evento global (por si el prop no llegara).
     if (navegar) navegar("Examenes Médicos")
