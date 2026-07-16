@@ -631,6 +631,7 @@ function EnlaceExamenesMedicos() {
     }
     setClave("")
     setAbierto(false)
+    toast({ title: "Abriendo Exámenes Médicos…", description: "Clave correcta." })
     // Navega al submódulo (respeta su permiso: si no lo tiene, no se muestra).
     try {
       window.dispatchEvent(new CustomEvent("lipgo:navigate-module", { detail: "Examenes Médicos" }))
