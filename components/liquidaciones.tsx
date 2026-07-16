@@ -1,10 +1,11 @@
 "use client"
 
-// Submódulo "Liquidaciones": lista las personas retiradas (estado Inactivo) con
-// sus novedades de nómina pendientes (desde pagonomina, hasta su fecha de retiro)
-// y el total a pagar. Detalle expandible por persona + export a Excel. Solo lee.
+// Submódulo "Liquidaciones": personas retiradas (estado Inactivo) con sus
+// novedades de nómina pendientes (desde pagonomina, hasta su fecha de retiro) y
+// el total a pagar. Por persona: marcar Pendiente/Liquidada y adjuntar/ver el
+// soporte de liquidación. Detalle expandible + export a Excel.
 
-import { useCallback, useEffect, useMemo, useState, Fragment } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, Fragment } from "react"
 import { useAuth } from "@/components/auth-provider"
 import { useToast } from "@/components/ui/use-toast"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -12,9 +13,19 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Loader2, Download, ChevronDown, ChevronRight, UserMinus } from "lucide-react"
+import {
+  Loader2,
+  Download,
+  ChevronDown,
+  ChevronRight,
+  UserMinus,
+  CheckCircle2,
+  Clock,
+  Upload,
+  FileText,
+} from "lucide-react"
 import * as XLSX from "xlsx"
-import { getLiquidaciones, type LiquidacionPersona } from "@/lib/liquidaciones-actions"
+import { getLiquidaciones, guardarEstadoLiquidacion, subirSoporteLiquidacion, type LiquidacionPersona } from "@/lib/liquidaciones-actions"
 
 const money = (n: number) =>
   "$" + (Number(n) || 0).toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -27,9 +38,17 @@ export default function Liquidaciones() {
   const [desde, setDesde] = useState("")
   const [hasta, setHasta] = useState("")
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [busy, setBusy] = useState<string | null>(null) // identificacion en proceso
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const uploadTarget = useRef<LiquidacionPersona | null>(null)
 
+  // Separado por cliente: muestra los retirados de la empresa (cliente) seleccionada.
   const cargar = useCallback(async () => {
-    if (!selectedEmpresaId) return
+    if (!selectedEmpresaId) {
+      setData([])
+      setLoading(false)
+      return
+    }
     setLoading(true)
     const r = await getLiquidaciones(selectedEmpresaId, desde || null, hasta || null)
     if (r.success) setData(r.data)
@@ -48,57 +67,81 @@ export default function Liquidaciones() {
       return next
     })
 
-  const totalGeneral = useMemo(() => data.reduce((s, p) => s + p.total, 0), [data])
+  const kpis = useMemo(() => {
+    const pendientes = data.filter((p) => p.estado === "pendiente")
+    return {
+      retirados: data.length,
+      pendientes: pendientes.length,
+      liquidadas: data.length - pendientes.length,
+      totalPendiente: pendientes.reduce((s, p) => s + p.total, 0),
+    }
+  }, [data])
+
+  const cambiarEstado = async (p: LiquidacionPersona) => {
+    setBusy(p.identificacion)
+    const nuevo = p.estado === "liquidada" ? "pendiente" : "liquidada"
+    const r = await guardarEstadoLiquidacion({
+      idempresa: p.idempresa,
+      identificacion: p.identificacion,
+      persona: p.persona,
+      fecha_retiro: p.fecha_retiro,
+      total: p.total,
+      estado: nuevo,
+    })
+    setBusy(null)
+    if (r.success) {
+      setData((prev) => prev.map((x) => (x.identificacion === p.identificacion ? { ...x, estado: nuevo } : x)))
+      toast({ title: "Actualizado", description: `Marcada como ${nuevo}.` })
+    } else {
+      toast({ title: "Error", description: r.message, variant: "destructive" })
+    }
+  }
+
+  const pedirSoporte = (p: LiquidacionPersona) => {
+    uploadTarget.current = p
+    fileInputRef.current?.click()
+  }
+
+  const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    const p = uploadTarget.current
+    e.target.value = "" // permite re-subir el mismo archivo
+    if (!file || !p) return
+    setBusy(p.identificacion)
+    const fd = new FormData()
+    fd.append("file", file)
+    fd.append("idempresa", String(p.idempresa ?? ""))
+    fd.append("identificacion", p.identificacion)
+    fd.append("persona", p.persona)
+    fd.append("fecha_retiro", p.fecha_retiro || "")
+    const r = await subirSoporteLiquidacion(fd)
+    setBusy(null)
+    if (r.success && r.url) {
+      setData((prev) =>
+        prev.map((x) => (x.identificacion === p.identificacion ? { ...x, soporte_url: r.url!, soporte_nombre: file.name } : x)),
+      )
+      toast({ title: "Soporte adjuntado", description: file.name })
+    } else {
+      toast({ title: "Error", description: r.message, variant: "destructive" })
+    }
+  }
 
   const exportar = () => {
     try {
-      const headers = [
-        "Persona",
-        "Identificación",
-        "Fecha retiro",
-        "Fecha",
-        "Actividad",
-        "Novedad",
-        "Base día",
-        "HED",
-        "HEDF",
-        "HEN",
-        "HEF",
-        "HN",
-        "Pago domingo",
-        "Recargo dominical",
-        "Total día",
-      ]
-      const rows: (string | number)[][] = []
-      for (const p of data) {
-        if (p.novedades.length === 0) {
-          rows.push([p.persona, p.identificacion, p.fecha_retiro || "", "", "", "(sin novedades pendientes)", 0, 0, 0, 0, 0, 0, 0, 0, 0])
-          continue
-        }
-        for (const n of p.novedades) {
-          rows.push([
-            p.persona,
-            p.identificacion,
-            p.fecha_retiro || "",
-            n.fecha || "",
-            n.actividad_registrada || "",
-            n.novedad_reportada || "",
-            n.base_dia,
-            n.hed,
-            n.hedf,
-            n.hen,
-            n.hef,
-            n.hn,
-            n.pago_domingo,
-            n.recargodominical,
-            n.total_liquidado_dia,
-          ])
-        }
-      }
+      const headers = ["Persona", "Identificación", "Fecha retiro", "Estado", "Días", "Total", "Soporte"]
+      const rows = data.map((p) => [
+        p.persona,
+        p.identificacion,
+        p.fecha_retiro || "",
+        p.estado,
+        p.dias,
+        p.total,
+        p.soporte_url || "",
+      ])
       const ws = XLSX.utils.aoa_to_sheet([headers, ...rows])
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, "Liquidaciones")
-      ws["!cols"] = [28, 16, 12, 12, 22, 24, 14, 10, 10, 10, 10, 10, 14, 16, 16].map((wch) => ({ wch }))
+      ws["!cols"] = [28, 16, 12, 12, 8, 16, 40].map((wch) => ({ wch }))
       XLSX.writeFile(wb, `liquidaciones-${new Date().toISOString().split("T")[0]}.xlsx`)
       toast({ title: "Éxito", description: "Archivo exportado correctamente" })
     } catch {
@@ -108,6 +151,8 @@ export default function Liquidaciones() {
 
   return (
     <div className="space-y-4">
+      <input ref={fileInputRef} type="file" accept=".pdf,image/*" className="hidden" onChange={onFileChange} />
+
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
           <CardTitle className="flex items-center gap-2 text-lg">
@@ -120,7 +165,8 @@ export default function Liquidaciones() {
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">
             Personas retiradas (estado Inactivo) con sus novedades de nómina pendientes hasta su fecha de
-            retiro. Estas personas ya no aparecen en el archivo plano; su pago se gestiona aquí.
+            retiro. Marca cada una como <strong>Liquidada</strong> o <strong>Pendiente</strong> y adjunta el
+            soporte de la liquidación. Ya no aparecen en el archivo plano.
           </p>
 
           <div className="flex flex-wrap items-end gap-3">
@@ -135,14 +181,22 @@ export default function Liquidaciones() {
             {loading && <Loader2 className="mb-2 h-4 w-4 animate-spin text-muted-foreground" />}
           </div>
 
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <div className="rounded-lg border border-border p-3">
               <p className="text-xs text-muted-foreground">Retirados</p>
-              <p className="text-2xl font-bold tabular-nums">{data.length}</p>
+              <p className="text-2xl font-bold tabular-nums">{kpis.retirados}</p>
             </div>
             <div className="rounded-lg border border-border p-3">
-              <p className="text-xs text-muted-foreground">Total a liquidar</p>
-              <p className="text-2xl font-bold tabular-nums text-primary">{money(totalGeneral)}</p>
+              <p className="text-xs text-muted-foreground">Pendientes</p>
+              <p className="text-2xl font-bold tabular-nums text-amber-600">{kpis.pendientes}</p>
+            </div>
+            <div className="rounded-lg border border-border p-3">
+              <p className="text-xs text-muted-foreground">Liquidadas</p>
+              <p className="text-2xl font-bold tabular-nums text-emerald-600">{kpis.liquidadas}</p>
+            </div>
+            <div className="rounded-lg border border-border p-3">
+              <p className="text-xs text-muted-foreground">Total pendiente</p>
+              <p className="text-2xl font-bold tabular-nums text-primary">{money(kpis.totalPendiente)}</p>
             </div>
           </div>
 
@@ -156,35 +210,80 @@ export default function Liquidaciones() {
                   <TableHead>Fecha retiro</TableHead>
                   <TableHead className="text-right">Días</TableHead>
                   <TableHead className="text-right">Total</TableHead>
+                  <TableHead>Estado</TableHead>
+                  <TableHead className="text-right">Acciones</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {data.length === 0 && !loading ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
                       No hay personal retirado para esta empresa.
                     </TableCell>
                   </TableRow>
                 ) : (
                   data.map((p) => (
-                    <Fragment key={p.persona}>
-                      <TableRow className="cursor-pointer" onClick={() => toggle(p.persona)}>
-                        <TableCell>
-                          {expanded.has(p.persona) ? (
-                            <ChevronDown className="h-4 w-4" />
-                          ) : (
-                            <ChevronRight className="h-4 w-4" />
-                          )}
+                    <Fragment key={p.identificacion || p.persona}>
+                      <TableRow>
+                        <TableCell className="cursor-pointer" onClick={() => toggle(p.persona)}>
+                          {expanded.has(p.persona) ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                         </TableCell>
                         <TableCell className="font-medium">{p.persona}</TableCell>
                         <TableCell className="font-mono text-sm">{p.identificacion}</TableCell>
                         <TableCell className="font-mono text-sm">{p.fecha_retiro || "—"}</TableCell>
                         <TableCell className="text-right tabular-nums">{p.dias}</TableCell>
                         <TableCell className="text-right font-semibold tabular-nums">{money(p.total)}</TableCell>
+                        <TableCell>
+                          {p.estado === "liquidada" ? (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400">
+                              <CheckCircle2 className="h-3 w-3" /> Liquidada
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-950 dark:text-amber-400">
+                              <Clock className="h-3 w-3" /> Pendiente
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center justify-end gap-2">
+                            {p.soporte_url && (
+                              <a
+                                href={p.soporte_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                                title={p.soporte_nombre || "Soporte"}
+                              >
+                                <FileText className="h-3.5 w-3.5" /> Ver
+                              </a>
+                            )}
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={busy === p.identificacion}
+                              onClick={() => pedirSoporte(p)}
+                            >
+                              {busy === p.identificacion ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Upload className="h-3.5 w-3.5" />
+                              )}
+                              <span className="ml-1 hidden sm:inline">Soporte</span>
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant={p.estado === "liquidada" ? "outline" : "default"}
+                              disabled={busy === p.identificacion}
+                              onClick={() => cambiarEstado(p)}
+                            >
+                              {p.estado === "liquidada" ? "Reabrir" : "Marcar liquidada"}
+                            </Button>
+                          </div>
+                        </TableCell>
                       </TableRow>
                       {expanded.has(p.persona) && (
                         <TableRow>
-                          <TableCell colSpan={6} className="bg-muted/30 p-0">
+                          <TableCell colSpan={8} className="bg-muted/30 p-0">
                             {p.novedades.length === 0 ? (
                               <div className="p-3 text-sm text-muted-foreground">Sin novedades pendientes en el rango.</div>
                             ) : (
