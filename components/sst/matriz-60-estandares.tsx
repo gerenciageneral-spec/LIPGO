@@ -10,6 +10,8 @@ import { useToast } from "@/hooks/use-toast"
 import { getMatrizEstandares, guardarRespuesta } from "@/lib/sst-auditoria-actions"
 import { cerrarAutoevaluacion } from "@/lib/sst-autoeval-actions"
 import { SoportesDocumentales } from "@/components/sst/soportes-documentales"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import ExamenesMedicos from "@/components/rrhh/examenes-medicos"
 import type {
   CicloPHVA,
   EstadoCumple,
@@ -32,9 +34,6 @@ import type { PointerEvent as ReactPointerEvent } from "react"
 
 interface Props {
   selectedEmpresaId?: number | null
-  /** Navegación robusta (fija grupo + módulo). Se usa en el numeral 3.1.4 para
-   *  llevar al auditor al submódulo «Examenes Médicos» (protegido por clave). */
-  onNavigate?: (moduleName: string) => void
 }
 
 const CICLOS: CicloPHVA[] = ["PLANEAR", "HACER", "VERIFICAR", "ACTUAR"]
@@ -48,7 +47,7 @@ const EMPTY: MatrizData = {
   aniosDisponibles: [],
 }
 
-export function Matriz60Estandares({ selectedEmpresaId: propEmpresaId, onNavigate }: Props) {
+export function Matriz60Estandares({ selectedEmpresaId: propEmpresaId }: Props) {
   const { selectedEmpresaId: ctxEmpresaId, selectedEmpresaNombre } = useAuth()
   const empresaId = propEmpresaId ?? ctxEmpresaId
   const { toast } = useToast()
@@ -386,7 +385,6 @@ export function Matriz60Estandares({ selectedEmpresaId: propEmpresaId, onNavigat
                     onSoporteUrl={persistSoporteUrl}
                     savingItem={savingItem}
                     empresaId={empresaId}
-                    onNavigate={onNavigate}
                   />
                 ))
               )}
@@ -428,7 +426,6 @@ function GrupoFilas({
   onSoporteUrl,
   savingItem,
   empresaId,
-  onNavigate,
 }: {
   grupo: { ciclo: CicloPHVA; estandar: string; items: EstandarItem[] }
   estadoOf: (id: number) => EstadoCumple | null
@@ -442,7 +439,6 @@ function GrupoFilas({
   onSoporteUrl: (item: EstandarItem, url: string) => void
   savingItem: number | null
   empresaId?: number | null
-  onNavigate?: (moduleName: string) => void
 }) {
   return (
     <>
@@ -476,7 +472,6 @@ function GrupoFilas({
             puntajeOf={puntajeOf}
             savingItem={savingItem}
             empresaId={empresaId}
-            onNavigate={onNavigate}
           />
         )
       })}
@@ -497,7 +492,6 @@ function FilaItem({
   puntajeOf,
   savingItem,
   empresaId,
-  onNavigate,
 }: {
   item: EstandarItem
   estado: EstadoCumple | null
@@ -511,7 +505,6 @@ function FilaItem({
   puntajeOf: (item: EstandarItem) => number
   savingItem: number | null
   empresaId?: number | null
-  onNavigate?: (moduleName: string) => void
 }) {
   return (
     <>
@@ -573,8 +566,8 @@ function FilaItem({
             />
           )}
           {/* Numeral 3.1.4 (evaluaciones médicas ocupacionales): enlace protegido
-              por clave que lleva al auditor al submódulo «Examenes Médicos». */}
-          {item.numeral === "3.1.4" && <EnlaceExamenesMedicos onNavigate={onNavigate} />}
+              por clave que abre el soporte de «Examenes Médicos» en un modal. */}
+          {item.numeral === "3.1.4" && <EnlaceExamenesMedicos />}
         </td>
         <td className="px-3 py-2 text-center align-top font-medium">{puntajeOf(item)}</td>
       </tr>
@@ -621,13 +614,15 @@ function FilaItem({
   )
 }
 
-// Enlace protegido por clave que lleva al auditor al submódulo «Examenes
-// Médicos» para revisar el soporte del numeral 3.1.4 (evaluaciones médicas
-// ocupacionales). La clave (por seguridad) es 1104.
-function EnlaceExamenesMedicos({ onNavigate }: { onNavigate?: (moduleName: string) => void }) {
+// Enlace protegido por clave que abre el SOPORTE de exámenes médicos ocupacionales
+// (numeral 3.1.4) en un MODAL, sin pasar por la ruta del submódulo (que está
+// gateada por el permiso `gestion_contratos`, ajeno al auditor de SST). La clave
+// (por seguridad) es 1104 y es la autorización de acceso a esta vista.
+function EnlaceExamenesMedicos() {
   const { toast } = useToast()
-  const [abierto, setAbierto] = useState(false)
+  const [abierto, setAbierto] = useState(false) // campo de clave desplegado
   const [clave, setClave] = useState("")
+  const [verModal, setVerModal] = useState(false) // modal con los exámenes
 
   const ir = () => {
     if (clave.trim() !== "1104") {
@@ -639,65 +634,71 @@ function EnlaceExamenesMedicos({ onNavigate }: { onNavigate?: (moduleName: strin
     }
     setClave("")
     setAbierto(false)
-    // Navegación robusta: evento global (lo escucha app/page.tsx) + prop de
-    // respaldo. El evento garantiza el direccionamiento aunque el prop no llegue.
-    try {
-      window.dispatchEvent(new CustomEvent("lipgo:navigate-module", { detail: "Examenes Médicos" }))
-    } catch {
-      /* SSR / sin window */
-    }
-    if (onNavigate) onNavigate("Examenes Médicos")
+    setVerModal(true)
   }
 
   return (
-    <div className="mt-2 rounded-md border border-dashed p-2" style={{ borderColor: SST_TOKENS.navy }}>
-      {!abierto ? (
-        <button
-          type="button"
-          onClick={() => setAbierto(true)}
-          className="inline-flex items-center gap-1.5 text-xs font-semibold hover:underline"
-          style={{ color: SST_TOKENS.navy }}
-        >
-          <Stethoscope className="h-3.5 w-3.5" /> Ver soporte en «Exámenes Médicos»
-        </button>
-      ) : (
-        <div className="flex items-center gap-2">
-          <KeyRound className="h-3.5 w-3.5 shrink-0" style={{ color: SST_TOKENS.navy }} />
-          <Input
-            type="password"
-            inputMode="numeric"
-            autoFocus
-            value={clave}
-            onChange={(e) => setClave(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") ir()
-              if (e.key === "Escape") {
-                setAbierto(false)
-                setClave("")
-              }
-            }}
-            placeholder="Clave"
-            className="h-8 w-24"
-          />
-          <Button size="sm" className="h-8" onClick={ir}>
-            Entrar
-          </Button>
+    <>
+      <div className="mt-2 rounded-md border border-dashed p-2" style={{ borderColor: SST_TOKENS.navy }}>
+        {!abierto ? (
           <button
             type="button"
-            onClick={() => {
-              setAbierto(false)
-              setClave("")
-            }}
-            className="text-[11px] text-muted-foreground underline"
+            onClick={() => setAbierto(true)}
+            className="inline-flex items-center gap-1.5 text-xs font-semibold hover:underline"
+            style={{ color: SST_TOKENS.navy }}
           >
-            Cancelar
+            <Stethoscope className="h-3.5 w-3.5" /> Ver soporte de «Exámenes Médicos»
           </button>
-        </div>
-      )}
-      <p className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground">
-        <Lock className="h-2.5 w-2.5" /> Acceso protegido: se solicita clave por seguridad.
-      </p>
-    </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <KeyRound className="h-3.5 w-3.5 shrink-0" style={{ color: SST_TOKENS.navy }} />
+            <Input
+              type="password"
+              inputMode="numeric"
+              autoFocus
+              value={clave}
+              onChange={(e) => setClave(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") ir()
+                if (e.key === "Escape") {
+                  setAbierto(false)
+                  setClave("")
+                }
+              }}
+              placeholder="Clave"
+              className="h-8 w-24"
+            />
+            <Button size="sm" className="h-8" onClick={ir}>
+              Entrar
+            </Button>
+            <button
+              type="button"
+              onClick={() => {
+                setAbierto(false)
+                setClave("")
+              }}
+              className="text-[11px] text-muted-foreground underline"
+            >
+              Cancelar
+            </button>
+          </div>
+        )}
+        <p className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground">
+          <Lock className="h-2.5 w-2.5" /> Acceso protegido: se solicita clave por seguridad.
+        </p>
+      </div>
+
+      <Dialog open={verModal} onOpenChange={setVerModal}>
+        <DialogContent className="max-w-6xl max-h-[92vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Stethoscope className="h-5 w-5 text-primary" /> Exámenes Médicos — soporte del numeral 3.1.4
+            </DialogTitle>
+          </DialogHeader>
+          <ExamenesMedicos />
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }
 

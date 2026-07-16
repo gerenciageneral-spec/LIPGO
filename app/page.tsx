@@ -51,20 +51,6 @@ export default function DashboardPage() {
     setSelectedModule(moduleName)
   }
 
-  // Canal de navegación por EVENTO GLOBAL (respaldo robusto para enlaces internos,
-  // p. ej. el numeral 3.1.4 de la Matriz 0312 → submódulo «Examenes Médicos»).
-  // Cualquier componente puede disparar: window.dispatchEvent(new CustomEvent(
-  // "lipgo:navigate-module", { detail: "<nombre del módulo>" })).
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const name = (e as CustomEvent).detail
-      if (typeof name === "string" && name) navigateToModule(name)
-    }
-    window.addEventListener("lipgo:navigate-module", handler)
-    return () => window.removeEventListener("lipgo:navigate-module", handler)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
   // Abrir un MÓDULO PRINCIPAL (grupo de la barra izquierda): muestra su submenú.
   const openGroup = (key: string) => {
     setSelectedGroup(key as GroupKey)
