@@ -170,5 +170,85 @@ async function getSubmoduloKpis(
     }
   }
 
+  // Recobro de Incapacidades: costo recuperable ante EPS (EG > 2 días) y ARL
+  // (AT 100%). Refleja el resumen del submódulo: por radicar, en trámite,
+  // recuperable pendiente y recobrado del año en curso.
+  if (moduleName === "Recobro de Incapacidades") {
+    const anio = hoyBogota().slice(0, 4)
+    let rows: any[] = []
+    try {
+      const { data } = await sb
+        .from("ausentismosst")
+        .select("tipo_evento, estado_recobro, valor_recobrado, costos_arl, costos_eps")
+        .eq("idempresa", empresaId)
+        .gte("fecha_inicial", `${anio}-01-01`)
+        .lte("fecha_inicial", `${anio}-12-31`)
+      rows = data || []
+    } catch {
+      rows = []
+    }
+    let porRadicar = 0
+    let enTramite = 0
+    let recuperado = 0
+    let pendiente = 0
+    for (const a of rows) {
+      const esAT = a.tipo_evento === "AT"
+      const recobrable = Number(esAT ? a.costos_arl : a.costos_eps) || 0
+      if (recobrable <= 0) continue // no genera recobro (EG ≤ 2 días)
+      const est = String(a.estado_recobro || "PENDIENTE").toUpperCase()
+      const rec = Number(a.valor_recobrado) || (est === "RECOBRADO" ? recobrable : 0)
+      recuperado += rec
+      if (est === "PENDIENTE") porRadicar++
+      else if (est === "RADICADO") enTramite++
+      if (est !== "RECOBRADO" && est !== "PERDIDO" && est !== "GLOSADO") pendiente += Math.max(0, recobrable - rec)
+    }
+    const cop = (n: number) => "$" + Math.round(n).toLocaleString("es-CO")
+    return {
+      titulo: `Recobro de incapacidades — ${anio}`,
+      items: [
+        { label: "Por radicar", value: String(porRadicar), subtext: "recobrables pendientes", variant: porRadicar > 0 ? "warning" : "success", icon: "clock" },
+        { label: "En trámite", value: String(enTramite), subtext: "radicados ante EPS/ARL", variant: "primary", icon: "file" },
+        { label: "Recuperable pendiente", value: cop(pendiente), subtext: "por recobrar", variant: pendiente > 0 ? "warning" : "success", icon: "receipt" },
+        { label: "Recobrado", value: cop(recuperado), subtext: `recuperado ${anio}`, variant: recuperado > 0 ? "success" : "primary", icon: "shield" },
+      ],
+    }
+  }
+
+  // Liquidaciones: personal retirado CON contrato (nº SIIGO) por liquidar. Refleja
+  // los KPIs del submódulo: retirados con contrato, pendientes y liquidadas.
+  if (moduleName === "Liquidaciones") {
+    let conContrato = 0
+    try {
+      const { data } = await sb
+        .from("headcount")
+        .select("identificacion, contratosiigo")
+        .eq("idempresa", empresaId)
+        .ilike("estado", "inactivo")
+      conContrato = (data || []).filter((r: any) => String(r.contratosiigo || "").trim() !== "").length
+    } catch {
+      conContrato = 0
+    }
+    let liquidadas = 0
+    try {
+      const { count } = await sb
+        .from("liquidaciones_retiro")
+        .select("*", { count: "exact", head: true })
+        .eq("idempresa", empresaId)
+        .eq("estado", "liquidada")
+      liquidadas = count || 0
+    } catch {
+      liquidadas = 0
+    }
+    const pendientes = Math.max(0, conContrato - liquidadas)
+    return {
+      titulo: "Liquidaciones — personal retirado",
+      items: [
+        { label: "Retirados con contrato", value: String(conContrato), subtext: "por liquidar", variant: "primary", icon: "file" },
+        { label: "Pendientes de liquidar", value: String(pendientes), subtext: "sin marcar liquidada", variant: pendientes > 0 ? "warning" : "success", icon: "clock" },
+        { label: "Liquidadas", value: String(liquidadas), subtext: "finalizadas", variant: "success", icon: "shield" },
+      ],
+    }
+  }
+
   return null
 }
