@@ -639,6 +639,13 @@ function EnlaceExamenesMedicos({ onNavigate }: { onNavigate?: (moduleName: strin
     }
     setClave("")
     setAbierto(false)
+    // Navegación robusta: evento global (lo escucha app/page.tsx) + prop de
+    // respaldo. El evento garantiza el direccionamiento aunque el prop no llegue.
+    try {
+      window.dispatchEvent(new CustomEvent("lipgo:navigate-module", { detail: "Examenes Médicos" }))
+    } catch {
+      /* SSR / sin window */
+    }
     if (onNavigate) onNavigate("Examenes Médicos")
   }
 
