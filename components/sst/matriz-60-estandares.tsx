@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react"
 import { useAuth } from "@/components/auth-provider"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -32,6 +32,7 @@ import type { PointerEvent as ReactPointerEvent } from "react"
 
 interface Props {
   selectedEmpresaId?: number | null
+  onNavigate?: (moduleName: string) => void
 }
 
 const CICLOS: CicloPHVA[] = ["PLANEAR", "HACER", "VERIFICAR", "ACTUAR"]
@@ -45,7 +46,11 @@ const EMPTY: MatrizData = {
   aniosDisponibles: [],
 }
 
-export function Matriz60Estandares({ selectedEmpresaId: propEmpresaId }: Props) {
+// Navegación a un módulo (para el enlace del numeral 3.1.4 → «Examenes Médicos»),
+// sin prop-drilling por GrupoFilas/FilaItem.
+const NavContext = createContext<((moduleName: string) => void) | undefined>(undefined)
+
+export function Matriz60Estandares({ selectedEmpresaId: propEmpresaId, onNavigate }: Props) {
   const { selectedEmpresaId: ctxEmpresaId, selectedEmpresaNombre } = useAuth()
   const empresaId = propEmpresaId ?? ctxEmpresaId
   const { toast } = useToast()
@@ -261,6 +266,7 @@ export function Matriz60Estandares({ selectedEmpresaId: propEmpresaId }: Props) 
   }
 
   return (
+    <NavContext.Provider value={onNavigate}>
     <div className="space-y-5">
       <Header nombre={selectedEmpresaNombre} sede={autoevaluacion.sede} anio={autoevaluacion.anio} />
 
@@ -423,6 +429,7 @@ export function Matriz60Estandares({ selectedEmpresaId: propEmpresaId }: Props) 
         }
       />
     </div>
+    </NavContext.Provider>
   )
 }
 
@@ -633,6 +640,7 @@ function FilaItem({
 // de Usuarios) — la clave solo evita que se abra desde otro contexto sin autorizar.
 function EnlaceExamenesMedicos() {
   const { toast } = useToast()
+  const navegar = useContext(NavContext)
   const [abierto, setAbierto] = useState(false) // campo de clave desplegado
   const [clave, setClave] = useState("")
 
@@ -647,7 +655,9 @@ function EnlaceExamenesMedicos() {
     setClave("")
     setAbierto(false)
     toast({ title: "Abriendo Exámenes Médicos…", description: "Clave correcta." })
-    // Navega al submódulo (respeta su permiso: si no lo tiene, no se muestra).
+    // Navega al submódulo. 1) Directo por el callback del padre (síncrono, siempre
+    // vigente). 2) Respaldo por evento global (por si el prop no llegara).
+    if (navegar) navegar("Examenes Médicos")
     try {
       window.dispatchEvent(new CustomEvent("lipgo:navigate-module", { detail: "Examenes Médicos" }))
     } catch {

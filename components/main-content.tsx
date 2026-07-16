@@ -764,7 +764,7 @@ export function MainContent({
             </PermissionGuard>
           ) : selectedModule === "Matriz de Estándares" ? (
             <PermissionGuard moduleName="Matriz de Estándares">
-              <Matriz60Estandares />
+              <Matriz60Estandares onNavigate={onNavigateModule} />
             </PermissionGuard>
           ) : selectedModule === "Repositorio de Soportes" ? (
             <PermissionGuard moduleName="Repositorio de Soportes">
