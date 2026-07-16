@@ -337,6 +337,20 @@ create or replace view public.pagonomina as
         END) + recargodominical) AS total_liquidado_dia
    FROM pre_calculo_valores pc
   WHERE (fecha <= CURRENT_DATE)
+    -- Estado / vínculo laboral: excluye días FUERA del vínculo — la persona tiene
+    -- contrato(s) en colaboradores_th pero NINGUNO cubre esa fecha (antes de
+    -- iniciar o después de terminar). Falla hacia pagar: si no se puede vincular su
+    -- contrato (por nombre↔cédula), NO se excluye (nunca deja sin pago a un activo).
+    AND NOT (
+          EXISTS (SELECT 1 FROM headcount hh
+                    JOIN colaboradores_th cc ON ((TRIM(BOTH FROM cc.numero_documento) = TRIM(BOTH FROM hh.identificacion)))
+                  WHERE (TRIM(BOTH FROM hh.nombre) = TRIM(BOTH FROM pc.persona)))
+      AND NOT EXISTS (SELECT 1 FROM headcount hh
+                        JOIN colaboradores_th cc ON ((TRIM(BOTH FROM cc.numero_documento) = TRIM(BOTH FROM hh.identificacion)))
+                      WHERE (TRIM(BOTH FROM hh.nombre) = TRIM(BOTH FROM pc.persona))
+                        AND (pc.fecha >= cc.fecha_inicio_contrato)
+                        AND ((cc.fecha_fin_contrato IS NULL) OR (pc.fecha <= cc.fecha_fin_contrato)))
+    )
   ORDER BY persona, fecha DESC;
 
 -- ----------------------------------------------------------------------------

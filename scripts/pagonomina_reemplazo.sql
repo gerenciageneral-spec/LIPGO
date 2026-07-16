@@ -1,13 +1,16 @@
 -- ============================================================================
--- DESPLIEGUE — reemplazo de la vista pagonomina (recargos por persona + dominical %)
+-- DESPLIEGUE — reemplazo de la vista pagonomina
+--   (recargos por persona + dominical % + FILTRO de vínculo laboral)
 -- ----------------------------------------------------------------------------
--- Aplica el remapeo YA VALIDADO contra pagonomina_v2:
---   - recargos/base del turno calculados por persona desde headcount.salario
---     (auxilio NO entra en la base), parametros de parametros_legales_anio;
---   - recargo dominical parametrizado (pct_recargo_dominical, hoy 90%).
--- Mismos nombres/campos/logica que antes. REVERSIBLE: la definicion anterior
--- queda en git (scripts/vistas_financieras.sql, historial).
--- REQUISITO: haber corrido scripts/extend_parametros_nomina.sql.
+-- Incluye TODO lo validado:
+--   - recargos/base del turno por persona desde headcount.salario (auxilio fuera
+--     de la base) y parametros_legales_anio; recargo dominical parametrizado.
+--   - FILTRO de estado/vínculo: no liquida días fuera del contrato de la persona
+--     (cubre el caso "no pagar a inactivos"). Falla hacia pagar.
+-- Mismos nombres/campos/lógica de salida. REVERSIBLE (definición previa en git).
+-- REQUISITO: correr antes scripts/extend_parametros_nomina.sql.
+-- ANTES DE CORRER: valida con scripts/pagonomina_estado_diagnostico.sql que los
+-- días que el filtro quitaría sean correctos.
 -- ============================================================================
 
 create or replace view public.pagonomina as
@@ -336,6 +339,20 @@ create or replace view public.pagonomina as
         END) + recargodominical) AS total_liquidado_dia
    FROM pre_calculo_valores pc
   WHERE (fecha <= CURRENT_DATE)
+    -- Estado / vínculo laboral: excluye días FUERA del vínculo — la persona tiene
+    -- contrato(s) en colaboradores_th pero NINGUNO cubre esa fecha (antes de
+    -- iniciar o después de terminar). Falla hacia pagar: si no se puede vincular su
+    -- contrato (por nombre↔cédula), NO se excluye (nunca deja sin pago a un activo).
+    AND NOT (
+          EXISTS (SELECT 1 FROM headcount hh
+                    JOIN colaboradores_th cc ON ((TRIM(BOTH FROM cc.numero_documento) = TRIM(BOTH FROM hh.identificacion)))
+                  WHERE (TRIM(BOTH FROM hh.nombre) = TRIM(BOTH FROM pc.persona)))
+      AND NOT EXISTS (SELECT 1 FROM headcount hh
+                        JOIN colaboradores_th cc ON ((TRIM(BOTH FROM cc.numero_documento) = TRIM(BOTH FROM hh.identificacion)))
+                      WHERE (TRIM(BOTH FROM hh.nombre) = TRIM(BOTH FROM pc.persona))
+                        AND (pc.fecha >= cc.fecha_inicio_contrato)
+                        AND ((cc.fecha_fin_contrato IS NULL) OR (pc.fecha <= cc.fecha_fin_contrato)))
+    )
   ORDER BY persona, fecha DESC;
 
 -- Limpieza: ya no se necesita la vista de verificacion.
