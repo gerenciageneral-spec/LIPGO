@@ -1,18 +1,38 @@
 "use server"
 
-// Submódulo Liquidaciones: reporte de las personas RETIRADAS (headcount.estado
-// Inactivo) CON contrato (tabla contratos), con sus novedades de nómina
-// PENDIENTES de pago (desde pagonomina, posteriores a "pagado_hasta" y hasta la
-// fecha de retiro). Maneja el ESTADO (pendiente/liquidada), el SOPORTE adjunto y
-// la fecha "pagado hasta", en la tabla liquidaciones_retiro. El detalle se calcula
-// en vivo; el estado/soporte/pagado_hasta se persisten.
+// Submódulo Liquidaciones: personas RETIRADAS (headcount.estado Inactivo) CON
+// contrato (número SIIGO), separado por CLIENTE (headcount.idempresa). Muestra:
+//   - Nómina PENDIENTE de pago (desde pagonomina, posterior a "pagado_hasta" y
+//     hasta la fecha de retiro).
+//   - PRESTACIONES SOCIALES (prima, cesantías, intereses, vacaciones) calculadas
+//     sobre el devengado del período de causación, con % de parametros_prestaciones.
+// Estado (pendiente/liquidada), soporte y "pagado_hasta" viven en liquidaciones_retiro.
 //
-// Separado por CLIENTE: los empleados de LIP están asignados a distintos clientes
-// (headcount.idempresa) → filtra por la empresa/cliente del selector global.
+// Base de prestaciones = devengado (salario + extras + recargos) + Auxilio de
+// Transporte (parametros_legales_anio.auxilio_transporte), EXCEPTO vacaciones que
+// excluye el auxilio. Períodos de causación derivados de la fecha de retiro:
+//   - Cesantías / intereses / vacaciones: desde el 1-ene del año del retiro.
+//   - Prima: desde 1-ene (si retiro en 1er semestre) o 1-jul (si 2do semestre).
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 
 export type EstadoLiquidacion = "pendiente" | "liquidada"
+
+export interface ParametrosPrestaciones {
+  pctPrima: number
+  pctCesantias: number
+  pctInteresesCesantias: number
+  pctVacaciones: number
+  incluyeAux: boolean
+}
+
+const PRESTACIONES_DEFAULT: ParametrosPrestaciones = {
+  pctPrima: 8.33,
+  pctCesantias: 8.33,
+  pctInteresesCesantias: 12,
+  pctVacaciones: 4.17,
+  incluyeAux: true,
+}
 
 export interface LiquidacionNovedad {
   fecha: string
@@ -36,23 +56,54 @@ export interface LiquidacionPersona {
   fecha_retiro: string | null
   pagado_hasta: string | null
   dias: number
-  total: number
+  total: number // nómina pendiente
+  prima: number
+  cesantias: number
+  intereses: number
+  vacaciones: number
+  prestaciones: number // suma de las 4
+  total_liquidacion: number // nómina pendiente + prestaciones
   estado: EstadoLiquidacion
   soporte_url: string | null
   soporte_nombre: string | null
   novedades: LiquidacionNovedad[]
 }
 
+async function leerParametrosPrestaciones(admin: any): Promise<ParametrosPrestaciones> {
+  const { data } = await admin.from("parametros_prestaciones").select("*").eq("id", 1).maybeSingle()
+  if (!data) return PRESTACIONES_DEFAULT
+  return {
+    pctPrima: Number(data.pct_prima ?? PRESTACIONES_DEFAULT.pctPrima),
+    pctCesantias: Number(data.pct_cesantias ?? PRESTACIONES_DEFAULT.pctCesantias),
+    pctInteresesCesantias: Number(data.pct_intereses_cesantias ?? PRESTACIONES_DEFAULT.pctInteresesCesantias),
+    pctVacaciones: Number(data.pct_vacaciones ?? PRESTACIONES_DEFAULT.pctVacaciones),
+    incluyeAux: data.incluye_aux !== false,
+  }
+}
+
+// Suma el devengado (total_liquidado_dia) y cuenta los días con pago dentro del
+// rango [desde, hasta] (fechas 'YYYY-MM-DD', comparación lexicográfica).
+function sumaPeriodo(rows: any[], desde: string, hasta: string): { dev: number; dias: number } {
+  let dev = 0
+  let dias = 0
+  for (const r of rows) {
+    const f = String(r.fecha)
+    if (f >= desde && f <= hasta) {
+      dev += Number(r.total_liquidado_dia || 0)
+      dias += 1
+    }
+  }
+  return { dev, dias }
+}
+
 export async function getLiquidaciones(
   idempresa: number,
-  fechaInicio?: string | null,
-  fechaFin?: string | null,
-): Promise<{ success: boolean; data: LiquidacionPersona[]; message?: string }> {
+): Promise<{ success: boolean; data: LiquidacionPersona[]; params?: ParametrosPrestaciones; message?: string }> {
   if (!idempresa) return { success: false, data: [], message: "Selecciona una empresa." }
   try {
     const admin: any = await getSupabaseAdmin()
 
-    // 1) Retirados (estado Inactivo) de la empresa/cliente seleccionado.
+    // 1) Retirados (Inactivo) del cliente seleccionado.
     const { data: retirados, error: rErr } = await admin
       .from("headcount")
       .select("identificacion, nombre, fecha_retiro, idempresa, contratosiigo")
@@ -61,7 +112,6 @@ export async function getLiquidaciones(
     if (rErr) return { success: false, data: [], message: rErr.message }
     if (!retirados || retirados.length === 0) return { success: true, data: [] }
 
-    // pagonomina cruza por NOMBRE; indexamos por nombre.
     const infoPorNombre = new Map<
       string,
       { identificacion: string; fecha_retiro: string | null; idempresa: number | null; contratosiigo: string }
@@ -77,15 +127,20 @@ export async function getLiquidaciones(
       })
     }
 
-    // 2) Solo quienes TIENEN contrato. El número de contrato es el de SIIGO
-    //    (headcount.contratosiigo), la FUENTE DE VERDAD. Sin ese número no se liquida.
+    // 2) Solo con contrato = número de contrato SIIGO (fuente de verdad).
     for (const [nombre, info] of Array.from(infoPorNombre.entries())) {
       if (info.contratosiigo === "") infoPorNombre.delete(nombre)
     }
     const nombres = Array.from(infoPorNombre.keys())
-    if (nombres.length === 0) return { success: true, data: [] }
+    if (nombres.length === 0) return { success: true, data: [], params: await leerParametrosPrestaciones(admin) }
 
-    // 3) Estado/soporte/pagado_hasta guardado por persona (liquidaciones_retiro).
+    // 3) Parámetros de prestaciones + auxilio de transporte por año.
+    const pp = await leerParametrosPrestaciones(admin)
+    const auxPorAnio = new Map<number, number>()
+    const { data: paramsAnio } = await admin.from("parametros_legales_anio").select("anio, auxilio_transporte")
+    for (const a of paramsAnio || []) auxPorAnio.set(Number(a.anio), Number(a.auxilio_transporte || 0))
+
+    // 4) Estado/soporte/pagado_hasta guardado.
     const estadoPorCedula = new Map<
       string,
       { estado: EstadoLiquidacion; soporte_url: string | null; soporte_nombre: string | null; pagado_hasta: string | null }
@@ -103,7 +158,8 @@ export async function getLiquidaciones(
       })
     }
 
-    // 4) Novedades desde pagonomina (paginado; PostgREST corta en 1000 filas).
+    // 5) TODAS las novedades de pagonomina de esos retirados (para prestaciones y
+    //    pendientes). Paginado.
     const cols =
       "fecha, persona, actividad_registrada, novedad_reportada, base_dia, hed, hedf, hen, hef, hn, pago_domingo, recargodominical, total_liquidado_dia"
     let all: any[] = []
@@ -111,81 +167,161 @@ export async function getLiquidaciones(
     let offset = 0
     let hasMore = true
     while (hasMore) {
-      let q = admin.from("pagonomina").select(cols).in("persona", nombres)
-      if (fechaInicio) q = q.gte("fecha", fechaInicio)
-      if (fechaFin) q = q.lte("fecha", fechaFin)
-      const { data, error } = await q.order("fecha", { ascending: false }).range(offset, offset + pageSize - 1)
+      const { data, error } = await admin
+        .from("pagonomina")
+        .select(cols)
+        .in("persona", nombres)
+        .order("fecha", { ascending: false })
+        .range(offset, offset + pageSize - 1)
       if (error) return { success: false, data: [], message: error.message }
-      if (!data || data.length === 0) {
-        hasMore = false
-      } else {
+      if (!data || data.length === 0) hasMore = false
+      else {
         all = all.concat(data)
         if (data.length < pageSize) hasMore = false
         else offset += pageSize
       }
     }
 
-    // 5) Agrupar por persona; solo novedades PENDIENTES de pago:
-    //    fecha > pagado_hasta (si existe) y fecha <= fecha_retiro.
-    const porPersona = new Map<string, LiquidacionPersona>()
+    // Agrupar filas por persona (solo hasta su fecha de retiro).
+    const rowsPorNombre = new Map<string, any[]>()
+    for (const row of all) {
+      const nombre = String(row.persona || "").trim()
+      const info = infoPorNombre.get(nombre)
+      if (!info) continue
+      if (info.fecha_retiro && String(row.fecha) > info.fecha_retiro) continue
+      const arr = rowsPorNombre.get(nombre) || []
+      arr.push(row)
+      rowsPorNombre.set(nombre, arr)
+    }
+
+    // 6) Construir cada persona: pendiente + prestaciones.
+    const data: LiquidacionPersona[] = []
     for (const [nombre, info] of infoPorNombre) {
       const est = estadoPorCedula.get(info.identificacion)
-      porPersona.set(nombre, {
+      const pagado_hasta = est?.pagado_hasta ?? null
+      const rows = rowsPorNombre.get(nombre) || []
+
+      // Nómina PENDIENTE: fecha > pagado_hasta (y <= retiro, ya filtrado).
+      const novedades: LiquidacionNovedad[] = []
+      let total = 0
+      for (const r of rows) {
+        if (pagado_hasta && String(r.fecha) <= pagado_hasta) continue
+        const nov: LiquidacionNovedad = {
+          fecha: r.fecha,
+          actividad_registrada: r.actividad_registrada ?? null,
+          novedad_reportada: r.novedad_reportada ?? null,
+          base_dia: Number(r.base_dia || 0),
+          hed: Number(r.hed || 0),
+          hedf: Number(r.hedf || 0),
+          hen: Number(r.hen || 0),
+          hef: Number(r.hef || 0),
+          hn: Number(r.hn || 0),
+          pago_domingo: Number(r.pago_domingo || 0),
+          recargodominical: Number(r.recargodominical || 0),
+          total_liquidado_dia: Number(r.total_liquidado_dia || 0),
+        }
+        novedades.push(nov)
+        total += nov.total_liquidado_dia
+      }
+
+      // PRESTACIONES sobre el devengado del período de causación.
+      let prima = 0
+      let cesantias = 0
+      let intereses = 0
+      let vacaciones = 0
+      if (info.fecha_retiro) {
+        const anio = Number(info.fecha_retiro.slice(0, 4))
+        const mes = Number(info.fecha_retiro.slice(5, 7))
+        const cesDesde = `${anio}-01-01`
+        const primaDesde = mes <= 6 ? `${anio}-01-01` : `${anio}-07-01`
+        const auxMensual = auxPorAnio.get(anio) ?? 0
+
+        const pr = sumaPeriodo(rows, primaDesde, info.fecha_retiro)
+        const ce = sumaPeriodo(rows, cesDesde, info.fecha_retiro)
+        const auxPropPrima = (auxMensual / 30) * pr.dias
+        const auxPropCes = (auxMensual / 30) * ce.dias
+        const basePrima = pr.dev + (pp.incluyeAux ? auxPropPrima : 0)
+        const baseCes = ce.dev + (pp.incluyeAux ? auxPropCes : 0)
+
+        prima = basePrima * (pp.pctPrima / 100)
+        cesantias = baseCes * (pp.pctCesantias / 100)
+        intereses = cesantias * (pp.pctInteresesCesantias / 100) * (ce.dias / 360)
+        vacaciones = ce.dev * (pp.pctVacaciones / 100) // vacaciones SIN auxilio
+      }
+      const prestaciones = prima + cesantias + intereses + vacaciones
+
+      data.push({
         persona: nombre,
         identificacion: info.identificacion,
         idempresa: info.idempresa,
         fecha_retiro: info.fecha_retiro,
-        pagado_hasta: est?.pagado_hasta ?? null,
-        dias: 0,
-        total: 0,
+        pagado_hasta,
+        dias: novedades.length,
+        total,
+        prima,
+        cesantias,
+        intereses,
+        vacaciones,
+        prestaciones,
+        total_liquidacion: total + prestaciones,
         estado: est?.estado ?? "pendiente",
         soporte_url: est?.soporte_url ?? null,
         soporte_nombre: est?.soporte_nombre ?? null,
-        novedades: [],
+        novedades,
       })
     }
-    for (const row of all) {
-      const nombre = String(row.persona || "").trim()
-      const acc = porPersona.get(nombre)
-      if (!acc) continue
-      if (acc.fecha_retiro && String(row.fecha) > acc.fecha_retiro) continue // no pagar después del retiro
-      if (acc.pagado_hasta && String(row.fecha) <= acc.pagado_hasta) continue // ya pagado
-      const nov: LiquidacionNovedad = {
-        fecha: row.fecha,
-        actividad_registrada: row.actividad_registrada ?? null,
-        novedad_reportada: row.novedad_reportada ?? null,
-        base_dia: Number(row.base_dia || 0),
-        hed: Number(row.hed || 0),
-        hedf: Number(row.hedf || 0),
-        hen: Number(row.hen || 0),
-        hef: Number(row.hef || 0),
-        hn: Number(row.hn || 0),
-        pago_domingo: Number(row.pago_domingo || 0),
-        recargodominical: Number(row.recargodominical || 0),
-        total_liquidado_dia: Number(row.total_liquidado_dia || 0),
-      }
-      acc.novedades.push(nov)
-      acc.dias += 1
-      acc.total += nov.total_liquidado_dia
-    }
 
-    // Orden: pendientes primero, luego por fecha de retiro más reciente.
-    const data = Array.from(porPersona.values()).sort((a, b) => {
+    data.sort((a, b) => {
       if (a.estado !== b.estado) return a.estado === "pendiente" ? -1 : 1
       return String(b.fecha_retiro || "").localeCompare(String(a.fecha_retiro || ""))
     })
-    return { success: true, data }
+    return { success: true, data, params: pp }
   } catch (e: any) {
     return { success: false, data: [], message: e?.message || "Error al cargar las liquidaciones." }
   }
 }
 
-// Upsert base de una fila de liquidaciones_retiro (comparte llave idempresa+cédula).
-async function upsertLiquidacion(admin: any, fields: Record<string, unknown>) {
-  return admin.from("liquidaciones_retiro").upsert({ ...fields, updated_at: new Date().toISOString() }, { onConflict: "idempresa,identificacion" })
+// ---- Parámetros de prestaciones (tabla de porcentajes de ley) ----
+export async function getParametrosPrestaciones(): Promise<{ success: boolean; data: ParametrosPrestaciones }> {
+  try {
+    const admin: any = await getSupabaseAdmin()
+    return { success: true, data: await leerParametrosPrestaciones(admin) }
+  } catch {
+    return { success: true, data: PRESTACIONES_DEFAULT }
+  }
 }
 
-// Marca la liquidación como 'liquidada' o 'pendiente'.
+export async function guardarParametrosPrestaciones(
+  p: ParametrosPrestaciones,
+): Promise<{ success: boolean; message?: string }> {
+  try {
+    const admin: any = await getSupabaseAdmin()
+    const { error } = await admin.from("parametros_prestaciones").upsert(
+      {
+        id: 1,
+        pct_prima: p.pctPrima,
+        pct_cesantias: p.pctCesantias,
+        pct_intereses_cesantias: p.pctInteresesCesantias,
+        pct_vacaciones: p.pctVacaciones,
+        incluye_aux: p.incluyeAux,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "id" },
+    )
+    if (error) return { success: false, message: error.message }
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al guardar parámetros." }
+  }
+}
+
+// ---- Estado / soporte / pagado_hasta ----
+async function upsertLiquidacion(admin: any, fields: Record<string, unknown>) {
+  return admin
+    .from("liquidaciones_retiro")
+    .upsert({ ...fields, updated_at: new Date().toISOString() }, { onConflict: "idempresa,identificacion" })
+}
+
 export async function guardarEstadoLiquidacion(payload: {
   idempresa: number | null
   identificacion: string
@@ -213,7 +349,6 @@ export async function guardarEstadoLiquidacion(payload: {
   }
 }
 
-// Guarda la fecha "pagado hasta" (define qué novedades quedan pendientes).
 export async function guardarPagadoHasta(payload: {
   idempresa: number | null
   identificacion: string
@@ -238,7 +373,6 @@ export async function guardarPagadoHasta(payload: {
   }
 }
 
-// Sube el soporte de liquidación (PDF/imagen) a Storage y guarda la URL.
 export async function subirSoporteLiquidacion(
   formData: FormData,
 ): Promise<{ success: boolean; url?: string; message?: string }> {
