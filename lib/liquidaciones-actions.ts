@@ -264,18 +264,9 @@ export async function getLiquidaciones(
       if (info.fecha_retiro) {
         const anio = Number(info.fecha_retiro.slice(0, 4))
         const cesDesde = `${anio}-01-01`
-        // Prima: causa desde el ÚLTIMO pago de prima (15-jun 1er semestre / 15-dic
-        // 2do semestre). Ej: retiro después del 15-jun → prima pendiente desde el 15-jun.
-        const primaDesde =
-          info.fecha_retiro >= `${anio}-12-15`
-            ? `${anio}-12-15`
-            : info.fecha_retiro >= `${anio}-06-15`
-              ? `${anio}-06-15`
-              : `${anio}-01-01`
         const auxMensual = auxPorAnio.get(anio) ?? 0
-        const salarioDia = (info.salario || smlvPorAnio.get(anio) || 0) / 30
-
-        const pr = sumaPeriodo(rows, primaDesde, info.fecha_retiro)
+        const salarioMensual = info.salario || smlvPorAnio.get(anio) || 0
+        const salarioDia = salarioMensual / 30
         const ce = sumaPeriodo(rows, cesDesde, info.fecha_retiro)
 
         // Relleno SOLO de los primeros días de enero que no existen en el sistema
@@ -297,14 +288,28 @@ export async function getLiquidaciones(
         const fillMonto = fillDias * salarioDia
         const diasCes = ce.dias + fillDias
 
-        const auxPropPrima = (auxMensual / 30) * pr.dias
         const auxPropCes = (auxMensual / 30) * diasCes
-        const basePrima = pr.dev + (pp.incluyeAux ? auxPropPrima : 0)
         const baseCes = ce.dev + fillMonto + (pp.incluyeAux ? auxPropCes : 0)
-
-        prima = basePrima * (pp.pctPrima / 100)
         cesantias = baseCes * (pp.pctCesantias / 100)
         intereses = cesantias * (pp.pctInteresesCesantias / 100) * (diasCes / 360)
+
+        // PRIMA — la prima del 1er semestre se pagó hasta el 30-jun. Según la fecha:
+        //  · Retiro en junio → ya recibió prima hasta el 30-jun → se DESCUENTAN los
+        //    días pagados de más (del retiro al 30-jun) → valor NEGATIVO.
+        //  · Retiro antes de junio → prima ene→retiro PENDIENTE (aún no pagada).
+        //  · Retiro 2do semestre → prima desde jul (o dic si ya se pagó).
+        const primaBaseDiaria = (salarioMensual + (pp.incluyeAux ? auxMensual : 0)) / 30
+        if (info.fecha_retiro >= `${anio}-06-01` && info.fecha_retiro <= `${anio}-06-30`) {
+          const diasDeMas = 30 - Number(info.fecha_retiro.slice(8, 10))
+          prima = -(diasDeMas * primaBaseDiaria * (pp.pctPrima / 100))
+        } else if (info.fecha_retiro < `${anio}-06-01`) {
+          const prc = sumaPeriodo(rows, cesDesde, info.fecha_retiro)
+          prima = (prc.dev + (pp.incluyeAux ? (auxMensual / 30) * prc.dias : 0)) * (pp.pctPrima / 100)
+        } else {
+          const primaDesde2 = info.fecha_retiro >= `${anio}-12-15` ? `${anio}-12-15` : `${anio}-07-01`
+          const pr2 = sumaPeriodo(rows, primaDesde2, info.fecha_retiro)
+          prima = (pr2.dev + (pp.incluyeAux ? (auxMensual / 30) * pr2.dias : 0)) * (pp.pctPrima / 100)
+        }
 
         // Vacaciones: causadas (% sobre devengado, sin auxilio) MENOS las ya
         // DISFRUTADAS ("31- Vacaciones disfrutadas" ya pagadas). Solo lo pendiente.
