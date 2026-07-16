@@ -266,8 +266,10 @@ export const MODULE_PERMISSION_MAP: Record<string, keyof UserPermissions> = {
   "Servicios Adicionales": "solicitudturnos",
   "Aprobar Turnos": "aprobacionturnos",
   "Gestión de Contratos": "gestion_contratos",
-  // Examenes Médicos: comparte el permiso de Gestión de Contratos.
-  "Examenes Médicos": "gestion_contratos",
+  // Examenes Médicos: ahora es parte de SST → comparte el permiso de la
+  // Autoevaluación 0312 (Matriz de Estándares). Así, quien audita la matriz
+  // puede abrir el soporte de exámenes desde el enlace del numeral 3.1.4.
+  "Examenes Médicos": "sst_autoevaluacion",
   "Gestión de Dotación EPP": "dotacion_epp",
   "Gestión de Capacitaciones": "capacitaciones",
   "Asistencia a Capacitaciones": "asistencia_capacitaciones",
