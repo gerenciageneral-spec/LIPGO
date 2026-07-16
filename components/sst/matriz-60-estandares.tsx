@@ -27,11 +27,14 @@ import {
   VALORACION_LABEL,
   valoracionColor,
 } from "@/components/sst/sst-utils"
-import { Loader2, FileWarning, Search, ChevronDown, ChevronRight, CheckCircle2, PenLine, Lock } from "lucide-react"
+import { Loader2, FileWarning, Search, ChevronDown, ChevronRight, CheckCircle2, PenLine, Lock, Stethoscope, KeyRound } from "lucide-react"
 import type { PointerEvent as ReactPointerEvent } from "react"
 
 interface Props {
   selectedEmpresaId?: number | null
+  /** Navegación robusta (fija grupo + módulo). Se usa en el numeral 3.1.4 para
+   *  llevar al auditor al submódulo «Examenes Médicos» (protegido por clave). */
+  onNavigate?: (moduleName: string) => void
 }
 
 const CICLOS: CicloPHVA[] = ["PLANEAR", "HACER", "VERIFICAR", "ACTUAR"]
@@ -45,7 +48,7 @@ const EMPTY: MatrizData = {
   aniosDisponibles: [],
 }
 
-export function Matriz60Estandares({ selectedEmpresaId: propEmpresaId }: Props) {
+export function Matriz60Estandares({ selectedEmpresaId: propEmpresaId, onNavigate }: Props) {
   const { selectedEmpresaId: ctxEmpresaId, selectedEmpresaNombre } = useAuth()
   const empresaId = propEmpresaId ?? ctxEmpresaId
   const { toast } = useToast()
@@ -383,6 +386,7 @@ export function Matriz60Estandares({ selectedEmpresaId: propEmpresaId }: Props) 
                     onSoporteUrl={persistSoporteUrl}
                     savingItem={savingItem}
                     empresaId={empresaId}
+                    onNavigate={onNavigate}
                   />
                 ))
               )}
@@ -424,6 +428,7 @@ function GrupoFilas({
   onSoporteUrl,
   savingItem,
   empresaId,
+  onNavigate,
 }: {
   grupo: { ciclo: CicloPHVA; estandar: string; items: EstandarItem[] }
   estadoOf: (id: number) => EstadoCumple | null
@@ -437,6 +442,7 @@ function GrupoFilas({
   onSoporteUrl: (item: EstandarItem, url: string) => void
   savingItem: number | null
   empresaId?: number | null
+  onNavigate?: (moduleName: string) => void
 }) {
   return (
     <>
@@ -470,6 +476,7 @@ function GrupoFilas({
             puntajeOf={puntajeOf}
             savingItem={savingItem}
             empresaId={empresaId}
+            onNavigate={onNavigate}
           />
         )
       })}
@@ -490,6 +497,7 @@ function FilaItem({
   puntajeOf,
   savingItem,
   empresaId,
+  onNavigate,
 }: {
   item: EstandarItem
   estado: EstadoCumple | null
@@ -503,6 +511,7 @@ function FilaItem({
   puntajeOf: (item: EstandarItem) => number
   savingItem: number | null
   empresaId?: number | null
+  onNavigate?: (moduleName: string) => void
 }) {
   return (
     <>
@@ -563,6 +572,9 @@ function FilaItem({
               onUploaded={(url) => onSoporteUrl(item, url)}
             />
           )}
+          {/* Numeral 3.1.4 (evaluaciones médicas ocupacionales): enlace protegido
+              por clave que lleva al auditor al submódulo «Examenes Médicos». */}
+          {item.numeral === "3.1.4" && <EnlaceExamenesMedicos onNavigate={onNavigate} />}
         </td>
         <td className="px-3 py-2 text-center align-top font-medium">{puntajeOf(item)}</td>
       </tr>
@@ -606,6 +618,79 @@ function FilaItem({
         </tr>
       )}
     </>
+  )
+}
+
+// Enlace protegido por clave que lleva al auditor al submódulo «Examenes
+// Médicos» para revisar el soporte del numeral 3.1.4 (evaluaciones médicas
+// ocupacionales). La clave (por seguridad) es 1104.
+function EnlaceExamenesMedicos({ onNavigate }: { onNavigate?: (moduleName: string) => void }) {
+  const { toast } = useToast()
+  const [abierto, setAbierto] = useState(false)
+  const [clave, setClave] = useState("")
+
+  const ir = () => {
+    if (clave.trim() !== "1104") {
+      toast({
+        title: "Clave incorrecta",
+        description: "Ingresa la clave de acceso para revisar los exámenes médicos.",
+      })
+      return
+    }
+    setClave("")
+    setAbierto(false)
+    if (onNavigate) onNavigate("Examenes Médicos")
+  }
+
+  return (
+    <div className="mt-2 rounded-md border border-dashed p-2" style={{ borderColor: SST_TOKENS.navy }}>
+      {!abierto ? (
+        <button
+          type="button"
+          onClick={() => setAbierto(true)}
+          className="inline-flex items-center gap-1.5 text-xs font-semibold hover:underline"
+          style={{ color: SST_TOKENS.navy }}
+        >
+          <Stethoscope className="h-3.5 w-3.5" /> Ver soporte en «Exámenes Médicos»
+        </button>
+      ) : (
+        <div className="flex items-center gap-2">
+          <KeyRound className="h-3.5 w-3.5 shrink-0" style={{ color: SST_TOKENS.navy }} />
+          <Input
+            type="password"
+            inputMode="numeric"
+            autoFocus
+            value={clave}
+            onChange={(e) => setClave(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") ir()
+              if (e.key === "Escape") {
+                setAbierto(false)
+                setClave("")
+              }
+            }}
+            placeholder="Clave"
+            className="h-8 w-24"
+          />
+          <Button size="sm" className="h-8" onClick={ir}>
+            Entrar
+          </Button>
+          <button
+            type="button"
+            onClick={() => {
+              setAbierto(false)
+              setClave("")
+            }}
+            className="text-[11px] text-muted-foreground underline"
+          >
+            Cancelar
+          </button>
+        </div>
+      )}
+      <p className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground">
+        <Lock className="h-2.5 w-2.5" /> Acceso protegido: se solicita clave por seguridad.
+      </p>
+    </div>
   )
 }
 
