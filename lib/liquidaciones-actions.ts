@@ -77,21 +77,10 @@ export async function getLiquidaciones(
       })
     }
 
-    // 2) Solo quienes TIENEN contrato: fila en la tabla `contratos` (colaborador_id
-    //    = cédula, estado != rechazado) O número de contrato SIIGO en Head Count.
-    const cedulas = Array.from(infoPorNombre.values()).map((v) => v.identificacion).filter(Boolean)
-    if (cedulas.length === 0) return { success: true, data: [] }
-    const { data: contratos } = await admin
-      .from("contratos")
-      .select("colaborador_id, estado")
-      .in("colaborador_id", cedulas)
-    const conContrato = new Set<string>()
-    for (const c of contratos || []) {
-      if (String(c.estado || "").toLowerCase() !== "rechazado") conContrato.add(String(c.colaborador_id || "").trim())
-    }
+    // 2) Solo quienes TIENEN contrato. El número de contrato es el de SIIGO
+    //    (headcount.contratosiigo), la FUENTE DE VERDAD. Sin ese número no se liquida.
     for (const [nombre, info] of Array.from(infoPorNombre.entries())) {
-      const tieneContrato = conContrato.has(info.identificacion) || info.contratosiigo !== ""
-      if (!tieneContrato) infoPorNombre.delete(nombre)
+      if (info.contratosiigo === "") infoPorNombre.delete(nombre)
     }
     const nombres = Array.from(infoPorNombre.keys())
     if (nombres.length === 0) return { success: true, data: [] }
