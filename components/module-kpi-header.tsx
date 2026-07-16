@@ -41,7 +41,8 @@ export function ModuleKpiHeader({ selectedModule }: { selectedModule: string | n
       </div>
     )
   }
-  // Resto de módulos operativos: tira rápida de "a revisar" (self-null si no aplica).
-  if (gk) return <AreaKpiStrip groupKey={gk} />
+  // Resto de módulos: tira rápida. Se pasa el submódulo actual para que muestre
+  // SUS datos (si tiene tira propia); si no, cae a la tira general del grupo.
+  if (gk) return <AreaKpiStrip groupKey={gk} moduleName={selectedModule} />
   return null
 }

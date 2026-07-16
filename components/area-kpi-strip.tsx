@@ -44,29 +44,34 @@ function Skeleton({ n }: { n: number }) {
   )
 }
 
-// Tira genérica de KPIs "a revisar" para un grupo/módulo. Rápida (conteos) + skeleton.
-export function AreaKpiStrip({ groupKey }: { groupKey: string }) {
+// Tira de KPIs "a revisar". Si se pasa `moduleName` y ese submódulo tiene tira
+// propia, muestra sus datos (según el BSC del módulo); si no, la tira general
+// del grupo (portada del módulo madre). Rápida (conteos) + skeleton.
+export function AreaKpiStrip({ groupKey, moduleName }: { groupKey: string; moduleName?: string | null }) {
   const { selectedEmpresaId, profile } = useAuth()
   const [items, setItems] = useState<AreaKpiItem[] | null>(null)
+  const [tituloResp, setTituloResp] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const titulo = tituloAreaKpis(groupKey)
+  const tituloGrupo = tituloAreaKpis(groupKey)
 
   useEffect(() => {
-    if (!titulo) {
+    if (!tituloGrupo) {
       setItems([])
       setLoading(false)
       return
     }
     let cancel = false
     setLoading(true)
-    getAreaKpisRapidas(groupKey, selectedEmpresaId, profile?.id)
-      .then((r) => { if (!cancel) setItems(r.items) })
-      .catch(() => { if (!cancel) setItems([]) })
+    getAreaKpisRapidas(groupKey, selectedEmpresaId, profile?.id, moduleName)
+      .then((r) => { if (!cancel) { setItems(r.items); setTituloResp(r.titulo ?? null) } })
+      .catch(() => { if (!cancel) { setItems([]); setTituloResp(null) } })
       .finally(() => { if (!cancel) setLoading(false) })
     return () => { cancel = true }
-  }, [groupKey, selectedEmpresaId, profile?.id, titulo])
+  }, [groupKey, moduleName, selectedEmpresaId, profile?.id, tituloGrupo])
 
-  if (!titulo) return null
+  const titulo = tituloResp ?? tituloGrupo
+
+  if (!tituloGrupo) return null
   if (loading && !items) {
     return (
       <div className="mb-5 space-y-1">

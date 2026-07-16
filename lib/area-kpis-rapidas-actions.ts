@@ -19,7 +19,8 @@ export async function getAreaKpisRapidas(
   groupKey: string,
   selectedEmpresaId?: number | null,
   userId?: string,
-): Promise<{ items: AreaKpiItem[] }> {
+  moduleName?: string | null,
+): Promise<{ items: AreaKpiItem[]; titulo?: string }> {
   const sb: any = await getSupabaseAdmin()
   const empresaId = selectedEmpresaId || (await getCurrentEmpresaIdForInsert())
   if (!empresaId || !AREA_KPI_TITULOS[groupKey]) return { items: [] }
@@ -31,6 +32,14 @@ export async function getAreaKpisRapidas(
       return 0
     }
   }
+
+  // --- KPIs propios del SUBMÓDULO (no la tira general del área madre) ---------
+  // Cada submódulo muestra SUS datos (según los SLA del BSC del módulo). La tira
+  // general del grupo se conserva para la portada del módulo madre. Si el
+  // submódulo actual tiene tira propia, se resuelve y se devuelve aquí.
+  const subKpis = await getSubmoduloKpis(sb, moduleName, empresaId)
+  if (subKpis) return subKpis
+
   const items: AreaKpiItem[] = []
 
   // ¿El usuario ve facturas? (KPI del Coordinador). Se calcula una sola vez.
@@ -116,4 +125,50 @@ export async function getAreaKpisRapidas(
   }
 
   return { items }
+}
+
+// KPIs propios de cada SUBMÓDULO (reflejan el resumen interno del submódulo, no
+// la tira general del área madre). Devuelve null si el submódulo no tiene tira
+// propia (entonces se cae a la tira general del grupo). Extensible: agregar aquí
+// un caso por submódulo con sus datos según el BSC.
+async function getSubmoduloKpis(
+  sb: any,
+  moduleName: string | null | undefined,
+  empresaId: number,
+): Promise<{ items: AreaKpiItem[]; titulo: string } | null> {
+  if (!moduleName) return null
+
+  // Ausentismos (Gestión Humana): mismo resumen que muestra el submódulo —
+  // casos, días perdidos, accidentes de trabajo y casos por revisar (SST) del
+  // año en curso, por empresa/cliente.
+  if (moduleName === "Ausentismos") {
+    const anio = hoyBogota().slice(0, 4)
+    let rows: any[] = []
+    try {
+      const { data } = await sb
+        .from("ausentismosst")
+        .select("total_dias_incapacidad, tipo_evento, requiere_revision_sst")
+        .eq("idempresa", empresaId)
+        .gte("fecha_inicial", `${anio}-01-01`)
+        .lte("fecha_inicial", `${anio}-12-31`)
+      rows = data || []
+    } catch {
+      rows = []
+    }
+    const casos = rows.length
+    const dias = rows.reduce((s, r) => s + (Number(r.total_dias_incapacidad) || 0), 0)
+    const at = rows.filter((r) => r.tipo_evento === "AT").length
+    const revSST = rows.filter((r) => r.requiere_revision_sst).length
+    return {
+      titulo: `Ausentismo — resumen ${anio}`,
+      items: [
+        { label: "Casos", value: String(casos), subtext: `incapacidades ${anio}`, variant: "primary", icon: "activity" },
+        { label: "Días de ausentismo", value: dias.toLocaleString("es-CO"), subtext: `días perdidos ${anio}`, variant: dias > 0 ? "warning" : "success", icon: "clock" },
+        { label: "Accidentes de trabajo", value: String(at), subtext: `AT ${anio}`, variant: at > 0 ? "danger" : "success", icon: "alert" },
+        { label: "Por revisar SST", value: String(revSST), subtext: "osteomuscular / requiere revisión", variant: revSST > 0 ? "warning" : "success", icon: "shield" },
+      ],
+    }
+  }
+
+  return null
 }
