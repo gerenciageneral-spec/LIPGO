@@ -1,11 +1,14 @@
 "use server"
 
 // Submódulo Liquidaciones: reporte de las personas RETIRADAS (headcount.estado
-// Inactivo) con sus novedades de nómina pendientes (desde pagonomina, hasta su
-// fecha de retiro) para pagarles la liquidación. Además maneja el ESTADO de la
-// liquidación (pendiente/liquidada) y el SOPORTE adjunto, en la tabla
-// liquidaciones_retiro. El detalle de novedades se calcula en vivo; el estado y
-// el soporte se persisten.
+// Inactivo) CON contrato (tabla contratos), con sus novedades de nómina
+// PENDIENTES de pago (desde pagonomina, posteriores a "pagado_hasta" y hasta la
+// fecha de retiro). Maneja el ESTADO (pendiente/liquidada), el SOPORTE adjunto y
+// la fecha "pagado hasta", en la tabla liquidaciones_retiro. El detalle se calcula
+// en vivo; el estado/soporte/pagado_hasta se persisten.
+//
+// Separado por CLIENTE: los empleados de LIP están asignados a distintos clientes
+// (headcount.idempresa) → filtra por la empresa/cliente del selector global.
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 
@@ -31,6 +34,7 @@ export interface LiquidacionPersona {
   identificacion: string
   idempresa: number | null
   fecha_retiro: string | null
+  pagado_hasta: string | null
   dias: number
   total: number
   estado: EstadoLiquidacion
@@ -39,9 +43,6 @@ export interface LiquidacionPersona {
   novedades: LiquidacionNovedad[]
 }
 
-// NOTA: aunque todos son empleados de LIP, están ASIGNADOS a clientes distintos;
-// headcount.idempresa = el cliente/operación. El reporte se mantiene separado por
-// cliente → filtra por la empresa (cliente) del selector global.
 export async function getLiquidaciones(
   idempresa: number,
   fechaInicio?: string | null,
@@ -62,20 +63,53 @@ export async function getLiquidaciones(
 
     // pagonomina cruza por NOMBRE; indexamos por nombre.
     const infoPorNombre = new Map<string, { identificacion: string; fecha_retiro: string | null; idempresa: number | null }>()
-    const nombres: string[] = []
     for (const r of retirados) {
       const nombre = String(r.nombre || "").trim()
       if (!nombre) continue
       infoPorNombre.set(nombre, {
-        identificacion: r.identificacion,
+        identificacion: String(r.identificacion || "").trim(),
         fecha_retiro: r.fecha_retiro ?? null,
         idempresa: r.idempresa ?? null,
       })
-      nombres.push(nombre)
     }
+
+    // 2) Solo quienes TIENEN contrato (tabla contratos, colaborador_id=cédula,
+    //    estado no rechazado). Los sin contrato no se liquidan.
+    const cedulas = Array.from(infoPorNombre.values()).map((v) => v.identificacion).filter(Boolean)
+    if (cedulas.length === 0) return { success: true, data: [] }
+    const { data: contratos } = await admin
+      .from("contratos")
+      .select("colaborador_id, estado")
+      .in("colaborador_id", cedulas)
+    const conContrato = new Set<string>()
+    for (const c of contratos || []) {
+      if (String(c.estado || "").toLowerCase() !== "rechazado") conContrato.add(String(c.colaborador_id || "").trim())
+    }
+    for (const [nombre, info] of Array.from(infoPorNombre.entries())) {
+      if (!conContrato.has(info.identificacion)) infoPorNombre.delete(nombre)
+    }
+    const nombres = Array.from(infoPorNombre.keys())
     if (nombres.length === 0) return { success: true, data: [] }
 
-    // 2) Novedades desde pagonomina (paginado; PostgREST corta en 1000 filas).
+    // 3) Estado/soporte/pagado_hasta guardado por persona (liquidaciones_retiro).
+    const estadoPorCedula = new Map<
+      string,
+      { estado: EstadoLiquidacion; soporte_url: string | null; soporte_nombre: string | null; pagado_hasta: string | null }
+    >()
+    const { data: estados } = await admin
+      .from("liquidaciones_retiro")
+      .select("identificacion, estado, soporte_url, soporte_nombre, pagado_hasta")
+      .eq("idempresa", idempresa)
+    for (const e of estados || []) {
+      estadoPorCedula.set(String(e.identificacion || "").trim(), {
+        estado: e.estado === "liquidada" ? "liquidada" : "pendiente",
+        soporte_url: e.soporte_url ?? null,
+        soporte_nombre: e.soporte_nombre ?? null,
+        pagado_hasta: e.pagado_hasta ?? null,
+      })
+    }
+
+    // 4) Novedades desde pagonomina (paginado; PostgREST corta en 1000 filas).
     const cols =
       "fecha, persona, actividad_registrada, novedad_reportada, base_dia, hed, hedf, hen, hef, hn, pago_domingo, recargodominical, total_liquidado_dia"
     let all: any[] = []
@@ -97,29 +131,17 @@ export async function getLiquidaciones(
       }
     }
 
-    // 3) Estado/soporte guardado por persona (tabla liquidaciones_retiro).
-    const estadoPorCedula = new Map<string, { estado: EstadoLiquidacion; soporte_url: string | null; soporte_nombre: string | null }>()
-    const { data: estados } = await admin
-      .from("liquidaciones_retiro")
-      .select("identificacion, estado, soporte_url, soporte_nombre")
-      .eq("idempresa", idempresa)
-    for (const e of estados || []) {
-      estadoPorCedula.set(String(e.identificacion || "").trim(), {
-        estado: e.estado === "liquidada" ? "liquidada" : "pendiente",
-        soporte_url: e.soporte_url ?? null,
-        soporte_nombre: e.soporte_nombre ?? null,
-      })
-    }
-
-    // 4) Agrupar por persona; nunca contar días posteriores a la fecha de retiro.
+    // 5) Agrupar por persona; solo novedades PENDIENTES de pago:
+    //    fecha > pagado_hasta (si existe) y fecha <= fecha_retiro.
     const porPersona = new Map<string, LiquidacionPersona>()
     for (const [nombre, info] of infoPorNombre) {
-      const est = estadoPorCedula.get(String(info.identificacion || "").trim())
+      const est = estadoPorCedula.get(info.identificacion)
       porPersona.set(nombre, {
         persona: nombre,
         identificacion: info.identificacion,
         idempresa: info.idempresa,
         fecha_retiro: info.fecha_retiro,
+        pagado_hasta: est?.pagado_hasta ?? null,
         dias: 0,
         total: 0,
         estado: est?.estado ?? "pendiente",
@@ -132,7 +154,8 @@ export async function getLiquidaciones(
       const nombre = String(row.persona || "").trim()
       const acc = porPersona.get(nombre)
       if (!acc) continue
-      if (acc.fecha_retiro && String(row.fecha) > acc.fecha_retiro) continue
+      if (acc.fecha_retiro && String(row.fecha) > acc.fecha_retiro) continue // no pagar después del retiro
+      if (acc.pagado_hasta && String(row.fecha) <= acc.pagado_hasta) continue // ya pagado
       const nov: LiquidacionNovedad = {
         fecha: row.fecha,
         actividad_registrada: row.actividad_registrada ?? null,
@@ -163,7 +186,12 @@ export async function getLiquidaciones(
   }
 }
 
-// Marca la liquidación de una persona como 'liquidada' o 'pendiente' (upsert).
+// Upsert base de una fila de liquidaciones_retiro (comparte llave idempresa+cédula).
+async function upsertLiquidacion(admin: any, fields: Record<string, unknown>) {
+  return admin.from("liquidaciones_retiro").upsert({ ...fields, updated_at: new Date().toISOString() }, { onConflict: "idempresa,identificacion" })
+}
+
+// Marca la liquidación como 'liquidada' o 'pendiente'.
 export async function guardarEstadoLiquidacion(payload: {
   idempresa: number | null
   identificacion: string
@@ -175,23 +203,44 @@ export async function guardarEstadoLiquidacion(payload: {
   if (!payload?.identificacion) return { success: false, message: "Datos incompletos." }
   try {
     const admin: any = await getSupabaseAdmin()
-    const { error } = await admin.from("liquidaciones_retiro").upsert(
-      {
-        idempresa: payload.idempresa,
-        identificacion: payload.identificacion,
-        persona: payload.persona,
-        fecha_retiro: payload.fecha_retiro,
-        total_liquidado: payload.total,
-        estado: payload.estado,
-        fecha_liquidacion: payload.estado === "liquidada" ? new Date().toISOString() : null,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "idempresa,identificacion" },
-    )
+    const { error } = await upsertLiquidacion(admin, {
+      idempresa: payload.idempresa,
+      identificacion: payload.identificacion,
+      persona: payload.persona,
+      fecha_retiro: payload.fecha_retiro,
+      total_liquidado: payload.total,
+      estado: payload.estado,
+      fecha_liquidacion: payload.estado === "liquidada" ? new Date().toISOString() : null,
+    })
     if (error) return { success: false, message: error.message }
     return { success: true }
   } catch (e: any) {
     return { success: false, message: e?.message || "Error al guardar el estado." }
+  }
+}
+
+// Guarda la fecha "pagado hasta" (define qué novedades quedan pendientes).
+export async function guardarPagadoHasta(payload: {
+  idempresa: number | null
+  identificacion: string
+  persona: string
+  fecha_retiro: string | null
+  pagado_hasta: string | null
+}): Promise<{ success: boolean; message?: string }> {
+  if (!payload?.identificacion) return { success: false, message: "Datos incompletos." }
+  try {
+    const admin: any = await getSupabaseAdmin()
+    const { error } = await upsertLiquidacion(admin, {
+      idempresa: payload.idempresa,
+      identificacion: payload.identificacion,
+      persona: payload.persona,
+      fecha_retiro: payload.fecha_retiro,
+      pagado_hasta: payload.pagado_hasta || null,
+    })
+    if (error) return { success: false, message: error.message }
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al guardar la fecha." }
   }
 }
 
@@ -201,11 +250,12 @@ export async function subirSoporteLiquidacion(
 ): Promise<{ success: boolean; url?: string; message?: string }> {
   try {
     const file = formData.get("file") as File | null
-    const idempresa = Number(formData.get("idempresa"))
+    const idempresaRaw = Number(formData.get("idempresa"))
+    const idempresa = Number.isFinite(idempresaRaw) && idempresaRaw > 0 ? idempresaRaw : null
     const identificacion = String(formData.get("identificacion") || "").trim()
     const persona = String(formData.get("persona") || "")
     const fecha_retiro = (formData.get("fecha_retiro") as string) || null
-    if (!file || !idempresa || !identificacion) return { success: false, message: "Faltan datos o archivo." }
+    if (!file || !identificacion) return { success: false, message: "Faltan datos o archivo." }
 
     const admin: any = await getSupabaseAdmin()
     const ext = (file.name.split(".").pop() || "pdf").toLowerCase()
@@ -217,18 +267,14 @@ export async function subirSoporteLiquidacion(
     const { data: urlData } = admin.storage.from("archivos").getPublicUrl(filePath)
     const url = urlData?.publicUrl as string
 
-    const { error: dbErr } = await admin.from("liquidaciones_retiro").upsert(
-      {
-        idempresa,
-        identificacion,
-        persona,
-        fecha_retiro,
-        soporte_url: url,
-        soporte_nombre: file.name,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "idempresa,identificacion" },
-    )
+    const { error: dbErr } = await upsertLiquidacion(admin, {
+      idempresa,
+      identificacion,
+      persona,
+      fecha_retiro,
+      soporte_url: url,
+      soporte_nombre: file.name,
+    })
     if (dbErr) return { success: false, message: dbErr.message }
 
     return { success: true, url }

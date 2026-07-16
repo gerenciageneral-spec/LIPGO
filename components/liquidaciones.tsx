@@ -25,7 +25,13 @@ import {
   FileText,
 } from "lucide-react"
 import * as XLSX from "xlsx"
-import { getLiquidaciones, guardarEstadoLiquidacion, subirSoporteLiquidacion, type LiquidacionPersona } from "@/lib/liquidaciones-actions"
+import {
+  getLiquidaciones,
+  guardarEstadoLiquidacion,
+  guardarPagadoHasta,
+  subirSoporteLiquidacion,
+  type LiquidacionPersona,
+} from "@/lib/liquidaciones-actions"
 
 const money = (n: number) =>
   "$" + (Number(n) || 0).toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -92,6 +98,24 @@ export default function Liquidaciones() {
     if (r.success) {
       setData((prev) => prev.map((x) => (x.identificacion === p.identificacion ? { ...x, estado: nuevo } : x)))
       toast({ title: "Actualizado", description: `Marcada como ${nuevo}.` })
+    } else {
+      toast({ title: "Error", description: r.message, variant: "destructive" })
+    }
+  }
+
+  const cambiarPagadoHasta = async (p: LiquidacionPersona, value: string) => {
+    setBusy(p.identificacion)
+    const r = await guardarPagadoHasta({
+      idempresa: p.idempresa,
+      identificacion: p.identificacion,
+      persona: p.persona,
+      fecha_retiro: p.fecha_retiro,
+      pagado_hasta: value || null,
+    })
+    setBusy(null)
+    if (r.success) {
+      await cargar() // recomputa las novedades pendientes con la nueva fecha
+      toast({ title: "Actualizado", description: value ? `Pagado hasta ${value}.` : "Se borró la fecha de pago." })
     } else {
       toast({ title: "Error", description: r.message, variant: "destructive" })
     }
@@ -164,9 +188,10 @@ export default function Liquidaciones() {
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            Personas retiradas (estado Inactivo) con sus novedades de nómina pendientes hasta su fecha de
-            retiro. Marca cada una como <strong>Liquidada</strong> o <strong>Pendiente</strong> y adjunta el
-            soporte de la liquidación. Ya no aparecen en el archivo plano.
+            Personas retiradas <strong>con contrato</strong> y sus novedades de nómina <strong>pendientes de
+            pago</strong> (posteriores a la fecha "Pagado hasta", hasta su retiro). Marca cada una como{" "}
+            <strong>Liquidada</strong> o <strong>Pendiente</strong> y adjunta el soporte. Ya no aparecen en el
+            archivo plano.
           </p>
 
           <div className="flex flex-wrap items-end gap-3">
@@ -284,11 +309,26 @@ export default function Liquidaciones() {
                       {expanded.has(p.persona) && (
                         <TableRow>
                           <TableCell colSpan={8} className="bg-muted/30 p-0">
-                            {p.novedades.length === 0 ? (
-                              <div className="p-3 text-sm text-muted-foreground">Sin novedades pendientes en el rango.</div>
-                            ) : (
-                              <div className="overflow-x-auto p-2">
-                                <table className="w-full text-xs">
+                            <div className="space-y-2 p-3">
+                              <div className="flex flex-wrap items-center gap-2 text-sm">
+                                <span className="text-muted-foreground">Pagado hasta:</span>
+                                <Input
+                                  type="date"
+                                  className="h-8 w-40"
+                                  value={p.pagado_hasta || ""}
+                                  max={p.fecha_retiro || undefined}
+                                  disabled={busy === p.identificacion}
+                                  onChange={(e) => cambiarPagadoHasta(p, e.target.value)}
+                                />
+                                <span className="text-xs text-muted-foreground">
+                                  Solo se muestran las novedades <strong>posteriores</strong> a esta fecha (pendientes de pago), hasta el retiro.
+                                </span>
+                              </div>
+                              {p.novedades.length === 0 ? (
+                                <div className="text-sm text-muted-foreground">Sin novedades pendientes.</div>
+                              ) : (
+                                <div className="overflow-x-auto">
+                                  <table className="w-full text-xs">
                                   <thead className="text-left text-muted-foreground">
                                     <tr>
                                       <th className="px-2 py-1">Fecha</th>
@@ -311,9 +351,10 @@ export default function Liquidaciones() {
                                       </tr>
                                     ))}
                                   </tbody>
-                                </table>
-                              </div>
-                            )}
+                                  </table>
+                                </div>
+                              )}
+                            </div>
                           </TableCell>
                         </TableRow>
                       )}

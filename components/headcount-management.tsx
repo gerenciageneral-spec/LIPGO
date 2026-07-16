@@ -762,22 +762,9 @@ export default function HeadcountManagement() {
             </div>
           </div>
 
-          {/* Checkbox "Aplica plano". Se ubica antes del footer ocupando
-              el ancho completo para que sea claramente visible. Boolean
-              que viaja al payload y se persiste en la columna
-              `aplicaplano` (boolean) de la tabla `headcount`. */}
-          <div className="flex items-center gap-2 pt-2">
-            <Checkbox
-              id="aplicaplano"
-              checked={formData.aplicaplano}
-              onCheckedChange={(checked) =>
-                setFormData({ ...formData, aplicaplano: checked === true })
-              }
-            />
-            <Label htmlFor="aplicaplano" className="cursor-pointer font-normal">
-              Aplica plano
-            </Label>
-          </div>
+          {/* "Aplica plano" se retiró de la UI: el archivo plano se gobierna por
+              el ESTADO (Inactivo = fuera del plano), no por esta bandera (que era
+              huérfana). El campo sigue en el payload para no romper la API. */}
 
           {/* Marca de personal administrativo. En la pestaña administrativa se
               fuerza a true y se deshabilita para evitar desmarcarlo. */}
