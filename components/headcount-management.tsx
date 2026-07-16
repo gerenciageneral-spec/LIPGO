@@ -71,6 +71,7 @@ export default function HeadcountManagement() {
     correo: "",
     celular: "",
     fechainicio: "",
+    fecha_retiro: "",
     salario: "",
     cargo: "",
     // `aplicaplano` se persiste como boolean en la columna del mismo
@@ -168,6 +169,7 @@ export default function HeadcountManagement() {
       correo: "",
       celular: "",
       fechainicio: "",
+      fecha_retiro: "",
       salario: "",
       cargo: "",
       aplicaplano: false,
@@ -342,6 +344,7 @@ export default function HeadcountManagement() {
       correo: person.correo || "",
       celular: person.celular || "",
       fechainicio: person.fechainicio || "",
+      fecha_retiro: person.fecha_retiro || "",
       salario: person.salario?.toString() || "",
       cargo: person.cargo || "",
       // null/undefined -> false en UI: el checkbox no soporta tristate.
@@ -743,6 +746,18 @@ export default function HeadcountManagement() {
                 value={formData.salario}
                 onChange={(e) => setFormData({ ...formData, salario: e.target.value })}
                 placeholder="Ingrese el salario"
+              />
+            </div>
+
+            {/* Fecha de retiro (baja). Se llena automáticamente al marcar la
+                novedad "Retiro"; editable manualmente. Vacío = trabajador activo. */}
+            <div className="space-y-2">
+              <Label htmlFor="fecha_retiro">Fecha de Retiro</Label>
+              <Input
+                id="fecha_retiro"
+                type="date"
+                value={formData.fecha_retiro}
+                onChange={(e) => setFormData({ ...formData, fecha_retiro: e.target.value })}
               />
             </div>
           </div>

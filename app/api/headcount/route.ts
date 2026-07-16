@@ -54,6 +54,7 @@ export async function POST(request: NextRequest) {
         contratosiigo: body.contratosiigo || null,
         cargo: body.cargo || null,
         fechainicio: body.fechainicio || null,
+        fecha_retiro: body.fecha_retiro || null,
         salario: body.salario ? Number(body.salario) : null,
         // Coercion estricta: `!!body.aplicaplano` garantiza boolean true/false
         // aunque el cliente envie undefined / null / "true" / 0, etc.

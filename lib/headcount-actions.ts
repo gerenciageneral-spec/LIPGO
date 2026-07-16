@@ -38,6 +38,9 @@ export interface HeadcountPerson {
   // Marca al trabajador como personal administrativo. Los administrativos se
   // listan en la pestaña "Headcount Administrativo" sin filtro de empresa.
   admin?: boolean | null
+  // Fecha de retiro (baja). Se setea automáticamente al marcar la novedad
+  // "Retiro"; también editable en el formulario. String date (YYYY-MM-DD).
+  fecha_retiro?: string | null
 }
 
 // Colaborador "liviano" para AUTOCOMPLETAR expediente (Hojas de Vida / Antecedentes)

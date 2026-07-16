@@ -26,6 +26,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         contratosiigo: body.contratosiigo || null,
         cargo: body.cargo || null,
         fechainicio: body.fechainicio || null,
+        fecha_retiro: body.fecha_retiro || null,
         salario: body.salario ? Number(body.salario) : null,
         // Coercion estricta a boolean (mismo patron que el POST).
         aplicaplano: !!body.aplicaplano,

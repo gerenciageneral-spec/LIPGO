@@ -103,6 +103,7 @@ export interface UserPermissions {
   // Gestión de Personal
   headcount: boolean
   nominapersonal: boolean
+  liquidaciones: boolean
   registro_asistencia: boolean
   tabla_asistencia: boolean
   asignacion_horas_extra: boolean
@@ -303,6 +304,7 @@ export const MODULE_PERMISSION_MAP: Record<string, keyof UserPermissions> = {
   Bitácora: "bitacora",
   "Head Count": "headcount",
   Nominapersonal: "nominapersonal",
+  Liquidaciones: "liquidaciones",
   "Registro de asistencia": "registro_asistencia",
   "Tabla Asistencia": "tabla_asistencia",
   "Asignación horas extra": "asignacion_horas_extra",

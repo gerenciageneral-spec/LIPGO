@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase-server"
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
+import { procesarNovedadRetiro } from "@/lib/retiro-actions"
 
 export async function GET(request: NextRequest) {
   try {
@@ -108,6 +109,20 @@ export async function POST(request: NextRequest) {
     if (updateErrors.length > 0) {
       console.error("[v0] Error updating records:", updateErrors)
       return NextResponse.json({ error: "Error al actualizar los registros" }, { status: 500 })
+    }
+
+    // Efecto automático: cada registro marcado como "Retiro" da de baja al
+    // trabajador (Inactivo + fecha de retiro + fuera del plano). La fecha de
+    // retiro es la de la novedad (record.fecha) o, si no viene, hoy (Colombia).
+    for (const record of records) {
+      if (String(record.asistencia || "").toLowerCase().includes("retiro")) {
+        await procesarNovedadRetiro({
+          identificacion: record.identificacion,
+          fecha: record.fecha || todayDate,
+          asistencia: record.asistencia,
+          idempresa: empresaId,
+        })
+      }
     }
 
     // If dateRange is provided, create future records

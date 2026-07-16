@@ -398,6 +398,10 @@ create or replace view public.archivoplano as
             to_char((p.fecha)::timestamp with time zone, 'DD/MM/YYYY'::text) AS fecha_evento
            FROM (pagonomina p
              LEFT JOIN headcount h ON ((h.nombre = p.persona)))
+          -- Excluir del archivo plano a los trabajadores RETIRADOS (estado
+          -- Inactivo). null/'activo' permanecen (no rompe a los legados). Su
+          -- nómina pendiente se paga desde el submódulo Liquidaciones.
+          WHERE (lower(COALESCE(h.estado, 'activo'::text)) <> 'inactivo'::text)
         ), agrupado_quincena AS (
          SELECT base_datos.mes_txt,
             base_datos.mes_num,

@@ -318,6 +318,7 @@ export const groups: Group[] = [
         title: "Nómina",
         modules: [
           { name: "Nominapersonal", icon: Banknote, label: "Nómina de Personal" },
+          { name: "Liquidaciones", icon: Receipt, label: "Liquidaciones" },
           { name: "Proyecciones", icon: Calculator, label: "Proyecciones de Nómina" },
         ],
       },

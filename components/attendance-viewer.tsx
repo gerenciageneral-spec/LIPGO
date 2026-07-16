@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Loader2, Search, Pencil, LayoutDashboard, CalendarDays, TableProperties, MapPin } from "lucide-react"
 import { useAuth } from "@/components/auth-provider"
 import { createClient } from "@/lib/supabase-client"
+import { procesarNovedadRetiro } from "@/lib/retiro-actions"
 import { AttendanceDailyDashboard } from "@/components/attendance-daily-dashboard"
 import { AttendanceHistoricalDashboard } from "@/components/attendance-historical-dashboard"
 import VisorUbicaciones from "@/components/visor-ubicaciones"
@@ -230,9 +231,23 @@ export function AttendanceViewer() {
       setRecords(updatedRecords)
       applyFilters(updatedRecords)
 
+      // Efecto automático: si la novedad es "Retiro", dar de baja al trabajador
+      // (Inactivo + fecha de retiro + fuera del plano). No bloquea el guardado.
+      let bajaAplicada = false
+      if (String(editingNotice || "").toLowerCase().includes("retiro")) {
+        const r = await procesarNovedadRetiro({
+          identificacion: editingRecord.identificacion,
+          fecha: editingRecord.fecha,
+          asistencia: editingNotice,
+        })
+        bajaAplicada = !!r.aplicado
+      }
+
       toast({
         title: "Éxito",
-        description: "Novedad actualizada correctamente",
+        description: bajaAplicada
+          ? "Retiro registrado: trabajador dado de baja (Inactivo) y retirado del plano."
+          : "Novedad actualizada correctamente",
       })
 
       setEditDialogOpen(false)
