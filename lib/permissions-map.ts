@@ -184,6 +184,7 @@ export interface UserPermissions {
   sst_investigaciones: boolean
   sst_medevac: boolean
   sst_perfil: boolean
+  examenes_medicos: boolean
   // Certificaciones LIP · ISO 9001 (Centro de Evidencia usa `evidenciasido`)
   iso_repositorio: boolean
   // ---------------------------------------------------------------------------
@@ -266,10 +267,11 @@ export const MODULE_PERMISSION_MAP: Record<string, keyof UserPermissions> = {
   "Servicios Adicionales": "solicitudturnos",
   "Aprobar Turnos": "aprobacionturnos",
   "Gestión de Contratos": "gestion_contratos",
-  // Examenes Médicos: ahora es parte de SST → comparte el permiso de la
-  // Autoevaluación 0312 (Matriz de Estándares). Así, quien audita la matriz
-  // puede abrir el soporte de exámenes desde el enlace del numeral 3.1.4.
-  "Examenes Médicos": "sst_autoevaluacion",
+  // Examenes Médicos: parte de SST, con permiso PROPIO (`examenes_medicos`)
+  // para poder otorgarlo por separado en Gestión de Usuarios. Se puebla desde
+  // sst_autoevaluacion (ver scripts/add_examenes_medicos_permission.sql) para
+  // no quitarle el acceso a quien ya audita la matriz 0312.
+  "Examenes Médicos": "examenes_medicos",
   "Gestión de Dotación EPP": "dotacion_epp",
   "Gestión de Capacitaciones": "capacitaciones",
   "Asistencia a Capacitaciones": "asistencia_capacitaciones",
