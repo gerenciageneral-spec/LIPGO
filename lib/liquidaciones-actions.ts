@@ -99,17 +99,28 @@ function defaultPagadoHasta(fechaRetiro: string): string {
 // Suma el devengado REAL (total_liquidado_dia) y cuenta los días con registro
 // dentro de [desde, hasta]. Se usan los datos reales de LIPgo; el único relleno
 // (los 4 primeros días de enero que no existen en el sistema) se maneja aparte.
-function sumaPeriodo(rows: any[], desde: string, hasta: string): { dev: number; dias: number } {
+//   - `extra` = parte del devengado que el CST art. 192 EXCLUYE de la base de
+//     vacaciones: trabajo suplementario/horas extras (hed+hedf+hen, lo que entra
+//     al total del día) + trabajo en descanso obligatorio (dominical/festivo:
+//     pago_domingo + recargodominical). Así la base de vacaciones = dev − extra.
+function sumaPeriodo(rows: any[], desde: string, hasta: string): { dev: number; dias: number; extra: number } {
   let dev = 0
   let dias = 0
+  let extra = 0
   for (const r of rows) {
     const f = String(r.fecha)
     if (f >= desde && f <= hasta) {
       dev += Number(r.total_liquidado_dia || 0)
+      extra +=
+        Number(r.hed || 0) +
+        Number(r.hedf || 0) +
+        Number(r.hen || 0) +
+        Number(r.pago_domingo || 0) +
+        Number(r.recargodominical || 0)
       dias += 1
     }
   }
-  return { dev, dias }
+  return { dev, dias, extra }
 }
 
 export async function getLiquidaciones(
@@ -326,10 +337,14 @@ export async function getLiquidaciones(
         const diasDisfrutados = rows.filter((r: any) =>
           /vacaciones\s+disfrutad/i.test(String(r.novedad_reportada || "")),
         ).length
-        // Los días pendientes se pagan sobre el DEVENGADO (promedio diario real),
-        // NO sobre el salario mínimo. (El devengado excluye el auxilio de transporte.)
-        const promedioDiaDevengado = diasCes > 0 ? (ce.dev + fillMonto) / diasCes : salarioDia
-        vacaciones = Math.max(0, vacCausadasDias - diasDisfrutados) * promedioDiaDevengado
+        // Los días pendientes se pagan sobre el DEVENGADO promedio, pero como manda
+        // el CST art. 192: la base es el SALARIO ORDINARIO, que EXCLUYE el trabajo
+        // suplementario (horas extras) y el de descanso obligatorio (dominical/
+        // festivo) — y también el auxilio de transporte (que no está en el devengado).
+        // No es sobre el salario mínimo: es el promedio diario ordinario real.
+        const devOrdinario = ce.dev - ce.extra + fillMonto
+        const promedioDiaOrdinario = diasCes > 0 ? devOrdinario / diasCes : salarioDia
+        vacaciones = Math.max(0, vacCausadasDias - diasDisfrutados) * promedioDiaOrdinario
       }
       const prestaciones = prima + cesantias + intereses + vacaciones
 

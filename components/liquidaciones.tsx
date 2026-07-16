@@ -26,6 +26,7 @@ import {
   FileText,
   Save,
   SlidersHorizontal,
+  Scale,
 } from "lucide-react"
 import * as XLSX from "xlsx"
 import {
@@ -57,6 +58,7 @@ export default function Liquidaciones() {
   const [loading, setLoading] = useState(true)
   const [savingParams, setSavingParams] = useState(false)
   const [showParams, setShowParams] = useState(false)
+  const [showNomenclatura, setShowNomenclatura] = useState(false)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -223,6 +225,9 @@ export default function Liquidaciones() {
             <UserMinus className="h-5 w-5 text-primary" /> Liquidaciones de personal retirado
           </CardTitle>
           <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => setShowNomenclatura((s) => !s)}>
+              <Scale className="mr-2 h-4 w-4" /> Nomenclatura legal
+            </Button>
             <Button size="sm" variant="outline" onClick={() => setShowParams((s) => !s)}>
               <SlidersHorizontal className="mr-2 h-4 w-4" /> Parámetros de ley
             </Button>
@@ -269,9 +274,91 @@ export default function Liquidaciones() {
                 </div>
               </div>
               <p className="mt-2 text-xs text-muted-foreground">
-                Base = devengado (salario + extras + recargos) + auxilio de transporte; vacaciones excluye el auxilio.
-                Causación: cesantías/vacaciones desde 1-ene del año del retiro; prima desde 1-ene o 1-jul según el semestre.
+                Base = devengado (salario + extras + recargos) + auxilio de transporte. <strong>Vacaciones</strong> (CST
+                art. 192) va sobre el <strong>salario ordinario</strong>: excluye horas extras, trabajo dominical/festivo
+                y el auxilio. Causación: cesantías/vacaciones desde 1-ene del año del retiro; prima desde 1-ene o 1-jul
+                según el semestre. Ver <strong>Nomenclatura legal</strong> para el detalle.
               </p>
+            </div>
+          )}
+
+          {/* Hoja de NOMENCLATURA LEGAL — base normativa de cada concepto (siempre prima la ley) */}
+          {showNomenclatura && (
+            <div className="rounded-lg border border-border bg-muted/40 p-4">
+              <div className="mb-1 flex items-center gap-2 text-sm font-semibold">
+                <Scale className="h-4 w-4 text-primary" /> Nomenclatura legal de la liquidación
+              </div>
+              <p className="mb-3 text-xs text-muted-foreground">
+                Fundamento normativo de cada concepto (Código Sustantivo del Trabajo — Ministerio de Trabajo de
+                Colombia). <strong>Siempre prima la ley.</strong>
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[720px] border-collapse text-xs">
+                  <thead>
+                    <tr className="border-b border-border text-left text-muted-foreground">
+                      <th className="px-2 py-1.5 font-medium">Concepto</th>
+                      <th className="px-2 py-1.5 font-medium">Norma</th>
+                      <th className="px-2 py-1.5 font-medium">Base de cálculo</th>
+                      <th className="px-2 py-1.5 font-medium">Fórmula / criterio</th>
+                    </tr>
+                  </thead>
+                  <tbody className="align-top">
+                    {[
+                      {
+                        c: "Nómina pendiente",
+                        n: "Pago quincenal (1–15 / 16–fin)",
+                        b: "Devengado real de LIPgo (tarifa por tonelada / turno)",
+                        f: "Novedades posteriores a “Pagado hasta” y hasta la fecha de retiro (la quincena en curso).",
+                      },
+                      {
+                        c: "Prima de servicios",
+                        n: "CST art. 306 · Ley 1788 de 2016",
+                        b: "Salario + auxilio de transporte",
+                        f: "1 mes de salario por año (15 días/semestre), proporcional. 1er semestre pagado al 30-jun → retiro en junio descuenta los días pagados de más.",
+                      },
+                      {
+                        c: "Cesantías",
+                        n: "CST art. 249 · Ley 50 de 1990",
+                        b: "Salario + extras + recargos + auxilio de transporte",
+                        f: "1 mes de salario por año, proporcional (devengado × 8.33%). Se causan desde el 1-ene del año del retiro.",
+                      },
+                      {
+                        c: "Intereses a las cesantías",
+                        n: "Ley 52 de 1975",
+                        b: "Valor de las cesantías del período",
+                        f: "12% anual sobre las cesantías, proporcional al tiempo (× días/360).",
+                      },
+                      {
+                        c: "Vacaciones",
+                        n: "CST art. 186 · 189 · 192",
+                        b: "Salario ORDINARIO (excluye horas extras, trabajo dominical/festivo y auxilio de transporte)",
+                        f: "15 días hábiles por año, compensables en dinero al retiro, proporcional a los días laborados de TODO el vínculo, menos los días ya disfrutados.",
+                      },
+                    ].map((r) => (
+                      <tr key={r.c} className="border-b border-border/50">
+                        <td className="px-2 py-2 font-medium text-foreground">{r.c}</td>
+                        <td className="px-2 py-2 text-muted-foreground">{r.n}</td>
+                        <td className="px-2 py-2 text-muted-foreground">{r.b}</td>
+                        <td className="px-2 py-2 text-muted-foreground">{r.f}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <ul className="mt-3 list-disc space-y-1 pl-5 text-xs text-muted-foreground">
+                <li>
+                  <strong>Incapacidades EPS/ARL</strong> y <strong>descansos/festivos</strong> se reconocen como 1 día de
+                  salario (ya vienen en el devengado de LIPgo).
+                </li>
+                <li>
+                  Los <strong>4 primeros días de enero</strong> (que no existen en el sistema) se rellenan a 1 día de
+                  salario básico, solo para quienes ingresaron en 2025.
+                </li>
+                <li>
+                  Auxilio de transporte y SMLV vigentes por año (tabla <em>parametros_legales_anio</em>); porcentajes de
+                  prestaciones editables en “Parámetros de ley”.
+                </li>
+              </ul>
             </div>
           )}
 
