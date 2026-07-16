@@ -326,11 +326,26 @@ export function Matriz60Estandares({ selectedEmpresaId: propEmpresaId }: Props) 
         <div className="relative lg:max-w-xs">
           <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
-            className="pl-9"
+            className="pl-9 pr-8"
             placeholder="Buscar numeral, estándar o ítem"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            type="search"
+            name="matriz-buscar-estandar"
+            autoComplete="off"
+            autoCorrect="off"
+            spellCheck={false}
           />
+          {search && (
+            <button
+              type="button"
+              aria-label="Limpiar búsqueda"
+              onClick={() => setSearch("")}
+              className="absolute right-2.5 top-2 text-muted-foreground hover:text-foreground"
+            >
+              ×
+            </button>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           <ChipBtn label="Todos" active={chip === "todos"} onClick={() => setChip("todos")} />
