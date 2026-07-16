@@ -326,7 +326,10 @@ export async function getLiquidaciones(
         const diasDisfrutados = rows.filter((r: any) =>
           /vacaciones\s+disfrutad/i.test(String(r.novedad_reportada || "")),
         ).length
-        vacaciones = Math.max(0, vacCausadasDias - diasDisfrutados) * salarioDia
+        // Los días pendientes se pagan sobre el DEVENGADO (promedio diario real),
+        // NO sobre el salario mínimo. (El devengado excluye el auxilio de transporte.)
+        const promedioDiaDevengado = diasCes > 0 ? (ce.dev + fillMonto) / diasCes : salarioDia
+        vacaciones = Math.max(0, vacCausadasDias - diasDisfrutados) * promedioDiaDevengado
       }
       const prestaciones = prima + cesantias + intereses + vacaciones
 
