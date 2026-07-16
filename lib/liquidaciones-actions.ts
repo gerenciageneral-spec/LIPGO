@@ -96,8 +96,9 @@ function defaultPagadoHasta(fechaRetiro: string): string {
   return `${prev.getUTCFullYear()}-${mm}-${dd}`
 }
 
-// Suma el devengado (total_liquidado_dia) y cuenta los días con pago dentro del
-// rango [desde, hasta] (fechas 'YYYY-MM-DD', comparación lexicográfica).
+// Suma el devengado REAL (total_liquidado_dia) y cuenta los días con registro
+// dentro de [desde, hasta]. Se usan los datos reales de LIPgo; el único relleno
+// (los 4 primeros días de enero que no existen en el sistema) se maneja aparte.
 function sumaPeriodo(rows: any[], desde: string, hasta: string): { dev: number; dias: number } {
   let dev = 0
   let dias = 0
@@ -121,7 +122,7 @@ export async function getLiquidaciones(
     // 1) Retirados (Inactivo) del cliente seleccionado.
     const { data: retirados, error: rErr } = await admin
       .from("headcount")
-      .select("identificacion, nombre, fecha_retiro, idempresa, contratosiigo")
+      .select("identificacion, nombre, fecha_retiro, idempresa, contratosiigo, salario, fechainicio")
       .eq("idempresa", idempresa)
       .ilike("estado", "inactivo")
     if (rErr) return { success: false, data: [], message: rErr.message }
@@ -129,7 +130,14 @@ export async function getLiquidaciones(
 
     const infoPorNombre = new Map<
       string,
-      { identificacion: string; fecha_retiro: string | null; idempresa: number | null; contratosiigo: string }
+      {
+        identificacion: string
+        fecha_retiro: string | null
+        idempresa: number | null
+        contratosiigo: string
+        salario: number
+        fechainicio: string | null
+      }
     >()
     for (const r of retirados) {
       const nombre = String(r.nombre || "").trim()
@@ -139,6 +147,8 @@ export async function getLiquidaciones(
         fecha_retiro: r.fecha_retiro ?? null,
         idempresa: r.idempresa ?? null,
         contratosiigo: String(r.contratosiigo || "").trim(),
+        salario: Number(r.salario) || 0,
+        fechainicio: r.fechainicio ?? null,
       })
     }
 
@@ -152,8 +162,12 @@ export async function getLiquidaciones(
     // 3) Parámetros de prestaciones + auxilio de transporte por año.
     const pp = await leerParametrosPrestaciones(admin)
     const auxPorAnio = new Map<number, number>()
-    const { data: paramsAnio } = await admin.from("parametros_legales_anio").select("anio, auxilio_transporte")
-    for (const a of paramsAnio || []) auxPorAnio.set(Number(a.anio), Number(a.auxilio_transporte || 0))
+    const smlvPorAnio = new Map<number, number>()
+    const { data: paramsAnio } = await admin.from("parametros_legales_anio").select("anio, auxilio_transporte, smlv")
+    for (const a of paramsAnio || []) {
+      auxPorAnio.set(Number(a.anio), Number(a.auxilio_transporte || 0))
+      smlvPorAnio.set(Number(a.anio), Number(a.smlv || 0))
+    }
 
     // 4) Estado/soporte/pagado_hasta guardado.
     const estadoPorCedula = new Map<
@@ -259,18 +273,50 @@ export async function getLiquidaciones(
               ? `${anio}-06-15`
               : `${anio}-01-01`
         const auxMensual = auxPorAnio.get(anio) ?? 0
+        const salarioDia = (info.salario || smlvPorAnio.get(anio) || 0) / 30
 
         const pr = sumaPeriodo(rows, primaDesde, info.fecha_retiro)
         const ce = sumaPeriodo(rows, cesDesde, info.fecha_retiro)
+
+        // Relleno SOLO de los primeros días de enero que no existen en el sistema
+        // (hasta 4), y únicamente si el trabajador venía del año anterior (tiene
+        // registros antes del 1-ene). Cada día = 1 día de salario básico.
+        let fillDias = 0
+        // "Venía del año anterior": tiene registros antes del 1-ene, o su fecha de
+        // inicio de contrato es anterior al año del retiro.
+        const veniaAnioAnterior =
+          rows.some((r: any) => String(r.fecha) < cesDesde) ||
+          (!!info.fechainicio && String(info.fechainicio) < cesDesde)
+        if (veniaAnioAnterior) {
+          const primerDelAnio = rows
+            .map((r: any) => String(r.fecha))
+            .filter((fx: string) => fx >= cesDesde)
+            .sort()[0]
+          if (primerDelAnio) fillDias = Math.max(0, Math.min(Number(primerDelAnio.slice(8, 10)) - 1, 4))
+        }
+        const fillMonto = fillDias * salarioDia
+        const diasCes = ce.dias + fillDias
+
         const auxPropPrima = (auxMensual / 30) * pr.dias
-        const auxPropCes = (auxMensual / 30) * ce.dias
+        const auxPropCes = (auxMensual / 30) * diasCes
         const basePrima = pr.dev + (pp.incluyeAux ? auxPropPrima : 0)
-        const baseCes = ce.dev + (pp.incluyeAux ? auxPropCes : 0)
+        const baseCes = ce.dev + fillMonto + (pp.incluyeAux ? auxPropCes : 0)
 
         prima = basePrima * (pp.pctPrima / 100)
         cesantias = baseCes * (pp.pctCesantias / 100)
-        intereses = cesantias * (pp.pctInteresesCesantias / 100) * (ce.dias / 360)
-        vacaciones = ce.dev * (pp.pctVacaciones / 100) // vacaciones SIN auxilio
+        intereses = cesantias * (pp.pctInteresesCesantias / 100) * (diasCes / 360)
+
+        // Vacaciones: causadas (% sobre devengado, sin auxilio) MENOS las ya
+        // DISFRUTADAS ("31- Vacaciones disfrutadas" ya pagadas). Solo lo pendiente.
+        const vacCausadas = (ce.dev + fillMonto) * (pp.pctVacaciones / 100)
+        const diasDisfrutados = rows.filter(
+          (r: any) =>
+            String(r.fecha) >= cesDesde &&
+            String(r.fecha) <= (info.fecha_retiro as string) &&
+            /vacaciones\s+disfrutad/i.test(String(r.novedad_reportada || "")),
+        ).length
+        const vacDisfrutadas = diasDisfrutados * salarioDia
+        vacaciones = Math.max(0, vacCausadas - vacDisfrutadas)
       }
       const prestaciones = prima + cesantias + intereses + vacaciones
 
