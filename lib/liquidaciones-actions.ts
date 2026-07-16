@@ -55,14 +55,17 @@ export async function getLiquidaciones(
     // 1) Retirados (estado Inactivo) de la empresa/cliente seleccionado.
     const { data: retirados, error: rErr } = await admin
       .from("headcount")
-      .select("identificacion, nombre, fecha_retiro, idempresa")
+      .select("identificacion, nombre, fecha_retiro, idempresa, contratosiigo")
       .eq("idempresa", idempresa)
       .ilike("estado", "inactivo")
     if (rErr) return { success: false, data: [], message: rErr.message }
     if (!retirados || retirados.length === 0) return { success: true, data: [] }
 
     // pagonomina cruza por NOMBRE; indexamos por nombre.
-    const infoPorNombre = new Map<string, { identificacion: string; fecha_retiro: string | null; idempresa: number | null }>()
+    const infoPorNombre = new Map<
+      string,
+      { identificacion: string; fecha_retiro: string | null; idempresa: number | null; contratosiigo: string }
+    >()
     for (const r of retirados) {
       const nombre = String(r.nombre || "").trim()
       if (!nombre) continue
@@ -70,11 +73,12 @@ export async function getLiquidaciones(
         identificacion: String(r.identificacion || "").trim(),
         fecha_retiro: r.fecha_retiro ?? null,
         idempresa: r.idempresa ?? null,
+        contratosiigo: String(r.contratosiigo || "").trim(),
       })
     }
 
-    // 2) Solo quienes TIENEN contrato (tabla contratos, colaborador_id=cédula,
-    //    estado no rechazado). Los sin contrato no se liquidan.
+    // 2) Solo quienes TIENEN contrato: fila en la tabla `contratos` (colaborador_id
+    //    = cédula, estado != rechazado) O número de contrato SIIGO en Head Count.
     const cedulas = Array.from(infoPorNombre.values()).map((v) => v.identificacion).filter(Boolean)
     if (cedulas.length === 0) return { success: true, data: [] }
     const { data: contratos } = await admin
@@ -86,7 +90,8 @@ export async function getLiquidaciones(
       if (String(c.estado || "").toLowerCase() !== "rechazado") conContrato.add(String(c.colaborador_id || "").trim())
     }
     for (const [nombre, info] of Array.from(infoPorNombre.entries())) {
-      if (!conContrato.has(info.identificacion)) infoPorNombre.delete(nombre)
+      const tieneContrato = conContrato.has(info.identificacion) || info.contratosiigo !== ""
+      if (!tieneContrato) infoPorNombre.delete(nombre)
     }
     const nombres = Array.from(infoPorNombre.keys())
     if (nombres.length === 0) return { success: true, data: [] }
