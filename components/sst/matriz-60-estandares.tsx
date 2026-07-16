@@ -27,7 +27,7 @@ import {
   VALORACION_LABEL,
   valoracionColor,
 } from "@/components/sst/sst-utils"
-import { Loader2, FileWarning, Search, ChevronDown, ChevronRight, CheckCircle2, PenLine, Lock, Stethoscope, KeyRound } from "lucide-react"
+import { Loader2, FileWarning, Search, ChevronDown, ChevronRight, CheckCircle2, PenLine, Lock, Stethoscope } from "lucide-react"
 import type { PointerEvent as ReactPointerEvent } from "react"
 
 interface Props {
@@ -641,26 +641,16 @@ function FilaItem({
 function EnlaceExamenesMedicos() {
   const { toast } = useToast()
   const navegar = useContext(NavContext)
-  const [abierto, setAbierto] = useState(false) // campo de clave desplegado
-  const [clave, setClave] = useState("")
 
-  const ir = () => {
-    if (clave.trim() !== "1104") {
-      toast({
-        title: "Clave incorrecta",
-        description: "Ingresa la clave de acceso para revisar los exámenes médicos.",
-      })
+  // Un SOLO botón: click → pide clave con prompt() nativo (síncrono, sin estado ni
+  // re-render que pueda fallar) → navega. Lo más simple y robusto posible.
+  const abrir = () => {
+    const c = window.prompt("Clave de acceso a «Exámenes Médicos»:")
+    if (c === null) return // canceló
+    if (c.trim() !== "1104") {
+      toast({ title: "Clave incorrecta", description: "No se pudo abrir Exámenes Médicos." })
       return
     }
-    setClave("")
-    setAbierto(false)
-    // DIAGNÓSTICO temporal: el aviso dice qué vía de navegación se usó.
-    toast({
-      title: "Abriendo Exámenes Médicos…",
-      description: navegar ? "Clave OK · callback directo" : "Clave OK · callback NO llegó, uso evento",
-    })
-    // Navega al submódulo. 1) Directo por el callback del padre (síncrono, siempre
-    // vigente). 2) Respaldo por evento global (por si el prop no llegara).
     if (navegar) navegar("Examenes Médicos")
     try {
       window.dispatchEvent(new CustomEvent("lipgo:navigate-module", { detail: "Examenes Médicos" }))
@@ -670,54 +660,15 @@ function EnlaceExamenesMedicos() {
   }
 
   return (
-    <div className="mt-2 rounded-md border border-dashed p-2" style={{ borderColor: SST_TOKENS.navy }}>
-      {!abierto ? (
-        <button
-          type="button"
-          onClick={() => setAbierto(true)}
-          className="inline-flex items-center gap-1.5 text-xs font-semibold hover:underline"
-          style={{ color: SST_TOKENS.navy }}
-        >
-          <Stethoscope className="h-3.5 w-3.5" /> Ver soporte en «Exámenes Médicos»
-        </button>
-      ) : (
-        <div className="flex items-center gap-2">
-          <KeyRound className="h-3.5 w-3.5 shrink-0" style={{ color: SST_TOKENS.navy }} />
-          <Input
-            type="password"
-            inputMode="numeric"
-            autoFocus
-            value={clave}
-            onChange={(e) => setClave(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") ir()
-              if (e.key === "Escape") {
-                setAbierto(false)
-                setClave("")
-              }
-            }}
-            placeholder="Clave"
-            className="h-8 w-24"
-          />
-          <Button size="sm" className="h-8" onClick={ir}>
-            Entrar
-          </Button>
-          <button
-            type="button"
-            onClick={() => {
-              setAbierto(false)
-              setClave("")
-            }}
-            className="text-[11px] text-muted-foreground underline"
-          >
-            Cancelar
-          </button>
-        </div>
-      )}
-      <p className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground">
-        <Lock className="h-2.5 w-2.5" /> Acceso protegido: requiere permiso y clave.
-      </p>
-    </div>
+    <button
+      type="button"
+      onClick={abrir}
+      className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-dashed px-2 py-1 text-xs font-semibold hover:bg-muted"
+      style={{ color: SST_TOKENS.navy, borderColor: SST_TOKENS.navy }}
+    >
+      <Stethoscope className="h-3.5 w-3.5" /> Ver soporte en «Exámenes Médicos»
+      <Lock className="h-2.5 w-2.5" />
+    </button>
   )
 }
 
