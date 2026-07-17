@@ -62,12 +62,22 @@ export interface AuditoriaEstandarRow {
   soporte_url: string | null
 }
 
+export interface MedicionIndicador {
+  tipo: string
+  valor: number | null
+  meta: number | null
+  nombre: string | null
+}
+
 export interface MatrizData {
   autoevaluacion: Autoevaluacion | null
   items: EstandarItem[]
   respuestas: Respuesta[]
   porCiclo: CicloResumen[]
   aniosDisponibles: number[]
+  // Indicadores de medición (numerales 3.3.1-3.3.6) cableados: si el indicador
+  // tiene datos del año, el numeral se auto-marca «cumple» y se muestra el valor.
+  medicion?: Record<string, MedicionIndicador>
 }
 
 export interface AuditoriaData {

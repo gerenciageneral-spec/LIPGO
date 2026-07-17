@@ -108,12 +108,61 @@ export async function getMatrizEstandares(
     porCiclo = await getPorCiclo(supabase, autoevaluacion.id)
   }
 
+  // CABLEADO de los numerales de MEDICIÓN (3.3.1-3.3.6) con sst_indicadores:
+  // si el indicador correspondiente tiene datos del año de la autoevaluación,
+  // el estándar se AUTO-MARCA «cumple» (se está midiendo) y se expone el valor.
+  // El override es EN VIVO (no se persiste): refleja el estado real de medición.
+  const medicion: Record<string, { tipo: string; valor: number | null; meta: number | null; nombre: string | null }> = {}
+  if (autoevaluacion?.anio) {
+    const NUMERAL_TIPO: Record<string, string> = {
+      "3.3.1": "severidad_at",
+      "3.3.2": "frecuencia_at",
+      "3.3.3": "mortalidad_at",
+      "3.3.4": "prevalencia_el",
+      "3.3.5": "incidencia_el",
+      "3.3.6": "ausentismo",
+    }
+    const anioStr = String(autoevaluacion.anio)
+    const { data: inds } = await supabase
+      .from("sst_indicadores")
+      .select("tipo, valor, meta, periodo, observacion")
+      .eq("idempresa", empresaId)
+      .like("periodo", `${anioStr}%`)
+    // Por tipo: preferir el consolidado anual (periodo == año), si no, cualquiera.
+    const byTipo = new Map<string, any>()
+    for (const r of inds ?? []) {
+      if (r.periodo === anioStr) byTipo.set(r.tipo, r)
+      else if (!byTipo.has(r.tipo)) byTipo.set(r.tipo, r)
+    }
+    const itemByNumeral = new Map((items ?? []).map((it: any) => [it.numeral, it]))
+    const respByItem = new Map(respuestas.map((r) => [r.item_id, r]))
+    for (const [num, tipo] of Object.entries(NUMERAL_TIPO)) {
+      const ind = byTipo.get(tipo)
+      const it: any = itemByNumeral.get(num)
+      if (!it || !ind || ind.valor == null) continue
+      medicion[num] = { tipo, valor: ind.valor, meta: ind.meta, nombre: ind.observacion }
+      // Auto-cumple en vivo.
+      const existing = respByItem.get(it.id)
+      if (existing) existing.cumple = "cumple"
+      else
+        respuestas.push({
+          autoevaluacion_id: autoevaluacion.id,
+          item_id: it.id,
+          cumple: "cumple",
+          puntaje_obtenido: it.peso,
+          observacion: "Auto: indicador medido",
+          soporte_url: null,
+        } as Respuesta)
+    }
+  }
+
   return {
     autoevaluacion,
     items: (items ?? []) as EstandarItem[],
     respuestas,
     porCiclo,
     aniosDisponibles,
+    medicion,
   }
 }
 

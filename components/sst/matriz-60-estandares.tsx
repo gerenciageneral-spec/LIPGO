@@ -27,7 +27,7 @@ import {
   VALORACION_LABEL,
   valoracionColor,
 } from "@/components/sst/sst-utils"
-import { Loader2, FileWarning, Search, ChevronDown, ChevronRight, CheckCircle2, PenLine, Lock, Stethoscope } from "lucide-react"
+import { Loader2, FileWarning, Search, ChevronDown, ChevronRight, CheckCircle2, PenLine, Lock, Stethoscope, Activity } from "lucide-react"
 import type { PointerEvent as ReactPointerEvent } from "react"
 
 interface Props {
@@ -49,6 +49,11 @@ const EMPTY: MatrizData = {
 // Navegación a un módulo (para el enlace del numeral 3.1.4 → «Examenes Médicos»),
 // sin prop-drilling por GrupoFilas/FilaItem.
 const NavContext = createContext<((moduleName: string) => void) | undefined>(undefined)
+
+// Indicadores de medición (numerales 3.3.1-3.3.6) para mostrar el valor vs meta
+// en la celda de evidencia. Sin prop-drilling.
+type MedicionMap = Record<string, { tipo: string; valor: number | null; meta: number | null; nombre: string | null }>
+const MedicionContext = createContext<MedicionMap | undefined>(undefined)
 
 export function Matriz60Estandares({ selectedEmpresaId: propEmpresaId, onNavigate }: Props) {
   const { selectedEmpresaId: ctxEmpresaId, selectedEmpresaNombre } = useAuth()
@@ -267,6 +272,7 @@ export function Matriz60Estandares({ selectedEmpresaId: propEmpresaId, onNavigat
 
   return (
     <NavContext.Provider value={onNavigate}>
+    <MedicionContext.Provider value={data.medicion}>
     <div className="space-y-5">
       <Header nombre={selectedEmpresaNombre} sede={autoevaluacion.sede} anio={autoevaluacion.anio} />
 
@@ -429,6 +435,7 @@ export function Matriz60Estandares({ selectedEmpresaId: propEmpresaId, onNavigat
         }
       />
     </div>
+    </MedicionContext.Provider>
     </NavContext.Provider>
   )
 }
@@ -526,6 +533,8 @@ function FilaItem({
   savingItem: number | null
   empresaId?: number | null
 }) {
+  // Indicador de medición cableado a este numeral (3.3.1-3.3.6), si lo hay.
+  const med = useContext(MedicionContext)?.[item.numeral]
   return (
     <>
       <tr className="border-b hover:bg-muted/40">
@@ -588,6 +597,24 @@ function FilaItem({
           {/* Numeral 3.1.4 (evaluaciones médicas ocupacionales): enlace protegido
               por clave que abre el soporte de «Examenes Médicos» en un modal. */}
           {item.numeral === "3.1.4" && <EnlaceExamenesMedicos />}
+          {/* Numerales de MEDICIÓN 3.3.1-3.3.6: valor del indicador (auto-cumple). */}
+          {med && (
+            <div
+              className="mt-2 inline-flex flex-wrap items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium"
+              style={{ backgroundColor: SST_TOKENS.light, color: SST_TOKENS.ink }}
+              title={med.nombre ?? undefined}
+            >
+              <Activity className="h-3 w-3" style={{ color: SST_TOKENS.navy }} />
+              Medido: <strong>{med.valor ?? "—"}</strong>
+              {med.meta != null ? ` (meta ${med.meta})` : ""}
+              <span
+                className="ml-1 rounded px-1 text-[10px] text-white"
+                style={{ backgroundColor: SST_TOKENS.ok }}
+              >
+                ✓ auto
+              </span>
+            </div>
+          )}
         </td>
         <td className="px-3 py-2 text-center align-top font-medium">{puntajeOf(item)}</td>
       </tr>

@@ -23,6 +23,8 @@ const TIPOS: [string, string][] = [
   ["prevalencia_el", "Prevalencia EL"],
   ["incidencia_el", "Incidencia EL"],
   ["ausentismo", "Ausentismo por causa médica"],
+  ["investigaciones", "Cumplimiento de investigación de AT/incidentes"],
+  ["rotacion_personal", "Índice de rotación de personal"],
   ["cobertura_epp", "Cobertura de EPP"],
   ["cumplimiento_capacitacion", "Cumplimiento de capacitación"],
   ["ejecucion_plan_anual", "Ejecución plan anual"],
