@@ -7,7 +7,7 @@
 // y análisis. Cualquier módulo (SST, BSC, tiras KPI…) lo alimenta con su data.
 
 import { useEffect, useState } from "react"
-import { X, Activity, TrendingDown, TrendingUp, Minus, Download, Loader2 } from "lucide-react"
+import { X, TrendingDown, TrendingUp, Minus, Download, Loader2 } from "lucide-react"
 import { generarFichaIndicadorPDF } from "@/lib/indicador-pdf-actions"
 import {
   AreaChart,
@@ -67,6 +67,25 @@ export function cumplimientoMeta(valor: number | null, meta: number | null, sent
   return meta === 0 ? 1 : Math.max(0, Math.min(1, valor / meta))
 }
 
+// Color de identidad por ÁREA (barra superior). No sustituye al semáforo —
+// solo ayuda a ubicar de un vistazo a qué área pertenece el indicador.
+const AREA_COLORS: Record<string, string> = {
+  sst: "#38bdf8", // Seguridad y Salud
+  humana: "#a78bfa", // Gestión Humana
+  financ: "#34d399", // Financiera
+  operac: "#22d3ee", // Operación LIP
+  despach: "#22d3ee",
+  inventar: "#fbbf24", // Almacenamiento
+  almacen: "#fbbf24",
+  sig: "#818cf8", // SIG / Calidad
+  pedido: "#f472b6",
+}
+function colorArea(area?: string | null): string {
+  const a = String(area || "").toLowerCase()
+  const k = Object.keys(AREA_COLORS).find((x) => a.includes(x))
+  return k ? AREA_COLORS[k] : "#60a5fa"
+}
+
 export function IndicadorViewer({ datos, onClose }: { datos: IndicadorDatos; onClose: () => void }) {
   useEffect(() => {
     const onEsc = (e: KeyboardEvent) => e.key === "Escape" && onClose()
@@ -105,6 +124,7 @@ export function IndicadorViewer({ datos, onClose }: { datos: IndicadorDatos; onC
   const R = 52
   const C = 2 * Math.PI * R
   const chart = serie.map((p) => ({ mes: p.etiqueta, valor: p.valor }))
+  const areaC = colorArea(ficha.area)
 
   return (
     <div className="indv-overlay" onClick={onClose} role="dialog" aria-modal="true">
@@ -131,6 +151,19 @@ export function IndicadorViewer({ datos, onClose }: { datos: IndicadorDatos; onC
       `}</style>
 
       <div className="indv-panel" onClick={(e) => e.stopPropagation()}>
+        {/* Barra de identidad por área (no es el semáforo) */}
+        <div
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            height: 4,
+            borderTopLeftRadius: 20,
+            borderTopRightRadius: 20,
+            background: `linear-gradient(90deg, ${areaC}, ${areaC}00 70%)`,
+          }}
+        />
         <div className="indv-grid" />
         <button type="button" className="indv-x" onClick={onClose} aria-label="Cerrar">
           <X className="h-5 w-5" />
@@ -142,8 +175,8 @@ export function IndicadorViewer({ datos, onClose }: { datos: IndicadorDatos; onC
             <span className="indv-chip" style={{ background: accent }}>
               {ficha.numeral ? ficha.numeral : ficha.area || "Indicador"}
             </span>
-            <Activity className="h-4 w-4" style={{ color: accent }} />
-            <span className="text-[11px] uppercase tracking-[.2em] text-sky-300/80">
+            <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: areaC, boxShadow: `0 0 8px ${areaC}` }} />
+            <span className="text-[11px] font-medium uppercase tracking-[.22em] text-sky-300/80">
               {ficha.area ? `${ficha.area} · ` : ""}
               {periodo ?? ""}
             </span>
@@ -157,31 +190,42 @@ export function IndicadorViewer({ datos, onClose }: { datos: IndicadorDatos; onC
               Ficha PDF
             </button>
           </div>
-          <h2 className="mt-1 text-2xl font-extrabold tracking-tight">{ficha.nombre}</h2>
+          <h2 className="mt-1.5 text-[26px] font-extrabold leading-tight tracking-tight text-white" style={{ textWrap: "balance" } as any}>
+            {ficha.nombre}
+          </h2>
 
           {/* Gauge + valor */}
           <div className="mt-4 grid items-center gap-4 sm:grid-cols-[auto,1fr]">
-            <div className="relative mx-auto h-32 w-32">
-              <svg viewBox="0 0 120 120" className="indv-ring h-32 w-32 -rotate-90">
-                <circle cx="60" cy="60" r={R} fill="none" stroke="rgba(150,210,255,.15)" strokeWidth="9" />
+            <div className="relative mx-auto h-36 w-36">
+              <svg viewBox="0 0 120 120" className="indv-ring h-36 w-36 -rotate-90">
+                <defs>
+                  <linearGradient id={`indvgauge-${ficha.codigo}`} x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0%" stopColor={accent} stopOpacity={0.55} />
+                    <stop offset="100%" stopColor={accent} stopOpacity={1} />
+                  </linearGradient>
+                </defs>
+                <circle cx="60" cy="60" r={R} fill="none" stroke="rgba(150,210,255,.12)" strokeWidth="8" />
                 <circle
                   cx="60"
                   cy="60"
                   r={R}
                   fill="none"
-                  stroke={accent}
-                  strokeWidth="9"
+                  stroke={`url(#indvgauge-${ficha.codigo})`}
+                  strokeWidth="8"
                   strokeLinecap="round"
                   strokeDasharray={C}
                   strokeDashoffset={C * (1 - cumpl)}
-                  style={{ transition: "stroke-dashoffset 1s cubic-bezier(.16,1,.3,1)" }}
+                  style={{ transition: "stroke-dashoffset 1.1s cubic-bezier(.16,1,.3,1)" }}
                 />
               </svg>
               <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-3xl font-extrabold tabular-nums" style={{ color: accent }}>
+                <span className="text-[34px] font-extrabold leading-none tabular-nums tracking-tight" style={{ color: accent }}>
                   {actual ?? "—"}
                 </span>
-                <span className="text-[10px] text-sky-300/70">{ficha.unidad || ""}</span>
+                <span className="mt-0.5 text-[10px] font-medium uppercase tracking-wider text-sky-300/60">{ficha.unidad || ""}</span>
+                {ficha.meta != null && (
+                  <span className="mt-1 text-[10px] font-semibold text-sky-200/70">{Math.round(cumpl * 100)}% meta</span>
+                )}
               </div>
             </div>
             <div className="space-y-2">
