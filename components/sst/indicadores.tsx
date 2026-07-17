@@ -1,8 +1,7 @@
 "use client"
 
-// Indicadores del SG-SST (Resolución 0312 · Dec. 1072, indicadores mínimos).
-// Tablero por indicador: tarjeta con valor/meta/semáforo/tendencia, ficha
-// técnica (exigencia de la norma), comparativo interanual y análisis.
+// Indicadores del SG-SST (Resolución 0312 · Dec. 1072). Tablero de tarjetas
+// (valor/meta/semáforo/tendencia) que al tocarse abren la VISTA 3D del indicador.
 // Registrar: alta/edición manual (upsert por periodo+tipo). Datos LIP (100).
 
 import { useEffect, useMemo, useState } from "react"
@@ -17,75 +16,12 @@ import { SST_TOKENS } from "@/components/sst/sst-utils"
 import { Row3, Field, Sel } from "@/components/sst/sst-form-ui"
 import { listIndicadores, upsertIndicador } from "@/lib/sst-plan-actions"
 import type { IndicadorRow } from "@/lib/sst-evidencia-types"
-import { TrendingDown, TrendingUp, Minus, ChevronDown, ChevronRight } from "lucide-react"
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ReferenceLine,
-  ResponsiveContainer,
-  CartesianGrid,
-} from "recharts"
+import { FICHAS, MESES, enMeta, type Ficha } from "@/components/sst/indicador-detalle"
+import { IndicadorModal3D } from "@/components/sst/indicador-modal-3d"
+import { TrendingDown, TrendingUp, Minus } from "lucide-react"
+import { LineChart, Line, ReferenceLine, ResponsiveContainer } from "recharts"
 
-// Ficha técnica por indicador (exigencia de la norma). sentido: menor|mayor.
-interface Ficha {
-  tipo: string
-  numeral?: string
-  nombre: string
-  definicion: string
-  formula: string
-  interpretacion: string
-  fuente: string
-  periodicidad: string
-  responsable: string
-  sentido: "menor" | "mayor"
-  clase: "resultado" | "gestion"
-}
-const FICHAS: Ficha[] = [
-  { tipo: "frecuencia_at", numeral: "3.3.2", nombre: "Frecuencia de accidentalidad", clase: "resultado", sentido: "menor",
-    definicion: "Relación entre el número de accidentes de trabajo y el número de trabajadores en el período.",
-    formula: "(N.º de AT / N.º de trabajadores) × 100", interpretacion: "AT por cada 100 trabajadores.",
-    fuente: "Registro de AT / investigaciones (LIPgo)", periodicidad: "Mensual", responsable: "Coordinador SST" },
-  { tipo: "severidad_at", numeral: "3.3.1", nombre: "Severidad de accidentalidad", clase: "resultado", sentido: "menor",
-    definicion: "Días perdidos por AT en relación con el número de trabajadores.",
-    formula: "(N.º de días perdidos por AT / N.º de trabajadores) × 100", interpretacion: "Días perdidos por cada 100 trabajadores.",
-    fuente: "Incapacidades por AT (LIPgo)", periodicidad: "Mensual", responsable: "Coordinador SST" },
-  { tipo: "mortalidad_at", numeral: "3.3.3", nombre: "Mortalidad por AT/EL", clase: "resultado", sentido: "menor",
-    definicion: "Proporción de accidentes de trabajo mortales frente al total de AT.",
-    formula: "(N.º de AT mortales / N.º total de AT) × 100", interpretacion: "% de AT que fueron mortales.",
-    fuente: "Registro de AT (LIPgo)", periodicidad: "Anual", responsable: "Coordinador SST" },
-  { tipo: "prevalencia_el", numeral: "3.3.4", nombre: "Prevalencia de enfermedad laboral", clase: "resultado", sentido: "menor",
-    definicion: "Número de casos de EL (nuevos y antiguos) en relación con los trabajadores.",
-    formula: "(N.º de casos EL / N.º de trabajadores) × 100.000", interpretacion: "Casos de EL por cada 100.000 trabajadores.",
-    fuente: "Diagnóstico EL / EPS-ARL", periodicidad: "Anual", responsable: "Coordinador SST" },
-  { tipo: "incidencia_el", numeral: "3.3.5", nombre: "Incidencia de enfermedad laboral", clase: "resultado", sentido: "menor",
-    definicion: "Número de casos NUEVOS de EL en relación con los trabajadores.",
-    formula: "(N.º de casos nuevos EL / N.º de trabajadores) × 100.000", interpretacion: "Casos nuevos de EL por cada 100.000 trabajadores.",
-    fuente: "Diagnóstico EL / EPS-ARL", periodicidad: "Anual", responsable: "Coordinador SST" },
-  { tipo: "ausentismo", numeral: "3.3.6", nombre: "Ausentismo por causa médica", clase: "resultado", sentido: "menor",
-    definicion: "Días de ausencia por causa médica frente a los días de trabajo programados.",
-    formula: "(N.º de días de ausencia médica / N.º de días programados) × 100", interpretacion: "% de tiempo perdido por causa médica.",
-    fuente: "Control diario / incapacidades (LIPgo)", periodicidad: "Mensual", responsable: "Coordinador SST" },
-  { tipo: "investigaciones", nombre: "Cumplimiento de investigación de AT/incidentes", clase: "gestion", sentido: "mayor",
-    definicion: "Investigaciones de AT/incidentes realizadas frente a las requeridas.",
-    formula: "(Investigaciones realizadas / requeridas) × 100", interpretacion: "% de eventos investigados.",
-    fuente: "Investigaciones (LIPgo)", periodicidad: "Mensual", responsable: "Coordinador SST" },
-  { tipo: "rotacion_personal", nombre: "Índice de rotación de personal", clase: "gestion", sentido: "menor",
-    definicion: "Retiros de personal frente al promedio de empleados.",
-    formula: "(Retiros / promedio de empleados) × 100", interpretacion: "% de rotación del personal.",
-    fuente: "Head Count / novedades (LIPgo)", periodicidad: "Mensual", responsable: "Coordinador SST" },
-]
-const fichaDe = (t: string) => FICHAS.find((f) => f.tipo === t)
-const MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
 const REG_TIPOS: [string, string][] = FICHAS.map((f) => [f.tipo, f.nombre])
-
-// ¿Está en meta? según sentido (menor-mejor o mayor-mejor).
-function enMeta(valor: number | null, meta: number | null, sentido: "menor" | "mayor") {
-  if (valor == null || meta == null) return null
-  return sentido === "menor" ? valor <= meta : valor >= meta
-}
 
 export function IndicadoresSST({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaId?: number | null }) {
   const { selectedEmpresaId: ctxEmpresaId } = useAuth()
@@ -94,7 +30,7 @@ export function IndicadoresSST({ selectedEmpresaId: propEmpresaId }: { selectedE
   const [rows, setRows] = useState<IndicadorRow[]>([])
   const [tab, setTab] = useState("tablero")
   const [anio, setAnio] = useState<string>("")
-  const [expandido, setExpandido] = useState<string | null>(null)
+  const [verTipo, setVerTipo] = useState<string | null>(null)
   const [form, setForm] = useState<Record<string, any>>(vacio())
   const set = (k: string, v: any) => setForm((f) => ({ ...f, [k]: v }))
 
@@ -106,17 +42,15 @@ export function IndicadoresSST({ selectedEmpresaId: propEmpresaId }: { selectedE
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [empresaId])
 
-  // Años disponibles (de las filas anuales o mensuales).
   const anios = useMemo(() => {
-    const set = new Set<string>()
-    for (const r of rows) set.add(String(r.periodo).slice(0, 4))
-    return Array.from(set).filter(Boolean).sort().reverse()
+    const s = new Set<string>()
+    for (const r of rows) s.add(String(r.periodo).slice(0, 4))
+    return Array.from(s).filter(Boolean).sort().reverse()
   }, [rows])
   useEffect(() => {
     if (anios.length && !anios.includes(anio)) setAnio(anios[0])
   }, [anios, anio])
 
-  // Índice: tipo -> { anual, prevAnual, mensual[12] } para el año seleccionado.
   const datos = useMemo(() => {
     const anioPrev = String(Number(anio) - 1)
     const out: Record<string, { anual: IndicadorRow | null; prev: IndicadorRow | null; mens: (number | null)[] }> = {}
@@ -163,11 +97,7 @@ export function IndicadoresSST({ selectedEmpresaId: propEmpresaId }: { selectedE
         {tab === "tablero" && anios.length > 0 && (
           <div className="flex items-center gap-2 text-sm">
             <span className="text-muted-foreground">Año</span>
-            <select
-              className="rounded-md border border-input bg-background px-2 py-1"
-              value={anio}
-              onChange={(e) => setAnio(e.target.value)}
-            >
+            <select className="rounded-md border border-input bg-background px-2 py-1" value={anio} onChange={(e) => setAnio(e.target.value)}>
               {anios.map((a) => (
                 <option key={a} value={a}>
                   {a}
@@ -190,18 +120,18 @@ export function IndicadoresSST({ selectedEmpresaId: propEmpresaId }: { selectedE
           ) : (
             <>
               <Seccion titulo="Medición (numerales 3.3.1 – 3.3.6)">
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+                <Grid>
                   {medicion.map((f) => (
-                    <TarjetaIndicador key={f.tipo} f={f} d={datos[f.tipo]} anio={anio} abierto={expandido === f.tipo} onToggle={() => setExpandido(expandido === f.tipo ? null : f.tipo)} />
+                    <TarjetaIndicador key={f.tipo} f={f} d={datos[f.tipo]} anio={anio} onVer={() => setVerTipo(f.tipo)} />
                   ))}
-                </div>
+                </Grid>
               </Seccion>
               <Seccion titulo="Gestión del SG-SST">
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+                <Grid>
                   {gestion.map((f) => (
-                    <TarjetaIndicador key={f.tipo} f={f} d={datos[f.tipo]} anio={anio} abierto={expandido === f.tipo} onToggle={() => setExpandido(expandido === f.tipo ? null : f.tipo)} />
+                    <TarjetaIndicador key={f.tipo} f={f} d={datos[f.tipo]} anio={anio} onVer={() => setVerTipo(f.tipo)} />
                   ))}
-                </div>
+                </Grid>
               </Seccion>
             </>
           )}
@@ -241,6 +171,8 @@ export function IndicadoresSST({ selectedEmpresaId: propEmpresaId }: { selectedE
           </Card>
         </TabsContent>
       </Tabs>
+
+      {verTipo && anio && <IndicadorModal3D tipo={verTipo} anio={anio} onClose={() => setVerTipo(null)} />}
     </div>
   )
 }
@@ -255,33 +187,33 @@ function Seccion({ titulo, children }: { titulo: string; children: React.ReactNo
     </div>
   )
 }
+function Grid({ children }: { children: React.ReactNode }) {
+  return <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">{children}</div>
+}
 
 function TarjetaIndicador({
   f,
   d,
   anio,
-  abierto,
-  onToggle,
+  onVer,
 }: {
   f: Ficha
   d: { anual: IndicadorRow | null; prev: IndicadorRow | null; mens: (number | null)[] }
   anio: string
-  abierto: boolean
-  onToggle: () => void
+  onVer: () => void
 }) {
   const valor = d?.anual?.valor ?? null
   const meta = d?.anual?.meta ?? null
   const ok = enMeta(valor, meta, f.sentido)
   const prev = d?.prev?.valor ?? null
-  const delta = valor != null && prev != null ? valor - prev : null
-  // Mejora = se mueve hacia el lado bueno (menor-mejor baja / mayor-mejor sube).
+  const delta = valor != null && prev != null ? Math.round((valor - prev) * 10) / 10 : null
   const mejora = delta == null ? null : f.sentido === "menor" ? delta < 0 : delta > 0
   const color = ok == null ? SST_TOKENS.grey : ok ? SST_TOKENS.ok : SST_TOKENS.bad
   const chart = d?.mens.map((v, i) => ({ mes: MESES[i], valor: v }))
 
   return (
-    <Card className="overflow-hidden">
-      <button type="button" onClick={onToggle} className="w-full p-4 text-left">
+    <Card className="overflow-hidden transition-shadow hover:shadow-lg">
+      <button type="button" onClick={onVer} className="w-full p-4 text-left">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             {f.numeral && (
@@ -291,7 +223,6 @@ function TarjetaIndicador({
             )}
             <span className="text-sm font-semibold text-foreground">{f.nombre}</span>
           </div>
-          {abierto ? <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />}
         </div>
         <div className="mt-2 flex items-end justify-between gap-2">
           <div>
@@ -306,7 +237,6 @@ function TarjetaIndicador({
             {ok == null ? "s/meta" : ok ? "En meta" : "Fuera"}
           </span>
         </div>
-        {/* Sparkline mensual */}
         <div className="mt-2 h-9">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={chart} margin={{ top: 2, right: 2, bottom: 0, left: 2 }}>
@@ -315,57 +245,20 @@ function TarjetaIndicador({
             </LineChart>
           </ResponsiveContainer>
         </div>
-        {delta != null && (
-          <div className="mt-1 flex items-center gap-1 text-[11px]" style={{ color: mejora ? SST_TOKENS.ok : SST_TOKENS.bad }}>
-            {mejora ? <TrendingDown className="h-3 w-3" /> : delta === 0 ? <Minus className="h-3 w-3" /> : <TrendingUp className="h-3 w-3" />}
-            {delta > 0 ? "+" : ""}
-            {Math.round(delta * 10) / 10} vs {Number(anio) - 1}
-          </div>
-        )}
-      </button>
-
-      {abierto && (
-        <div className="border-t px-4 py-3 text-xs" style={{ backgroundColor: SST_TOKENS.light }}>
-          {/* Gráfico mensual grande */}
-          <div className="h-40">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chart} margin={{ top: 6, right: 10, bottom: 0, left: -10 }}>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
-                <XAxis dataKey="mes" tick={{ fontSize: 10 }} />
-                <YAxis tick={{ fontSize: 10 }} width={34} />
-                <Tooltip formatter={(v: any) => [v, f.nombre]} />
-                {meta != null && <ReferenceLine y={meta} stroke={SST_TOKENS.bad} strokeDasharray="4 4" label={{ value: `Meta ${meta}`, fontSize: 10, position: "right", fill: SST_TOKENS.bad }} />}
-                <Line type="monotone" dataKey="valor" stroke={SST_TOKENS.navy} strokeWidth={2} dot={{ r: 2 }} isAnimationActive={false} connectNulls />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-          {/* Ficha técnica (exigencia de la norma) */}
-          <div className="mt-3 grid gap-x-4 gap-y-1 sm:grid-cols-2">
-            <FTec l="Definición" v={f.definicion} full />
-            <FTec l="Fórmula" v={f.formula} />
-            <FTec l="Interpretación" v={f.interpretacion} />
-            <FTec l="Fuente" v={f.fuente} />
-            <FTec l="Periodicidad" v={f.periodicidad} />
-            <FTec l="Responsable" v={f.responsable} />
-            <FTec l="Meta" v={`${meta ?? "—"} (${f.sentido === "menor" ? "menor es mejor" : "mayor es mejor"})`} />
-          </div>
-          {d?.anual?.observacion && (
-            <div className="mt-2 rounded-md bg-white p-2">
-              <span className="font-semibold text-foreground">Análisis:</span> {d.anual.observacion}
-            </div>
+        <div className="mt-1 flex items-center justify-between text-[11px]">
+          {delta != null ? (
+            <span className="flex items-center gap-1" style={{ color: mejora ? SST_TOKENS.ok : delta === 0 ? SST_TOKENS.ink : SST_TOKENS.bad }}>
+              {mejora ? <TrendingDown className="h-3 w-3" /> : delta === 0 ? <Minus className="h-3 w-3" /> : <TrendingUp className="h-3 w-3" />}
+              {delta > 0 ? "+" : ""}
+              {delta} vs {Number(anio) - 1}
+            </span>
+          ) : (
+            <span />
           )}
+          <span className="text-primary underline decoration-dotted">ver 3D →</span>
         </div>
-      )}
+      </button>
     </Card>
-  )
-}
-
-function FTec({ l, v, full }: { l: string; v: string; full?: boolean }) {
-  return (
-    <div className={full ? "sm:col-span-2" : ""}>
-      <span className="font-semibold text-foreground">{l}: </span>
-      <span className="text-muted-foreground">{v}</span>
-    </div>
   )
 }
 

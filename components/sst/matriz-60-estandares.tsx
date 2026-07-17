@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast"
 import { getMatrizEstandares, guardarRespuesta } from "@/lib/sst-auditoria-actions"
 import { cerrarAutoevaluacion } from "@/lib/sst-autoeval-actions"
 import { SoportesDocumentales } from "@/components/sst/soportes-documentales"
+import { IndicadorModal3D } from "@/components/sst/indicador-modal-3d"
 import type {
   CicloPHVA,
   EstadoCumple,
@@ -50,10 +51,10 @@ const EMPTY: MatrizData = {
 // sin prop-drilling por GrupoFilas/FilaItem.
 const NavContext = createContext<((moduleName: string) => void) | undefined>(undefined)
 
-// Indicadores de medición (numerales 3.3.1-3.3.6) para mostrar el valor vs meta
-// en la celda de evidencia. Sin prop-drilling.
+// Indicadores de medición (numerales 3.3.1-3.3.6): valor vs meta en la celda +
+// modal 3D al tocarlo. Sin prop-drilling; el contexto lleva el mapa y el año.
 type MedicionMap = Record<string, { tipo: string; valor: number | null; meta: number | null; nombre: string | null }>
-const MedicionContext = createContext<MedicionMap | undefined>(undefined)
+const MedicionContext = createContext<{ map: MedicionMap; anio: number | null } | undefined>(undefined)
 
 export function Matriz60Estandares({ selectedEmpresaId: propEmpresaId, onNavigate }: Props) {
   const { selectedEmpresaId: ctxEmpresaId, selectedEmpresaNombre } = useAuth()
@@ -272,7 +273,7 @@ export function Matriz60Estandares({ selectedEmpresaId: propEmpresaId, onNavigat
 
   return (
     <NavContext.Provider value={onNavigate}>
-    <MedicionContext.Provider value={data.medicion}>
+    <MedicionContext.Provider value={{ map: data.medicion ?? {}, anio: data.autoevaluacion?.anio ?? null }}>
     <div className="space-y-5">
       <Header nombre={selectedEmpresaNombre} sede={autoevaluacion.sede} anio={autoevaluacion.anio} />
 
@@ -534,7 +535,9 @@ function FilaItem({
   empresaId?: number | null
 }) {
   // Indicador de medición cableado a este numeral (3.3.1-3.3.6), si lo hay.
-  const med = useContext(MedicionContext)?.[item.numeral]
+  const mctx = useContext(MedicionContext)
+  const med = mctx?.map?.[item.numeral]
+  const [verInd, setVerInd] = useState(false)
   return (
     <>
       <tr className="border-b hover:bg-muted/40">
@@ -597,23 +600,27 @@ function FilaItem({
           {/* Numeral 3.1.4 (evaluaciones médicas ocupacionales): enlace protegido
               por clave que abre el soporte de «Examenes Médicos» en un modal. */}
           {item.numeral === "3.1.4" && <EnlaceExamenesMedicos />}
-          {/* Numerales de MEDICIÓN 3.3.1-3.3.6: valor del indicador (auto-cumple). */}
+          {/* Numerales de MEDICIÓN 3.3.1-3.3.6: valor del indicador (auto-cumple).
+              Clic → abre la vista 3D del indicador (solo el de este numeral). */}
           {med && (
-            <div
-              className="mt-2 inline-flex flex-wrap items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium"
+            <button
+              type="button"
+              onClick={() => setVerInd(true)}
+              className="mt-2 inline-flex flex-wrap items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium transition-shadow hover:shadow-md"
               style={{ backgroundColor: SST_TOKENS.light, color: SST_TOKENS.ink }}
-              title={med.nombre ?? undefined}
+              title={`Ver indicador: ${med.nombre ?? ""}`}
             >
               <Activity className="h-3 w-3" style={{ color: SST_TOKENS.navy }} />
               Medido: <strong>{med.valor ?? "—"}</strong>
               {med.meta != null ? ` (meta ${med.meta})` : ""}
-              <span
-                className="ml-1 rounded px-1 text-[10px] text-white"
-                style={{ backgroundColor: SST_TOKENS.ok }}
-              >
+              <span className="ml-1 rounded px-1 text-[10px] text-white" style={{ backgroundColor: SST_TOKENS.ok }}>
                 ✓ auto
               </span>
-            </div>
+              <span className="ml-1 underline decoration-dotted opacity-70">ver</span>
+            </button>
+          )}
+          {verInd && med && mctx?.anio != null && (
+            <IndicadorModal3D tipo={med.tipo} anio={mctx.anio} onClose={() => setVerInd(false)} />
           )}
         </td>
         <td className="px-3 py-2 text-center align-top font-medium">{puntajeOf(item)}</td>
