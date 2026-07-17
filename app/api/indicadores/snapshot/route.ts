@@ -1,6 +1,19 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { snapshotIndicadoresHistorico } from "@/lib/sig-actions"
 
+// GET → lo invoca el CRON de Vercel (día 1 de cada mes): congela el mes ACTUAL.
+// Si hay CRON_SECRET configurado, exige el header Authorization: Bearer <secret>
+// (Vercel lo envía automáticamente). Sin CRON_SECRET, queda abierto.
+export async function GET(request: NextRequest) {
+  const secret = process.env.CRON_SECRET
+  if (secret && request.headers.get("authorization") !== `Bearer ${secret}`) {
+    return NextResponse.json({ success: false, error: "no autorizado" }, { status: 401 })
+  }
+  const now = new Date()
+  const r = await snapshotIndicadoresHistorico(now.getFullYear(), now.getMonth() + 1)
+  return NextResponse.json({ success: r.success, periodo: `${now.getFullYear()}-${now.getMonth() + 1}`, count: r.count, error: r.error })
+}
+
 // Congela la serie histórica de indicadores del BSC.
 //  - POST /api/indicadores/snapshot            → mes actual
 //  - POST /api/indicadores/snapshot?anio=2026&mes=6   → un mes puntual
