@@ -1,7 +1,9 @@
 "use client"
 
+import { useState } from "react"
 import { AREA_KPIS, KPI_DEFS, formatKpi, kpiSev, type KpiSev } from "@/lib/kpis-area"
 import type { GroupKey } from "@/lib/dashboard-data"
+import { BscIndicadorModal } from "@/components/indicadores/bsc-indicador-modal"
 
 const SEV_COLOR: Record<KpiSev, string> = {
   good: "#12a06a",
@@ -32,6 +34,7 @@ export function AreaKpis({
   valores: Record<string, ValorBsc>
   loading: boolean
 }) {
+  const [ver, setVer] = useState<string | null>(null)
   const keys = AREA_KPIS[groupKey] ?? []
   if (keys.length === 0) return null
 
@@ -55,7 +58,12 @@ export function AreaKpis({
           const sev = v ? kpiSev(def, v.valor) : "none"
           const color = SEV_COLOR[sev]
           return (
-            <div key={k} className="rounded-2xl border border-border bg-card p-3.5">
+            <button
+              key={k}
+              type="button"
+              onClick={() => setVer(k)}
+              className="rounded-2xl border border-border bg-card p-3.5 text-left transition-shadow hover:shadow-md"
+            >
               <div className="flex items-center gap-2 text-[11px] font-semibold text-muted-foreground">
                 <span
                   className="h-[7px] w-[7px] flex-none rounded-full"
@@ -69,13 +77,16 @@ export function AreaKpis({
               >
                 {loading && !v ? "…" : v ? formatKpi(def, v.valor) : "—"}
               </div>
-              <div className="mt-1 truncate text-[10.5px] text-muted-foreground/80">
-                {def.meta != null ? `meta ${formatKpi(def, def.meta)}` : v?.base || " "}
+              <div className="mt-1 flex items-center justify-between gap-1 truncate text-[10.5px] text-muted-foreground/80">
+                <span className="truncate">{def.meta != null ? `meta ${formatKpi(def, def.meta)}` : v?.base || " "}</span>
+                <span className="shrink-0 text-primary/70">ver 3D →</span>
               </div>
-            </div>
+            </button>
           )
         })}
       </div>
+
+      {ver && <BscIndicadorModal codigo={ver} def={KPI_DEFS[ver]} actual={valores[ver]?.valor ?? null} onClose={() => setVer(null)} />}
     </div>
   )
 }

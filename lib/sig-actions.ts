@@ -4185,3 +4185,101 @@ export async function guardarCuadreManualPedidoSalida(payload: {
     return { success: false, error: err?.message || "Error desconocido" }
   }
 }
+
+// =====================================================================
+// SERIE HISTÓRICA DE INDICADORES DEL BSC (para la tendencia del viewer)
+// =====================================================================
+
+// Congela (snapshot) el valor de TODOS los indicadores del BSC para un mes,
+// calculándolos con getIndicadoresValores sobre el rango de ese mes. Idempotente
+// (upsert por idempresa+codigo+periodo). Pensado para correr al cierre de cada mes
+// (cron) o para backfill de meses ya transcurridos.
+export async function snapshotIndicadoresHistorico(
+  anio: number,
+  mes: number,
+): Promise<{ success: boolean; count: number; error?: string }> {
+  try {
+    const mm = String(mes).padStart(2, "0")
+    const desde = `${anio}-${mm}-01`
+    const hasta = new Date(Date.UTC(anio, mes, 0)).toISOString().slice(0, 10) // último día del mes
+    const r = await getIndicadoresValores(100, desde, hasta)
+    if (!r.success) return { success: false, count: 0, error: r.error }
+    const periodo = `${anio}-${mm}`
+    const rows = Object.entries(r.valores).map(([codigo, v]) => ({
+      idempresa: 100,
+      codigo,
+      periodo,
+      valor: Number.isFinite(v.valor) ? v.valor : null,
+      base: v.base ?? null,
+    }))
+    if (rows.length === 0) return { success: true, count: 0 }
+    const supabase: any = await getSupabaseAdmin()
+    const { error } = await supabase
+      .from("indicador_historico")
+      .upsert(rows, { onConflict: "idempresa,codigo,periodo" })
+    if (error) return { success: false, count: 0, error: error.message }
+    return { success: true, count: rows.length }
+  } catch (err: any) {
+    return { success: false, count: 0, error: err?.message || "Error" }
+  }
+}
+
+// Ficha (de sig_indicadores) + serie mensual (de indicador_historico) de UN
+// indicador del BSC, para alimentar el viewer 3D genérico.
+export async function getBscIndicadorDetalle(
+  codigo: string,
+  anio: string,
+): Promise<{
+  ficha: {
+    nombre: string | null
+    formula: string | null
+    fuente: string | null
+    periodicidad: string | null
+    responsable: string | null
+    interpretacion: string | null
+    unidad: string | null
+    meta: number | null
+    sentido: "menor" | "mayor"
+    area: string | null
+  } | null
+  serie: { etiqueta: string; valor: number | null }[]
+}> {
+  const MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
+  try {
+    const supabase: any = await getSupabaseAdmin()
+    const { data: sig } = await supabase
+      .from("sig_indicadores")
+      .select("nombre, formula, fuente, frecuencia, responsable, finalidad, unidad, meta, sentido, area")
+      .eq("idempresa", 100)
+      .eq("calculo_auto", codigo)
+      .maybeSingle()
+    const { data: hist } = await supabase
+      .from("indicador_historico")
+      .select("periodo, valor")
+      .eq("idempresa", 100)
+      .eq("codigo", codigo)
+      .like("periodo", `${anio}-%`)
+    const mens: (number | null)[] = Array(12).fill(null)
+    for (const h of hist ?? []) {
+      const m = String(h.periodo).match(new RegExp(`^${anio}-(\\d{2})$`))
+      if (m) mens[Number(m[1]) - 1] = h.valor
+    }
+    const ficha = sig
+      ? {
+          nombre: sig.nombre ?? null,
+          formula: sig.formula ?? null,
+          fuente: sig.fuente ?? null,
+          periodicidad: sig.frecuencia ?? null,
+          responsable: sig.responsable ?? null,
+          interpretacion: sig.finalidad ?? null,
+          unidad: sig.unidad ?? null,
+          meta: sig.meta ?? null,
+          sentido: (String(sig.sentido || "").startsWith("mayor") ? "mayor" : "menor") as "menor" | "mayor",
+          area: sig.area ?? null,
+        }
+      : null
+    return { ficha, serie: MESES.map((m, i) => ({ etiqueta: m, valor: mens[i] })) }
+  } catch {
+    return { ficha: null, serie: [] }
+  }
+}
