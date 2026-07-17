@@ -25,6 +25,10 @@ import {
   GraduationCap,
   Baby,
   PiggyBank,
+  AlertTriangle,
+  CheckCircle2,
+  Info,
+  RotateCcw,
 } from "lucide-react"
 import {
   getParafiscales,
@@ -32,7 +36,15 @@ import {
   type ParafiscalPersona,
   type ResumenParafiscales,
 } from "@/lib/parafiscales-actions"
-import { CLASES_ARL, PARAFISCALES_DEFAULT, type ClaseRiesgo, type ParametrosParafiscales } from "@/lib/parafiscales"
+import {
+  calcularAportes,
+  validarParametros,
+  CLASES_ARL,
+  REFERENCIAS_LEY,
+  PARAFISCALES_DEFAULT,
+  type ClaseRiesgo,
+  type ParametrosParafiscales,
+} from "@/lib/parafiscales"
 
 const money = (n: number) =>
   "$" + Math.round(Number(n) || 0).toLocaleString("es-CO", { maximumFractionDigits: 0 })
@@ -53,10 +65,13 @@ export default function Parafiscales() {
   const [resumen, setResumen] = useState<ResumenParafiscales | null>(null)
   const [params, setParams] = useState<ParametrosParafiscales>({ anio, ...PARAFISCALES_DEFAULT })
   const [smlv, setSmlv] = useState(0)
+  const [auxMes, setAuxMes] = useState(0)
   const [loading, setLoading] = useState(true)
   const [savingParams, setSavingParams] = useState(false)
   const [showParams, setShowParams] = useState(false)
   const [showNomenclatura, setShowNomenclatura] = useState(false)
+  // Confirmación explícita cuando un parámetro se aparta del valor de ley vigente.
+  const [confirmaReforma, setConfirmaReforma] = useState(false)
 
   const cargar = useCallback(async () => {
     if (!consolidado && !selectedEmpresaId) {
@@ -72,6 +87,7 @@ export default function Parafiscales() {
       setResumen(r.resumen ?? null)
       if (r.params) setParams(r.params)
       if (r.smlv) setSmlv(r.smlv)
+      if (r.auxilio != null) setAuxMes(r.auxilio)
     } else {
       setData([])
       setResumen(null)
@@ -84,18 +100,46 @@ export default function Parafiscales() {
     cargar()
   }, [cargar])
 
+  // Contraste contra la norma vigente: "error" bloquea el guardado; "aviso"
+  // (apartarse del valor de ley) exige confirmar que responde a una reforma.
+  const avisos = useMemo(() => validarParametros({ ...params, anio }), [params, anio])
+  const errores = useMemo(() => avisos.filter((a) => a.nivel === "error"), [avisos])
+  const desviaciones = useMemo(() => avisos.filter((a) => a.nivel === "aviso"), [avisos])
+  const bloqueado = errores.length > 0 || (desviaciones.length > 0 && !confirmaReforma)
+
   const guardarParams = async () => {
     setSavingParams(true)
     const r = await guardarParametrosParafiscales({ ...params, anio })
     setSavingParams(false)
     if (r.success) {
-      toast({ title: "Parámetros guardados", description: "Se recalcularon los aportes." })
+      toast({ title: "Parámetros guardados", description: `Año ${anio} actualizado. Se recalcularon los aportes.` })
+      setConfirmaReforma(false)
       await cargar()
-    } else toast({ title: "Error", description: r.message, variant: "destructive" })
+    } else toast({ title: "No se pudo guardar", description: r.message, variant: "destructive" })
   }
 
-  const setP = (k: keyof ParametrosParafiscales, v: number | boolean | string) =>
+  const restaurarLey = () => {
+    setParams((prev) => ({ ...prev, ...PARAFISCALES_DEFAULT, anio }))
+    setConfirmaReforma(false)
+    toast({ title: "Valores de ley restaurados", description: "Revísalos y guarda para aplicarlos." })
+  }
+
+  const setP = (k: keyof ParametrosParafiscales, v: number | boolean | string) => {
     setParams((prev) => ({ ...prev, [k]: v }) as ParametrosParafiscales)
+    setConfirmaReforma(false)
+  }
+
+  // Preview en vivo: cómo queda un trabajador de SMLV con estos parámetros.
+  const preview = useMemo(
+    () =>
+      smlv > 0
+        ? calcularAportes(
+            { devengado: smlv, auxilio: auxMes, dias: 30, smlv, esAdmin: false },
+            { ...params, anio },
+          )
+        : null,
+    [smlv, auxMes, params, anio],
+  )
 
   // Tarjetas por ENTIDAD: lo que se gira a cada ente de control.
   const entidades = useMemo(() => {
@@ -229,73 +273,214 @@ export default function Parafiscales() {
             )}
           </div>
 
-          {/* Parámetros de ley */}
+          {/* CUADRO DE MANDO: parámetros por año, contrastados contra la norma.
+              Editable, pero cada valor muestra la norma que lo fija y su valor de
+              ley; salirse del rango admisible bloquea el guardado y apartarse del
+              valor de ley exige confirmar que responde a una reforma vigente. */}
           {showParams && (
-            <div className="rounded-lg border border-border bg-muted/40 p-3">
-              <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
-                <SlidersHorizontal className="h-4 w-4 text-primary" /> Porcentajes de ley {anio}
-              </div>
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-5">
-                {[
-                  { k: "pctPensionEmpleador" as const, l: "Pensión empresa %" },
-                  { k: "pctPensionEmpleado" as const, l: "Pensión trabajador %" },
-                  { k: "pctSaludEmpleador" as const, l: "Salud empresa %" },
-                  { k: "pctSaludEmpleado" as const, l: "Salud trabajador %" },
-                  { k: "pctCaja" as const, l: "Caja %" },
-                  { k: "pctSena" as const, l: "SENA %" },
-                  { k: "pctIcbf" as const, l: "ICBF %" },
-                  { k: "umbralExoneracionSmlv" as const, l: "Umbral exoneración (SMMLV)" },
-                  { k: "topeIbcSmlv" as const, l: "Tope IBC (SMLV)" },
-                ].map((f) => (
-                  <div key={f.k} className="space-y-1">
-                    <Label className="text-xs text-muted-foreground">{f.l}</Label>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      value={params[f.k] as number}
-                      onChange={(e) => setP(f.k, Number(e.target.value))}
-                    />
-                  </div>
-                ))}
-                {[
-                  { k: "claseArlOperativo" as const, l: "Clase ARL · operativo" },
-                  { k: "claseArlAdmin" as const, l: "Clase ARL · administrativo" },
-                ].map((f) => (
-                  <div key={f.k} className="space-y-1">
-                    <Label className="text-xs text-muted-foreground">{f.l}</Label>
-                    <select
-                      className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm"
-                      value={params[f.k] as ClaseRiesgo}
-                      onChange={(e) => setP(f.k, e.target.value)}
-                    >
-                      {CLASES_ARL.map((c) => (
-                        <option key={c.clase} value={c.clase}>
-                          {c.clase} — {c.pct}% ({c.ejemplo})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-3 flex items-center gap-4">
-                <label className="flex cursor-pointer items-center gap-2 text-xs">
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4"
-                    checked={params.incluyeAuxParafiscales}
-                    onChange={(e) => setP("incluyeAuxParafiscales", e.target.checked)}
-                  />
-                  Sumar el auxilio de transporte a la base de Caja/SENA/ICBF
-                </label>
-                <Button size="sm" onClick={guardarParams} disabled={savingParams}>
-                  {savingParams ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                  Guardar
+            <div className="space-y-3 rounded-lg border border-border bg-muted/40 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  <SlidersHorizontal className="h-4 w-4 text-primary" /> Cuadro de mando de aportes · {anio}
+                </div>
+                <Button size="sm" variant="outline" onClick={restaurarLey}>
+                  <RotateCcw className="mr-2 h-4 w-4" /> Restaurar valores de ley
                 </Button>
               </div>
-              <p className="mt-2 text-xs text-muted-foreground">
-                La <strong>clase de riesgo ARL</strong> se asigna por tipo de personal: los marcados como{" "}
-                <strong>administrativos</strong> en Head Count usan la clase administrativa; el resto, la operativa.
-              </p>
+
+              {/* Tarifas por ente de control */}
+              <div className="overflow-x-auto rounded-md border border-border bg-background">
+                <table className="w-full min-w-[720px] border-collapse text-xs">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/50 text-left text-muted-foreground">
+                      <th className="px-3 py-2 font-medium">Concepto</th>
+                      <th className="px-3 py-2 font-medium">Ente de control</th>
+                      <th className="px-3 py-2 font-medium">Norma que lo fija</th>
+                      <th className="px-3 py-2 text-right font-medium">Valor de ley</th>
+                      <th className="px-3 py-2 text-right font-medium">Valor aplicado</th>
+                      <th className="px-3 py-2 text-center font-medium">Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {REFERENCIAS_LEY.map((ref) => {
+                      const v = Number(params[ref.campo])
+                      const err = errores.some((a) => a.campo === ref.campo)
+                      const dif = desviaciones.some((a) => a.campo === ref.campo)
+                      return (
+                        <tr key={ref.campo} className="border-b border-border/50 last:border-0">
+                          <td className="px-3 py-2 font-medium text-foreground">{ref.label}</td>
+                          <td className="px-3 py-2 text-muted-foreground">{ref.ente}</td>
+                          <td className="px-3 py-2 text-muted-foreground">{ref.norma}</td>
+                          <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                            {ref.valorLey}
+                            {ref.unidad}
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <Input
+                              type="number"
+                              step="0.001"
+                              className={`ml-auto h-8 w-28 text-right tabular-nums ${
+                                err ? "border-destructive focus-visible:ring-destructive" : ""
+                              }`}
+                              value={Number.isFinite(v) ? v : ""}
+                              onChange={(e) => setP(ref.campo, Number(e.target.value))}
+                            />
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            {err ? (
+                              <span className="inline-flex items-center gap-1 text-destructive">
+                                <AlertTriangle className="h-3.5 w-3.5" /> Fuera de rango
+                              </span>
+                            ) : dif ? (
+                              <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400">
+                                <AlertTriangle className="h-3.5 w-3.5" /> Difiere de la ley
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+                                <CheckCircle2 className="h-3.5 w-3.5" /> Conforme
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Clase de riesgo ARL + base de parafiscales */}
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-2 rounded-md border border-border bg-background p-3">
+                  <div className="text-xs font-semibold">Clase de riesgo ARL · Decreto 1772/1994</div>
+                  {[
+                    { k: "claseArlOperativo" as const, l: "Personal operativo" },
+                    { k: "claseArlAdmin" as const, l: "Personal administrativo" },
+                  ].map((f) => (
+                    <div key={f.k} className="flex items-center justify-between gap-2">
+                      <Label className="text-xs text-muted-foreground">{f.l}</Label>
+                      <select
+                        className="h-8 w-64 rounded-md border border-input bg-background px-2 text-xs"
+                        value={params[f.k] as ClaseRiesgo}
+                        onChange={(e) => setP(f.k, e.target.value)}
+                      >
+                        {CLASES_ARL.map((c) => (
+                          <option key={c.clase} value={c.clase}>
+                            {c.clase} — {c.pct}% · {c.ejemplo}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                  <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                    <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+                    La clase la asigna la ARL según la actividad económica. Se aplica por tipo de personal: los
+                    marcados como <strong>administrativos</strong> en Head Count usan la clase administrativa; el
+                    resto, la operativa.
+                  </p>
+                </div>
+
+                {/* Preview en vivo con estos parámetros */}
+                <div className="space-y-2 rounded-md border border-border bg-background p-3">
+                  <div className="text-xs font-semibold">
+                    Preview · trabajador de SMLV, mes completo, clase {params.claseArlOperativo}
+                  </div>
+                  {preview ? (
+                    <>
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+                        {[
+                          ["IBC", preview.ibc],
+                          ["Pensión", preview.pensionEmpleador],
+                          ["Salud", preview.saludEmpleador],
+                          ["ARL", preview.arl],
+                          ["Caja", preview.caja],
+                          ["SENA", preview.sena],
+                          ["ICBF", preview.icbf],
+                        ].map(([l, v]) => (
+                          <div key={l as string} className="flex justify-between">
+                            <span className="text-muted-foreground">{l as string}</span>
+                            <span className="tabular-nums">{money(v as number)}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="flex items-baseline justify-between border-t border-border pt-2">
+                        <span className="text-xs text-muted-foreground">Costo empresa / trabajador / mes</span>
+                        <span className="text-base font-bold tabular-nums text-primary">
+                          {money(preview.totalEmpresa)}
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {preview.exonerado
+                          ? "Exonerado del art. 114-1: no causa salud patronal, SENA ni ICBF."
+                          : "No exonerado: causa salud patronal, SENA e ICBF."}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      Carga el SMLV del año {anio} en el cuadro de mando de nómina para ver el preview.
+                    </p>
+                  )}
+                  <label className="flex cursor-pointer items-center gap-2 border-t border-border pt-2 text-xs">
+                    <input
+                      type="checkbox"
+                      className="h-3.5 w-3.5"
+                      checked={params.incluyeAuxParafiscales}
+                      onChange={(e) => setP("incluyeAuxParafiscales", e.target.checked)}
+                    />
+                    Sumar el auxilio de transporte a la base de Caja/SENA/ICBF
+                  </label>
+                </div>
+              </div>
+
+              {/* Barandas: errores bloquean; desviaciones exigen confirmación */}
+              {errores.length > 0 && (
+                <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3">
+                  <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-destructive">
+                    <AlertTriangle className="h-4 w-4" /> No se puede guardar: hay valores fuera de lo admisible
+                  </div>
+                  <ul className="list-inside list-disc space-y-0.5 text-xs text-destructive">
+                    {errores.map((a, i) => (
+                      <li key={i}>{a.mensaje}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {errores.length === 0 && desviaciones.length > 0 && (
+                <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
+                  <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-amber-700 dark:text-amber-400">
+                    <AlertTriangle className="h-4 w-4" /> Estos valores se apartan de la norma vigente
+                  </div>
+                  <ul className="mb-2 list-inside list-disc space-y-0.5 text-xs text-amber-700 dark:text-amber-400">
+                    {desviaciones.map((a, i) => (
+                      <li key={i}>{a.mensaje}</li>
+                    ))}
+                  </ul>
+                  <label className="flex cursor-pointer items-center gap-2 text-xs font-medium">
+                    <input
+                      type="checkbox"
+                      className="h-3.5 w-3.5"
+                      checked={confirmaReforma}
+                      onChange={(e) => setConfirmaReforma(e.target.checked)}
+                    />
+                    Confirmo que estos valores corresponden a una <strong>reforma legal vigente</strong> para {anio}.
+                  </label>
+                </div>
+              )}
+              {errores.length === 0 && desviaciones.length === 0 && (
+                <div className="flex items-center gap-2 rounded-md border border-emerald-500/40 bg-emerald-500/10 p-2 text-xs text-emerald-700 dark:text-emerald-400">
+                  <CheckCircle2 className="h-4 w-4" /> Todos los parámetros están conforme a la norma vigente.
+                </div>
+              )}
+
+              <div className="flex items-center gap-3">
+                <Button size="sm" onClick={guardarParams} disabled={savingParams || bloqueado}>
+                  {savingParams ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                  Guardar parámetros {anio}
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  Los parámetros se guardan <strong>por año</strong>: cambiar el año de arriba edita ese año sin tocar
+                  los anteriores.
+                </span>
+              </div>
             </div>
           )}
 

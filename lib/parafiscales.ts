@@ -68,6 +68,102 @@ export const PARAFISCALES_DEFAULT: Omit<ParametrosParafiscales, "anio"> = {
   incluyeAuxParafiscales: true,
 }
 
+// ---------------------------------------------------------------------------
+// BARANDAS LEGALES del cuadro de mando.
+// Cada parámetro editable declara su VALOR DE LEY vigente, la norma que lo fija
+// y el rango admisible. Editar es posible (una reforma legal puede cambiar un %),
+// pero salirse del rango es un ERROR que bloquea el guardado, y apartarse del
+// valor de ley es un AVISO que exige confirmación explícita.
+// ---------------------------------------------------------------------------
+
+export type CampoLegal = Exclude<keyof ParametrosParafiscales, "anio" | "claseArlAdmin" | "claseArlOperativo" | "incluyeAuxParafiscales">
+
+export interface ReferenciaLegal {
+  campo: CampoLegal
+  label: string
+  /** Valor que fija la norma vigente. */
+  valorLey: number
+  norma: string
+  /** Rango admisible; fuera de él el valor es imposible/ilegal. */
+  min: number
+  max: number
+  unidad: "%" | "SMMLV" | "SMLV"
+  /** A quién se le paga / a qué ente corresponde. */
+  ente: string
+}
+
+export const REFERENCIAS_LEY: ReferenciaLegal[] = [
+  { campo: "pctPensionEmpleador", label: "Pensión · empresa", valorLey: 12, norma: "Ley 100/1993 art. 20", min: 0, max: 100, unidad: "%", ente: "Fondo de Pensiones" },
+  { campo: "pctPensionEmpleado", label: "Pensión · trabajador", valorLey: 4, norma: "Ley 100/1993 art. 20", min: 0, max: 100, unidad: "%", ente: "Fondo de Pensiones" },
+  { campo: "pctSaludEmpleador", label: "Salud · empresa", valorLey: 8.5, norma: "Ley 100/1993 art. 204", min: 0, max: 100, unidad: "%", ente: "EPS" },
+  { campo: "pctSaludEmpleado", label: "Salud · trabajador", valorLey: 4, norma: "Ley 100/1993 art. 204", min: 0, max: 100, unidad: "%", ente: "EPS" },
+  { campo: "pctCaja", label: "Caja de Compensación", valorLey: 4, norma: "Ley 21/1982", min: 0, max: 100, unidad: "%", ente: "Caja de Compensación" },
+  { campo: "pctSena", label: "SENA", valorLey: 2, norma: "Ley 21/1982", min: 0, max: 100, unidad: "%", ente: "SENA" },
+  { campo: "pctIcbf", label: "ICBF", valorLey: 3, norma: "Ley 89/1988", min: 0, max: 100, unidad: "%", ente: "ICBF" },
+  { campo: "umbralExoneracionSmlv", label: "Umbral de exoneración", valorLey: 10, norma: "E.T. art. 114-1", min: 0, max: 25, unidad: "SMMLV", ente: "DIAN / UGPP" },
+  { campo: "topeIbcSmlv", label: "Tope del IBC", valorLey: 25, norma: "Ley 100/1993 art. 18", min: 1, max: 100, unidad: "SMLV", ente: "UGPP" },
+]
+
+export interface AvisoLegal {
+  campo: CampoLegal | "pensionTotal" | "saludTotal"
+  nivel: "error" | "aviso"
+  mensaje: string
+}
+
+/**
+ * Contrasta los parámetros contra la norma vigente.
+ *   · "error" → valor imposible o que rompe la norma → NO se debe guardar.
+ *   · "aviso" → se aparta del valor de ley vigente → exige confirmación.
+ * Nunca bloquea por completo la edición: una reforma legal debe poder cargarse.
+ */
+export function validarParametros(p: ParametrosParafiscales): AvisoLegal[] {
+  const avisos: AvisoLegal[] = []
+
+  for (const ref of REFERENCIAS_LEY) {
+    const v = Number(p[ref.campo])
+    if (!Number.isFinite(v)) {
+      avisos.push({ campo: ref.campo, nivel: "error", mensaje: `${ref.label}: falta el valor.` })
+      continue
+    }
+    if (v < ref.min || v > ref.max) {
+      avisos.push({
+        campo: ref.campo,
+        nivel: "error",
+        mensaje: `${ref.label}: ${v}${ref.unidad} está fuera del rango admisible (${ref.min}–${ref.max}${ref.unidad}).`,
+      })
+      continue
+    }
+    if (Math.abs(v - ref.valorLey) > 0.001) {
+      avisos.push({
+        campo: ref.campo,
+        nivel: "aviso",
+        mensaje: `${ref.label}: ${v}${ref.unidad} difiere del ${ref.valorLey}${ref.unidad} que fija la ${ref.norma}.`,
+      })
+    }
+  }
+
+  // Los totales de la cotización están fijados por la norma: si empresa +
+  // trabajador no suma lo de ley, el aporte no lo recibe el ente completo.
+  const pension = Number(p.pctPensionEmpleador) + Number(p.pctPensionEmpleado)
+  if (Number.isFinite(pension) && Math.abs(pension - 16) > 0.001) {
+    avisos.push({
+      campo: "pensionTotal",
+      nivel: "aviso",
+      mensaje: `La cotización total de pensión suma ${pension}% y la Ley 100/1993 art. 20 fija 16% (12% empresa + 4% trabajador).`,
+    })
+  }
+  const salud = Number(p.pctSaludEmpleador) + Number(p.pctSaludEmpleado)
+  if (Number.isFinite(salud) && Math.abs(salud - 12.5) > 0.001) {
+    avisos.push({
+      campo: "saludTotal",
+      nivel: "aviso",
+      mensaje: `La cotización total de salud suma ${salud}% y la Ley 100/1993 art. 204 fija 12,5% (8,5% empresa + 4% trabajador).`,
+    })
+  }
+
+  return avisos
+}
+
 export interface EntradaAportes {
   /** Devengado salarial del mes (sin auxilio de transporte). */
   devengado: number

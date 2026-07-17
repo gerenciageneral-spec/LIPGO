@@ -19,6 +19,7 @@
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import {
   calcularAportes,
+  validarParametros,
   PARAFISCALES_DEFAULT,
   type Aportes,
   type ClaseRiesgo,
@@ -95,6 +96,13 @@ export async function getParametrosParafiscales(
 export async function guardarParametrosParafiscales(
   p: ParametrosParafiscales,
 ): Promise<{ success: boolean; message?: string }> {
+  // Baranda legal del lado del servidor: un valor fuera del rango admisible no
+  // se persiste aunque la UI lo mande. Los "avisos" (apartarse del valor de ley
+  // vigente por una reforma) sí se permiten — los confirma el usuario en la UI.
+  const errores = validarParametros(p).filter((a) => a.nivel === "error")
+  if (errores.length > 0) {
+    return { success: false, message: errores.map((e) => e.mensaje).join(" ") }
+  }
   try {
     const admin: any = await getSupabaseAdmin()
     const { error } = await admin.from("parametros_parafiscales").upsert(
