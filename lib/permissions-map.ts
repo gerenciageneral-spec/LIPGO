@@ -104,6 +104,7 @@ export interface UserPermissions {
   headcount: boolean
   nominapersonal: boolean
   liquidaciones: boolean
+  parafiscales: boolean
   registro_asistencia: boolean
   tabla_asistencia: boolean
   asignacion_horas_extra: boolean
@@ -309,6 +310,7 @@ export const MODULE_PERMISSION_MAP: Record<string, keyof UserPermissions> = {
   "Head Count": "headcount",
   Nominapersonal: "nominapersonal",
   Liquidaciones: "liquidaciones",
+  Parafiscales: "parafiscales",
   "Registro de asistencia": "registro_asistencia",
   "Tabla Asistencia": "tabla_asistencia",
   "Asignación horas extra": "asignacion_horas_extra",

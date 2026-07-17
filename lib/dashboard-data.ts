@@ -1,4 +1,4 @@
-import { Truck, Scale, ClipboardCheck, Package, FileText, CheckCircle, Box, PackagePlus, BarChart3, Package2, ArrowRightLeft, History, Search, LayoutDashboard, Activity, FileCheck, Receipt, Clock, Users, Eye, Settings, Type as type, LucideIcon, CreditCard, UserCheck, Store, Tag, Layers, MapPin, Warehouse, Gauge, QrCode, Sparkles, BadgeCheck, BookOpen, Lock, ClipboardList, CalendarDays, NotebookPen, GraduationCap, Wallet, Banknote, Calculator, CalendarClock, FolderOpen, FolderArchive, UserCog, HeartHandshake, ShieldCheck, Stethoscope, AlertTriangle, Star, Send } from "lucide-react"
+import { Truck, Scale, ClipboardCheck, Package, FileText, CheckCircle, Box, PackagePlus, BarChart3, Package2, ArrowRightLeft, History, Search, LayoutDashboard, Activity, FileCheck, Receipt, Clock, Users, Eye, Settings, Type as type, LucideIcon, CreditCard, UserCheck, Store, Tag, Layers, MapPin, Warehouse, Gauge, QrCode, Sparkles, BadgeCheck, BookOpen, Lock, ClipboardList, CalendarDays, NotebookPen, GraduationCap, Wallet, Banknote, Calculator, CalendarClock, FolderOpen, FolderArchive, UserCog, HeartHandshake, ShieldCheck, Stethoscope, AlertTriangle, Star, Send, Landmark } from "lucide-react"
 
 export interface Module {
   name: string
@@ -319,6 +319,8 @@ export const groups: Group[] = [
         modules: [
           { name: "Nominapersonal", icon: Banknote, label: "Nómina de Personal" },
           { name: "Liquidaciones", icon: Receipt, label: "Liquidaciones" },
+          // Aportes de seguridad social y parafiscales del mes (guía de la planilla PILA).
+          { name: "Parafiscales", icon: Landmark, label: "Parafiscales y Seguridad Social" },
           { name: "Proyecciones", icon: Calculator, label: "Proyecciones de Nómina" },
         ],
       },

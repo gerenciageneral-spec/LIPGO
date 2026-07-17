@@ -134,6 +134,7 @@ import BienestarPrograma from "@/components/rrhh/bienestar-programa"
 import BienestarParticipacion from "@/components/rrhh/bienestar-participacion"
 import Nominapersonal from "@/components/nominapersonal" // Added import for Nominapersonal component
 import Liquidaciones from "@/components/liquidaciones"
+import Parafiscales from "@/components/parafiscales"
 import { SolicitudTurnos } from "@/components/solicitud-turnos" // Added import for Solicitud de Turnos
 import { AprobarTurnos } from "@/components/aprobar-turnos" // Added import for Aprobar Turnos
 import { AttendanceViewer } from "@/components/attendance-viewer" // Added import for AttendanceViewer component
@@ -255,6 +256,7 @@ export function MainContent({
       "Recepción de Traslado": "transfer_requests", // Added mapping for renamed module
       Proyecciones: "proyecciones", // Added mapping for Proyecciones module
       Liquidaciones: "liquidaciones", // Submódulo de liquidaciones de personal retirado
+      Parafiscales: "parafiscales", // Aportes de seguridad social y parafiscales (PILA)
       "Gestión de Contratos": "gestion_contratos",
       "Gestión de Dotación EPP": "dotacion_epp",
       "Gestión de Capacitaciones": "capacitaciones",
@@ -724,6 +726,10 @@ export function MainContent({
           ) : selectedModule === "Liquidaciones" ? (
             <PermissionGuard moduleName="Liquidaciones">
               <Liquidaciones />
+            </PermissionGuard>
+          ) : selectedModule === "Parafiscales" ? (
+            <PermissionGuard moduleName="Parafiscales">
+              <Parafiscales />
             </PermissionGuard>
           ) : selectedModule === "Registro de asistencia" ? (
             <PermissionGuard moduleName="Registro de asistencia">
