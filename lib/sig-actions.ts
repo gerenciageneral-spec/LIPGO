@@ -1755,9 +1755,43 @@ export async function getIndicadoresValores(
       }
     } catch {}
 
+    // Indicadores de MEDICIÓN del SG-SST (0312, numerales 3.3.1-3.3.6) + extras,
+    // desde sst_indicadores (LIP=100). Se toma el consolidado del año más reciente
+    // (periodo sin guion = anual, p. ej. "2025"/"2026").
+    const sstIndVal: Record<string, number | null> = {}
+    const sstIndBase: Record<string, string> = {}
+    try {
+      const { data: si } = await supabase
+        .from("sst_indicadores")
+        .select("tipo, valor, periodo")
+        .eq("idempresa", 100)
+        .not("periodo", "like", "%-%")
+        .order("periodo", { ascending: false })
+      const vistos = new Set<string>()
+      for (const r of si ?? []) {
+        if (vistos.has(r.tipo)) continue
+        vistos.add(r.tipo)
+        sstIndVal[r.tipo] = r.valor
+        sstIndBase[r.tipo] = `consolidado ${r.periodo}`
+      }
+    } catch {}
+    const sstI = (tipo: string): SigIndicadorValor => ({
+      valor: sstIndVal[tipo] ?? 0,
+      base: sstIndBase[tipo] ?? "sin datos",
+    })
+
     const valores: Record<string, SigIndicadorValor> = {
       // Cumplimiento SG-SST (Resolución 0312) — avance real de los 60 estándares.
       sgsst_0312: { valor: Math.round(sgsst0312 * 10) / 10, base: "Autoevaluación 0312 (Art. 27)" },
+      // Indicadores de medición 0312 (numerales 3.3.1-3.3.6) + extras (sst_indicadores).
+      sst_severidad: sstI("severidad_at"),
+      sst_frecuencia: sstI("frecuencia_at"),
+      sst_mortalidad: sstI("mortalidad_at"),
+      sst_prevalencia: sstI("prevalencia_el"),
+      sst_incidencia: sstI("incidencia_el"),
+      sst_ausentismo_med: sstI("ausentismo"),
+      sst_investigaciones: sstI("investigaciones"),
+      sst_rotacion: sstI("rotacion_personal"),
       // Desempeño de LIP = cargues finalizados por LIP (fincargue).
       desp_cumplimiento: { valor: pct(finalizadasLIP, totOrdenes), base: `${finalizadasLIP}/${totOrdenes}` },
       // Valor agregado: ciclo completo registrado en LIPgo (trazabilidad para el cliente).
