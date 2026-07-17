@@ -6,8 +6,9 @@
 // consolidado + comparativo) y pinta gauge, tendencia, interanual, ficha técnica
 // y análisis. Cualquier módulo (SST, BSC, tiras KPI…) lo alimenta con su data.
 
-import { useEffect } from "react"
-import { X, Activity, TrendingDown, TrendingUp, Minus } from "lucide-react"
+import { useEffect, useState } from "react"
+import { X, Activity, TrendingDown, TrendingUp, Minus, Download, Loader2 } from "lucide-react"
+import { generarFichaIndicadorPDF } from "@/lib/indicador-pdf-actions"
 import {
   AreaChart,
   Area,
@@ -73,6 +74,27 @@ export function IndicadorViewer({ datos, onClose }: { datos: IndicadorDatos; onC
     return () => window.removeEventListener("keydown", onEsc)
   }, [onClose])
 
+  const [exportando, setExportando] = useState(false)
+  const exportarPDF = async () => {
+    setExportando(true)
+    try {
+      const r = await generarFichaIndicadorPDF(datos)
+      if (r.success && r.base64) {
+        const bin = atob(r.base64)
+        const arr = new Uint8Array(bin.length)
+        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i)
+        const url = URL.createObjectURL(new Blob([arr], { type: "application/pdf" }))
+        const a = document.createElement("a")
+        a.href = url
+        a.download = r.fileName || "ficha-indicador.pdf"
+        a.click()
+        URL.revokeObjectURL(url)
+      }
+    } finally {
+      setExportando(false)
+    }
+  }
+
   const { ficha, serie, actual, anterior, periodo, periodoAnterior, analisis } = datos
   const sentido = ficha.sentido
   const ok = enMeta(actual, ficha.meta, sentido)
@@ -125,6 +147,15 @@ export function IndicadorViewer({ datos, onClose }: { datos: IndicadorDatos; onC
               {ficha.area ? `${ficha.area} · ` : ""}
               {periodo ?? ""}
             </span>
+            <button
+              type="button"
+              onClick={exportarPDF}
+              disabled={exportando}
+              className="ml-auto mr-6 inline-flex items-center gap-1 rounded-md border border-sky-400/30 bg-white/5 px-2 py-1 text-[11px] font-semibold text-sky-100 transition-colors hover:bg-white/10 disabled:opacity-60"
+            >
+              {exportando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+              Ficha PDF
+            </button>
           </div>
           <h2 className="mt-1 text-2xl font-extrabold tracking-tight">{ficha.nombre}</h2>
 
