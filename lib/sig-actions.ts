@@ -4202,7 +4202,9 @@ export async function snapshotIndicadoresHistorico(
     const mm = String(mes).padStart(2, "0")
     const desde = `${anio}-${mm}-01`
     const hasta = new Date(Date.UTC(anio, mes, 0)).toISOString().slice(0, 10) // último día del mes
-    const r = await getIndicadoresValores(100, desde, hasta)
+    // null → consolida los proyectos/clientes [1,2,3,4] (BSC de LIP), igual que la
+    // portada. Con 100 no hay datos operativos (cargues/asistencia viven en 1-4).
+    const r = await getIndicadoresValores(null, desde, hasta)
     if (!r.success) return { success: false, count: 0, error: r.error }
     const periodo = `${anio}-${mm}`
     const rows = Object.entries(r.valores).map(([codigo, v]) => ({
