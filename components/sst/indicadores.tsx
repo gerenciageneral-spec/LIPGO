@@ -35,8 +35,9 @@ import { FICHAS, MESES, enMeta, type Ficha } from "@/components/sst/indicador-de
 import { IndicadorModal3D } from "@/components/sst/indicador-modal-3d"
 import { TrendingDown, TrendingUp, Minus, CheckCircle2, AlertTriangle, HelpCircle } from "lucide-react"
 import {
-  LineChart,
   Line,
+  Area,
+  ComposedChart,
   ReferenceLine,
   ResponsiveContainer,
   CartesianGrid,
@@ -44,6 +45,7 @@ import {
   YAxis,
   Tooltip,
   Legend,
+  Label,
 } from "recharts"
 
 const REG_TIPOS: [string, string][] = FICHAS.map((f) => [f.tipo, f.nombre])
@@ -54,15 +56,41 @@ const RAMPA = `
 .ind-scope {
   --ind-prev: #93B4F5;  /* año anterior  */
   --ind-act:  #0D3B6E;  /* año actual    */
-  --ind-grid: #e2e8f0;
+  --ind-grid: #e6edf5;
   --ind-meta: #94a3b8;
+  --ind-card-from: #ffffff;
+  --ind-card-to:   #f6f9fd;
 }
 .dark .ind-scope {
   --ind-prev: #2E63B8;
   --ind-act:  #A8C7F0;
-  --ind-grid: #334155;
+  --ind-grid: #2a3646;
   --ind-meta: #64748b;
+  --ind-card-from: #131a24;
+  --ind-card-to:   #0e141d;
 }
+/* Tarjeta premium: degradado sutil, filo superior en el tono del año y realce al hover. */
+.ind-card {
+  position: relative;
+  background: linear-gradient(160deg, var(--ind-card-from), var(--ind-card-to));
+  border: 1px solid color-mix(in srgb, var(--ind-act) 14%, transparent);
+  border-radius: 16px;
+  overflow: hidden;
+  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+}
+.ind-card::before {
+  content: "";
+  position: absolute; inset: 0 0 auto 0; height: 3px;
+  background: linear-gradient(90deg, var(--ind-prev), var(--ind-act));
+  opacity: .9;
+}
+.ind-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 14px 32px -18px color-mix(in srgb, var(--ind-act) 60%, transparent);
+  border-color: color-mix(in srgb, var(--ind-act) 30%, transparent);
+}
+/* Punto final resaltado del año actual, con leve glow. */
+.ind-dot-act { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--ind-act) 70%, transparent)); }
 `
 
 const fmt = (v: number | null | undefined) =>
@@ -525,59 +553,148 @@ function TarjetaIndicador({
     actual: d?.mens?.[i] ?? null,
     anterior: base ? (d?.mensPrev?.[i] ?? null) : null,
   }))
+  const gid = `sp-${f.tipo}`
+  // Último mes con dato del año actual → punto resaltado.
+  const lastIdx = (() => {
+    for (let i = chart.length - 1; i >= 0; i--) if (chart[i].actual != null) return i
+    return -1
+  })()
 
   return (
-    <Card className="overflow-hidden transition-shadow hover:shadow-lg">
-      <button type="button" onClick={onVer} className="w-full p-4 text-left">
+    <button type="button" onClick={onVer} className="ind-card block w-full p-4 text-left">
+      <div className="flex items-start justify-between gap-2">
         <Cableado f={f} />
-        <div className="mt-1.5 text-sm font-semibold text-foreground">{f.nombre}</div>
+        <EstadoChip ok={ok} />
+      </div>
+      <div className="mt-1.5 text-sm font-semibold text-foreground">{f.nombre}</div>
 
-        <div className="mt-2 flex items-end justify-between gap-2">
-          <div>
-            <span className="text-3xl font-extrabold tabular-nums" style={{ color }}>
-              {fmt(valor)}
-            </span>
-            <span className="ml-1 text-xs text-muted-foreground">
-              {d?.unidad || ""} · meta {fmt(meta)}
-            </span>
-          </div>
-          <EstadoChip ok={ok} />
+      <div className="mt-1 flex items-baseline gap-2">
+        <span className="text-4xl font-extrabold tabular-nums tracking-tight" style={{ color }}>
+          {fmt(valor)}
+        </span>
+        <span className="text-xs text-muted-foreground">
+          {d?.unidad || ""} · meta {fmt(meta)}
+        </span>
+      </div>
+
+      {delta != null && base ? (
+        <div
+          className="mt-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold"
+          style={{
+            color: mej == null ? SST_TOKENS.ink : mej ? SST_TOKENS.ok : SST_TOKENS.bad,
+            background: `color-mix(in srgb, ${mej == null ? SST_TOKENS.ink : mej ? SST_TOKENS.ok : SST_TOKENS.bad} 12%, transparent)`,
+          }}
+        >
+          {mej == null ? (
+            <Minus className="h-3 w-3" />
+          ) : (f.sentido === "menor") === mej ? (
+            <TrendingDown className="h-3 w-3" />
+          ) : (
+            <TrendingUp className="h-3 w-3" />
+          )}
+          {delta > 0 ? "+" : ""}
+          {fmt(delta)} vs {base}
         </div>
+      ) : (
+        <div className="h-[22px]" />
+      )}
 
-        <div className="mt-2 h-14">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chart} margin={{ top: 4, right: 4, bottom: 0, left: 4 }}>
-              {meta != null && (
-                <ReferenceLine y={meta} stroke="var(--ind-meta)" strokeDasharray="4 3" strokeWidth={1} />
-              )}
-              {base && (
-                <Line
-                  type="monotone"
-                  dataKey="anterior"
-                  stroke="var(--ind-prev)"
-                  strokeWidth={2}
-                  dot={false}
-                  isAnimationActive={false}
-                  connectNulls
-                />
-              )}
+      <div className="mt-2 h-16">
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={chart} margin={{ top: 6, right: 8, bottom: 0, left: 4 }}>
+            <defs>
+              <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="var(--ind-act)" stopOpacity={0.28} />
+                <stop offset="100%" stopColor="var(--ind-act)" stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            {meta != null && (
+              <ReferenceLine y={meta} stroke="var(--ind-meta)" strokeDasharray="4 3" strokeWidth={1} />
+            )}
+            {base && (
               <Line
                 type="monotone"
-                dataKey="actual"
-                stroke="var(--ind-act)"
-                strokeWidth={2}
+                dataKey="anterior"
+                stroke="var(--ind-prev)"
+                strokeWidth={1.5}
+                strokeDasharray="3 3"
                 dot={false}
                 isAnimationActive={false}
                 connectNulls
               />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
+            )}
+            <Area
+              type="monotone"
+              dataKey="actual"
+              stroke="var(--ind-act)"
+              strokeWidth={2.5}
+              fill={`url(#${gid})`}
+              isAnimationActive={false}
+              connectNulls
+              dot={(props: any) =>
+                props.index === lastIdx ? (
+                  <circle
+                    key="last"
+                    className="ind-dot-act"
+                    cx={props.cx}
+                    cy={props.cy}
+                    r={3.5}
+                    fill="var(--ind-act)"
+                    stroke="var(--ind-card-from)"
+                    strokeWidth={1.5}
+                  />
+                ) : (
+                  <g key={props.index} />
+                )
+              }
+            />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
 
-        <div className="mt-1 flex items-center justify-between text-[11px]">
-          {delta != null && base ? (
-            <span
-              className="flex items-center gap-1 font-medium"
+      <div className="mt-0.5 text-right text-[11px] font-medium text-primary">ver 3D →</div>
+    </button>
+  )
+}
+
+/** Un indicador, dos años, UN solo eje (misma unidad). Área para el año actual,
+ *  línea punteada de referencia para el base, meta marcada y valor final resaltado. */
+function GraficoComparativo({ f, d, anio, base }: { f: Ficha; d: DatoIndicador; anio: string; base: string }) {
+  const chart = MESES.map((mes, i) => ({
+    mes,
+    [base]: d?.mensPrev?.[i] ?? null,
+    [anio]: d?.mens?.[i] ?? null,
+  }))
+  const meta = d?.meta ?? null
+  const hayDatos = chart.some((p) => p[base] != null || p[anio] != null)
+  const gid = `cmp-${f.tipo}`
+  const ok = enMeta(d?.valor ?? null, d?.meta ?? null, f.sentido)
+  const mej = mejora(d?.valor ?? null, d?.prev ?? null, f.sentido)
+  const delta = d?.valor != null && d?.prev != null ? d.valor - d.prev : null
+  const lastIdx = (() => {
+    for (let i = chart.length - 1; i >= 0; i--) if (chart[i][anio] != null) return i
+    return -1
+  })()
+
+  return (
+    <div className="ind-card p-4">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-foreground">{f.nombre}</span>
+            <EstadoChip ok={ok} />
+          </div>
+          <div className="mt-0.5 text-xs text-muted-foreground">
+            {f.numeral ? `0312 · ${f.numeral} · ` : ""}
+            {f.sentido === "menor" ? "menor es mejor" : "mayor es mejor"}
+            {meta != null ? ` · meta ${fmt(meta)}` : ""}
+          </div>
+        </div>
+        <div className="shrink-0 text-right">
+          <div className="text-2xl font-extrabold tabular-nums leading-none text-foreground">{fmt(d?.valor)}</div>
+          {delta != null ? (
+            <div
+              className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold"
               style={{ color: mej == null ? SST_TOKENS.ink : mej ? SST_TOKENS.ok : SST_TOKENS.bad }}
             >
               {mej == null ? (
@@ -589,96 +706,84 @@ function TarjetaIndicador({
               )}
               {delta > 0 ? "+" : ""}
               {fmt(delta)} vs {base}
-            </span>
+            </div>
           ) : (
-            <span />
+            <div className="mt-1 text-[11px] text-muted-foreground">{base}: {fmt(d?.prev)}</div>
           )}
-          <span className="text-primary underline decoration-dotted">ver 3D →</span>
-        </div>
-      </button>
-    </Card>
-  )
-}
-
-/** Un indicador, dos años, UN solo eje (misma unidad). Con leyenda y tooltip. */
-function GraficoComparativo({ f, d, anio, base }: { f: Ficha; d: DatoIndicador; anio: string; base: string }) {
-  const chart = MESES.map((mes, i) => ({
-    mes,
-    [base]: d?.mensPrev?.[i] ?? null,
-    [anio]: d?.mens?.[i] ?? null,
-  }))
-  const meta = d?.meta ?? null
-  const hayDatos = chart.some((p) => p[base] != null || p[anio] != null)
-
-  return (
-    <Card className="p-4">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="text-sm font-semibold text-foreground">{f.nombre}</div>
-          <div className="text-xs text-muted-foreground">
-            {f.numeral ? `Numeral ${f.numeral} · ` : ""}
-            {f.sentido === "menor" ? "menor es mejor" : "mayor es mejor"}
-            {meta != null ? ` · meta ${fmt(meta)}` : ""}
-          </div>
-        </div>
-        <div className="shrink-0 text-right text-xs">
-          <div className="tabular-nums text-muted-foreground">
-            {base}: {fmt(d?.prev)}
-          </div>
-          <div className="font-semibold tabular-nums text-foreground">
-            {anio}: {fmt(d?.valor)}
-          </div>
         </div>
       </div>
 
-      <div className="mt-3 h-48">
+      <div className="mt-3 h-52">
         {hayDatos ? (
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chart} margin={{ top: 6, right: 8, bottom: 0, left: -12 }}>
+            <ComposedChart data={chart} margin={{ top: 8, right: 10, bottom: 0, left: -12 }}>
+              <defs>
+                <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="var(--ind-act)" stopOpacity={0.32} />
+                  <stop offset="100%" stopColor="var(--ind-act)" stopOpacity={0} />
+                </linearGradient>
+              </defs>
               <CartesianGrid stroke="var(--ind-grid)" strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="mes" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} interval={0} />
               <YAxis tick={{ fontSize: 10 }} tickLine={false} axisLine={false} width={44} />
               <Tooltip
+                cursor={{ stroke: "var(--ind-grid)", strokeWidth: 1 }}
                 contentStyle={{
                   fontSize: 12,
-                  borderRadius: 8,
+                  borderRadius: 10,
                   border: "1px solid var(--ind-grid)",
                   background: "hsl(var(--popover))",
                   color: "hsl(var(--popover-foreground))",
+                  boxShadow: "0 10px 30px -12px rgba(0,0,0,.35)",
                 }}
                 formatter={(v: any, name: any) => [fmt(v as number), name]}
               />
               <Legend wrapperStyle={{ fontSize: 11 }} iconType="plainline" />
               {meta != null && (
-                <ReferenceLine
-                  y={meta}
-                  stroke="var(--ind-meta)"
-                  strokeDasharray="4 3"
-                  strokeWidth={1}
-                  label={{ value: "meta", position: "right", fontSize: 10, fill: "var(--ind-meta)" }}
-                />
+                <ReferenceLine y={meta} stroke="var(--ind-meta)" strokeDasharray="5 4" strokeWidth={1.25}>
+                  <Label value="meta" position="right" fontSize={10} fill="var(--ind-meta)" />
+                </ReferenceLine>
               )}
+              {/* Año base: línea recesiva de referencia, punteada. */}
               <Line
                 type="monotone"
                 dataKey={base}
                 stroke="var(--ind-prev)"
                 strokeWidth={2}
-                dot={{ r: 2.5 }}
-                activeDot={{ r: 5 }}
+                strokeDasharray="4 3"
+                dot={false}
+                activeDot={{ r: 4 }}
                 isAnimationActive={false}
                 connectNulls
               />
-              <Line
+              {/* Año actual: área protagonista con degradado + punto final resaltado. */}
+              <Area
                 type="monotone"
                 dataKey={anio}
                 stroke="var(--ind-act)"
-                strokeWidth={2}
-                dot={{ r: 2.5 }}
-                activeDot={{ r: 5 }}
+                strokeWidth={2.5}
+                fill={`url(#${gid})`}
                 isAnimationActive={false}
                 connectNulls
+                activeDot={{ r: 5 }}
+                dot={(props: any) =>
+                  props.index === lastIdx ? (
+                    <circle
+                      key="last"
+                      className="ind-dot-act"
+                      cx={props.cx}
+                      cy={props.cy}
+                      r={4}
+                      fill="var(--ind-act)"
+                      stroke="var(--ind-card-from)"
+                      strokeWidth={1.5}
+                    />
+                  ) : (
+                    <g key={props.index} />
+                  )
+                }
               />
-            </LineChart>
+            </ComposedChart>
           </ResponsiveContainer>
         ) : (
           <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
@@ -686,7 +791,7 @@ function GraficoComparativo({ f, d, anio, base }: { f: Ficha; d: DatoIndicador; 
           </div>
         )}
       </div>
-    </Card>
+    </div>
   )
 }
 
