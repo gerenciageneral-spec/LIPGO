@@ -32,6 +32,13 @@ export interface PendingLoadOrder {
    */
   fincargue?: string | null
   tipooperacion?: string
+  /**
+   * Solo para órdenes de DISTRIBUCIÓN: indica si esa distribución se factura.
+   * Se decide en Packing (a veces el conductor va solo, sin auxiliares, y no hay
+   * servicio de distribución que cobrar). `false` = NO se factura (solo el cargue);
+   * `null`/`true` = SÍ se factura (por defecto encendido).
+   */
+  facturar?: boolean | null
 }
 
 export interface PackingItem {
@@ -92,7 +99,7 @@ export async function getDistributionOrders(selectedEmpresaId?: number | null) {
   const { data, error } = await supabase
     .from("cabeceraoc")
     .select(
-      "id, ordendecargue, placa, conductor, fechaorden, fechacargue, iniciocargue, auxiliares, fincargue",
+      "id, ordendecargue, placa, conductor, fechaorden, fechacargue, iniciocargue, auxiliares, fincargue, tipooperacion, facturar",
     )
     .eq("idempresa", empresaId) // 1) Filter by empresa session
     .eq("tipooperacion", "Distribucion") // 2) Filter by Distribucion
@@ -121,6 +128,20 @@ export async function getDistributionOrders(selectedEmpresaId?: number | null) {
   )
 
   return { success: true, data: ordersWithClients, message: "Órdenes de distribución cargadas exitosamente" }
+}
+
+// Marca si una orden se factura o no. Lo deciden la operación:
+//   · CARGUE en Picking → se desmarca si el personal de carga NO es de LIP.
+//   · DISTRIBUCIÓN en Packing → se desmarca si el conductor va solo (sin auxiliares).
+// `false` → la orden no aparece en Gestión de Facturas (no se cobra).
+export async function setFacturarOrden(orderId: number, facturar: boolean) {
+  const supabase = await createClient()
+  const { error } = await supabase.from("cabeceraoc").update({ facturar }).eq("id", orderId)
+  if (error) {
+    console.error("[v0] Error updating facturar:", error)
+    return { success: false, message: error.message }
+  }
+  return { success: true, message: facturar ? "Orden marcada para facturar" : "Orden excluida de facturación" }
 }
 
 export async function getPackingItems(ordendecargue: string) {

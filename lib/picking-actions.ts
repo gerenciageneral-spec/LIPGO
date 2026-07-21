@@ -31,6 +31,12 @@ export interface PendingLoadOrder {
    * acciones cuando la orden ya esta cerrada.
    */
   fincargue?: string | null
+  /**
+   * ¿Se factura este cargue? Se decide en Picking. Encendido por defecto
+   * (`null`/`true`); se DESMARCA cuando el personal que carga NO es de LIP (el
+   * vehículo trae los suyos) → `false` = ese cargue no aparece en Gestión de Facturas.
+   */
+  facturar?: boolean | null
 }
 
 export interface PersonnelEmployee {
@@ -138,7 +144,7 @@ export async function getPendingLoadOrders(selectedEmpresaId?: number | null) {
   const { data, error } = await supabase
     .from("cabeceraoc")
     .select(
-      "id, ordendecargue, placa, conductor, fechaorden, fechacargue, iniciocargue, fotospicking, doccargue, horapicking, auxiliares, fincargue",
+      "id, ordendecargue, placa, conductor, fechaorden, fechacargue, iniciocargue, fotospicking, doccargue, horapicking, auxiliares, fincargue, facturar",
     )
     .eq("idempresa", empresaId) // Filter by empresa from session
     .eq("tipooperacion", "Cargue") // Only show Cargue operations

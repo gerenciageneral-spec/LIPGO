@@ -9,6 +9,18 @@ export const PLACAS_EXCLUIDAS_FACTURAS: Record<number, string[]> = {
 }
 
 /**
+ * Excluye del cobro las órdenes marcadas como NO facturables (`cabeceraoc.facturar
+ * = false`). El check "Facturar" se decide en la operación:
+ *   · CARGUE en Picking → se desmarca cuando el personal que carga NO es de LIP.
+ *   · DISTRIBUCIÓN en Packing → se desmarca cuando el conductor va solo (sin auxiliares).
+ * Encendido por defecto: `null`/`true` = SÍ factura; solo `false` (desmarcado) se excluye.
+ */
+export function excluirNoFacturable(q: any): any {
+  // PostgREST: se conservan las filas donde facturar != false (incluye null).
+  return q.or("facturar.is.null,facturar.is.true")
+}
+
+/**
  * Aplica la exclusión de placas al query de `cabeceraoc` para la empresa dada.
  * CONSERVA las filas con placa nula: el filtro es `placa IS NULL OR placa <> 'X'`
  * (un simple `neq`/`not` dejaría fuera las nulas, que sí deben aparecer).

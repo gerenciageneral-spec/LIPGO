@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { parseColombianNumber } from "@/lib/parse-colombian-number"
-import { excluirPlacasFacturas } from "@/lib/facturas-exclusiones"
+import { excluirPlacasFacturas, excluirNoFacturable } from "@/lib/facturas-exclusiones"
 
 export async function GET(request: NextRequest) {
   try {
@@ -31,6 +31,8 @@ export async function GET(request: NextRequest) {
     // .eq()/.or()/.ilike() devuelve un FilterBuilder distinto del QueryBuilder
     // inicial y la reasignación no tipa. Type-only, no cambia el runtime.
     const applyFilters = (q: any) => {
+      // Órdenes marcadas como NO facturables (personal de carga no-LIP): fuera del cobro.
+      q = excluirNoFacturable(q)
       if (empresaId) {
         const emp = parseInt(empresaId, 10)
         q = q.eq("idempresa", emp)

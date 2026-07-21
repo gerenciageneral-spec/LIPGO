@@ -869,6 +869,8 @@ export async function generateLoadOrder(orderData: {
             ordendecargue: distribucionOrderCode,
             // Valor SIN tilde: así está en la BD y en los filtros (getLoadOrders).
             tipooperacion: "Distribucion",
+            // Se factura por defecto; en Packing la desmarcan si el conductor va solo.
+            facturar: true,
           }
           const { error: distHeaderError } = await supabase.from("cabeceraoc").insert(distHeader)
 

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
-import { excluirPlacasFacturas } from "@/lib/facturas-exclusiones"
+import { excluirPlacasFacturas, excluirNoFacturable } from "@/lib/facturas-exclusiones"
 import * as XLSX from "xlsx"
 
 export async function GET(request: NextRequest) {
@@ -29,6 +29,8 @@ export async function GET(request: NextRequest) {
       .neq("tipooperacion", "proyeccion")
       .order("id", { ascending: false })
 
+    // Órdenes marcadas como NO facturables (personal de carga no-LIP): fuera del cobro.
+    query = excluirNoFacturable(query)
     if (empresaId) {
       const emp = parseInt(empresaId, 10)
       query = query.eq("idempresa", emp)

@@ -12,6 +12,7 @@ import { RefreshCw, FileText, UserPlus, ArrowLeft, Camera, Check } from "lucide-
 import {
   getPendingUnloadOrders,
   getDistributionOrders,
+  setFacturarOrden,
   type PendingLoadOrder,
   generatePackingPDF,
   getCarguDescarguePersonnel,
@@ -315,6 +316,21 @@ export function Packing() {
     setGeneratingPDF(null)
   }
 
+  // Facturar la distribución (solo órdenes de Distribucion). Encendido por
+  // defecto; se DESMARCA cuando el conductor va solo (sin auxiliares) y no hay
+  // servicio de distribución que cobrar. `false` → no aparece en Gestión de Facturas.
+  const handleToggleFacturar = async (order: PendingLoadOrder, checked: boolean) => {
+    // Optimista: refleja de inmediato.
+    setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, facturar: checked } : o)))
+    const res = await setFacturarOrden(order.id, checked)
+    if (!res.success) {
+      setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, facturar: !checked } : o)))
+      toast({ title: "Error", description: res.message, variant: "destructive" })
+    } else {
+      toast({ title: checked ? "Se facturará" : "No se facturará", description: res.message })
+    }
+  }
+
   const handleUploadPhotos = (order: PendingLoadOrder) => {
     setSelectedPhotosOrder(order)
     setSelectedPhotos([])
@@ -547,6 +563,7 @@ export function Packing() {
                     <th className="py-1 px-2 text-left font-semibold">Cliente</th>
                     <th className="py-1 px-2 text-left font-semibold">Placa</th>
                     <th className="py-1 px-2 text-left font-semibold">Conductor</th>
+                    <th className="py-1 px-2 text-center font-semibold">Facturar</th>
                     <th className="py-1 px-2 text-left font-semibold">Acciones</th>
                   </tr>
                 </thead>
@@ -559,6 +576,23 @@ export function Packing() {
                       <td className="py-1 px-2">{order.cliente}</td>
                       <td className="py-1 px-2">{order.placa}</td>
                       <td className="py-1 px-2">{order.conductor}</td>
+                      <td className="py-1 px-2 text-center">
+                        {/* Facturar: SOLO para órdenes de distribución. Encendido por
+                            defecto (facturar !== false); se desmarca si el conductor va
+                            solo. Descargue no tiene esta opción. */}
+                        {order.tipooperacion === "Distribucion" ? (
+                          <label className="inline-flex cursor-pointer items-center justify-center gap-1" title="Facturar esta distribución (desmarca si el conductor va solo)">
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 cursor-pointer accent-primary"
+                              checked={order.facturar !== false}
+                              onChange={(e) => handleToggleFacturar(order, e.target.checked)}
+                            />
+                          </label>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
                       <td className="py-1 px-2">
                         {/* Nuevo flujo de Packing: PDF -> Personal -> Fotos.
                             El cargue de fotos es el paso final y el que cierra
