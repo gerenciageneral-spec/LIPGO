@@ -853,49 +853,46 @@ export async function generateLoadOrder(orderData: {
         const distId = nextId + 1
         distribucionOrderCode = numeroOrdenDistribucion(orderCode)
 
-        const { error: distHeaderError } = await supabase.from("cabeceraoc").insert({
-          id: distId,
-          idempresa: sessionEmpresaId,
-          ordendecargue: distribucionOrderCode,
-          fechaorden: currentDate,
-          fechacargue: fechaCargue,
-          placa: orderData.vehiculo,
-          conductor: orderData.nombreConductor,
-          celular: telefono,
-          transporte: orderData.tipoTransporte,
-          // Valor SIN tilde: así está en la BD y en los filtros (getLoadOrders).
-          tipooperacion: "Distribucion",
-          pesoorden: orderData.totalWeight,
-          horaorden: currentTime,
-          observaciones: `Distribución automática de la orden ${orderCode}`,
-          pesajeinicial: horapesoinicial,
-          horavehiculo: horallegada,
-        })
+        // La orden de distribución debe ser IGUAL a la de cargue: se CLONAN las
+        // filas reales recién creadas (cabecera + todo el detalle: cada owner,
+        // producto, cantidad, cliente, peso), cambiando SOLO el id, el número
+        // (mismo + "D") y el tipo de operación. Así lleva exactamente lo mismo.
+        const { data: origHeader } = await supabase.from("cabeceraoc").select("*").eq("id", nextId).maybeSingle()
 
-        if (distHeaderError) {
-          console.error("[v0] Error creando cabecera de distribución automática:", distHeaderError)
+        if (!origHeader) {
+          console.error("[v0] Distribución automática: no se encontró la cabecera original", nextId)
           distribucionOrderCode = null
         } else {
-          // Detalle: copia EXACTA de productos/cantidades/cliente de la orden de
-          // cargue (owner incluido, va pegado al producto). Reusa nextDetailId.
-          const distDetails = orderData.productsList
-            .filter((product) => product.cantidad > 0)
-            .map((product) => ({
-              id: nextDetailId++,
-              idorden: distId,
-              numeroorden: distribucionOrderCode,
-              producto: product.producto,
-              cantidad: product.cantidad,
-              toneladas: product.toneladas,
-              cliente: product.cliente,
-            }))
-          if (distDetails.length > 0) {
-            const { error: distDetailError } = await supabase.from("detalleoc").insert(distDetails)
-            if (distDetailError) {
-              console.error("[v0] Error creando detalle de distribución automática:", distDetailError)
-            }
+          const distHeader = {
+            ...origHeader,
+            id: distId,
+            ordendecargue: distribucionOrderCode,
+            // Valor SIN tilde: así está en la BD y en los filtros (getLoadOrders).
+            tipooperacion: "Distribucion",
           }
-          console.log("[v0] Orden de distribución automática creada:", distribucionOrderCode)
+          const { error: distHeaderError } = await supabase.from("cabeceraoc").insert(distHeader)
+
+          if (distHeaderError) {
+            console.error("[v0] Error creando cabecera de distribución automática:", distHeaderError)
+            distribucionOrderCode = null
+          } else {
+            // Detalle: clon EXACTO de todas las líneas de la orden de cargue
+            // (idorden identifica de forma única las líneas de la cargue).
+            const { data: origDetails } = await supabase.from("detalleoc").select("*").eq("idorden", nextId)
+            if (origDetails && origDetails.length > 0) {
+              const distDetails = origDetails.map((d: any) => ({
+                ...d,
+                id: nextDetailId++,
+                idorden: distId,
+                numeroorden: distribucionOrderCode,
+              }))
+              const { error: distDetailError } = await supabase.from("detalleoc").insert(distDetails)
+              if (distDetailError) {
+                console.error("[v0] Error creando detalle de distribución automática:", distDetailError)
+              }
+            }
+            console.log("[v0] Orden de distribución automática creada:", distribucionOrderCode)
+          }
         }
       } catch (distErr) {
         console.error("[v0] Excepción en distribución automática (no bloquea el cargue):", distErr)
