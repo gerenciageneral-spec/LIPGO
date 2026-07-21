@@ -139,6 +139,31 @@ function tarifaDeServicio(
   }
 }
 
+// Trae las tarifas POR SERVICIO de un proyecto desde tarifasoperacion
+// (Cargue/Distribución, Descargue, Descargue SUSANITA). Fuente única de la valoración
+// real, compartida por la prefactura y el cuadro de control.
+async function tarifasDeEmpresa(
+  sb: any,
+  idempresa: number,
+): Promise<{ cargue: number; descargue: number; susanita: number }> {
+  const tarifas = { cargue: 0, descargue: 0, susanita: 0 }
+  const { data: tar } = await sb
+    .from("tarifasoperacion")
+    .select("operacion, empresafactura, tarifa")
+    .eq("empresaid", idempresa)
+  for (const t of tar || []) {
+    const op = String(t.operacion ?? "").trim().toLowerCase()
+    const fact = String(t.empresafactura ?? "").trim().toUpperCase()
+    const v = num(t.tarifa)
+    if (op === "cargue" || op === "distribucion") tarifas.cargue = Math.max(tarifas.cargue, v)
+    else if (op === "descargue") {
+      if (fact === "SUSANITA") tarifas.susanita = Math.max(tarifas.susanita, v)
+      else tarifas.descargue = Math.max(tarifas.descargue, v)
+    }
+  }
+  return tarifas
+}
+
 export interface PrefacturaLinea {
   fechaorden: string | null
   fechacargue: string | null
@@ -172,6 +197,112 @@ export interface Prefactura {
   totalToneladas: number
 }
 
+// ---------- Prefacturas GUARDADAS (borrador/aprobada) ----------
+export interface PrefacturaLineaGuardada {
+  owner: string
+  servicio: string
+  toneladas: number
+  tarifa: number
+  total: number
+}
+export interface PrefacturaGuardada {
+  id: number
+  idempresa: number
+  proyecto: string | null
+  periodo_desde: string | null
+  periodo_hasta: string | null
+  lineas: PrefacturaLineaGuardada[]
+  total: number
+  toneladas: number
+  estado: "borrador" | "aprobada"
+  usuario: string | null
+  observacion: string | null
+  created_at: string
+}
+
+export async function guardarPrefactura(payload: {
+  idempresa: number
+  proyecto?: string | null
+  periodo_desde?: string | null
+  periodo_hasta?: string | null
+  lineas: PrefacturaLineaGuardada[]
+  total: number
+  toneladas: number
+  usuario?: string | null
+  observacion?: string | null
+}): Promise<{ success: boolean; id?: number; message?: string }> {
+  if (!payload?.idempresa) return { success: false, message: "Falta el proyecto." }
+  if (!payload.lineas?.length) return { success: false, message: "La prefactura no tiene líneas seleccionadas." }
+  try {
+    const sb: any = await getSupabaseAdmin()
+    const { data, error } = await sb
+      .from("prefacturas")
+      .insert({
+        idempresa: payload.idempresa,
+        proyecto: payload.proyecto ?? null,
+        periodo_desde: payload.periodo_desde || null,
+        periodo_hasta: payload.periodo_hasta || null,
+        lineas: payload.lineas,
+        total: payload.total,
+        toneladas: payload.toneladas,
+        estado: "borrador",
+        usuario: payload.usuario ?? null,
+        observacion: payload.observacion ?? null,
+        updated_at: new Date().toISOString(),
+      })
+      .select("id")
+      .single()
+    if (error) return { success: false, message: error.message }
+    return { success: true, id: data?.id }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al guardar la prefactura." }
+  }
+}
+
+export async function listarPrefacturas(
+  idempresa: number,
+): Promise<{ success: boolean; data: PrefacturaGuardada[]; message?: string }> {
+  if (!idempresa) return { success: true, data: [] }
+  try {
+    const sb: any = await getSupabaseAdmin()
+    const { data, error } = await sb
+      .from("prefacturas")
+      .select("*")
+      .eq("idempresa", idempresa)
+      .order("created_at", { ascending: false })
+      .limit(100)
+    if (error) return { success: false, data: [], message: error.message }
+    return { success: true, data: (data || []) as PrefacturaGuardada[] }
+  } catch (e: any) {
+    return { success: false, data: [], message: e?.message || "Error al listar prefacturas." }
+  }
+}
+
+export async function cambiarEstadoPrefactura(
+  id: number,
+  estado: "borrador" | "aprobada",
+): Promise<{ success: boolean; message?: string }> {
+  try {
+    const sb: any = await getSupabaseAdmin()
+    const { error } = await sb.from("prefacturas").update({ estado, updated_at: new Date().toISOString() }).eq("id", id)
+    if (error) return { success: false, message: error.message }
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al cambiar el estado." }
+  }
+}
+
+export async function eliminarPrefactura(id: number): Promise<{ success: boolean; message?: string }> {
+  try {
+    const sb: any = await getSupabaseAdmin()
+    const { error } = await sb.from("prefacturas").delete().eq("id", id).eq("estado", "borrador")
+    if (error) return { success: false, message: error.message }
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al eliminar." }
+  }
+}
+
 /**
  * Arma la PREFACTURA de un proyecto (idempresa) para un rango: la TABLA ORIGEN
  * (líneas de la vista `facturacion`, owner ya resuelto) + un resumen por
@@ -186,23 +317,7 @@ export async function getPrefactura(
     const sb: any = await getSupabaseAdmin()
 
     // Tarifas por servicio desde tarifasoperacion (Cargue, Descargue, Descargue SUSANITA).
-    const tarifas = { cargue: 0, descargue: 0, susanita: 0 }
-    {
-      const { data: tar } = await sb
-        .from("tarifasoperacion")
-        .select("operacion, empresafactura, tarifa")
-        .eq("empresaid", idempresa)
-      for (const t of tar || []) {
-        const op = String(t.operacion ?? "").trim().toLowerCase()
-        const fact = String(t.empresafactura ?? "").trim().toUpperCase()
-        const v = num(t.tarifa)
-        if (op === "cargue" || op === "distribucion") tarifas.cargue = Math.max(tarifas.cargue, v)
-        else if (op === "descargue") {
-          if (fact === "SUSANITA") tarifas.susanita = Math.max(tarifas.susanita, v)
-          else tarifas.descargue = Math.max(tarifas.descargue, v)
-        }
-      }
-    }
+    const tarifas = await tarifasDeEmpresa(sb, idempresa)
 
     // Placas que NO atiende LIP (excepto cuando cargan a Susanita). Ej. WMP446 en id 4.
     const placasExcluidas = new Set((PLACAS_EXCLUIDAS_FACTURAS[idempresa] || []).map((p) => p.toUpperCase()))
@@ -308,6 +423,11 @@ export async function getControlFacturacion(
   try {
     const sb: any = await getSupabaseAdmin()
 
+    // Tarifas POR SERVICIO (misma valoración que la prefactura) y placas que LIP no
+    // atiende (WMP446), para que "lo que se debe facturar" sea REAL y consistente.
+    const tarifas = await tarifasDeEmpresa(sb, idempresa)
+    const placasExcluidas = new Set((PLACAS_EXCLUIDAS_FACTURAS[idempresa] || []).map((p) => p.toUpperCase()))
+
     // 1) Estado + vínculo de las órdenes de la empresa (fuente de verdad).
     //    Solo procesadas (fincargue) y facturables (facturar != false).
     const estadoPorOrden = new Map<
@@ -347,7 +467,7 @@ export async function getControlFacturacion(
       for (let offset = 0; ; offset += pageSize) {
         let q = sb
           .from("facturacion")
-          .select("numeroorden, fechacargue, fechaorden, placa, tiquetebascula, cliente, producto, toneladas, owner, tipooperacion, tarifa, valor_a_facturar")
+          .select("numeroorden, fechacargue, fechaorden, placa, tiquetebascula, cliente, producto, toneladas, owner, transporte, tipooperacion, tarifa, valor_a_facturar")
           .eq("idempresa", idempresa)
         if (filtros.desde) q = q.gte("fechacargue", filtros.desde)
         if (filtros.hasta) q = q.lte("fechacargue", filtros.hasta)
@@ -372,12 +492,20 @@ export async function getControlFacturacion(
     const esBascula = idempresa === 1 || idempresa === 2
     const filasMap = new Map<string, ControlFacturaFila>()
 
+    // WMP446 (u otras excluidas) NO las atiende LIP, SALVO cuando cargan a Susanita.
+    const esExcluida = (r: any) => {
+      const placa = String(r.placa ?? "").trim().toUpperCase()
+      const cl = String(r.cliente ?? "").toUpperCase()
+      return placasExcluidas.has(placa) && !cl.includes("SUSANITA")
+    }
+
     if (esBascula) {
       // Acumular por orden: tarifa máxima y datos de cabecera.
       const porOrden = new Map<string, { tarifaMax: number; sinTarifa: boolean; r: any }>()
       for (const r of facturas) {
         const on = String(r.numeroorden || "").trim()
         if (!on || !procesadas.has(on)) continue
+        if (esExcluida(r)) continue
         const tNum = num(r.tarifa)
         const sinTarifa = String(r.tarifa) === "SIN TARIFA EN MAESTRO" || r.tarifa == null
         const prev = porOrden.get(on)
@@ -412,23 +540,35 @@ export async function getControlFacturacion(
         })
       }
     } else {
-      // Cedis: por orden+owner, con toneladas del detalle (peso de la orden).
+      // Cedis: por orden+owner, con toneladas del detalle (peso de la orden). El VALOR
+      // se calcula con la TARIFA DEL SERVICIO real (propio 18.942 / recoge en bodega y
+      // descargue 19.792 / Susanita 31.544) — la MISMA valoración que la prefactura, NO
+      // la tarifa cruda de la vista. Así "lo que se debe facturar" es real y coincide.
       const key = (o: string, w: string) => `${o}|||${w}`
+      const acc = new Map<string, { valor: number; ton: number }>()
       for (const r of facturas) {
         const on = String(r.numeroorden || "").trim()
         if (!on || !procesadas.has(on)) continue
+        if (esExcluida(r)) continue
         const owner = String(r.owner || "SIN OWNER")
         const est = estadoPorOrden.get(on)
-        const sinTarifa = String(r.tarifa) === "SIN TARIFA EN MAESTRO" || r.tarifa == null
+        const servicio = servicioDe(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa)
+        const tarifaServ = tarifaDeServicio(servicio, tarifas)
+        const ton = num(r.toneladas)
+        const val = ton * tarifaServ
+        const sinTarifa = tarifaServ <= 0
         const k = key(on, owner)
         const prev = filasMap.get(k)
-        const val = num(r.valor_a_facturar)
-        const ton = num(r.toneladas)
         if (prev) {
-          prev.toneladas += ton
-          prev.valor_a_facturar += val
+          const a = acc.get(k)!
+          a.valor += val
+          a.ton += ton
+          prev.toneladas = a.ton
+          prev.valor_a_facturar = a.valor
+          prev.tarifa = a.ton > 0 ? Math.round(a.valor / a.ton) : null
           prev.sin_tarifa = prev.sin_tarifa || sinTarifa
         } else {
+          acc.set(k, { valor: val, ton })
           filasMap.set(k, {
             numeroorden: on,
             fecha: r.fechacargue ?? r.fechaorden ?? null,
@@ -439,7 +579,7 @@ export async function getControlFacturacion(
             owner,
             toneladas: ton,
             fuente_peso: "orden",
-            tarifa: sinTarifa ? null : num(r.tarifa),
+            tarifa: sinTarifa ? null : tarifaServ,
             valor_a_facturar: val,
             sin_tarifa: sinTarifa,
             estadofactura: est?.estado ?? null,
