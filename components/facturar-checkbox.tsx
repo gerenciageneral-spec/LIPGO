@@ -20,10 +20,12 @@ interface FacturarCheckboxProps {
   idempresa?: number | null
   usuario?: string | null
   modulo: "Picking" | "Packing"
+  /** Si la orden ya está finalizada, el check se bloquea (no se puede modificar). */
+  disabled?: boolean
   onChanged?: (v: boolean) => void
 }
 
-export function FacturarCheckbox({ orden, facturar, idempresa, usuario, modulo, onChanged }: FacturarCheckboxProps) {
+export function FacturarCheckbox({ orden, facturar, idempresa, usuario, modulo, disabled, onChanged }: FacturarCheckboxProps) {
   const { toast } = useToast()
   const checked = facturar !== false
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -71,10 +73,15 @@ export function FacturarCheckbox({ orden, facturar, idempresa, usuario, modulo, 
     <>
       <input
         type="checkbox"
-        className="h-4 w-4 cursor-pointer accent-primary"
+        className="h-4 w-4 accent-primary disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
         checked={checked}
+        disabled={disabled}
         onChange={(e) => onToggle(e.target.checked)}
-        title="Facturar esta orden (desmarca si LIP no prestó el servicio)"
+        title={
+          disabled
+            ? "Orden finalizada: el check ya no se puede modificar"
+            : "Facturar esta orden (desmarca si LIP no prestó el servicio)"
+        }
       />
       <Dialog open={confirmOpen} onOpenChange={(o) => !o && setConfirmOpen(false)}>
         <DialogContent>

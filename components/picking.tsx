@@ -1871,14 +1871,7 @@ const loadOrders = async () => {
                 ) : (
                   orders.map((order) => (
                     <tr key={order.id} className="border-b hover:bg-muted/50">
-                      <td className="py-1 px-2 text-[10px]">
-                        {order.ordendecargue}
-                        {order.fincargue ? (
-                          <span className="ml-1 rounded bg-muted px-1 py-0.5 text-[9px] text-muted-foreground" title="Ya finalizada; visible hoy solo para corregir el check Facturar">
-                            finalizada
-                          </span>
-                        ) : null}
-                      </td>
+                      <td className="py-1 px-2 text-[10px]">{order.ordendecargue}</td>
                       <td className="py-1 px-2 text-[10px]">
                         {order.fechaorden ? new Date(order.fechaorden + "T12:00:00").toLocaleDateString("es-CO") : "-"}
                       </td>
@@ -1899,6 +1892,7 @@ const loadOrders = async () => {
                           idempresa={selectedEmpresaId}
                           usuario={profile?.usuario}
                           modulo="Picking"
+                          disabled={!!order.fincargue}
                           onChanged={(v) =>
                             setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, facturar: v } : o)))
                           }

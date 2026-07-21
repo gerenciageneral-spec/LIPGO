@@ -4,7 +4,6 @@ import { createClient } from "@/lib/supabase-client"
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getCurrentEmpresaIdForInsert } from "@/lib/user-context"
 import { getColombiaDateTime } from "@/lib/inventory-actions"
-import { getColombiaDate } from "@/lib/date-utils"
 import {
   getCarguDescarguePersonnel as _getCarguDescarguePersonnel,
   assignPersonnelToOrder as _assignPersonnelToOrder,
@@ -104,10 +103,7 @@ export async function getDistributionOrders(selectedEmpresaId?: number | null) {
     )
     .eq("idempresa", empresaId) // 1) Filter by empresa session
     .eq("tipooperacion", "Distribucion") // 2) Filter by Distribucion
-    // 3) Pendientes (fincargue null) O las marcadas NO facturables HOY: estas
-    //    siguen visibles hasta que termine el día para poder re-marcarlas si se
-    //    equivocaron; al día siguiente ya no aparecen.
-    .or(`fincargue.is.null,and(facturar.eq.false,fechacargue.eq.${await getColombiaDate()})`)
+    .is("fincargue", null) // 3) Solo pendientes; al finalizar el proceso desaparece (igual que todas)
     .order("ordendecargue", { ascending: false })
 
   if (error) {

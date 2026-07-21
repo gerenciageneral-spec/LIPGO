@@ -555,14 +555,7 @@ export function Packing() {
                 <tbody>
                   {orders.map((order) => (
                     <tr key={order.id} className="border-b hover:bg-muted/50">
-                      <td className="py-1 px-2">
-                        {order.ordendecargue}
-                        {order.fincargue ? (
-                          <span className="ml-1 rounded bg-muted px-1 py-0.5 text-[9px] text-muted-foreground" title="Ya finalizada; visible hoy solo para corregir el check Facturar">
-                            finalizada
-                          </span>
-                        ) : null}
-                      </td>
+                      <td className="py-1 px-2">{order.ordendecargue}</td>
                       <td className="py-1 px-2">{order.fechaorden || "-"}</td>
                       <td className="py-1 px-2">{order.fechacargue || "-"}</td>
                       <td className="py-1 px-2">{order.cliente}</td>
@@ -579,6 +572,7 @@ export function Packing() {
                             idempresa={selectedEmpresaId}
                             usuario={profile?.usuario}
                             modulo="Packing"
+                            disabled={!!order.fincargue}
                             onChanged={(v) =>
                               setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, facturar: v } : o)))
                             }
