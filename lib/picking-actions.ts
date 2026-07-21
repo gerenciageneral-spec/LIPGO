@@ -2,7 +2,7 @@
 
 import { createClient } from "@/lib/supabase-client"
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
-import { getColombiaDateTime, getColombiaTime } from "@/lib/date-utils"
+import { getColombiaDateTime, getColombiaTime, getColombiaDate } from "@/lib/date-utils"
 import { getCurrentEmpresaIdForInsert, getCurrentEmpresaId } from "@/lib/company-filter"
 
 export interface PendingLoadOrder {
@@ -148,7 +148,9 @@ export async function getPendingLoadOrders(selectedEmpresaId?: number | null) {
     )
     .eq("idempresa", empresaId) // Filter by empresa from session
     .eq("tipooperacion", "Cargue") // Only show Cargue operations
-    .is("fincargue", null)
+    // Pendientes (fincargue null) O las marcadas NO facturables HOY: estas siguen
+    // visibles hasta que termine el día para poder re-marcarlas si se equivocaron.
+    .or(`fincargue.is.null,and(facturar.eq.false,fechacargue.eq.${await getColombiaDate()})`)
     .not("horalote", "is", null)
     .order("ordendecargue", { ascending: false })
 
