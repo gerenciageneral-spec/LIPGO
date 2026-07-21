@@ -9,6 +9,7 @@
 // es el paso siguiente y NO se cruza aquí.
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
+import { ownerDeIdEmpresa } from "@/lib/owner-utils"
 
 export type CategoriaFactura = "facturado" | "en_proceso" | "sin_gestionar"
 
@@ -33,12 +34,14 @@ export interface ControlFacturaFila {
   numeroorden: string
   fecha: string | null
   placa: string | null
+  tiquete: string | null
   tipooperacion: string | null
   cliente: string | null
   owner: string
-  toneladas: number
-  tarifa: string | number | null
-  valor_a_facturar: number
+  toneladas: number // CANTIDAD facturable: peso báscula (id 1/2) o peso orden/detalle (id 3/4)
+  fuente_peso: "bascula" | "orden"
+  tarifa: number | null
+  valor_a_facturar: number // total = cantidad × tarifa
   sin_tarifa: boolean
   estadofactura: string | null
   categoria: CategoriaFactura
@@ -101,14 +104,17 @@ export async function getControlFacturacion(
 
     // 1) Estado + vínculo de las órdenes de la empresa (fuente de verdad).
     //    Solo procesadas (fincargue) y facturables (facturar != false).
-    const estadoPorOrden = new Map<string, { estado: string | null; valorpago: number | null }>()
+    const estadoPorOrden = new Map<
+      string,
+      { estado: string | null; valorpago: number | null; pesovascula: number }
+    >()
     const procesadas = new Set<string>()
     {
       const pageSize = 1000
       for (let offset = 0; ; offset += pageSize) {
         const { data, error } = await sb
           .from("cabeceraoc")
-          .select("ordendecargue, estadofactura, valorpago, fincargue, facturar, tipooperacion")
+          .select("ordendecargue, estadofactura, valorpago, fincargue, facturar, tipooperacion, pesovascula")
           .eq("idempresa", idempresa)
           .neq("tipooperacion", "proyeccion")
           .range(offset, offset + pageSize - 1)
@@ -117,7 +123,11 @@ export async function getControlFacturacion(
         for (const o of data) {
           const on = String(o.ordendecargue || "").trim()
           if (!on) continue
-          estadoPorOrden.set(on, { estado: o.estadofactura ?? null, valorpago: o.valorpago ?? null })
+          estadoPorOrden.set(on, {
+            estado: o.estadofactura ?? null,
+            valorpago: o.valorpago ?? null,
+            pesovascula: num(o.pesovascula),
+          })
           if (o.fincargue && o.facturar !== false) procesadas.add(on)
         }
         if (data.length < pageSize) break
@@ -131,7 +141,7 @@ export async function getControlFacturacion(
       for (let offset = 0; ; offset += pageSize) {
         let q = sb
           .from("facturacion")
-          .select("numeroorden, fechacargue, fechaorden, placa, cliente, producto, toneladas, owner, tipooperacion, tarifa, valor_a_facturar")
+          .select("numeroorden, fechacargue, fechaorden, placa, tiquetebascula, cliente, producto, toneladas, owner, tipooperacion, tarifa, valor_a_facturar")
           .eq("idempresa", idempresa)
         if (filtros.desde) q = q.gte("fechacargue", filtros.desde)
         if (filtros.hasta) q = q.lte("fechacargue", filtros.hasta)
@@ -147,40 +157,90 @@ export async function getControlFacturacion(
       }
     }
 
-    // 3) Agregar por ORDEN+OWNER (una fila del cuadro por owner dentro de la orden).
-    const key = (o: string, w: string) => `${o}|||${w}`
+    // 3) Agregar según la FUENTE DE VERDAD del peso:
+    //   · ID 1/2 (plantas con báscula: Harinera Indupan, Avimol) → PESO DE BÁSCULA.
+    //     El cobro real es MAX(peso_báscula) × MAX(tarifa) por orden (regla vigente en
+    //     Gestión de Facturas). Una fila por ORDEN; owner = el de la planta.
+    //   · ID 3/4 y demás (cedis sin báscula: Funza, Medellín) → PESO DE LA ORDEN.
+    //     Una fila por ORDEN+OWNER: cantidad = Σ toneladas del detalle, total = Σ valor.
+    const esBascula = idempresa === 1 || idempresa === 2
     const filasMap = new Map<string, ControlFacturaFila>()
-    for (const r of facturas) {
-      const on = String(r.numeroorden || "").trim()
-      if (!on || !procesadas.has(on)) continue // solo procesadas (fuente de verdad)
-      const owner = String(r.owner || "SIN OWNER")
-      const est = estadoPorOrden.get(on)
-      const categoria = categoriaDeEstado(est?.estado)
-      const sinTarifa = String(r.tarifa) === "SIN TARIFA EN MAESTRO" || r.tarifa == null
-      const k = key(on, owner)
-      const prev = filasMap.get(k)
-      const val = num(r.valor_a_facturar)
-      const ton = num(r.toneladas)
-      if (prev) {
-        prev.toneladas += ton
-        prev.valor_a_facturar += val
-        prev.sin_tarifa = prev.sin_tarifa || sinTarifa
-      } else {
-        filasMap.set(k, {
+
+    if (esBascula) {
+      // Acumular por orden: tarifa máxima y datos de cabecera.
+      const porOrden = new Map<string, { tarifaMax: number; sinTarifa: boolean; r: any }>()
+      for (const r of facturas) {
+        const on = String(r.numeroorden || "").trim()
+        if (!on || !procesadas.has(on)) continue
+        const tNum = num(r.tarifa)
+        const sinTarifa = String(r.tarifa) === "SIN TARIFA EN MAESTRO" || r.tarifa == null
+        const prev = porOrden.get(on)
+        if (prev) {
+          if (tNum > prev.tarifaMax) prev.tarifaMax = tNum
+          prev.sinTarifa = prev.sinTarifa && sinTarifa
+        } else {
+          porOrden.set(on, { tarifaMax: tNum, sinTarifa, r })
+        }
+      }
+      const ownerPlanta = ownerDeIdEmpresa(idempresa)
+      for (const [on, v] of porOrden) {
+        const est = estadoPorOrden.get(on)
+        const cantidad = est?.pesovascula ?? 0 // peso de báscula (fuente de verdad)
+        const total = cantidad * v.tarifaMax
+        filasMap.set(on, {
           numeroorden: on,
-          fecha: r.fechacargue ?? r.fechaorden ?? null,
-          placa: r.placa ?? null,
-          tipooperacion: r.tipooperacion ?? null,
-          cliente: r.cliente ?? null,
-          owner,
-          toneladas: ton,
-          tarifa: r.tarifa ?? null,
-          valor_a_facturar: val,
-          sin_tarifa: sinTarifa,
+          fecha: v.r.fechacargue ?? v.r.fechaorden ?? null,
+          placa: v.r.placa ?? null,
+          tiquete: v.r.tiquetebascula ?? null,
+          tipooperacion: v.r.tipooperacion ?? null,
+          cliente: v.r.cliente ?? null,
+          owner: ownerPlanta,
+          toneladas: cantidad,
+          fuente_peso: "bascula",
+          tarifa: v.tarifaMax || null,
+          valor_a_facturar: total,
+          sin_tarifa: v.tarifaMax <= 0,
           estadofactura: est?.estado ?? null,
-          categoria,
+          categoria: categoriaDeEstado(est?.estado),
           valorpago: est?.valorpago ?? null,
         })
+      }
+    } else {
+      // Cedis: por orden+owner, con toneladas del detalle (peso de la orden).
+      const key = (o: string, w: string) => `${o}|||${w}`
+      for (const r of facturas) {
+        const on = String(r.numeroorden || "").trim()
+        if (!on || !procesadas.has(on)) continue
+        const owner = String(r.owner || "SIN OWNER")
+        const est = estadoPorOrden.get(on)
+        const sinTarifa = String(r.tarifa) === "SIN TARIFA EN MAESTRO" || r.tarifa == null
+        const k = key(on, owner)
+        const prev = filasMap.get(k)
+        const val = num(r.valor_a_facturar)
+        const ton = num(r.toneladas)
+        if (prev) {
+          prev.toneladas += ton
+          prev.valor_a_facturar += val
+          prev.sin_tarifa = prev.sin_tarifa || sinTarifa
+        } else {
+          filasMap.set(k, {
+            numeroorden: on,
+            fecha: r.fechacargue ?? r.fechaorden ?? null,
+            placa: r.placa ?? null,
+            tiquete: r.tiquetebascula ?? null,
+            tipooperacion: r.tipooperacion ?? null,
+            cliente: r.cliente ?? null,
+            owner,
+            toneladas: ton,
+            fuente_peso: "orden",
+            tarifa: sinTarifa ? null : num(r.tarifa),
+            valor_a_facturar: val,
+            sin_tarifa: sinTarifa,
+            estadofactura: est?.estado ?? null,
+            categoria: categoriaDeEstado(est?.estado),
+            valorpago: est?.valorpago ?? null,
+          })
+        }
       }
     }
 

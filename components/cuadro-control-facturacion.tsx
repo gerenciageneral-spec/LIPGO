@@ -83,15 +83,17 @@ export function CuadroControlFacturacion() {
   const exportarDetalle = () => {
     if (!data) return
     const rows = data.filas.map((f) => ({
-      Orden: f.numeroorden,
       Fecha: f.fecha ?? "",
+      "Orden de cargue": f.numeroorden,
       Placa: f.placa ?? "",
+      Tiquete: f.tiquete ?? "",
       Operación: f.tipooperacion ?? "",
       Owner: f.owner,
       Cliente: f.cliente ?? "",
-      Toneladas: Number(f.toneladas.toFixed(3)),
+      Cantidad: Number(f.toneladas.toFixed(3)),
+      Peso: f.fuente_peso === "bascula" ? "báscula" : "orden",
       Tarifa: f.sin_tarifa ? "SIN TARIFA" : f.tarifa,
-      "Valor a facturar": Math.round(f.valor_a_facturar),
+      Total: Math.round(f.valor_a_facturar),
       Estado: f.estadofactura ?? "(sin gestionar)",
       Categoría: CAT_LABEL[f.categoria],
     }))
@@ -110,13 +112,15 @@ export function CuadroControlFacturacion() {
         .filter((f) => f.owner === o.owner)
         .map((f) => ({
           Fecha: f.fecha ?? "",
-          Orden: f.numeroorden,
+          "Orden de cargue": f.numeroorden,
           Placa: f.placa ?? "",
+          Tiquete: f.tiquete ?? "",
           Operación: f.tipooperacion ?? "",
+          Owner: f.owner,
           Cliente: f.cliente ?? "",
-          Toneladas: Number(f.toneladas.toFixed(3)),
+          Cantidad: Number(f.toneladas.toFixed(3)),
           Tarifa: f.sin_tarifa ? "SIN TARIFA" : f.tarifa,
-          "Valor a facturar": Math.round(f.valor_a_facturar),
+          Total: Math.round(f.valor_a_facturar),
           Estado: f.estadofactura ?? "(sin gestionar)",
         }))
       const sheet = XLSX.utils.json_to_sheet(rows)
@@ -283,11 +287,13 @@ export function CuadroControlFacturacion() {
                         <TableHead>Orden</TableHead>
                         <TableHead>Fecha</TableHead>
                         <TableHead>Placa</TableHead>
+                        <TableHead>Tiquete</TableHead>
                         <TableHead>Operación</TableHead>
                         <TableHead>Owner</TableHead>
                         <TableHead>Cliente</TableHead>
-                        <TableHead className="text-right">Ton</TableHead>
-                        <TableHead className="text-right">Valor</TableHead>
+                        <TableHead className="text-right">Cantidad</TableHead>
+                        <TableHead className="text-right">Tarifa</TableHead>
+                        <TableHead className="text-right">Total</TableHead>
                         <TableHead>Estado</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -299,13 +305,18 @@ export function CuadroControlFacturacion() {
                             <TableCell className="text-xs font-medium">{f.numeroorden}</TableCell>
                             <TableCell className="text-xs">{f.fecha ?? "-"}</TableCell>
                             <TableCell className="text-xs">{f.placa ?? "-"}</TableCell>
+                            <TableCell className="text-xs">{f.tiquete ?? "-"}</TableCell>
                             <TableCell className="text-xs">{f.tipooperacion ?? "-"}</TableCell>
                             <TableCell className="text-xs">{f.owner}</TableCell>
                             <TableCell className="text-xs">{f.cliente ?? "-"}</TableCell>
-                            <TableCell className="text-right text-xs tabular-nums">{ton(f.toneladas)}</TableCell>
                             <TableCell className="text-right text-xs tabular-nums">
-                              {f.sin_tarifa ? <span className="font-semibold text-red-600">sin tarifa</span> : money(f.valor_a_facturar)}
+                              {ton(f.toneladas)}
+                              <span className="ml-1 text-[9px] text-muted-foreground">{f.fuente_peso === "bascula" ? "bás" : "ord"}</span>
                             </TableCell>
+                            <TableCell className="text-right text-xs tabular-nums">
+                              {f.sin_tarifa ? <span className="font-semibold text-red-600">sin tarifa</span> : money(f.tarifa || 0)}
+                            </TableCell>
+                            <TableCell className="text-right text-xs tabular-nums">{money(f.valor_a_facturar)}</TableCell>
                             <TableCell className="text-xs">
                               {f.categoria === "sin_gestionar" ? (
                                 <span className="font-semibold text-red-600">Sin gestionar</span>
