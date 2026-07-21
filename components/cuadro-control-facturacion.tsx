@@ -145,9 +145,10 @@ export function CuadroControlFacturacion() {
       Owner: x.owner,
       Servicio: x.servicio,
       Toneladas: Number(x.toneladas.toFixed(3)),
+      Tarifa: x.tarifa,
       Total: Math.round(x.valor),
     }))
-    resumen.push({ Owner: "TOTAL", Servicio: "", Toneladas: Number(r.data.totalToneladas.toFixed(3)), Total: Math.round(r.data.totalValor) })
+    resumen.push({ Owner: "TOTAL", Servicio: "", Toneladas: Number(r.data.totalToneladas.toFixed(3)), Tarifa: 0, Total: Math.round(r.data.totalValor) })
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumen), "RESUMEN")
     const rango = filtros.desde || filtros.hasta ? `_${filtros.desde || "ini"}_a_${filtros.hasta || "fin"}` : ""
     XLSX.writeFile(wb, `Prefactura${rango}.xlsx`)

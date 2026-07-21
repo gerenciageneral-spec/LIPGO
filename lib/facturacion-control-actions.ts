@@ -10,6 +10,8 @@
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { ownerDeIdEmpresa } from "@/lib/owner-utils"
+import { esPlacaDistribucion } from "@/lib/distribucion-placas"
+import { PLACAS_EXCLUIDAS_FACTURAS } from "@/lib/facturas-exclusiones"
 
 export type CategoriaFactura = "facturado" | "en_proceso" | "sin_gestionar"
 
@@ -88,17 +90,53 @@ const num = (v: any) => {
   return Number.isFinite(n) ? n : 0
 }
 
-// Clasifica una orden en el SERVICIO de la prefactura, por transporte + operación
-// (mapeo confirmado con el usuario). "Propio" = vehículo propio (no TERCEROS);
-// "Recoge en bodega" = TERCEROS; Susanita = cliente Tostaditos Susanita; Descargue.
-function servicioDe(operacion: string | null, transporte: string | null, cliente: string | null): string {
+export type Servicio =
+  | "Cargue/Descargue propio"
+  | "Cargue recoge en bodega"
+  | "Descargue"
+  | "Susanita"
+
+// Clasifica una orden en el SERVICIO de la prefactura (mapeo confirmado):
+//   · Susanita           = cliente Tostaditos Susanita (cualquier operación).
+//   · Descargue          = operación Descargue.
+//   · Propio             = la PLACA DE DISTRIBUCIÓN del proyecto (vehículo propio),
+//                          operaciones Cargue/Distribución.
+//   · Recoge en bodega   = Cargue con transporte TERCEROS (el cliente recoge).
+function servicioDe(
+  empresa: number,
+  operacion: string | null,
+  transporte: string | null,
+  cliente: string | null,
+  placa: string | null,
+): Servicio {
   const op = String(operacion ?? "").trim().toLowerCase()
   const tr = String(transporte ?? "").trim().toUpperCase()
   const cl = String(cliente ?? "").toUpperCase()
   if (cl.includes("SUSANITA")) return "Susanita"
+  // La PLACA DE DISTRIBUCIÓN (vehículo propio) manda: "Cargue Y Descargue propio"
+  // agrupa todas sus operaciones (cargue, distribución y descargue).
+  if (esPlacaDistribucion(empresa, placa)) return "Cargue/Descargue propio"
   if (op === "descargue") return "Descargue"
   if (tr === "TERCEROS") return "Cargue recoge en bodega"
-  return "Cargue/Descargue propio"
+  return "Cargue recoge en bodega" // fallback (cargue de tercero)
+}
+
+// Tarifa que factura cada SERVICIO (desde tarifasoperacion). Clave: recoge en bodega
+// se cobra a la tarifa de DESCARGUE, no a la de cargue.
+//   Propio → Cargue · Recoge en bodega/Descargue → Descargue · Susanita → Descargue SUSANITA.
+function tarifaDeServicio(
+  servicio: Servicio,
+  tarifas: { cargue: number; descargue: number; susanita: number },
+): number {
+  switch (servicio) {
+    case "Cargue/Descargue propio":
+      return tarifas.cargue
+    case "Cargue recoge en bodega":
+    case "Descargue":
+      return tarifas.descargue
+    case "Susanita":
+      return tarifas.susanita
+  }
 }
 
 export interface PrefacturaLinea {
@@ -124,7 +162,8 @@ export interface PrefacturaResumen {
   owner: string
   servicio: string
   toneladas: number
-  valor: number
+  tarifa: number
+  valor: number // toneladas × tarifa del servicio
 }
 export interface Prefactura {
   origen: PrefacturaLinea[]
@@ -145,6 +184,28 @@ export async function getPrefactura(
   if (!idempresa) return { success: false, message: "Selecciona un proyecto/empresa." }
   try {
     const sb: any = await getSupabaseAdmin()
+
+    // Tarifas por servicio desde tarifasoperacion (Cargue, Descargue, Descargue SUSANITA).
+    const tarifas = { cargue: 0, descargue: 0, susanita: 0 }
+    {
+      const { data: tar } = await sb
+        .from("tarifasoperacion")
+        .select("operacion, empresafactura, tarifa")
+        .eq("empresaid", idempresa)
+      for (const t of tar || []) {
+        const op = String(t.operacion ?? "").trim().toLowerCase()
+        const fact = String(t.empresafactura ?? "").trim().toUpperCase()
+        const v = num(t.tarifa)
+        if (op === "cargue" || op === "distribucion") tarifas.cargue = Math.max(tarifas.cargue, v)
+        else if (op === "descargue") {
+          if (fact === "SUSANITA") tarifas.susanita = Math.max(tarifas.susanita, v)
+          else tarifas.descargue = Math.max(tarifas.descargue, v)
+        }
+      }
+    }
+
+    // Placas que NO atiende LIP (excepto cuando cargan a Susanita). Ej. WMP446 en id 4.
+    const placasExcluidas = new Set((PLACAS_EXCLUIDAS_FACTURAS[idempresa] || []).map((p) => p.toUpperCase()))
 
     // Procesadas del proyecto (fuente de verdad).
     const procesadas = new Set<string>()
@@ -178,6 +239,11 @@ export async function getPrefactura(
       for (const r of data) {
         const on = String(r.numeroorden || "").trim()
         if (!procesadas.has(on)) continue
+        const placa = String(r.placa ?? "").trim().toUpperCase()
+        const cl = String(r.cliente ?? "").toUpperCase()
+        // WMP446 (u otras excluidas) NO las atiende LIP, SALVO cuando cargan a Susanita.
+        if (placasExcluidas.has(placa) && !cl.includes("SUSANITA")) continue
+        const servicio = servicioDe(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa)
         origen.push({
           fechaorden: r.fechaorden ?? null,
           fechacargue: r.fechacargue ?? null,
@@ -195,24 +261,28 @@ export async function getPrefactura(
           tipooperacion: r.tipooperacion ?? null,
           tarifa: r.tarifa ?? null,
           valor_a_facturar: num(r.valor_a_facturar),
-          servicio: servicioDe(r.tipooperacion, r.transporte, r.cliente),
+          servicio,
         })
       }
       if (data.length < 1000) break
     }
 
-    // Resumen por owner × servicio.
+    // Resumen por owner × servicio, facturado a la TARIFA DEL SERVICIO (no la de la línea).
     const map = new Map<string, PrefacturaResumen>()
-    let totalValor = 0
     let totalToneladas = 0
     for (const l of origen) {
       const k = `${l.owner}|||${l.servicio}`
-      const r = map.get(k) || { owner: l.owner, servicio: l.servicio, toneladas: 0, valor: 0 }
+      const tarifaServ = tarifaDeServicio(l.servicio as Servicio, tarifas)
+      const r = map.get(k) || { owner: l.owner, servicio: l.servicio, toneladas: 0, tarifa: tarifaServ, valor: 0 }
       r.toneladas += l.toneladas
-      r.valor += l.valor_a_facturar
+      r.tarifa = tarifaServ
       map.set(k, r)
-      totalValor += l.valor_a_facturar
       totalToneladas += l.toneladas
+    }
+    let totalValor = 0
+    for (const r of map.values()) {
+      r.valor = r.toneladas * r.tarifa
+      totalValor += r.valor
     }
     const resumen = Array.from(map.values()).sort(
       (a, b) => a.owner.localeCompare(b.owner) || a.servicio.localeCompare(b.servicio),
