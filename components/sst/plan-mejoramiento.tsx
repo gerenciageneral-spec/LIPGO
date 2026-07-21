@@ -53,7 +53,14 @@ export function PlanMejoramiento({ selectedEmpresaId: propEmpresaId }: { selecte
     setRows(await listPlanMejora(empresaId))
   }
   useEffect(() => {
-    cargar()
+    // Al abrir el módulo se sincroniza con la auditoría 0312 (en silencio): crea
+    // acciones para los estándares nuevos en no-cumple y CIERRA las de estándares
+    // ya subsanados. Así el plan refleja siempre el estado real de los 60
+    // estándares sin depender de pulsar el botón. Ver [[cerrarAccionYActualizarEstandar]].
+    ;(async () => {
+      if (empresaId) await sincronizarPlanConAuditoria(empresaId)
+      await cargar()
+    })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [empresaId])
 
