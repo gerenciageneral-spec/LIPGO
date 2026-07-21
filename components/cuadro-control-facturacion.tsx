@@ -23,6 +23,7 @@ import {
   type ControlFacturacion,
   type CategoriaFactura,
   type FiltrosControl,
+  type Prefactura,
 } from "@/lib/facturacion-control-actions"
 import { getAccessibleEmpresesFromPermisos } from "@/lib/orders-actions"
 
@@ -57,6 +58,11 @@ export function CuadroControlFacturacion() {
   // empresa del selector global, pero se puede cambiar acá para facturar otro proyecto.
   const [empresas, setEmpresas] = useState<Array<{ id: number; nombre: string }>>([])
   const [empresaId, setEmpresaId] = useState<number | null>(selectedEmpresaId ?? null)
+  // Prefactura interactiva: se elige (owner × servicio) qué facturar y se arma en pantalla.
+  const [pref, setPref] = useState<Prefactura | null>(null)
+  const [prefLoading, setPrefLoading] = useState(false)
+  const [selKeys, setSelKeys] = useState<Set<string>>(new Set())
+  const keyRes = (owner: string, servicio: string) => `${owner}|||${servicio}`
 
   useEffect(() => {
     getAccessibleEmpresesFromPermisos()
@@ -119,54 +125,95 @@ export function CuadroControlFacturacion() {
     XLSX.writeFile(wb, `Control_Facturacion_${new Date().toISOString().slice(0, 10)}.xlsx`)
   }
 
-  // PREFACTURA (soporte de factura por proyecto): réplica del formato manual.
-  // Hoja "TABLA ORIGEN" (líneas de la vista facturacion, owner ya resuelto) +
-  // "RESUMEN por servicio" (owner × servicio = transporte+operación). El "acordado
-  // /ajuste" del cierre queda pendiente (config por proyecto/mes).
-  const [prefacturando, setPrefacturando] = useState(false)
-  const exportarPrefactura = async () => {
-    if (!empresaId) return
-    setPrefacturando(true)
+  // ---- PREFACTURA interactiva: se genera la data (owner × servicio) y el usuario
+  // elige qué facturar; se refleja en una prefactura formateada + Excel. ----
+  const generarPrefactura = async () => {
+    if (!empresaId) {
+      toast({ title: "Elige un proyecto", variant: "destructive" })
+      return
+    }
+    setPrefLoading(true)
     const r = await getPrefactura(empresaId, { desde: filtros.desde, hasta: filtros.hasta })
-    setPrefacturando(false)
+    setPrefLoading(false)
     if (!r.success || !r.data) {
       toast({ title: "Error", description: r.message, variant: "destructive" })
       return
     }
+    setPref(r.data)
+    setSelKeys(new Set(r.data.resumen.map((x) => keyRes(x.owner, x.servicio)))) // todo seleccionado
+  }
+
+  const toggleSel = (k: string) =>
+    setSelKeys((prev) => {
+      const n = new Set(prev)
+      n.has(k) ? n.delete(k) : n.add(k)
+      return n
+    })
+
+  // Resumen SELECCIONADO, agrupado por owner (para la prefactura en pantalla).
+  const prefSel = useMemo(() => {
+    if (!pref) return null
+    const rows = pref.resumen.filter((x) => selKeys.has(keyRes(x.owner, x.servicio)))
+    const porOwner = new Map<string, { owner: string; items: typeof rows; ton: number; total: number }>()
+    for (const r of rows) {
+      const g = porOwner.get(r.owner) || { owner: r.owner, items: [] as any, ton: 0, total: 0 }
+      g.items.push(r)
+      g.ton += r.toneladas
+      g.total += r.valor
+      porOwner.set(r.owner, g)
+    }
+    const grupos = Array.from(porOwner.values()).sort((a, b) => a.owner.localeCompare(b.owner))
+    const totalTon = rows.reduce((s, r) => s + r.toneladas, 0)
+    const totalVal = rows.reduce((s, r) => s + r.valor, 0)
+    return { grupos, totalTon, totalVal, keys: new Set(rows.map((r) => keyRes(r.owner, r.servicio))) }
+  }, [pref, selKeys])
+
+  // Descarga la prefactura SELECCIONADA, bien formateada (encabezado por owner,
+  // filas de servicio con nombre/tipo operación, subtotales, total) + TABLA ORIGEN.
+  const descargarPrefacturaExcel = () => {
+    if (!pref || !prefSel) return
+    const proyecto = empresas.find((e) => e.id === empresaId)?.nombre || `Empresa ${empresaId}`
+    const rango = `${filtros.desde || "inicio"} a ${filtros.hasta || "fin"}`
+    // Hoja PREFACTURA (formateada, por owner).
+    const aoa: any[][] = [
+      ["PREFACTURA"],
+      ["Proyecto", proyecto],
+      ["Período", rango],
+      [],
+      ["Owner", "Servicio", "Toneladas", "Tarifa", "Total"],
+    ]
+    for (const g of prefSel.grupos) {
+      for (const it of g.items) {
+        aoa.push([g.owner, it.servicio, Number(it.toneladas.toFixed(3)), it.tarifa, Math.round(it.valor)])
+      }
+      aoa.push(["", `Subtotal ${g.owner}`, Number(g.ton.toFixed(3)), "", Math.round(g.total)])
+      aoa.push([])
+    }
+    aoa.push(["", "TOTAL PREFACTURA", Number(prefSel.totalTon.toFixed(3)), "", Math.round(prefSel.totalVal)])
     const wb = XLSX.utils.book_new()
-    // TABLA ORIGEN (mismas columnas del soporte manual).
-    const origen = r.data.origen.map((l) => ({
-      "Fecha Orden": l.fechaorden ?? "",
-      "Fecha Cargue": l.fechacargue ?? "",
-      Cliente: l.cliente ?? "",
-      "N° Orden": l.numeroorden,
-      "Tiquete Báscula": l.tiquete ?? "",
-      Placa: l.placa ?? "",
-      Producto: l.producto ?? "",
-      "Peso Báscula": l.pesobascula,
-      Toneladas: Number(l.toneladas.toFixed(3)),
-      Owner: l.owner,
-      Subcategoría: l.subcategoria ?? "",
-      Empresa: l.idempresa,
-      Transporte: l.transporte ?? "",
-      "Tipo Operación": l.tipooperacion ?? "",
-      Tarifa: l.tarifa,
-      "Valor a Facturar": Math.round(l.valor_a_facturar),
-      Servicio: l.servicio,
-    }))
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), "PREFACTURA")
+    // TABLA ORIGEN de lo SELECCIONADO (soporte).
+    const origen = pref.origen
+      .filter((l) => prefSel.keys.has(keyRes(l.owner, l.servicio)))
+      .map((l) => ({
+        "Fecha Orden": l.fechaorden ?? "",
+        "Fecha Cargue": l.fechacargue ?? "",
+        Cliente: l.cliente ?? "",
+        "N° Orden": l.numeroorden,
+        "Tiquete Báscula": l.tiquete ?? "",
+        Placa: l.placa ?? "",
+        Producto: l.producto ?? "",
+        "Peso Báscula": l.pesobascula,
+        Toneladas: Number(l.toneladas.toFixed(3)),
+        Owner: l.owner,
+        Servicio: l.servicio,
+        Transporte: l.transporte ?? "",
+        "Tipo Operación": l.tipooperacion ?? "",
+        Tarifa: l.tarifa,
+        "Valor a Facturar": Math.round(l.valor_a_facturar),
+      }))
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(origen), "TABLA ORIGEN")
-    // RESUMEN por owner × servicio + total.
-    const resumen = r.data.resumen.map((x) => ({
-      Owner: x.owner,
-      Servicio: x.servicio,
-      Toneladas: Number(x.toneladas.toFixed(3)),
-      Tarifa: x.tarifa,
-      Total: Math.round(x.valor),
-    }))
-    resumen.push({ Owner: "TOTAL", Servicio: "", Toneladas: Number(r.data.totalToneladas.toFixed(3)), Tarifa: 0, Total: Math.round(r.data.totalValor) })
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumen), "RESUMEN")
-    const rango = filtros.desde || filtros.hasta ? `_${filtros.desde || "ini"}_a_${filtros.hasta || "fin"}` : ""
-    XLSX.writeFile(wb, `Prefactura${rango}.xlsx`)
+    XLSX.writeFile(wb, `Prefactura_${proyecto.replace(/[^a-zA-Z0-9]+/g, "_")}.xlsx`)
   }
 
   // Anexos por OWNER × TIPO DE OPERACIÓN (una hoja por cada combinación, para
@@ -249,10 +296,6 @@ export function CuadroControlFacturacion() {
             </div>
           </div>
           <div className="flex gap-2">
-            <Button size="sm" onClick={exportarPrefactura} disabled={!empresaId || prefacturando}>
-              {prefacturando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
-              Prefactura
-            </Button>
             <Button size="sm" variant="outline" onClick={exportarDetalle} disabled={!data || data.filas.length === 0}>
               <Download className="mr-2 h-4 w-4" /> Detalle
             </Button>
@@ -358,6 +401,7 @@ export function CuadroControlFacturacion() {
             <TabsList>
               <TabsTrigger value="owner">Resumen por owner</TabsTrigger>
               <TabsTrigger value="detalle">Detalle por orden</TabsTrigger>
+              <TabsTrigger value="prefactura">Prefactura</TabsTrigger>
             </TabsList>
 
             <TabsContent value="owner">
@@ -451,6 +495,131 @@ export function CuadroControlFacturacion() {
                       Mostrando 500 de {data.filas.length.toLocaleString("es-CO")} filas. Usa filtros o exporta el detalle
                       completo.
                     </p>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* PREFACTURA interactiva: elegir qué facturar y verlo armado aquí. */}
+            <TabsContent value="prefactura" className="space-y-3">
+              <Card>
+                <CardContent className="space-y-3 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="text-base font-bold">Prefactura</div>
+                      <div className="text-xs text-muted-foreground">
+                        Elige owner y servicio a facturar; la prefactura se arma abajo. Descárgala a Excel cuando esté lista.
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="outline" onClick={generarPrefactura} disabled={prefLoading}>
+                        {prefLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}
+                        {pref ? "Actualizar" : "Generar prefactura"}
+                      </Button>
+                      <Button size="sm" onClick={descargarPrefacturaExcel} disabled={!pref || !prefSel || prefSel.keys.size === 0}>
+                        <Download className="mr-2 h-4 w-4" /> Descargar Excel
+                      </Button>
+                    </div>
+                  </div>
+
+                  {!pref ? (
+                    <div className="py-8 text-center text-sm text-muted-foreground">
+                      Genera la prefactura para elegir qué facturar.
+                    </div>
+                  ) : (
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      {/* Selección */}
+                      <div>
+                        <div className="mb-1 flex items-center justify-between">
+                          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Qué facturar</span>
+                          <div className="flex gap-2 text-xs">
+                            <button className="text-primary hover:underline" onClick={() => setSelKeys(new Set(pref.resumen.map((x) => keyRes(x.owner, x.servicio))))}>
+                              Todo
+                            </button>
+                            <button className="text-primary hover:underline" onClick={() => setSelKeys(new Set())}>
+                              Nada
+                            </button>
+                          </div>
+                        </div>
+                        <div className="overflow-x-auto rounded-md border">
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead className="w-8"></TableHead>
+                                <TableHead>Owner</TableHead>
+                                <TableHead>Servicio</TableHead>
+                                <TableHead className="text-right">Ton</TableHead>
+                                <TableHead className="text-right">Tarifa</TableHead>
+                                <TableHead className="text-right">Total</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {pref.resumen.map((x) => {
+                                const k = keyRes(x.owner, x.servicio)
+                                return (
+                                  <TableRow key={k} className={selKeys.has(k) ? "" : "opacity-50"}>
+                                    <TableCell>
+                                      <input type="checkbox" className="h-4 w-4 accent-primary" checked={selKeys.has(k)} onChange={() => toggleSel(k)} />
+                                    </TableCell>
+                                    <TableCell className="text-xs font-medium">{x.owner}</TableCell>
+                                    <TableCell className="text-xs">{x.servicio}</TableCell>
+                                    <TableCell className="text-right text-xs tabular-nums">{ton(x.toneladas)}</TableCell>
+                                    <TableCell className="text-right text-xs tabular-nums">{money(x.tarifa)}</TableCell>
+                                    <TableCell className="text-right text-xs font-semibold tabular-nums">{money(x.valor)}</TableCell>
+                                  </TableRow>
+                                )
+                              })}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      </div>
+
+                      {/* Prefactura armada (formateada) */}
+                      <div>
+                        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Prefactura</span>
+                        <div className="mt-1 rounded-md border p-3">
+                          <div className="mb-2 border-b pb-2">
+                            <div className="text-sm font-bold">{empresas.find((e) => e.id === empresaId)?.nombre || `Empresa ${empresaId}`}</div>
+                            <div className="text-xs text-muted-foreground">
+                              Período: {filtros.desde || "inicio"} a {filtros.hasta || "fin"}
+                            </div>
+                          </div>
+                          {!prefSel || prefSel.grupos.length === 0 ? (
+                            <div className="py-6 text-center text-xs text-muted-foreground">Selecciona qué facturar.</div>
+                          ) : (
+                            <>
+                              {prefSel.grupos.map((g) => (
+                                <div key={g.owner} className="mb-3">
+                                  <div className="text-xs font-bold text-foreground">{g.owner}</div>
+                                  <table className="w-full text-xs">
+                                    <tbody>
+                                      {g.items.map((it) => (
+                                        <tr key={it.servicio}>
+                                          <td className="py-0.5 pl-2 text-muted-foreground">{it.servicio}</td>
+                                          <td className="py-0.5 text-right tabular-nums">{ton(it.toneladas)} t</td>
+                                          <td className="py-0.5 text-right tabular-nums text-muted-foreground">× {money(it.tarifa)}</td>
+                                          <td className="py-0.5 text-right font-medium tabular-nums">{money(it.valor)}</td>
+                                        </tr>
+                                      ))}
+                                      <tr className="border-t">
+                                        <td className="py-0.5 pl-2 font-semibold">Subtotal {g.owner}</td>
+                                        <td className="py-0.5 text-right tabular-nums">{ton(g.ton)} t</td>
+                                        <td></td>
+                                        <td className="py-0.5 text-right font-semibold tabular-nums">{money(g.total)}</td>
+                                      </tr>
+                                    </tbody>
+                                  </table>
+                                </div>
+                              ))}
+                              <div className="mt-2 flex items-center justify-between border-t-2 border-primary/40 pt-2">
+                                <span className="text-sm font-bold">TOTAL PREFACTURA</span>
+                                <span className="text-lg font-extrabold tabular-nums text-primary">{money(prefSel.totalVal)}</span>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
                   )}
                 </CardContent>
               </Card>
