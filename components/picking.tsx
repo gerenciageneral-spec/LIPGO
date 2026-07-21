@@ -35,7 +35,7 @@ import {
   reanudarOrden,
   getOrdenesPausadas,
 } from "@/lib/picking-actions"
-import { setFacturarOrden } from "@/lib/packing-actions"
+import { FacturarCheckbox } from "@/components/facturar-checkbox"
 import { useToast } from "@/hooks/use-toast"
 import {
   Dialog,
@@ -701,19 +701,6 @@ const loadOrders = async () => {
       newMap.set(itemId, newQuantity)
       return newMap
     })
-  }
-
-  // Facturar el cargue. Encendido por defecto; se DESMARCA cuando el personal que
-  // carga NO es de LIP (el vehículo trae los suyos) → ese cargue no se factura.
-  const handleToggleFacturar = async (order: PendingLoadOrder, checked: boolean) => {
-    setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, facturar: checked } : o)))
-    const res = await setFacturarOrden(order.id, checked)
-    if (!res.success) {
-      setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, facturar: !checked } : o)))
-      toast({ title: "Error", description: res.message, variant: "destructive" })
-    } else {
-      toast({ title: checked ? "Se facturará" : "No se facturará", description: res.message })
-    }
   }
 
   const handlePerformPicking = async (order: PendingLoadOrder) => {
@@ -1897,14 +1884,17 @@ const loadOrders = async () => {
                       <td className="py-1 px-2 text-[10px]">{order.placa}</td>
                       <td className="py-1 px-2 text-[10px]">{order.conductor}</td>
                       <td className="py-1 px-2 text-center">
-                        {/* Facturar el cargue. Encendido por defecto; se desmarca si el
-                            personal que carga NO es de LIP (vehículo con los suyos). */}
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4 cursor-pointer accent-primary"
-                          checked={order.facturar !== false}
-                          onChange={(e) => handleToggleFacturar(order, e.target.checked)}
-                          title="Facturar este cargue (desmarca si el personal de carga no es de LIP)"
+                        {/* Facturar el cargue. Encendido por defecto; al desmarcar pide
+                            confirmación + motivo y registra el cambio. */}
+                        <FacturarCheckbox
+                          orden={{ ...order, tipooperacion: "Cargue" }}
+                          facturar={order.facturar}
+                          idempresa={selectedEmpresaId}
+                          usuario={profile?.usuario}
+                          modulo="Picking"
+                          onChanged={(v) =>
+                            setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, facturar: v } : o)))
+                          }
                         />
                       </td>
                       <td className="py-1 px-2">

@@ -12,7 +12,6 @@ import { RefreshCw, FileText, UserPlus, ArrowLeft, Camera, Check } from "lucide-
 import {
   getPendingUnloadOrders,
   getDistributionOrders,
-  setFacturarOrden,
   type PendingLoadOrder,
   generatePackingPDF,
   getCarguDescarguePersonnel,
@@ -23,6 +22,7 @@ import {
   confirmPacking,
 } from "@/lib/packing-actions"
 import { updateOrderInitioCargue } from "@/lib/orders-actions"
+import { FacturarCheckbox } from "@/components/facturar-checkbox"
 import { useToast } from "@/hooks/use-toast"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { useIsMobile } from "@/components/qr-camera-scanner"
@@ -316,21 +316,6 @@ export function Packing() {
     setGeneratingPDF(null)
   }
 
-  // Facturar la distribución (solo órdenes de Distribucion). Encendido por
-  // defecto; se DESMARCA cuando el conductor va solo (sin auxiliares) y no hay
-  // servicio de distribución que cobrar. `false` → no aparece en Gestión de Facturas.
-  const handleToggleFacturar = async (order: PendingLoadOrder, checked: boolean) => {
-    // Optimista: refleja de inmediato.
-    setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, facturar: checked } : o)))
-    const res = await setFacturarOrden(order.id, checked)
-    if (!res.success) {
-      setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, facturar: !checked } : o)))
-      toast({ title: "Error", description: res.message, variant: "destructive" })
-    } else {
-      toast({ title: checked ? "Se facturará" : "No se facturará", description: res.message })
-    }
-  }
-
   const handleUploadPhotos = (order: PendingLoadOrder) => {
     setSelectedPhotosOrder(order)
     setSelectedPhotos([])
@@ -577,18 +562,20 @@ export function Packing() {
                       <td className="py-1 px-2">{order.placa}</td>
                       <td className="py-1 px-2">{order.conductor}</td>
                       <td className="py-1 px-2 text-center">
-                        {/* Facturar: SOLO para órdenes de distribución. Encendido por
-                            defecto (facturar !== false); se desmarca si el conductor va
-                            solo. Descargue no tiene esta opción. */}
+                        {/* Facturar: SOLO para distribución. Encendido por defecto; al
+                            desmarcar pide confirmación + motivo y registra el cambio.
+                            Descargue no tiene esta opción. */}
                         {order.tipooperacion === "Distribucion" ? (
-                          <label className="inline-flex cursor-pointer items-center justify-center gap-1" title="Facturar esta distribución (desmarca si el conductor va solo)">
-                            <input
-                              type="checkbox"
-                              className="h-4 w-4 cursor-pointer accent-primary"
-                              checked={order.facturar !== false}
-                              onChange={(e) => handleToggleFacturar(order, e.target.checked)}
-                            />
-                          </label>
+                          <FacturarCheckbox
+                            orden={order}
+                            facturar={order.facturar}
+                            idempresa={selectedEmpresaId}
+                            usuario={profile?.usuario}
+                            modulo="Packing"
+                            onChanged={(v) =>
+                              setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, facturar: v } : o)))
+                            }
+                          />
                         ) : (
                           <span className="text-muted-foreground">—</span>
                         )}

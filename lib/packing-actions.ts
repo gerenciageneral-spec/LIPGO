@@ -134,13 +134,47 @@ export async function getDistributionOrders(selectedEmpresaId?: number | null) {
 //   · CARGUE en Picking → se desmarca si el personal de carga NO es de LIP.
 //   · DISTRIBUCIÓN en Packing → se desmarca si el conductor va solo (sin auxiliares).
 // `false` → la orden no aparece en Gestión de Facturas (no se cobra).
-export async function setFacturarOrden(orderId: number, facturar: boolean) {
+// Deja RASTRO en `facturar_registro` (quién, cuándo, qué orden y por qué) para
+// análisis posterior — sobre todo de las desactivaciones.
+export async function setFacturarOrden(
+  orderId: number,
+  facturar: boolean,
+  meta?: {
+    usuario?: string | null
+    motivo?: string | null
+    modulo?: string | null
+    ordendecargue?: string | null
+    idempresa?: number | null
+    tipooperacion?: string | null
+    placa?: string | null
+  },
+) {
   const supabase = await createClient()
   const { error } = await supabase.from("cabeceraoc").update({ facturar }).eq("id", orderId)
   if (error) {
     console.error("[v0] Error updating facturar:", error)
     return { success: false, message: error.message }
   }
+
+  // Registro de auditoría (con admin para no depender de RLS de la tabla nueva).
+  // No debe tumbar la operación si algo falla: se registra el error y se sigue.
+  try {
+    const admin = await getSupabaseAdmin()
+    await admin.from("facturar_registro").insert({
+      orden_id: orderId,
+      ordendecargue: meta?.ordendecargue ?? null,
+      idempresa: meta?.idempresa ?? null,
+      tipooperacion: meta?.tipooperacion ?? null,
+      placa: meta?.placa ?? null,
+      facturar,
+      usuario: meta?.usuario ?? null,
+      motivo: meta?.motivo ?? null,
+      modulo: meta?.modulo ?? null,
+    })
+  } catch (e) {
+    console.error("[v0] Error registrando cambio de facturar:", e)
+  }
+
   return { success: true, message: facturar ? "Orden marcada para facturar" : "Orden excluida de facturación" }
 }
 
