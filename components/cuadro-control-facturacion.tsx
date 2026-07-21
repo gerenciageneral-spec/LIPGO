@@ -75,7 +75,7 @@ const emptyFiltros = (): FiltrosControl => ({
   desde: "",
   hasta: "",
   owner: "",
-  tipooperacion: "",
+  tipooperaciones: [],
   categoria: null,
   cliente: "",
   placa: "",
@@ -172,7 +172,11 @@ export function CuadroControlFacturacion() {
       return
     }
     setPrefLoading(true)
-    const r = await getPrefactura(empresaId, { desde: filtros.desde, hasta: filtros.hasta })
+    const r = await getPrefactura(empresaId, {
+      desde: filtros.desde,
+      hasta: filtros.hasta,
+      tipooperaciones: filtros.tipooperaciones,
+    })
     setPrefLoading(false)
     if (!r.success || !r.data) {
       toast({ title: "Error", description: r.message, variant: "destructive" })
@@ -486,15 +490,27 @@ export function CuadroControlFacturacion() {
               </select>
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Operación</Label>
-              <select className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" value={pending.tipooperacion ?? ""} onChange={(e) => setF("tipooperacion", e.target.value)}>
-                <option value="">Todas</option>
-                {OPERACIONES.map((o) => (
-                  <option key={o} value={o}>
-                    {o}
-                  </option>
-                ))}
-              </select>
+              <Label className="text-xs">Operación (varias)</Label>
+              <div className="flex h-8 items-center gap-2 overflow-x-auto rounded-md border border-input bg-background px-2">
+                {OPERACIONES.map((o) => {
+                  const sel = (pending.tipooperaciones || []).includes(o)
+                  return (
+                    <label key={o} className="flex shrink-0 cursor-pointer items-center gap-1 text-xs">
+                      <input
+                        type="checkbox"
+                        className="h-3.5 w-3.5 accent-primary"
+                        checked={sel}
+                        onChange={() => {
+                          const cur = pending.tipooperaciones || []
+                          setF("tipooperaciones", sel ? cur.filter((x) => x !== o) : [...cur, o])
+                        }}
+                      />
+                      {o}
+                    </label>
+                  )
+                })}
+              </div>
+              <p className="text-[10px] text-muted-foreground">Vacío = todas. Ej. Medellín: marca Cargue + Distribucion.</p>
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Estado</Label>

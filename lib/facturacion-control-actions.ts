@@ -75,7 +75,7 @@ export interface FiltrosControl {
   desde?: string | null
   hasta?: string | null
   owner?: string | null
-  tipooperacion?: string | null
+  tipooperaciones?: string[] | null // multi-selección de operaciones (vacío/null = todas)
   categoria?: CategoriaFactura | null
   cliente?: string | null
   placa?: string | null
@@ -108,7 +108,9 @@ function servicioDe(
   const op = String(operacion ?? "").trim().toLowerCase()
   const tr = String(transporte ?? "").trim().toUpperCase()
   const cl = String(cliente ?? "").toUpperCase()
-  if (cl.includes("SUSANITA")) return "Susanita"
+  // Susanita se identifica por el TRANSPORTE "SUSANITA" (el cliente suele venir vacío)
+  // o por el nombre del cliente. La vista ya le pone owner=AVIMOL y tarifa 31.544.
+  if (cl.includes("SUSANITA") || tr === "SUSANITA") return "Susanita"
   // La PLACA DE DISTRIBUCIÓN (vehículo propio) manda: "Cargue Y Descargue propio"
   // agrupa todas sus operaciones (cargue, distribución y descargue).
   if (esPlacaDistribucion(empresa, placa)) return "Cargue/Descargue propio"
@@ -315,7 +317,7 @@ export async function eliminarPrefactura(id: number): Promise<{ success: boolean
  */
 export async function getPrefactura(
   idempresa: number,
-  filtros: { desde?: string | null; hasta?: string | null } = {},
+  filtros: { desde?: string | null; hasta?: string | null; tipooperaciones?: string[] | null } = {},
 ): Promise<{ success: boolean; data?: Prefactura; message?: string }> {
   if (!idempresa) return { success: false, message: "Selecciona un proyecto/empresa." }
   try {
@@ -326,6 +328,8 @@ export async function getPrefactura(
 
     // Placas que NO atiende LIP (excepto cuando cargan a Susanita). Ej. WMP446 en id 4.
     const placasExcluidas = new Set((PLACAS_EXCLUIDAS_FACTURAS[idempresa] || []).map((p) => p.toUpperCase()))
+    // Filtro multi-operación (vacío = todas).
+    const opSet = new Set((filtros.tipooperaciones || []).map((o) => String(o).trim().toLowerCase()))
 
     // Procesadas del proyecto (fuente de verdad) + ESTADO DE FACTURA por orden.
     // El estado dice qué ya se gestionó (para el semáforo y NO facturar doble): en
@@ -369,6 +373,10 @@ export async function getPrefactura(
         // WMP446 (u otras excluidas) NO las atiende LIP, SALVO cuando cargan a Susanita.
         if (placasExcluidas.has(placa) && !cl.includes("SUSANITA")) continue
         const servicio = servicioDe(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa)
+        // Filtro multi-operación (Susanita se conserva siempre, es factura del owner).
+        if (opSet.size > 0 && servicio !== "Susanita" && !opSet.has(String(r.tipooperacion ?? "").trim().toLowerCase())) continue
+        // El propio (placa de distribución) se factura al owner del VEHÍCULO, no del producto.
+        const owner = servicio === "Cargue/Descargue propio" ? ownerDeIdEmpresa(idempresa) : String(r.owner || "SIN OWNER")
         const est = estadoPorOrden.get(on)
         const estadofactura = est?.estado ?? null
         origen.push({
@@ -381,7 +389,7 @@ export async function getPrefactura(
           producto: r.producto ?? null,
           pesobascula: num(r.pesobascula),
           toneladas: num(r.toneladas),
-          owner: String(r.owner || "SIN OWNER"),
+          owner,
           subcategoria: r.subcategoria ?? null,
           idempresa: Number(r.idempresa),
           transporte: r.transporte ?? null,
@@ -506,7 +514,6 @@ export async function getControlFacturacion(
         if (filtros.desde) q = q.gte("fechacargue", filtros.desde)
         if (filtros.hasta) q = q.lte("fechacargue", filtros.hasta)
         if (filtros.owner) q = q.eq("owner", filtros.owner)
-        if (filtros.tipooperacion) q = q.eq("tipooperacion", filtros.tipooperacion)
         if (filtros.placa) q = q.ilike("placa", `%${filtros.placa}%`)
         if (filtros.cliente) q = q.ilike("cliente", `%${filtros.cliente}%`)
         const { data, error } = await q.range(offset, offset + pageSize - 1)
@@ -532,6 +539,13 @@ export async function getControlFacturacion(
       const cl = String(r.cliente ?? "").toUpperCase()
       return placasExcluidas.has(placa) && !cl.includes("SUSANITA")
     }
+    // Filtro multi-operación (en código para conservar Susanita aunque se excluya Descargue).
+    const opSet = new Set((filtros.tipooperaciones || []).map((o) => String(o).trim().toLowerCase()))
+    const filtraOperacion = (r: any, servicio: Servicio | null) => {
+      if (opSet.size === 0) return false // sin filtro → no descarta
+      if (servicio === "Susanita") return false // Susanita se conserva siempre (factura del owner)
+      return !opSet.has(String(r.tipooperacion ?? "").trim().toLowerCase())
+    }
 
     if (esBascula) {
       // Acumular por orden: tarifa máxima y datos de cabecera.
@@ -540,6 +554,7 @@ export async function getControlFacturacion(
         const on = String(r.numeroorden || "").trim()
         if (!on || !procesadas.has(on)) continue
         if (esExcluida(r)) continue
+        if (filtraOperacion(r, null)) continue
         const tNum = num(r.tarifa)
         const sinTarifa = String(r.tarifa) === "SIN TARIFA EN MAESTRO" || r.tarifa == null
         const prev = porOrden.get(on)
@@ -584,9 +599,12 @@ export async function getControlFacturacion(
         const on = String(r.numeroorden || "").trim()
         if (!on || !procesadas.has(on)) continue
         if (esExcluida(r)) continue
-        const owner = String(r.owner || "SIN OWNER")
-        const est = estadoPorOrden.get(on)
         const servicio = servicioDe(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa)
+        if (filtraOperacion(r, servicio)) continue
+        // El CARGUE/DESCARGUE PROPIO (placa de distribución) se factura al owner del
+        // VEHÍCULO (ej. LWY393 en id4 → Molinos), no al owner del producto.
+        const owner = servicio === "Cargue/Descargue propio" ? ownerDeIdEmpresa(idempresa) : String(r.owner || "SIN OWNER")
+        const est = estadoPorOrden.get(on)
         const tarifaServ = tarifaDeServicio(servicio, tarifas)
         const ton = num(r.toneladas)
         const val = ton * tarifaServ
