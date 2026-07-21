@@ -24,6 +24,7 @@ import {
   type CategoriaFactura,
   type FiltrosControl,
 } from "@/lib/facturacion-control-actions"
+import { getAccessibleEmpresesFromPermisos } from "@/lib/orders-actions"
 
 const money = (n: number) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO")
 const ton = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { maximumFractionDigits: 2 })
@@ -52,19 +53,33 @@ export function CuadroControlFacturacion() {
   const [loading, setLoading] = useState(true)
   const [pending, setPending] = useState<FiltrosControl>(emptyFiltros())
   const [filtros, setFiltros] = useState<FiltrosControl>(emptyFiltros())
+  // Selector propio de PROYECTO/EMPRESA: la facturación es por ID. Arranca en la
+  // empresa del selector global, pero se puede cambiar acá para facturar otro proyecto.
+  const [empresas, setEmpresas] = useState<Array<{ id: number; nombre: string }>>([])
+  const [empresaId, setEmpresaId] = useState<number | null>(selectedEmpresaId ?? null)
+
+  useEffect(() => {
+    getAccessibleEmpresesFromPermisos()
+      .then((list) => {
+        setEmpresas(list)
+        setEmpresaId((prev) => prev ?? selectedEmpresaId ?? list[0]?.id ?? null)
+      })
+      .catch(() => setEmpresas([]))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const cargar = useCallback(async () => {
-    if (!selectedEmpresaId) {
+    if (!empresaId) {
       setData(null)
       setLoading(false)
       return
     }
     setLoading(true)
-    const r = await getControlFacturacion(selectedEmpresaId, filtros)
+    const r = await getControlFacturacion(empresaId, filtros)
     if (r.success && r.data) setData(r.data)
     else toast({ title: "Error", description: r.message, variant: "destructive" })
     setLoading(false)
-  }, [selectedEmpresaId, filtros, toast])
+  }, [empresaId, filtros, toast])
 
   useEffect(() => {
     cargar()
@@ -110,9 +125,9 @@ export function CuadroControlFacturacion() {
   // /ajuste" del cierre queda pendiente (config por proyecto/mes).
   const [prefacturando, setPrefacturando] = useState(false)
   const exportarPrefactura = async () => {
-    if (!selectedEmpresaId) return
+    if (!empresaId) return
     setPrefacturando(true)
-    const r = await getPrefactura(selectedEmpresaId, { desde: filtros.desde, hasta: filtros.hasta })
+    const r = await getPrefactura(empresaId, { desde: filtros.desde, hasta: filtros.hasta })
     setPrefacturando(false)
     if (!r.success || !r.data) {
       toast({ title: "Error", description: r.message, variant: "destructive" })
@@ -184,10 +199,28 @@ export function CuadroControlFacturacion() {
   return (
     <div className="space-y-4">
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
-          <CardTitle className="text-lg">Cuadro de Control de Facturación</CardTitle>
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
+          <div className="flex flex-wrap items-center gap-3">
+            <CardTitle className="text-lg">Cuadro de Control de Facturación</CardTitle>
+            {/* Selector de PROYECTO/EMPRESA a facturar (por ID). */}
+            <div className="flex items-center gap-2">
+              <Label className="text-xs text-muted-foreground">Proyecto</Label>
+              <select
+                className="h-9 rounded-md border border-input bg-background px-2 text-sm font-medium"
+                value={empresaId ?? ""}
+                onChange={(e) => setEmpresaId(e.target.value ? Number(e.target.value) : null)}
+              >
+                <option value="">— elegir —</option>
+                {empresas.map((em) => (
+                  <option key={em.id} value={em.id}>
+                    {em.nombre} (ID {em.id})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
           <div className="flex gap-2">
-            <Button size="sm" onClick={exportarPrefactura} disabled={!selectedEmpresaId || prefacturando}>
+            <Button size="sm" onClick={exportarPrefactura} disabled={!empresaId || prefacturando}>
               {prefacturando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
               Prefactura
             </Button>
@@ -269,7 +302,7 @@ export function CuadroControlFacturacion() {
             <Loader2 className="h-5 w-5 animate-spin" /> Cruzando órdenes con la facturación…
           </CardContent>
         </Card>
-      ) : !selectedEmpresaId ? (
+      ) : !empresaId ? (
         <Card>
           <CardContent className="py-12 text-center text-sm text-muted-foreground">
             Selecciona un proyecto/empresa para ver su control de facturación.
