@@ -223,6 +223,8 @@ export const groups: Group[] = [
         modules: [
           { name: "Indicador de Facturación por Proyectos", icon: BarChart3 },
           { name: "Facturación Proyectos", icon: CreditCard },
+          // Cruce órdenes procesadas vs facturado por owner + prefactura. Permiso propio.
+          { name: "Cuadro de Control Facturación", icon: ClipboardCheck },
           { name: "Tarifas", icon: CreditCard },
           // "Gestión de Facturas" se MOVIÓ a Gestión LIP → Operación Lip (función
           // operativa del coordinador). Conserva su permiso (gestionfacturas).

@@ -73,6 +73,7 @@ import NotificacionesPersonal from "@/components/rrhh/notificaciones-personal" /
 import { ViewPicking } from "@/components/view-picking" // Added import for ViewPicking component
 import { Tarifas } from "@/components/configuration/tarifas" // Added import for Tarifas component
 import { FacturacionProyectos } from "@/components/facturacion-proyectos" // Added import for Facturacion Proyectos component
+import { CuadroControlFacturacion } from "@/components/cuadro-control-facturacion"
 import { DashboardOperacionesLip } from "@/components/dashboard-operaciones-lip" // Dashboard Operaciones LIP
 import { RegistroPreoperacional } from "@/components/registro-preoperacional" // Registro Preoperacional
 import GestionContratos from "@/components/rrhh/gestion-contratos"
@@ -251,6 +252,7 @@ export function MainContent({
       "Ver Picking/Packing": "view_picking", // Added mapping for renamed module Ver Picking/Packing
       Tarifas: "tarifas", // Added mapping for Tarifas module
       "Facturación Proyectos": "facturacion_proyectos", // Added mapping for Facturacion Proyectos module
+      "Cuadro de Control Facturación": "cuadro_facturacion",
       "Gestión de Facturas": "gestionfacturas", // Added mapping for Gestión de Facturas module
       "Dashboard Operaciones LIP": "dashboardop", // Dashboard Operaciones LIP
       "Recepción de Traslado": "transfer_requests", // Added mapping for renamed module
@@ -924,6 +926,10 @@ export function MainContent({
           <PermissionGuard moduleName="Facturación Proyectos">
             <FacturacionProyectos />
           </PermissionGuard>
+          ) : selectedModule === "Cuadro de Control Facturación" ? (
+            <PermissionGuard moduleName="Cuadro de Control Facturación">
+              <CuadroControlFacturacion />
+            </PermissionGuard>
           ) : selectedModule === "Gestión de Facturas" ? (
             <PermissionGuard moduleName="Gestión de Facturas">
               <GestionFacturas onBack={onBack} />
