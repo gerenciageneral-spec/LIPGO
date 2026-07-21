@@ -595,7 +595,10 @@ create or replace view public.toneladasauxiliarespago as
             array_length(string_to_array(cabeceraoc.auxiliares, ','::text), 1) AS cantidad_auxiliares,
             TRIM(BOTH FROM regexp_split_to_table(cabeceraoc.auxiliares, ','::text)) AS nombre_auxiliar
            FROM cabeceraoc
-          WHERE ((cabeceraoc.fincargue IS NOT NULL) AND ((cabeceraoc.fincargue)::text <> ''::text))
+          WHERE ((cabeceraoc.fincargue IS NOT NULL) AND ((cabeceraoc.fincargue)::text <> ''::text)
+                 -- Si la orden se marcó como NO facturable (personal no-LIP / conductor
+                 -- solo), tampoco genera pago de nómina de auxiliares.
+                 AND (cabeceraoc.facturar IS DISTINCT FROM false))
         ), liquidacion_individual AS (
          SELECT t.fechacargue,
             t.idempresa,
