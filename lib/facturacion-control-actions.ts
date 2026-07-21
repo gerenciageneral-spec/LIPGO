@@ -88,6 +88,142 @@ const num = (v: any) => {
   return Number.isFinite(n) ? n : 0
 }
 
+// Clasifica una orden en el SERVICIO de la prefactura, por transporte + operación
+// (mapeo confirmado con el usuario). "Propio" = vehículo propio (no TERCEROS);
+// "Recoge en bodega" = TERCEROS; Susanita = cliente Tostaditos Susanita; Descargue.
+function servicioDe(operacion: string | null, transporte: string | null, cliente: string | null): string {
+  const op = String(operacion ?? "").trim().toLowerCase()
+  const tr = String(transporte ?? "").trim().toUpperCase()
+  const cl = String(cliente ?? "").toUpperCase()
+  if (cl.includes("SUSANITA")) return "Susanita"
+  if (op === "descargue") return "Descargue"
+  if (tr === "TERCEROS") return "Cargue recoge en bodega"
+  return "Cargue/Descargue propio"
+}
+
+export interface PrefacturaLinea {
+  fechaorden: string | null
+  fechacargue: string | null
+  cliente: string | null
+  numeroorden: string
+  tiquete: string | null
+  placa: string | null
+  producto: string | null
+  pesobascula: number
+  toneladas: number
+  owner: string
+  subcategoria: string | null
+  idempresa: number
+  transporte: string | null
+  tipooperacion: string | null
+  tarifa: string | number | null
+  valor_a_facturar: number
+  servicio: string
+}
+export interface PrefacturaResumen {
+  owner: string
+  servicio: string
+  toneladas: number
+  valor: number
+}
+export interface Prefactura {
+  origen: PrefacturaLinea[]
+  resumen: PrefacturaResumen[]
+  totalValor: number
+  totalToneladas: number
+}
+
+/**
+ * Arma la PREFACTURA de un proyecto (idempresa) para un rango: la TABLA ORIGEN
+ * (líneas de la vista `facturacion`, owner ya resuelto) + un resumen por
+ * owner×servicio. Solo órdenes procesadas. Base para el anexo/soporte de factura.
+ */
+export async function getPrefactura(
+  idempresa: number,
+  filtros: { desde?: string | null; hasta?: string | null } = {},
+): Promise<{ success: boolean; data?: Prefactura; message?: string }> {
+  if (!idempresa) return { success: false, message: "Selecciona un proyecto/empresa." }
+  try {
+    const sb: any = await getSupabaseAdmin()
+
+    // Procesadas del proyecto (fuente de verdad).
+    const procesadas = new Set<string>()
+    for (let offset = 0; ; offset += 1000) {
+      const { data, error } = await sb
+        .from("cabeceraoc")
+        .select("ordendecargue, fincargue, facturar, tipooperacion")
+        .eq("idempresa", idempresa)
+        .neq("tipooperacion", "proyeccion")
+        .range(offset, offset + 999)
+      if (error) return { success: false, message: error.message }
+      if (!data || data.length === 0) break
+      for (const o of data) {
+        if (o.fincargue && o.facturar !== false) procesadas.add(String(o.ordendecargue || "").trim())
+      }
+      if (data.length < 1000) break
+    }
+
+    // Líneas de la vista facturacion (TABLA ORIGEN).
+    const origen: PrefacturaLinea[] = []
+    for (let offset = 0; ; offset += 1000) {
+      let q = sb
+        .from("facturacion")
+        .select("fechaorden, fechacargue, cliente, numeroorden, tiquetebascula, placa, producto, pesobascula, toneladas, owner, subcategoria, idempresa, transporte, tipooperacion, tarifa, valor_a_facturar")
+        .eq("idempresa", idempresa)
+      if (filtros.desde) q = q.gte("fechacargue", filtros.desde)
+      if (filtros.hasta) q = q.lte("fechacargue", filtros.hasta)
+      const { data, error } = await q.range(offset, offset + 999)
+      if (error) return { success: false, message: error.message }
+      if (!data || data.length === 0) break
+      for (const r of data) {
+        const on = String(r.numeroorden || "").trim()
+        if (!procesadas.has(on)) continue
+        origen.push({
+          fechaorden: r.fechaorden ?? null,
+          fechacargue: r.fechacargue ?? null,
+          cliente: r.cliente ?? null,
+          numeroorden: on,
+          tiquete: r.tiquetebascula ?? null,
+          placa: r.placa ?? null,
+          producto: r.producto ?? null,
+          pesobascula: num(r.pesobascula),
+          toneladas: num(r.toneladas),
+          owner: String(r.owner || "SIN OWNER"),
+          subcategoria: r.subcategoria ?? null,
+          idempresa: Number(r.idempresa),
+          transporte: r.transporte ?? null,
+          tipooperacion: r.tipooperacion ?? null,
+          tarifa: r.tarifa ?? null,
+          valor_a_facturar: num(r.valor_a_facturar),
+          servicio: servicioDe(r.tipooperacion, r.transporte, r.cliente),
+        })
+      }
+      if (data.length < 1000) break
+    }
+
+    // Resumen por owner × servicio.
+    const map = new Map<string, PrefacturaResumen>()
+    let totalValor = 0
+    let totalToneladas = 0
+    for (const l of origen) {
+      const k = `${l.owner}|||${l.servicio}`
+      const r = map.get(k) || { owner: l.owner, servicio: l.servicio, toneladas: 0, valor: 0 }
+      r.toneladas += l.toneladas
+      r.valor += l.valor_a_facturar
+      map.set(k, r)
+      totalValor += l.valor_a_facturar
+      totalToneladas += l.toneladas
+    }
+    const resumen = Array.from(map.values()).sort(
+      (a, b) => a.owner.localeCompare(b.owner) || a.servicio.localeCompare(b.servicio),
+    )
+
+    return { success: true, data: { origen, resumen, totalValor, totalToneladas } }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al armar la prefactura." }
+  }
+}
+
 /**
  * Cruce del cuadro para UNA empresa/ID (owner del proyecto). Trae la vista
  * `facturacion` (valor por owner) de esa empresa y le cruza el `estadofactura` de

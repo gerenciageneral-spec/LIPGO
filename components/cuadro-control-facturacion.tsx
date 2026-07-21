@@ -19,6 +19,7 @@ import { Loader2, Download, Filter, RotateCcw, AlertTriangle, CheckCircle2, Cloc
 import * as XLSX from "xlsx"
 import {
   getControlFacturacion,
+  getPrefactura,
   type ControlFacturacion,
   type CategoriaFactura,
   type FiltrosControl,
@@ -103,6 +104,55 @@ export function CuadroControlFacturacion() {
     XLSX.writeFile(wb, `Control_Facturacion_${new Date().toISOString().slice(0, 10)}.xlsx`)
   }
 
+  // PREFACTURA (soporte de factura por proyecto): réplica del formato manual.
+  // Hoja "TABLA ORIGEN" (líneas de la vista facturacion, owner ya resuelto) +
+  // "RESUMEN por servicio" (owner × servicio = transporte+operación). El "acordado
+  // /ajuste" del cierre queda pendiente (config por proyecto/mes).
+  const [prefacturando, setPrefacturando] = useState(false)
+  const exportarPrefactura = async () => {
+    if (!selectedEmpresaId) return
+    setPrefacturando(true)
+    const r = await getPrefactura(selectedEmpresaId, { desde: filtros.desde, hasta: filtros.hasta })
+    setPrefacturando(false)
+    if (!r.success || !r.data) {
+      toast({ title: "Error", description: r.message, variant: "destructive" })
+      return
+    }
+    const wb = XLSX.utils.book_new()
+    // TABLA ORIGEN (mismas columnas del soporte manual).
+    const origen = r.data.origen.map((l) => ({
+      "Fecha Orden": l.fechaorden ?? "",
+      "Fecha Cargue": l.fechacargue ?? "",
+      Cliente: l.cliente ?? "",
+      "N° Orden": l.numeroorden,
+      "Tiquete Báscula": l.tiquete ?? "",
+      Placa: l.placa ?? "",
+      Producto: l.producto ?? "",
+      "Peso Báscula": l.pesobascula,
+      Toneladas: Number(l.toneladas.toFixed(3)),
+      Owner: l.owner,
+      Subcategoría: l.subcategoria ?? "",
+      Empresa: l.idempresa,
+      Transporte: l.transporte ?? "",
+      "Tipo Operación": l.tipooperacion ?? "",
+      Tarifa: l.tarifa,
+      "Valor a Facturar": Math.round(l.valor_a_facturar),
+      Servicio: l.servicio,
+    }))
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(origen), "TABLA ORIGEN")
+    // RESUMEN por owner × servicio + total.
+    const resumen = r.data.resumen.map((x) => ({
+      Owner: x.owner,
+      Servicio: x.servicio,
+      Toneladas: Number(x.toneladas.toFixed(3)),
+      Total: Math.round(x.valor),
+    }))
+    resumen.push({ Owner: "TOTAL", Servicio: "", Toneladas: Number(r.data.totalToneladas.toFixed(3)), Total: Math.round(r.data.totalValor) })
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumen), "RESUMEN")
+    const rango = filtros.desde || filtros.hasta ? `_${filtros.desde || "ini"}_a_${filtros.hasta || "fin"}` : ""
+    XLSX.writeFile(wb, `Prefactura${rango}.xlsx`)
+  }
+
   // Anexo por owner (soporte de la factura). Una hoja por owner con su detalle.
   const exportarAnexos = () => {
     if (!data) return
@@ -136,6 +186,10 @@ export function CuadroControlFacturacion() {
         <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
           <CardTitle className="text-lg">Cuadro de Control de Facturación</CardTitle>
           <div className="flex gap-2">
+            <Button size="sm" onClick={exportarPrefactura} disabled={!selectedEmpresaId || prefacturando}>
+              {prefacturando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+              Prefactura
+            </Button>
             <Button size="sm" variant="outline" onClick={exportarDetalle} disabled={!data || data.filas.length === 0}>
               <Download className="mr-2 h-4 w-4" /> Detalle
             </Button>
