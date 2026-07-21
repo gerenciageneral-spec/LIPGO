@@ -48,6 +48,22 @@ import { getAccessibleEmpresesFromPermisos } from "@/lib/orders-actions"
 const money = (n: number) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO")
 const ton = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { maximumFractionDigits: 2 })
 
+// Semáforo de facturación (lo determina la FACTURA DE SIIGO):
+//   VERDE = por facturar (sin factura Siigo) · ROJO = ya facturado (tiene factura Siigo, NO recobrar).
+// "Factura solicitada" sin Siigo sigue siendo VERDE (aún no se facturó).
+function Semaforo({ c, showLabel = false }: { c: CategoriaFactura; showLabel?: boolean }) {
+  const facturado = c === "facturado"
+  const dot = facturado ? "bg-red-500" : "bg-emerald-500"
+  const text = facturado ? "text-red-700" : "text-emerald-700"
+  const label = facturado ? "Facturado" : "Por facturar"
+  return (
+    <span className="inline-flex items-center gap-1.5" title={label}>
+      <span className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${dot}`} />
+      {showLabel && <span className={`text-xs font-medium ${text}`}>{label}</span>}
+    </span>
+  )
+}
+
 const CAT_LABEL: Record<CategoriaFactura, string> = {
   facturado: "Facturado",
   en_proceso: "En proceso",
@@ -174,21 +190,47 @@ export function CuadroControlFacturacion() {
     })
 
   // Resumen SELECCIONADO, agrupado por owner (para la prefactura en pantalla).
+  // Desglosa POR FACTURAR (verde) vs YA FACTURADO (rojo, no recobrar) para no cobrar doble.
   const prefSel = useMemo(() => {
     if (!pref) return null
     const rows = pref.resumen.filter((x) => selKeys.has(keyRes(x.owner, x.servicio)))
-    const porOwner = new Map<string, { owner: string; items: typeof rows; ton: number; total: number }>()
+    type Grupo = {
+      owner: string
+      items: typeof rows
+      ton: number
+      total: number
+      porFacturar: number
+      facturado: number
+      enProceso: number
+    }
+    const porOwner = new Map<string, Grupo>()
     for (const r of rows) {
-      const g = porOwner.get(r.owner) || { owner: r.owner, items: [] as any, ton: 0, total: 0 }
+      const g =
+        porOwner.get(r.owner) ||
+        ({ owner: r.owner, items: [] as any, ton: 0, total: 0, porFacturar: 0, facturado: 0, enProceso: 0 } as Grupo)
       g.items.push(r)
       g.ton += r.toneladas
       g.total += r.valor
+      g.porFacturar += r.valorPorFacturar
+      g.facturado += r.valorFacturado
+      g.enProceso += r.valorEnProceso
       porOwner.set(r.owner, g)
     }
     const grupos = Array.from(porOwner.values()).sort((a, b) => a.owner.localeCompare(b.owner))
     const totalTon = rows.reduce((s, r) => s + r.toneladas, 0)
     const totalVal = rows.reduce((s, r) => s + r.valor, 0)
-    return { grupos, totalTon, totalVal, keys: new Set(rows.map((r) => keyRes(r.owner, r.servicio))) }
+    const totalPorFacturar = rows.reduce((s, r) => s + r.valorPorFacturar, 0)
+    const totalFacturado = rows.reduce((s, r) => s + r.valorFacturado, 0)
+    const totalEnProceso = rows.reduce((s, r) => s + r.valorEnProceso, 0)
+    return {
+      grupos,
+      totalTon,
+      totalVal,
+      totalPorFacturar,
+      totalFacturado,
+      totalEnProceso,
+      keys: new Set(rows.map((r) => keyRes(r.owner, r.servicio))),
+    }
   }, [pref, selKeys])
 
   // Descarga la prefactura SELECCIONADA, bien formateada (encabezado por owner,
@@ -258,25 +300,33 @@ export function CuadroControlFacturacion() {
       toast({ title: "Nada que guardar", description: "Genera y selecciona qué facturar.", variant: "destructive" })
       return
     }
+    // Se guarda SOLO lo POR FACTURAR (sin factura Siigo) para no cobrar doble.
+    const lineas = prefSel.grupos
+      .flatMap((g) =>
+        g.items
+          .filter((it) => it.valorPorFacturar > 0)
+          .map((it) => ({
+            owner: g.owner,
+            servicio: it.servicio,
+            toneladas: Number(it.tonPorFacturar.toFixed(3)),
+            tarifa: it.tarifa,
+            total: Math.round(it.valorPorFacturar),
+          })),
+      )
+    if (lineas.length === 0) {
+      toast({ title: "Nada por facturar", description: "Todo lo seleccionado ya tiene factura Siigo.", variant: "destructive" })
+      return
+    }
     setGuardando(true)
     const proyecto = empresas.find((e) => e.id === empresaId)?.nombre || `Empresa ${empresaId}`
-    const lineas = prefSel.grupos.flatMap((g) =>
-      g.items.map((it) => ({
-        owner: g.owner,
-        servicio: it.servicio,
-        toneladas: Number(it.toneladas.toFixed(3)),
-        tarifa: it.tarifa,
-        total: Math.round(it.valor),
-      })),
-    )
     const r = await guardarPrefactura({
       idempresa: empresaId,
       proyecto,
       periodo_desde: filtros.desde || null,
       periodo_hasta: filtros.hasta || null,
       lineas,
-      total: Math.round(prefSel.totalVal),
-      toneladas: Number(prefSel.totalTon.toFixed(3)),
+      total: Math.round(prefSel.totalPorFacturar),
+      toneladas: Number(lineas.reduce((s, l) => s + l.toneladas, 0).toFixed(3)),
       usuario: user?.email || user?.nombre || null,
       observacion: obs || null,
     })
@@ -558,7 +608,7 @@ export function CuadroControlFacturacion() {
                         <TableHead className="text-right">Cantidad</TableHead>
                         <TableHead className="text-right">Tarifa</TableHead>
                         <TableHead className="text-right">Total</TableHead>
-                        <TableHead>Estado</TableHead>
+                        <TableHead>Factura</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -582,11 +632,12 @@ export function CuadroControlFacturacion() {
                             </TableCell>
                             <TableCell className="text-right text-xs tabular-nums">{money(f.valor_a_facturar)}</TableCell>
                             <TableCell className="text-xs">
-                              {f.categoria === "sin_gestionar" ? (
-                                <span className="font-semibold text-red-600">Sin gestionar</span>
-                              ) : (
-                                <span className="text-muted-foreground">{f.estadofactura}</span>
-                              )}
+                              <span className="inline-flex items-center gap-1.5">
+                                <Semaforo c={f.categoria} showLabel />
+                                {f.categoria !== "facturado" && f.estadofactura && (
+                                  <span className="text-[10px] text-muted-foreground">({f.estadofactura})</span>
+                                )}
+                              </span>
                             </TableCell>
                           </TableRow>
                         )
@@ -651,13 +702,16 @@ export function CuadroControlFacturacion() {
                       <div className="grid gap-x-6 gap-y-1 p-3 sm:grid-cols-2 lg:grid-cols-3">
                         {pref.resumen.map((x) => {
                           const k = keyRes(x.owner, x.servicio)
+                          const soloFacturado = x.valorPorFacturar === 0 && x.valorFacturado > 0
                           return (
                             <label key={k} className={`flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-xs hover:bg-muted/50 ${selKeys.has(k) ? "" : "opacity-50"}`}>
                               <input type="checkbox" className="h-3.5 w-3.5 accent-primary" checked={selKeys.has(k)} onChange={() => toggleSel(k)} />
+                              <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${soloFacturado ? "bg-red-500" : x.valorFacturado > 0 ? "bg-amber-400" : "bg-emerald-500"}`} />
                               <span className="flex-1 truncate">
                                 <span className="font-medium">{x.owner}</span> · {x.servicio}
+                                {soloFacturado && <span className="ml-1 text-[10px] text-red-500">(ya facturado)</span>}
                               </span>
-                              <span className="tabular-nums text-muted-foreground">{money(x.valor)}</span>
+                              <span className="tabular-nums text-emerald-700">{money(x.valorPorFacturar)}</span>
                             </label>
                           )
                         })}
@@ -703,11 +757,30 @@ export function CuadroControlFacturacion() {
                         </div>
                       </div>
                       <div className="text-right">
-                        <div className="text-xs uppercase tracking-wide text-muted-foreground">Total prefactura</div>
-                        <div className="text-2xl font-extrabold tabular-nums text-primary">{money(prefSel.totalVal)}</div>
-                        <div className="text-xs text-muted-foreground">{ton(prefSel.totalTon)} t · {prefSel.grupos.length} owner(s)</div>
+                        <div className="flex items-center justify-end gap-1.5 text-xs uppercase tracking-wide text-emerald-700">
+                          <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" /> Por facturar
+                        </div>
+                        <div className="text-2xl font-extrabold tabular-nums text-emerald-600">{money(prefSel.totalPorFacturar)}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {ton(prefSel.totalTon)} t · Total {money(prefSel.totalVal)}
+                        </div>
+                        {prefSel.totalFacturado > 0 && (
+                          <div className="mt-0.5 flex items-center justify-end gap-1.5 text-[11px] text-red-600">
+                            <span className="inline-block h-2 w-2 rounded-full bg-red-500" /> Ya facturado (no recobrar): {money(prefSel.totalFacturado)}
+                          </div>
+                        )}
                       </div>
                     </div>
+
+                    {prefSel.totalFacturado > 0 && (
+                      <div className="mb-4 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950/20">
+                        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        <span>
+                          Hay <strong>{money(prefSel.totalFacturado)}</strong> con factura Siigo ya emitida (marcado en rojo).
+                          No lo incluyas en la nueva factura para <strong>no cobrar doble</strong>.
+                        </span>
+                      </div>
+                    )}
 
                     {/* Cuerpo: un bloque por owner, con detalle navegable por servicio */}
                     <div className="space-y-5">
@@ -721,6 +794,7 @@ export function CuadroControlFacturacion() {
                                   <th className="py-1.5 pl-2 font-medium">Servicio</th>
                                   <th className="py-1.5 text-right font-medium">Cantidad (t)</th>
                                   <th className="py-1.5 text-right font-medium">Tarifa</th>
+                                  <th className="py-1.5 text-right font-medium">Por facturar</th>
                                   <th className="py-1.5 pr-3 text-right font-medium">Total</th>
                                   <th className="w-6"></th>
                                 </tr>
@@ -744,17 +818,29 @@ export function CuadroControlFacturacion() {
                                         </td>
                                         <td className="py-1.5 text-right tabular-nums">{ton(it.toneladas)}</td>
                                         <td className="py-1.5 text-right tabular-nums text-muted-foreground">{money(it.tarifa)}</td>
+                                        <td className="py-1.5 text-right tabular-nums">
+                                          <span className="inline-flex items-center justify-end gap-1.5">
+                                            <span className={`inline-block h-2 w-2 rounded-full ${it.valorFacturado > 0 ? "bg-red-500" : "bg-emerald-500"}`} />
+                                            <span className={it.valorFacturado > 0 && it.valorPorFacturar === 0 ? "text-red-600" : "text-emerald-700"}>
+                                              {money(it.valorPorFacturar)}
+                                            </span>
+                                          </span>
+                                          {it.valorFacturado > 0 && (
+                                            <div className="text-[10px] text-red-500">fact. {money(it.valorFacturado)}</div>
+                                          )}
+                                        </td>
                                         <td className="py-1.5 pr-3 text-right font-semibold tabular-nums">{money(it.valor)}</td>
                                         <td></td>
                                       </tr>
                                       {abierto && (
                                         <tr className="bg-muted/20">
-                                          <td colSpan={5} className="px-2 py-2">
+                                          <td colSpan={6} className="px-2 py-2">
                                             <div className="max-h-64 overflow-auto rounded border bg-background">
                                               <table className="w-full text-[11px]">
                                                 <thead>
                                                   <tr className="border-b text-left text-muted-foreground">
-                                                    <th className="py-1 pl-2 font-medium">Fecha</th>
+                                                    <th className="py-1 pl-2 font-medium">Factura</th>
+                                                    <th className="py-1 font-medium">Fecha</th>
                                                     <th className="py-1 font-medium">Orden</th>
                                                     <th className="py-1 font-medium">Placa</th>
                                                     <th className="py-1 font-medium">Cliente</th>
@@ -764,8 +850,9 @@ export function CuadroControlFacturacion() {
                                                 </thead>
                                                 <tbody>
                                                   {det.map((l, i) => (
-                                                    <tr key={`${l.numeroorden}-${i}`} className="border-b last:border-0">
-                                                      <td className="py-1 pl-2 tabular-nums">{l.fechacargue ?? "-"}</td>
+                                                    <tr key={`${l.numeroorden}-${i}`} className={`border-b last:border-0 ${l.categoria === "facturado" ? "bg-red-50/60 dark:bg-red-950/20" : ""}`}>
+                                                      <td className="py-1 pl-2"><Semaforo c={l.categoria} /></td>
+                                                      <td className="py-1 tabular-nums">{l.fechacargue ?? "-"}</td>
                                                       <td className="py-1">{l.numeroorden}</td>
                                                       <td className="py-1">{l.placa ?? "-"}</td>
                                                       <td className="py-1">{l.cliente ?? "-"}</td>
@@ -775,7 +862,7 @@ export function CuadroControlFacturacion() {
                                                   ))}
                                                   {det.length === 0 && (
                                                     <tr>
-                                                      <td colSpan={6} className="py-2 text-center text-muted-foreground">Sin líneas.</td>
+                                                      <td colSpan={7} className="py-2 text-center text-muted-foreground">Sin líneas.</td>
                                                     </tr>
                                                   )}
                                                 </tbody>
@@ -791,6 +878,7 @@ export function CuadroControlFacturacion() {
                                   <td className="py-1.5 pl-2">Subtotal {g.owner}</td>
                                   <td className="py-1.5 text-right tabular-nums">{ton(g.ton)}</td>
                                   <td></td>
+                                  <td className="py-1.5 text-right tabular-nums text-emerald-700">{money(g.porFacturar)}</td>
                                   <td className="py-1.5 pr-3 text-right tabular-nums">{money(g.total)}</td>
                                   <td></td>
                                 </tr>
@@ -802,9 +890,15 @@ export function CuadroControlFacturacion() {
                     </div>
 
                     {/* Total general */}
-                    <div className="mt-5 flex items-center justify-between border-t-2 border-primary/40 pt-3">
+                    <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t-2 border-primary/40 pt-3">
                       <span className="text-sm font-bold">TOTAL PREFACTURA</span>
-                      <span className="text-xl font-extrabold tabular-nums text-primary">{money(prefSel.totalVal)}</span>
+                      <div className="flex items-center gap-4">
+                        <span className="text-xs text-muted-foreground">Total período {money(prefSel.totalVal)}</span>
+                        <span className="flex items-center gap-1.5 text-xl font-extrabold tabular-nums text-emerald-600">
+                          <span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                          {money(prefSel.totalPorFacturar)}
+                        </span>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>

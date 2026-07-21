@@ -15,21 +15,17 @@ import { PLACAS_EXCLUIDAS_FACTURAS } from "@/lib/facturas-exclusiones"
 
 export type CategoriaFactura = "facturado" | "en_proceso" | "sin_gestionar"
 
-// Clasificación de estadofactura → categoría del control.
-const ESTADOS_FACTURADO = new Set([
-  "CF - Cerrado",
-  "SF - Cerrado",
-  "Facturado - por validar",
-  "Confirmado - recibido",
-])
-const ESTADOS_EN_PROCESO = new Set(["CF - Factura solicitada", "SF - Pago confirmado", "A credito"])
-
-function categoriaDeEstado(estado: string | null | undefined): CategoriaFactura {
+// Determinante REAL de "¿se facturó?": existe la FACTURA DE SIIGO (`facturasiigo`).
+// Sin factura Siigo → NO facturado (verde), aunque el estado sea "Factura solicitada"
+// (eso es solo el trámite del coordinador → ámbar). Con factura Siigo → facturado (rojo).
+function categoriaDeFactura(
+  facturasiigo: string | null | undefined,
+  estado: string | null | undefined,
+): CategoriaFactura {
+  if (String(facturasiigo ?? "").trim() !== "") return "facturado"
   const e = String(estado ?? "").trim()
-  if (ESTADOS_FACTURADO.has(e)) return "facturado"
-  if (ESTADOS_EN_PROCESO.has(e)) return "en_proceso"
-  if (/validado/i.test(e)) return "facturado"
-  return "sin_gestionar" // null / vacío / desconocido
+  if (e !== "" && !/pendiente/i.test(e)) return "en_proceso" // solicitada, sin Siigo aún
+  return "sin_gestionar" // por facturar
 }
 
 export interface ControlFacturaFila {
@@ -182,13 +178,22 @@ export interface PrefacturaLinea {
   tarifa: string | number | null
   valor_a_facturar: number
   servicio: string
+  estadofactura: string | null
+  categoria: CategoriaFactura // semáforo: sin_gestionar=por facturar · en_proceso · facturado
 }
 export interface PrefacturaResumen {
   owner: string
   servicio: string
   toneladas: number
   tarifa: number
-  valor: number // toneladas × tarifa del servicio
+  valor: number // toneladas × tarifa del servicio (todo)
+  // Desglose por estado de factura (para el semáforo y no facturar doble):
+  tonPorFacturar: number
+  valorPorFacturar: number // solo lo NO gestionado (verde)
+  tonEnProceso: number
+  valorEnProceso: number // factura solicitada / a crédito (ámbar)
+  tonFacturado: number
+  valorFacturado: number // ya facturado — NO volver a facturar (rojo)
 }
 export interface Prefactura {
   origen: PrefacturaLinea[]
@@ -322,19 +327,24 @@ export async function getPrefactura(
     // Placas que NO atiende LIP (excepto cuando cargan a Susanita). Ej. WMP446 en id 4.
     const placasExcluidas = new Set((PLACAS_EXCLUIDAS_FACTURAS[idempresa] || []).map((p) => p.toUpperCase()))
 
-    // Procesadas del proyecto (fuente de verdad).
+    // Procesadas del proyecto (fuente de verdad) + ESTADO DE FACTURA por orden.
+    // El estado dice qué ya se gestionó (para el semáforo y NO facturar doble): en
+    // Medellín los descargues ya se facturan a las transportadoras y quedan con estado.
     const procesadas = new Set<string>()
+    const estadoPorOrden = new Map<string, { estado: string | null; facturasiigo: string | null }>()
     for (let offset = 0; ; offset += 1000) {
       const { data, error } = await sb
         .from("cabeceraoc")
-        .select("ordendecargue, fincargue, facturar, tipooperacion")
+        .select("ordendecargue, fincargue, facturar, tipooperacion, estadofactura, facturasiigo")
         .eq("idempresa", idempresa)
         .neq("tipooperacion", "proyeccion")
         .range(offset, offset + 999)
       if (error) return { success: false, message: error.message }
       if (!data || data.length === 0) break
       for (const o of data) {
-        if (o.fincargue && o.facturar !== false) procesadas.add(String(o.ordendecargue || "").trim())
+        const on = String(o.ordendecargue || "").trim()
+        estadoPorOrden.set(on, { estado: o.estadofactura ?? null, facturasiigo: o.facturasiigo ?? null })
+        if (o.fincargue && o.facturar !== false) procesadas.add(on)
       }
       if (data.length < 1000) break
     }
@@ -359,6 +369,8 @@ export async function getPrefactura(
         // WMP446 (u otras excluidas) NO las atiende LIP, SALVO cuando cargan a Susanita.
         if (placasExcluidas.has(placa) && !cl.includes("SUSANITA")) continue
         const servicio = servicioDe(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa)
+        const est = estadoPorOrden.get(on)
+        const estadofactura = est?.estado ?? null
         origen.push({
           fechaorden: r.fechaorden ?? null,
           fechacargue: r.fechacargue ?? null,
@@ -377,20 +389,41 @@ export async function getPrefactura(
           tarifa: r.tarifa ?? null,
           valor_a_facturar: num(r.valor_a_facturar),
           servicio,
+          estadofactura,
+          categoria: categoriaDeFactura(est?.facturasiigo, estadofactura),
         })
       }
       if (data.length < 1000) break
     }
 
     // Resumen por owner × servicio, facturado a la TARIFA DEL SERVICIO (no la de la línea).
+    // Se desglosa por ESTADO para el semáforo: por facturar (verde) / en proceso (ámbar)
+    // / facturado (rojo, NO volver a facturar).
     const map = new Map<string, PrefacturaResumen>()
     let totalToneladas = 0
     for (const l of origen) {
       const k = `${l.owner}|||${l.servicio}`
       const tarifaServ = tarifaDeServicio(l.servicio as Servicio, tarifas)
-      const r = map.get(k) || { owner: l.owner, servicio: l.servicio, toneladas: 0, tarifa: tarifaServ, valor: 0 }
+      const r =
+        map.get(k) ||
+        {
+          owner: l.owner, servicio: l.servicio, toneladas: 0, tarifa: tarifaServ, valor: 0,
+          tonPorFacturar: 0, valorPorFacturar: 0, tonEnProceso: 0, valorEnProceso: 0,
+          tonFacturado: 0, valorFacturado: 0,
+        }
+      const v = l.toneladas * tarifaServ
       r.toneladas += l.toneladas
       r.tarifa = tarifaServ
+      if (l.categoria === "facturado") {
+        r.tonFacturado += l.toneladas
+        r.valorFacturado += v
+      } else if (l.categoria === "en_proceso") {
+        r.tonEnProceso += l.toneladas
+        r.valorEnProceso += v
+      } else {
+        r.tonPorFacturar += l.toneladas
+        r.valorPorFacturar += v
+      }
       map.set(k, r)
       totalToneladas += l.toneladas
     }
@@ -432,7 +465,7 @@ export async function getControlFacturacion(
     //    Solo procesadas (fincargue) y facturables (facturar != false).
     const estadoPorOrden = new Map<
       string,
-      { estado: string | null; valorpago: number | null; pesovascula: number }
+      { estado: string | null; facturasiigo: string | null; valorpago: number | null; pesovascula: number }
     >()
     const procesadas = new Set<string>()
     {
@@ -440,7 +473,7 @@ export async function getControlFacturacion(
       for (let offset = 0; ; offset += pageSize) {
         const { data, error } = await sb
           .from("cabeceraoc")
-          .select("ordendecargue, estadofactura, valorpago, fincargue, facturar, tipooperacion, pesovascula")
+          .select("ordendecargue, estadofactura, facturasiigo, valorpago, fincargue, facturar, tipooperacion, pesovascula")
           .eq("idempresa", idempresa)
           .neq("tipooperacion", "proyeccion")
           .range(offset, offset + pageSize - 1)
@@ -451,6 +484,7 @@ export async function getControlFacturacion(
           if (!on) continue
           estadoPorOrden.set(on, {
             estado: o.estadofactura ?? null,
+            facturasiigo: o.facturasiigo ?? null,
             valorpago: o.valorpago ?? null,
             pesovascula: num(o.pesovascula),
           })
@@ -535,7 +569,7 @@ export async function getControlFacturacion(
           valor_a_facturar: total,
           sin_tarifa: v.tarifaMax <= 0,
           estadofactura: est?.estado ?? null,
-          categoria: categoriaDeEstado(est?.estado),
+          categoria: categoriaDeFactura(est?.facturasiigo, est?.estado),
           valorpago: est?.valorpago ?? null,
         })
       }
@@ -583,7 +617,7 @@ export async function getControlFacturacion(
             valor_a_facturar: val,
             sin_tarifa: sinTarifa,
             estadofactura: est?.estado ?? null,
-            categoria: categoriaDeEstado(est?.estado),
+            categoria: categoriaDeFactura(est?.facturasiigo, est?.estado),
             valorpago: est?.valorpago ?? null,
           })
         }
