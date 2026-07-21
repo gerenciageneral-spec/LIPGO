@@ -8,6 +8,7 @@ import { getCurrentEmpresaId } from "@/lib/company-filter"
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { revalidatePath } from "next/cache"
 import { generateAndUploadLoadOrderPDF } from "./pdf-actions" // Added for generateLoadOrder
+import { esPlacaDistribucion, numeroOrdenDistribucion } from "@/lib/distribucion-placas"
 
 /**
  * Obtiene los IDs de empresa accesibles para el usuario actual desde perfil_acceso_empresas
@@ -838,6 +839,70 @@ export async function generateLoadOrder(orderData: {
 
     console.log("[v0] Detalleoc inserted successfully")
 
+    // ------------------------------------------------------------------
+    // DISTRIBUCIÓN AUTOMÁTICA. Si la placa es un vehículo propio del cliente
+    // que hace distribución (ver lib/distribucion-placas.ts), se DUPLICA esta
+    // misma orden como orden de Distribución: mismo número + "D", tipooperacion
+    // "Distribucion", copiando cliente/productos/cantidades de la orden original.
+    // Antes se hacía a mano en "Generar órdenes de distribución".
+    // Falla-seguro: si algo aquí falla, se registra pero NO se tumba la orden de
+    // cargue (que ya quedó creada correctamente).
+    let distribucionOrderCode: string | null = null
+    if (!orderData.sinVehiculo && esPlacaDistribucion(sessionEmpresaId, orderData.vehiculo)) {
+      try {
+        const distId = nextId + 1
+        distribucionOrderCode = numeroOrdenDistribucion(orderCode)
+
+        const { error: distHeaderError } = await supabase.from("cabeceraoc").insert({
+          id: distId,
+          idempresa: sessionEmpresaId,
+          ordendecargue: distribucionOrderCode,
+          fechaorden: currentDate,
+          fechacargue: fechaCargue,
+          placa: orderData.vehiculo,
+          conductor: orderData.nombreConductor,
+          celular: telefono,
+          transporte: orderData.tipoTransporte,
+          // Valor SIN tilde: así está en la BD y en los filtros (getLoadOrders).
+          tipooperacion: "Distribucion",
+          pesoorden: orderData.totalWeight,
+          horaorden: currentTime,
+          observaciones: `Distribución automática de la orden ${orderCode}`,
+          pesajeinicial: horapesoinicial,
+          horavehiculo: horallegada,
+        })
+
+        if (distHeaderError) {
+          console.error("[v0] Error creando cabecera de distribución automática:", distHeaderError)
+          distribucionOrderCode = null
+        } else {
+          // Detalle: copia EXACTA de productos/cantidades/cliente de la orden de
+          // cargue (owner incluido, va pegado al producto). Reusa nextDetailId.
+          const distDetails = orderData.productsList
+            .filter((product) => product.cantidad > 0)
+            .map((product) => ({
+              id: nextDetailId++,
+              idorden: distId,
+              numeroorden: distribucionOrderCode,
+              producto: product.producto,
+              cantidad: product.cantidad,
+              toneladas: product.toneladas,
+              cliente: product.cliente,
+            }))
+          if (distDetails.length > 0) {
+            const { error: distDetailError } = await supabase.from("detalleoc").insert(distDetails)
+            if (distDetailError) {
+              console.error("[v0] Error creando detalle de distribución automática:", distDetailError)
+            }
+          }
+          console.log("[v0] Orden de distribución automática creada:", distribucionOrderCode)
+        }
+      } catch (distErr) {
+        console.error("[v0] Excepción en distribución automática (no bloquea el cargue):", distErr)
+        distribucionOrderCode = null
+      }
+    }
+
     if (!orderData.sinVehiculo && orderData.vehiculo) {
       const { error: vehicleUpdateError } = await supabase
         .from("citasvehiculos")
@@ -895,8 +960,11 @@ export async function generateLoadOrder(orderData: {
 
     return {
       success: true,
-      message: "Orden de cargue generada exitosamente",
+      message: distribucionOrderCode
+        ? `Orden de cargue generada. Se creó automáticamente la orden de distribución ${distribucionOrderCode}.`
+        : "Orden de cargue generada exitosamente",
       orderId: nextId,
+      distribucionOrderCode,
       orderData: {
         orderCode,
         empresaId: sessionEmpresaId,
