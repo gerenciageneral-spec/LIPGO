@@ -2,6 +2,7 @@
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getCurrentEmpresaData } from "@/lib/user-context"
+import { resolverOwnerPorNombre } from "@/lib/owner-utils"
 
 async function imageUrlToBase64(url: string): Promise<string> {
   try {
@@ -561,82 +562,155 @@ export async function generateAndUploadLoadOrderPDF(orderData: any, ordenCargueI
     doc.rect(100, 42, 95, 6, "F")
     doc.text(ordenCargueCode, 105, 46)
 
+    // --- Tabla de productos AGRUPADA por Cliente -> Owner, con subtotales. ---
+    // El OWNER (razón social dueña del producto) se resuelve por id_empresa desde el
+    // maestro `productos` — MISMA fuente y etiquetas que la facturación, para que
+    // coincidan. En los cedis (Funza, Medellín) conviven varios owners en un mismo
+    // vehículo y a cada uno se le factura SU cantidad; por eso el desglose por
+    // cliente y por owner con subtotales.
+    const ownerRes = await resolverOwnerPorNombre((orderData.products || []).map((p: any) => p.producto))
+    const ownerDe = (nombre: string) => ownerRes.ownerPorNombre.get(String(nombre ?? "").trim()) || "SIN OWNER"
+
+    // cliente -> owner -> líneas
+    const porCliente = new Map<string, Map<string, any[]>>()
+    for (const p of orderData.products || []) {
+      const cli = String(p.cliente ?? "").trim() || "(sin cliente)"
+      const own = ownerDe(p.producto)
+      if (!porCliente.has(cli)) porCliente.set(cli, new Map())
+      const owns = porCliente.get(cli)!
+      if (!owns.has(own)) owns.set(own, [])
+      owns.get(own)!.push(p)
+    }
+
     let yPos = 52
-    doc.setFillColor(100, 100, 100)
-    doc.setTextColor(255, 255, 255)
-    doc.rect(15, yPos, 180, 6, "F")
-
-    doc.setFontSize(8)
-    doc.setFont(undefined as any, "bold")
-    doc.text("Cliente", 20, yPos + 4)
-    doc.text("Destino", 63, yPos + 4)
-    doc.text("Producto", 90, yPos + 4)
-    doc.text("Und.", 152, yPos + 4, { align: "center" })
-    doc.text("Peso (Ton)", 172, yPos + 4, { align: "center" })
-
-    yPos += 6
-    doc.setFont(undefined as any, "normal")
-    doc.setFontSize(6)
-    doc.setTextColor(0, 0, 0)
-    doc.setDrawColor(200, 200, 200)
-
-    orderData.products.forEach((product: any) => {
-      doc.rect(15, yPos, 45, 6, "S")
-      doc.rect(60, yPos, 25, 6, "S")
-      doc.rect(85, yPos, 65, 6, "S")
-      doc.rect(150, yPos, 15, 6, "S")
-      doc.rect(165, yPos, 30, 6, "S")
-
-      // Reduce font size to 5 for Cliente and Producto to fit more text
-      doc.setFontSize(5)
-      // Use splitTextToSize to wrap text if needed, with maxWidth based on column width
-      const clienteText = doc.splitTextToSize(product.cliente, 43) // 45 - 2 for padding
-      const productoText = doc.splitTextToSize(product.producto, 63) // 65 - 2 for padding
-      
-      // Show first line only (to keep row height consistent)
-      doc.text(clienteText[0] || "", 17, yPos + 4)
-      doc.text(productoText[0] || "", 87, yPos + 4)
-      
-      // Keep Destino at font size 6
-      doc.setFontSize(6)
-      doc.text(product.destino.substring(0, 12), 62, yPos + 4)
-      doc.text(String(product.cantidad), 157, yPos + 4, { align: "center" })
-      doc.text(((product.pesoKgs || 0) / 1000).toFixed(3), 180, yPos + 4, { align: "center" })
-
-      yPos += 6
-    })
-
-    // Add empty rows if needed
-    const minRows = 8
-    const currentRows = orderData.products.length
-    if (currentRows < minRows) {
-      for (let i = 0; i < minRows - currentRows; i++) {
-        doc.rect(15, yPos, 45, 6, "S")
-        doc.rect(60, yPos, 25, 6, "S")
-        doc.rect(85, yPos, 65, 6, "S")
-        doc.rect(150, yPos, 15, 6, "S")
-        doc.rect(165, yPos, 30, 6, "S")
-
-        yPos += 6
+    const pageBottom = 250
+    const ensure = (need: number) => {
+      if (yPos + need > pageBottom) {
+        doc.addPage()
+        yPos = 20
       }
     }
 
+    // Encabezado de columnas
+    doc.setFillColor(100, 100, 100)
+    doc.setTextColor(255, 255, 255)
+    doc.rect(15, yPos, 180, 6, "F")
+    doc.setFontSize(8)
+    doc.setFont(undefined as any, "bold")
+    doc.text("Producto", 20, yPos + 4)
+    doc.text("Destino", 122, yPos + 4)
+    doc.text("Und.", 159, yPos + 4, { align: "center" })
+    doc.text("Peso (Ton)", 181, yPos + 4, { align: "center" })
+    yPos += 6
+
+    let granUnd = 0
+    let granTon = 0
+    for (const [cli, owners] of porCliente) {
+      ensure(6)
+      // Banda Cliente
+      doc.setFillColor(44, 82, 130)
+      doc.setTextColor(255, 255, 255)
+      doc.rect(15, yPos, 180, 6, "F")
+      doc.setFontSize(8)
+      doc.setFont(undefined as any, "bold")
+      doc.text(`Cliente: ${cli}`.substring(0, 70), 20, yPos + 4)
+      yPos += 6
+
+      let cliUnd = 0
+      let cliTon = 0
+      for (const [own, prods] of owners) {
+        ensure(5)
+        // Sub-banda Owner
+        doc.setFillColor(224, 224, 224)
+        doc.setTextColor(0, 0, 0)
+        doc.rect(15, yPos, 180, 5, "F")
+        doc.setFontSize(7)
+        doc.setFont(undefined as any, "bold")
+        doc.text(`Owner: ${own}`, 22, yPos + 3.5)
+        yPos += 5
+
+        let ownUnd = 0
+        let ownTon = 0
+        doc.setFont(undefined as any, "normal")
+        doc.setDrawColor(200, 200, 200)
+        for (const p of prods) {
+          ensure(5)
+          doc.rect(15, yPos, 105, 5, "S")
+          doc.rect(120, yPos, 30, 5, "S")
+          doc.rect(150, yPos, 18, 5, "S")
+          doc.rect(168, yPos, 27, 5, "S")
+          doc.setFontSize(5.5)
+          const prodTxt = doc.splitTextToSize(String(p.producto ?? ""), 103)
+          doc.text(prodTxt[0] || "", 17, yPos + 3.5)
+          doc.setFontSize(6)
+          doc.text(String(p.destino ?? "").substring(0, 14), 122, yPos + 3.5)
+          const und = Number(p.cantidad) || 0
+          const ton = (Number(p.pesoKgs) || 0) / 1000
+          doc.text(String(und), 159, yPos + 3.5, { align: "center" })
+          doc.text(ton.toFixed(3), 181, yPos + 3.5, { align: "center" })
+          ownUnd += und
+          ownTon += ton
+          yPos += 5
+        }
+        // Subtotal por Owner
+        ensure(5)
+        doc.setFillColor(245, 245, 245)
+        doc.setDrawColor(180, 180, 180)
+        doc.rect(15, yPos, 180, 5, "FD")
+        doc.setFont(undefined as any, "bold")
+        doc.setFontSize(6.5)
+        doc.text(`Subtotal ${own}`.substring(0, 60), 20, yPos + 3.5)
+        doc.text(String(ownUnd), 159, yPos + 3.5, { align: "center" })
+        doc.text(ownTon.toFixed(3), 181, yPos + 3.5, { align: "center" })
+        yPos += 5
+        cliUnd += ownUnd
+        cliTon += ownTon
+      }
+      // Subtotal por Cliente
+      ensure(5)
+      doc.setFillColor(210, 220, 235)
+      doc.setDrawColor(150, 160, 180)
+      doc.rect(15, yPos, 180, 5, "FD")
+      doc.setFont(undefined as any, "bold")
+      doc.setFontSize(7)
+      doc.setTextColor(0, 0, 0)
+      doc.text(`Subtotal Cliente ${cli}`.substring(0, 55), 20, yPos + 3.5)
+      doc.text(String(cliUnd), 159, yPos + 3.5, { align: "center" })
+      doc.text(cliTon.toFixed(3), 181, yPos + 3.5, { align: "center" })
+      yPos += 5
+      granUnd += cliUnd
+      granTon += cliTon
+    }
+
+    // Aviso si algún producto está amarrado a 2+ id_empresa (owner ambiguo).
+    if (ownerRes.ambiguos.length > 0) {
+      ensure(6)
+      doc.setTextColor(180, 0, 0)
+      doc.setFontSize(6)
+      doc.setFont(undefined as any, "bold")
+      doc.text(
+        `OJO: producto(s) con 2+ owner, revisar: ${ownerRes.ambiguos.join(", ")}`.substring(0, 120),
+        15,
+        yPos + 3,
+      )
+      doc.setTextColor(0, 0, 0)
+      yPos += 6
+    }
+
+    // TOTAL general de la orden
     yPos += 2
+    ensure(6)
     doc.setFillColor(44, 82, 130)
     doc.setTextColor(255, 255, 255)
-    doc.rect(15, yPos, 110, 6, "F")
+    doc.rect(15, yPos, 180, 6, "F")
     doc.setFontSize(9)
     doc.setFont(undefined as any, "bold")
-    doc.text("TOTALES", 20, yPos + 4)
+    doc.text("TOTAL ORDEN", 20, yPos + 4)
+    doc.text(String(granUnd), 159, yPos + 4, { align: "center" })
+    doc.text(granTon.toFixed(3), 181, yPos + 4, { align: "center" })
 
-    doc.setFillColor(255, 255, 255)
-    doc.setTextColor(0, 0, 0)
-    doc.rect(150, yPos, 15, 6, "FD")
-    doc.text(String(orderData.totalUnidades), 157, yPos + 4, { align: "center" })
-
-    doc.setFillColor(255, 255, 255)
-    doc.rect(165, yPos, 30, 6, "FD")
-    doc.text(String(orderData.totalPeso), 180, yPos + 4, { align: "center" })
+    // Asegura espacio para la sección de vehículo/firmas que sigue.
+    ensure(78)
 
     // Vehicle details section
     yPos += 12
