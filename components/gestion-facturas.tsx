@@ -16,6 +16,8 @@ import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { useAuth } from "@/components/auth-provider"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { CuadroControlFacturacion } from "@/components/cuadro-control-facturacion"
 
 interface GestionFacturasProps {
   onBack?: () => void
@@ -97,6 +99,9 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
 
   // View state - 'list' for orders list, 'register' for registration form
   const [currentView, setCurrentView] = useState<"list" | "register">("list")
+  // Pestaña superior: Facturas (flujo actual) vs Cuadro de Control (permiso propio).
+  const [topTab, setTopTab] = useState<"facturas" | "control">("facturas")
+  const [canControl, setCanControl] = useState(false)
   // Flow type: "sin_factura" means Coordinator handles payment with subtotal calc,
   // "con_factura" means Coordinator only requests invoice, no subtotal shown
   const [currentFlow, setCurrentFlow] = useState<"sin_factura" | "con_factura">("sin_factura")
@@ -221,6 +226,18 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
     setCurrentPage(1)
     loadOrdenes(1, searchTerm, filters)
   }, [selectedEmpresaId, searchTerm])
+
+  // Permiso propio para la pestaña "Cuadro de Control" (no todos facturan).
+  useEffect(() => {
+    fetch("/api/check-permission", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ moduleName: "Cuadro de Control Facturación" }),
+    })
+      .then((r) => (r.ok ? r.json() : { hasPermission: false }))
+      .then((d) => setCanControl(!!d.hasPermission))
+      .catch(() => setCanControl(false))
+  }, [])
 
   const handlePageChange = (newPage: number) => {
     setCurrentPage(newPage)
@@ -2253,7 +2270,20 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
 
   return (
     <>
-      {confirmacionView && ordenConfirmacion ? confirmacionViewComponent : currentView === "register" ? registrationView : listView}
+      <Tabs value={topTab} onValueChange={(v) => setTopTab(v as "facturas" | "control")}>
+        <TabsList>
+          <TabsTrigger value="facturas">Facturas</TabsTrigger>
+          {canControl && <TabsTrigger value="control">Cuadro de Control</TabsTrigger>}
+        </TabsList>
+        <TabsContent value="facturas">
+          {confirmacionView && ordenConfirmacion ? confirmacionViewComponent : currentView === "register" ? registrationView : listView}
+        </TabsContent>
+        {canControl && (
+          <TabsContent value="control">
+            <CuadroControlFacturacion />
+          </TabsContent>
+        )}
+      </Tabs>
       {comprobanteDialog}
 
       {/* Password Dialog for Confirmation Access */}

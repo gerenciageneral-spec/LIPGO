@@ -163,6 +163,7 @@ export interface UserPermissions {
   gestion_usuarios: boolean
   accesos_usuario: boolean
   facturacion_proyectos: boolean
+  cuadro_facturacion: boolean
   // ---------------------------------------------------------------------------
   // Certificaciones LIP · SST. Estas columnas ya existian en
   // `permisos_usuarios` pero nunca se habian cableado al mapa de permisos,
@@ -299,6 +300,8 @@ export const MODULE_PERMISSION_MAP: Record<string, keyof UserPermissions> = {
   // permiso de Facturación Proyectos (conserva accesos ya otorgados).
   "Indicador de Facturación por Proyectos": "facturacion_proyectos",
   "Gestión de Facturas": "gestionfacturas",
+  // Pestaña "Cuadro de Control" dentro de Gestión de Facturas; permiso propio.
+  "Cuadro de Control Facturación": "cuadro_facturacion",
   // Ambos modulos del flujo de gastos comparten un unico permiso `gastos`
   // en `permisos_usuarios`, asi que mapean al mismo campo.
   "Registrar Gasto": "gastos",
