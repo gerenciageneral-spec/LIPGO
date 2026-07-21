@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { parseColombianNumber } from "@/lib/parse-colombian-number"
+import { excluirPlacasFacturas } from "@/lib/facturas-exclusiones"
 
 export async function GET(request: NextRequest) {
   try {
@@ -31,7 +32,10 @@ export async function GET(request: NextRequest) {
     // inicial y la reasignación no tipa. Type-only, no cambia el runtime.
     const applyFilters = (q: any) => {
       if (empresaId) {
-        q = q.eq("idempresa", parseInt(empresaId, 10))
+        const emp = parseInt(empresaId, 10)
+        q = q.eq("idempresa", emp)
+        // Placas que LIP no atiende en el cargue de este proyecto: se excluyen.
+        q = excluirPlacasFacturas(q, emp)
       }
       if (search) {
         q = q.or(`ordendecargue.ilike.%${search}%,placa.ilike.%${search}%,transporte.ilike.%${search}%`)

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
+import { excluirPlacasFacturas } from "@/lib/facturas-exclusiones"
 import * as XLSX from "xlsx"
 
 export async function GET(request: NextRequest) {
@@ -29,7 +30,10 @@ export async function GET(request: NextRequest) {
       .order("id", { ascending: false })
 
     if (empresaId) {
-      query = query.eq("idempresa", parseInt(empresaId, 10))
+      const emp = parseInt(empresaId, 10)
+      query = query.eq("idempresa", emp)
+      // Placas que LIP no atiende en el cargue de este proyecto: se excluyen.
+      query = excluirPlacasFacturas(query, emp)
     }
     if (search) {
       query = query.or(`ordendecargue.ilike.%${search}%,placa.ilike.%${search}%,transporte.ilike.%${search}%`)
