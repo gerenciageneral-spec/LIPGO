@@ -1607,9 +1607,13 @@ export async function getIndicadoresValores(
     const lipFacturacion = pct(factTot - factPend, factTot)
 
     // --- SG-SST 0312: puntaje de la autoevaluación de LIP (una sola, alcance LIP) ---
+    // La 0312 es de LIP (idempresa 100, sede CONSOLIDADA). Se filtra explícito
+    // para que un futuro registro de otro alcance no cambie el valor del BSC; es
+    // el MISMO puntaje_total que muestran la Matriz de 60 Estándares y Auditoría 0312.
     const { data: aeSST } = await supabase
       .from("sst_autoevaluaciones")
       .select("puntaje_total")
+      .eq("idempresa", 100)
       .order("anio", { ascending: false })
       .limit(1)
       .maybeSingle()

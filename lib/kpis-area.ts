@@ -32,7 +32,9 @@ export const KPI_DEFS: Record<string, KpiDef> = {
   sat_conductor: { nombre: "Satisfacción conductor", fmt: "pct", meta: 85, higherBetter: true },
   sat_cliente: { nombre: "Satisfacción cliente", fmt: "pct", meta: 85, higherBetter: true },
   // SST (BSC del área): SG-SST 0312, accidentalidad y IPEVR.
-  sgsst_0312: { nombre: "Cumplimiento SG-SST 0312", fmt: "pct", meta: 85, higherBetter: true },
+  // Meta = 86% (umbral "aceptable" de la Res. 0312, Art. 28). Debe coincidir con
+  // la ficha del BSC en sig_indicadores (IND-SST-0312), que es la fuente oficial.
+  sgsst_0312: { nombre: "Cumplimiento SG-SST 0312", fmt: "pct", meta: 86, higherBetter: true },
   sst_at_count: { nombre: "Accidentes de trabajo", fmt: "num", meta: 0, higherBetter: false },
   sst_at_dias: { nombre: "Días perdidos por AT", fmt: "num", meta: 0, higherBetter: false },
   sst_ipevr_cumpl: { nombre: "Intervención de peligros (IPEVR)", fmt: "pct", meta: 90, higherBetter: true },
