@@ -169,31 +169,60 @@ export function CuadroControlFacturacion() {
     XLSX.writeFile(wb, `Prefactura${rango}.xlsx`)
   }
 
-  // Anexo por owner (soporte de la factura). Una hoja por owner con su detalle.
+  // Anexos por OWNER × TIPO DE OPERACIÓN (una hoja por cada combinación, para
+  // facturar cada ID por operación sin mezclar). Cada hoja lleva su subtotal.
   const exportarAnexos = () => {
     if (!data) return
+    const abrev = (w: string) => {
+      const u = w.toUpperCase()
+      if (u.includes("MOLINOS")) return "MOLINOS"
+      if (u.includes("HARINERA") || u.includes("INDUPAN")) return "HARINERA"
+      if (u.includes("AVIMOL")) return "AVIMOL"
+      return w.substring(0, 12)
+    }
+    // Agrupar filas por owner × operación, en orden estable.
+    const grupos = new Map<string, { owner: string; op: string; filas: typeof data.filas }>()
+    for (const f of data.filas) {
+      const op = f.tipooperacion || "(sin op)"
+      const k = `${f.owner}|||${op}`
+      const g = grupos.get(k) || { owner: f.owner, op, filas: [] as any }
+      g.filas.push(f)
+      grupos.set(k, g)
+    }
     const wb = XLSX.utils.book_new()
-    for (const o of data.porOwner) {
-      const rows = data.filas
-        .filter((f) => f.owner === o.owner)
-        .map((f) => ({
+    const nombresUsados = new Set<string>()
+    for (const g of Array.from(grupos.values()).sort((a, b) => a.owner.localeCompare(b.owner) || a.op.localeCompare(b.op))) {
+      let subTon = 0
+      let subVal = 0
+      const rows = g.filas.map((f) => {
+        subTon += f.toneladas
+        subVal += f.valor_a_facturar
+        return {
           Fecha: f.fecha ?? "",
           "Orden de cargue": f.numeroorden,
           Placa: f.placa ?? "",
           Tiquete: f.tiquete ?? "",
-          Operación: f.tipooperacion ?? "",
           Owner: f.owner,
+          Operación: f.tipooperacion ?? "",
           Cliente: f.cliente ?? "",
           Cantidad: Number(f.toneladas.toFixed(3)),
           Tarifa: f.sin_tarifa ? "SIN TARIFA" : f.tarifa,
           Total: Math.round(f.valor_a_facturar),
           Estado: f.estadofactura ?? "(sin gestionar)",
-        }))
-      const sheet = XLSX.utils.json_to_sheet(rows)
-      const nombre = o.owner.substring(0, 28).replace(/[\\/?*[\]:]/g, "")
-      XLSX.utils.book_append_sheet(wb, sheet, nombre || "Owner")
+        }
+      })
+      rows.push({
+        Fecha: "", "Orden de cargue": "", Placa: "", Tiquete: "", Owner: "", Operación: "SUBTOTAL",
+        Cliente: "", Cantidad: Number(subTon.toFixed(3)), Tarifa: "" as any, Total: Math.round(subVal), Estado: "",
+      })
+      // Nombre de hoja único, <=31 chars, sin caracteres inválidos.
+      let nombre = `${abrev(g.owner)} - ${g.op}`.substring(0, 31).replace(/[\\/?*[\]:]/g, "")
+      let i = 2
+      while (nombresUsados.has(nombre)) nombre = `${nombre.substring(0, 28)}(${i++})`
+      nombresUsados.add(nombre)
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), nombre || "Anexo")
     }
-    XLSX.writeFile(wb, `Anexos_Facturacion_${new Date().toISOString().slice(0, 10)}.xlsx`)
+    XLSX.writeFile(wb, `Anexos_por_owner_operacion_${new Date().toISOString().slice(0, 10)}.xlsx`)
   }
 
   return (
@@ -228,7 +257,7 @@ export function CuadroControlFacturacion() {
               <Download className="mr-2 h-4 w-4" /> Detalle
             </Button>
             <Button size="sm" variant="outline" onClick={exportarAnexos} disabled={!data || data.filas.length === 0}>
-              <Download className="mr-2 h-4 w-4" /> Anexos por owner
+              <Download className="mr-2 h-4 w-4" /> Anexos owner+operación
             </Button>
           </div>
         </CardHeader>
