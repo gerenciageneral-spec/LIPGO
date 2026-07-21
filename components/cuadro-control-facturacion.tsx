@@ -6,7 +6,7 @@
 // lo "sin gestionar" (procesado sin facturar) y lo "sin tarifa". De aquí salen
 // los anexos por proyecto. Datos: lib/facturacion-control-actions.ts.
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react"
 import { useAuth } from "@/components/auth-provider"
 import { useToast } from "@/hooks/use-toast"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -15,15 +15,33 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Loader2, Download, Filter, RotateCcw, AlertTriangle, CheckCircle2, Clock } from "lucide-react"
+import {
+  Loader2,
+  Download,
+  Filter,
+  RotateCcw,
+  AlertTriangle,
+  CheckCircle2,
+  Clock,
+  Save,
+  FileText,
+  Check,
+  Trash2,
+  ChevronRight,
+} from "lucide-react"
 import * as XLSX from "xlsx"
 import {
   getControlFacturacion,
   getPrefactura,
+  guardarPrefactura,
+  listarPrefacturas,
+  cambiarEstadoPrefactura,
+  eliminarPrefactura,
   type ControlFacturacion,
   type CategoriaFactura,
   type FiltrosControl,
   type Prefactura,
+  type PrefacturaGuardada,
 } from "@/lib/facturacion-control-actions"
 import { getAccessibleEmpresesFromPermisos } from "@/lib/orders-actions"
 
@@ -48,7 +66,7 @@ const emptyFiltros = (): FiltrosControl => ({
 })
 
 export function CuadroControlFacturacion() {
-  const { selectedEmpresaId } = useAuth()
+  const { selectedEmpresaId, user } = useAuth() as any
   const { toast } = useToast()
   const [data, setData] = useState<ControlFacturacion | null>(null)
   const [loading, setLoading] = useState(true)
@@ -63,6 +81,11 @@ export function CuadroControlFacturacion() {
   const [prefLoading, setPrefLoading] = useState(false)
   const [selKeys, setSelKeys] = useState<Set<string>>(new Set())
   const keyRes = (owner: string, servicio: string) => `${owner}|||${servicio}`
+  // Guardar / retomar prefacturas (borrador → aprobada, luego Siigo).
+  const [guardando, setGuardando] = useState(false)
+  const [guardadas, setGuardadas] = useState<PrefacturaGuardada[]>([])
+  const [obs, setObs] = useState("")
+  const [expand, setExpand] = useState<Set<string>>(new Set()) // owner×servicio con detalle abierto
 
   useEffect(() => {
     getAccessibleEmpresesFromPermisos()
@@ -215,6 +238,86 @@ export function CuadroControlFacturacion() {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(origen), "TABLA ORIGEN")
     XLSX.writeFile(wb, `Prefactura_${proyecto.replace(/[^a-zA-Z0-9]+/g, "_")}.xlsx`)
   }
+
+  // Cargar prefacturas guardadas del proyecto.
+  const cargarGuardadas = useCallback(async () => {
+    if (!empresaId) {
+      setGuardadas([])
+      return
+    }
+    const r = await listarPrefacturas(empresaId)
+    if (r.success) setGuardadas(r.data)
+  }, [empresaId])
+  useEffect(() => {
+    cargarGuardadas()
+  }, [cargarGuardadas])
+
+  // Guardar la prefactura SELECCIONADA como borrador (para retomar/aprobar → Siigo).
+  const guardarBorrador = async () => {
+    if (!empresaId || !prefSel || prefSel.grupos.length === 0) {
+      toast({ title: "Nada que guardar", description: "Genera y selecciona qué facturar.", variant: "destructive" })
+      return
+    }
+    setGuardando(true)
+    const proyecto = empresas.find((e) => e.id === empresaId)?.nombre || `Empresa ${empresaId}`
+    const lineas = prefSel.grupos.flatMap((g) =>
+      g.items.map((it) => ({
+        owner: g.owner,
+        servicio: it.servicio,
+        toneladas: Number(it.toneladas.toFixed(3)),
+        tarifa: it.tarifa,
+        total: Math.round(it.valor),
+      })),
+    )
+    const r = await guardarPrefactura({
+      idempresa: empresaId,
+      proyecto,
+      periodo_desde: filtros.desde || null,
+      periodo_hasta: filtros.hasta || null,
+      lineas,
+      total: Math.round(prefSel.totalVal),
+      toneladas: Number(prefSel.totalTon.toFixed(3)),
+      usuario: user?.email || user?.nombre || null,
+      observacion: obs || null,
+    })
+    setGuardando(false)
+    if (r.success) {
+      toast({ title: "Prefactura guardada", description: `Borrador #${r.id} guardado.` })
+      setObs("")
+      cargarGuardadas()
+    } else {
+      toast({ title: "No se pudo guardar", description: r.message, variant: "destructive" })
+    }
+  }
+
+  const aprobar = async (id: number, estado: "borrador" | "aprobada") => {
+    const r = await cambiarEstadoPrefactura(id, estado)
+    if (r.success) {
+      toast({ title: estado === "aprobada" ? "Prefactura aprobada" : "Reabierta a borrador" })
+      cargarGuardadas()
+    } else toast({ title: "Error", description: r.message, variant: "destructive" })
+  }
+
+  const borrar = async (id: number) => {
+    const r = await eliminarPrefactura(id)
+    if (r.success) {
+      toast({ title: "Borrador eliminado" })
+      cargarGuardadas()
+    } else toast({ title: "Error", description: r.message, variant: "destructive" })
+  }
+
+  const toggleExpand = (k: string) =>
+    setExpand((prev) => {
+      const n = new Set(prev)
+      n.has(k) ? n.delete(k) : n.add(k)
+      return n
+    })
+
+  // Órdenes (líneas origen) detrás de un owner×servicio, para navegar el detalle.
+  const detalleDe = (owner: string, servicio: string) =>
+    (pref?.origen || []).filter((l) => l.owner === owner && l.servicio === servicio)
+
+  const proyectoNombre = empresas.find((e) => e.id === empresaId)?.nombre || `Empresa ${empresaId}`
 
   // Anexos por OWNER × TIPO DE OPERACIÓN (una hoja por cada combinación, para
   // facturar cada ID por operación sin mezclar). Cada hoja lleva su subtotal.
@@ -500,129 +603,278 @@ export function CuadroControlFacturacion() {
               </Card>
             </TabsContent>
 
-            {/* PREFACTURA interactiva: elegir qué facturar y verlo armado aquí. */}
-            <TabsContent value="prefactura" className="space-y-3">
+            {/* PREFACTURA: se arma como DOCUMENTO en pantalla; se elige qué incluir,
+                se guarda como borrador y se aprueba (luego se enlaza a Siigo). */}
+            <TabsContent value="prefactura" className="space-y-4">
+              {/* Barra de acciones */}
               <Card>
                 <CardContent className="space-y-3 p-4">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
                       <div className="text-base font-bold">Prefactura</div>
                       <div className="text-xs text-muted-foreground">
-                        Elige owner y servicio a facturar; la prefactura se arma abajo. Descárgala a Excel cuando esté lista.
+                        Se arma con las <strong>órdenes procesadas del período</strong> valoradas por servicio. Elige qué
+                        incluir, revísala abajo, <strong>guárdala</strong> y <strong>apruébala</strong> (luego se enlaza a Siigo).
                       </div>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
                       <Button size="sm" variant="outline" onClick={generarPrefactura} disabled={prefLoading}>
                         {prefLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}
                         {pref ? "Actualizar" : "Generar prefactura"}
                       </Button>
-                      <Button size="sm" onClick={descargarPrefacturaExcel} disabled={!pref || !prefSel || prefSel.keys.size === 0}>
-                        <Download className="mr-2 h-4 w-4" /> Descargar Excel
+                      <Button size="sm" variant="outline" onClick={guardarBorrador} disabled={guardando || !prefSel || prefSel.grupos.length === 0}>
+                        {guardando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                        Guardar borrador
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={descargarPrefacturaExcel} disabled={!pref || !prefSel || prefSel.keys.size === 0}>
+                        <Download className="mr-2 h-4 w-4" /> Excel
                       </Button>
                     </div>
                   </div>
 
-                  {!pref ? (
-                    <div className="py-8 text-center text-sm text-muted-foreground">
-                      Genera la prefactura para elegir qué facturar.
-                    </div>
-                  ) : (
-                    <div className="grid gap-4 lg:grid-cols-2">
-                      {/* Selección */}
-                      <div>
-                        <div className="mb-1 flex items-center justify-between">
-                          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Qué facturar</span>
-                          <div className="flex gap-2 text-xs">
-                            <button className="text-primary hover:underline" onClick={() => setSelKeys(new Set(pref.resumen.map((x) => keyRes(x.owner, x.servicio))))}>
-                              Todo
-                            </button>
-                            <button className="text-primary hover:underline" onClick={() => setSelKeys(new Set())}>
-                              Nada
-                            </button>
-                          </div>
-                        </div>
-                        <div className="overflow-x-auto rounded-md border">
-                          <Table>
-                            <TableHeader>
-                              <TableRow>
-                                <TableHead className="w-8"></TableHead>
-                                <TableHead>Owner</TableHead>
-                                <TableHead>Servicio</TableHead>
-                                <TableHead className="text-right">Ton</TableHead>
-                                <TableHead className="text-right">Tarifa</TableHead>
-                                <TableHead className="text-right">Total</TableHead>
-                              </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                              {pref.resumen.map((x) => {
-                                const k = keyRes(x.owner, x.servicio)
-                                return (
-                                  <TableRow key={k} className={selKeys.has(k) ? "" : "opacity-50"}>
-                                    <TableCell>
-                                      <input type="checkbox" className="h-4 w-4 accent-primary" checked={selKeys.has(k)} onChange={() => toggleSel(k)} />
-                                    </TableCell>
-                                    <TableCell className="text-xs font-medium">{x.owner}</TableCell>
-                                    <TableCell className="text-xs">{x.servicio}</TableCell>
-                                    <TableCell className="text-right text-xs tabular-nums">{ton(x.toneladas)}</TableCell>
-                                    <TableCell className="text-right text-xs tabular-nums">{money(x.tarifa)}</TableCell>
-                                    <TableCell className="text-right text-xs font-semibold tabular-nums">{money(x.valor)}</TableCell>
-                                  </TableRow>
-                                )
-                              })}
-                            </TableBody>
-                          </Table>
+                  {/* Selección compacta de qué incluir */}
+                  {pref && (
+                    <div className="rounded-md border">
+                      <div className="flex items-center justify-between border-b bg-muted/40 px-3 py-1.5">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          ¿Qué facturar? ({selKeys.size}/{pref.resumen.length} conceptos)
+                        </span>
+                        <div className="flex gap-3 text-xs">
+                          <button className="text-primary hover:underline" onClick={() => setSelKeys(new Set(pref.resumen.map((x) => keyRes(x.owner, x.servicio))))}>
+                            Todo
+                          </button>
+                          <button className="text-primary hover:underline" onClick={() => setSelKeys(new Set())}>
+                            Nada
+                          </button>
                         </div>
                       </div>
-
-                      {/* Prefactura armada (formateada) */}
-                      <div>
-                        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Prefactura</span>
-                        <div className="mt-1 rounded-md border p-3">
-                          <div className="mb-2 border-b pb-2">
-                            <div className="text-sm font-bold">{empresas.find((e) => e.id === empresaId)?.nombre || `Empresa ${empresaId}`}</div>
-                            <div className="text-xs text-muted-foreground">
-                              Período: {filtros.desde || "inicio"} a {filtros.hasta || "fin"}
-                            </div>
-                          </div>
-                          {!prefSel || prefSel.grupos.length === 0 ? (
-                            <div className="py-6 text-center text-xs text-muted-foreground">Selecciona qué facturar.</div>
-                          ) : (
-                            <>
-                              {prefSel.grupos.map((g) => (
-                                <div key={g.owner} className="mb-3">
-                                  <div className="text-xs font-bold text-foreground">{g.owner}</div>
-                                  <table className="w-full text-xs">
-                                    <tbody>
-                                      {g.items.map((it) => (
-                                        <tr key={it.servicio}>
-                                          <td className="py-0.5 pl-2 text-muted-foreground">{it.servicio}</td>
-                                          <td className="py-0.5 text-right tabular-nums">{ton(it.toneladas)} t</td>
-                                          <td className="py-0.5 text-right tabular-nums text-muted-foreground">× {money(it.tarifa)}</td>
-                                          <td className="py-0.5 text-right font-medium tabular-nums">{money(it.valor)}</td>
-                                        </tr>
-                                      ))}
-                                      <tr className="border-t">
-                                        <td className="py-0.5 pl-2 font-semibold">Subtotal {g.owner}</td>
-                                        <td className="py-0.5 text-right tabular-nums">{ton(g.ton)} t</td>
-                                        <td></td>
-                                        <td className="py-0.5 text-right font-semibold tabular-nums">{money(g.total)}</td>
-                                      </tr>
-                                    </tbody>
-                                  </table>
-                                </div>
-                              ))}
-                              <div className="mt-2 flex items-center justify-between border-t-2 border-primary/40 pt-2">
-                                <span className="text-sm font-bold">TOTAL PREFACTURA</span>
-                                <span className="text-lg font-extrabold tabular-nums text-primary">{money(prefSel.totalVal)}</span>
-                              </div>
-                            </>
-                          )}
-                        </div>
+                      <div className="grid gap-x-6 gap-y-1 p-3 sm:grid-cols-2 lg:grid-cols-3">
+                        {pref.resumen.map((x) => {
+                          const k = keyRes(x.owner, x.servicio)
+                          return (
+                            <label key={k} className={`flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-xs hover:bg-muted/50 ${selKeys.has(k) ? "" : "opacity-50"}`}>
+                              <input type="checkbox" className="h-3.5 w-3.5 accent-primary" checked={selKeys.has(k)} onChange={() => toggleSel(k)} />
+                              <span className="flex-1 truncate">
+                                <span className="font-medium">{x.owner}</span> · {x.servicio}
+                              </span>
+                              <span className="tabular-nums text-muted-foreground">{money(x.valor)}</span>
+                            </label>
+                          )
+                        })}
+                      </div>
+                      <div className="border-t px-3 py-2">
+                        <Input
+                          value={obs}
+                          onChange={(e) => setObs(e.target.value)}
+                          placeholder="Observación (opcional) para el borrador guardado"
+                          className="h-8 text-xs"
+                        />
                       </div>
                     </div>
                   )}
                 </CardContent>
               </Card>
+
+              {/* DOCUMENTO de prefactura en pantalla */}
+              {!pref ? (
+                <Card>
+                  <CardContent className="py-12 text-center text-sm text-muted-foreground">
+                    Genera la prefactura para armarla aquí.
+                  </CardContent>
+                </Card>
+              ) : !prefSel || prefSel.grupos.length === 0 ? (
+                <Card>
+                  <CardContent className="py-12 text-center text-sm text-muted-foreground">
+                    Marca al menos un concepto arriba para armar la prefactura.
+                  </CardContent>
+                </Card>
+              ) : (
+                <Card>
+                  <CardContent className="p-6">
+                    {/* Encabezado del documento */}
+                    <div className="mb-5 flex flex-wrap items-start justify-between gap-4 border-b pb-4">
+                      <div>
+                        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                          <FileText className="h-3.5 w-3.5" /> Prefactura
+                        </div>
+                        <div className="mt-1 text-xl font-bold">{proyectoNombre}</div>
+                        <div className="text-xs text-muted-foreground">
+                          ID {empresaId} · Período {filtros.desde || "inicio"} → {filtros.hasta || "fin"}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-xs uppercase tracking-wide text-muted-foreground">Total prefactura</div>
+                        <div className="text-2xl font-extrabold tabular-nums text-primary">{money(prefSel.totalVal)}</div>
+                        <div className="text-xs text-muted-foreground">{ton(prefSel.totalTon)} t · {prefSel.grupos.length} owner(s)</div>
+                      </div>
+                    </div>
+
+                    {/* Cuerpo: un bloque por owner, con detalle navegable por servicio */}
+                    <div className="space-y-5">
+                      {prefSel.grupos.map((g) => (
+                        <div key={g.owner}>
+                          <div className="mb-1 text-sm font-bold text-foreground">{g.owner}</div>
+                          <div className="overflow-x-auto rounded-md border">
+                            <table className="w-full text-xs">
+                              <thead>
+                                <tr className="border-b bg-muted/40 text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+                                  <th className="py-1.5 pl-2 font-medium">Servicio</th>
+                                  <th className="py-1.5 text-right font-medium">Cantidad (t)</th>
+                                  <th className="py-1.5 text-right font-medium">Tarifa</th>
+                                  <th className="py-1.5 pr-3 text-right font-medium">Total</th>
+                                  <th className="w-6"></th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {g.items.map((it) => {
+                                  const k = keyRes(it.owner, it.servicio)
+                                  const abierto = expand.has(k)
+                                  const det = abierto ? detalleDe(it.owner, it.servicio) : []
+                                  return (
+                                    <Fragment key={k}>
+                                      <tr
+                                        className="cursor-pointer border-b last:border-0 hover:bg-muted/30"
+                                        onClick={() => toggleExpand(k)}
+                                      >
+                                        <td className="py-1.5 pl-2">
+                                          <span className="inline-flex items-center gap-1">
+                                            <ChevronRight className={`h-3 w-3 text-muted-foreground transition-transform ${abierto ? "rotate-90" : ""}`} />
+                                            {it.servicio}
+                                          </span>
+                                        </td>
+                                        <td className="py-1.5 text-right tabular-nums">{ton(it.toneladas)}</td>
+                                        <td className="py-1.5 text-right tabular-nums text-muted-foreground">{money(it.tarifa)}</td>
+                                        <td className="py-1.5 pr-3 text-right font-semibold tabular-nums">{money(it.valor)}</td>
+                                        <td></td>
+                                      </tr>
+                                      {abierto && (
+                                        <tr className="bg-muted/20">
+                                          <td colSpan={5} className="px-2 py-2">
+                                            <div className="max-h-64 overflow-auto rounded border bg-background">
+                                              <table className="w-full text-[11px]">
+                                                <thead>
+                                                  <tr className="border-b text-left text-muted-foreground">
+                                                    <th className="py-1 pl-2 font-medium">Fecha</th>
+                                                    <th className="py-1 font-medium">Orden</th>
+                                                    <th className="py-1 font-medium">Placa</th>
+                                                    <th className="py-1 font-medium">Cliente</th>
+                                                    <th className="py-1 font-medium">Producto</th>
+                                                    <th className="py-1 pr-2 text-right font-medium">Ton</th>
+                                                  </tr>
+                                                </thead>
+                                                <tbody>
+                                                  {det.map((l, i) => (
+                                                    <tr key={`${l.numeroorden}-${i}`} className="border-b last:border-0">
+                                                      <td className="py-1 pl-2 tabular-nums">{l.fechacargue ?? "-"}</td>
+                                                      <td className="py-1">{l.numeroorden}</td>
+                                                      <td className="py-1">{l.placa ?? "-"}</td>
+                                                      <td className="py-1">{l.cliente ?? "-"}</td>
+                                                      <td className="py-1">{l.producto ?? "-"}</td>
+                                                      <td className="py-1 pr-2 text-right tabular-nums">{ton(l.toneladas)}</td>
+                                                    </tr>
+                                                  ))}
+                                                  {det.length === 0 && (
+                                                    <tr>
+                                                      <td colSpan={6} className="py-2 text-center text-muted-foreground">Sin líneas.</td>
+                                                    </tr>
+                                                  )}
+                                                </tbody>
+                                              </table>
+                                            </div>
+                                          </td>
+                                        </tr>
+                                      )}
+                                    </Fragment>
+                                  )
+                                })}
+                                <tr className="border-t bg-muted/30 font-semibold">
+                                  <td className="py-1.5 pl-2">Subtotal {g.owner}</td>
+                                  <td className="py-1.5 text-right tabular-nums">{ton(g.ton)}</td>
+                                  <td></td>
+                                  <td className="py-1.5 pr-3 text-right tabular-nums">{money(g.total)}</td>
+                                  <td></td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Total general */}
+                    <div className="mt-5 flex items-center justify-between border-t-2 border-primary/40 pt-3">
+                      <span className="text-sm font-bold">TOTAL PREFACTURA</span>
+                      <span className="text-xl font-extrabold tabular-nums text-primary">{money(prefSel.totalVal)}</span>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Prefacturas guardadas del proyecto */}
+              {guardadas.length > 0 && (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm">Prefacturas guardadas ({guardadas.length})</CardTitle>
+                  </CardHeader>
+                  <CardContent className="overflow-x-auto p-0">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>#</TableHead>
+                          <TableHead>Período</TableHead>
+                          <TableHead className="text-right">Toneladas</TableHead>
+                          <TableHead className="text-right">Total</TableHead>
+                          <TableHead>Estado</TableHead>
+                          <TableHead>Guardó</TableHead>
+                          <TableHead className="text-right">Acciones</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {guardadas.map((p) => (
+                          <TableRow key={p.id}>
+                            <TableCell className="text-xs font-medium">{p.id}</TableCell>
+                            <TableCell className="text-xs">
+                              {p.periodo_desde || "inicio"} → {p.periodo_hasta || "fin"}
+                            </TableCell>
+                            <TableCell className="text-right text-xs tabular-nums">{ton(p.toneladas)}</TableCell>
+                            <TableCell className="text-right text-xs font-semibold tabular-nums">{money(p.total)}</TableCell>
+                            <TableCell>
+                              <span
+                                className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
+                                  p.estado === "aprobada"
+                                    ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40"
+                                    : "bg-amber-100 text-amber-700 dark:bg-amber-950/40"
+                                }`}
+                              >
+                                {p.estado}
+                              </span>
+                            </TableCell>
+                            <TableCell className="text-xs text-muted-foreground">{p.usuario ?? "-"}</TableCell>
+                            <TableCell className="text-right">
+                              <div className="flex justify-end gap-1">
+                                {p.estado === "borrador" ? (
+                                  <>
+                                    <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => aprobar(p.id, "aprobada")}>
+                                      <Check className="mr-1 h-3 w-3" /> Aprobar
+                                    </Button>
+                                    <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-red-600" onClick={() => borrar(p.id)}>
+                                      <Trash2 className="h-3 w-3" />
+                                    </Button>
+                                  </>
+                                ) : (
+                                  <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => aprobar(p.id, "borrador")}>
+                                    Reabrir
+                                  </Button>
+                                )}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+              )}
             </TabsContent>
           </Tabs>
         </>
