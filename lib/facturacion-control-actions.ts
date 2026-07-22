@@ -69,6 +69,7 @@ export interface ControlFacturacion {
     ordenes_sin_gestionar: number
     ordenes_sin_tarifa: number
   }
+  operaciones: string[] // operaciones REALES del proyecto (para el filtro), sin depender del filtro aplicado
 }
 
 export interface FiltrosControl {
@@ -476,6 +477,8 @@ export async function getControlFacturacion(
       { estado: string | null; facturasiigo: string | null; valorpago: number | null; pesovascula: number }
     >()
     const procesadas = new Set<string>()
+    // Operaciones REALES del proyecto (para poblar el filtro con lo que sí existe).
+    const operacionesSet = new Set<string>()
     {
       const pageSize = 1000
       for (let offset = 0; ; offset += pageSize) {
@@ -496,11 +499,15 @@ export async function getControlFacturacion(
             valorpago: o.valorpago ?? null,
             pesovascula: num(o.pesovascula),
           })
-          if (o.fincargue && o.facturar !== false) procesadas.add(on)
+          const procesada = o.fincargue && o.facturar !== false
+          if (procesada) procesadas.add(on)
+          const op = String(o.tipooperacion ?? "").trim()
+          if (procesada && op) operacionesSet.add(op)
         }
         if (data.length < pageSize) break
       }
     }
+    const operaciones = Array.from(operacionesSet).sort((a, b) => a.localeCompare(b))
 
     // 2) Líneas de la vista `facturacion` de la empresa (valor por owner).
     let facturas: any[] = []
@@ -691,7 +698,7 @@ export async function getControlFacturacion(
     const porOwner = Array.from(ownerMap.values()).sort((a, b) => b.valor_a_facturar - a.valor_a_facturar)
     filas.sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)))
 
-    return { success: true, data: { filas, porOwner, totales: t } }
+    return { success: true, data: { filas, porOwner, totales: t, operaciones } }
   } catch (e: any) {
     return { success: false, message: e?.message || "Error al calcular el control de facturación." }
   }

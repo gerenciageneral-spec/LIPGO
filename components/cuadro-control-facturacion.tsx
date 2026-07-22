@@ -69,8 +69,6 @@ const CAT_LABEL: Record<CategoriaFactura, string> = {
   en_proceso: "En proceso",
   sin_gestionar: "Sin gestionar",
 }
-const OPERACIONES = ["Cargue", "Distribucion", "Descargue", "Tolva"]
-
 const emptyFiltros = (): FiltrosControl => ({
   desde: "",
   hasta: "",
@@ -138,6 +136,8 @@ export function CuadroControlFacturacion() {
   }
 
   const owners = useMemo(() => (data?.porOwner || []).map((o) => o.owner), [data])
+  // Operaciones reales del proyecto seleccionado (para el filtro de Operación).
+  const opcionesOperacion = useMemo(() => data?.operaciones || [], [data])
 
   const t = data?.totales
 
@@ -490,29 +490,6 @@ export function CuadroControlFacturacion() {
               </select>
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Operación (varias)</Label>
-              <div className="flex h-8 items-center gap-2 overflow-x-auto rounded-md border border-input bg-background px-2">
-                {OPERACIONES.map((o) => {
-                  const sel = (pending.tipooperaciones || []).includes(o)
-                  return (
-                    <label key={o} className="flex shrink-0 cursor-pointer items-center gap-1 text-xs">
-                      <input
-                        type="checkbox"
-                        className="h-3.5 w-3.5 accent-primary"
-                        checked={sel}
-                        onChange={() => {
-                          const cur = pending.tipooperaciones || []
-                          setF("tipooperaciones", sel ? cur.filter((x) => x !== o) : [...cur, o])
-                        }}
-                      />
-                      {o}
-                    </label>
-                  )
-                })}
-              </div>
-              <p className="text-[10px] text-muted-foreground">Vacío = todas. Ej. Medellín: marca Cargue + Distribucion.</p>
-            </div>
-            <div className="space-y-1">
               <Label className="text-xs">Estado</Label>
               <select className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" value={pending.categoria ?? ""} onChange={(e) => setF("categoria", (e.target.value || null) as CategoriaFactura | null)}>
                 <option value="">Todos</option>
@@ -526,6 +503,56 @@ export function CuadroControlFacturacion() {
               <Input value={pending.cliente ?? ""} onChange={(e) => setF("cliente", e.target.value)} placeholder="Cliente" className="h-8 text-xs" />
             </div>
           </div>
+
+          {/* Operación: multi-selección con chips. Usa las operaciones REALES del
+              proyecto seleccionado (selector de proyecto de arriba, no el global). */}
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <Label className="text-xs">Operación</Label>
+              <span className="text-[11px] text-muted-foreground">
+                {(pending.tipooperaciones?.length || 0) === 0
+                  ? "todas"
+                  : `${pending.tipooperaciones!.length} seleccionada(s)`}
+              </span>
+              {(pending.tipooperaciones?.length || 0) > 0 && (
+                <button className="text-[11px] text-primary hover:underline" onClick={() => setF("tipooperaciones", [])}>
+                  ver todas
+                </button>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {opcionesOperacion.length === 0 ? (
+                <span className="text-xs text-muted-foreground">
+                  {empresaId ? "El proyecto no tiene operaciones procesadas." : "Selecciona un proyecto para ver sus operaciones."}
+                </span>
+              ) : (
+                opcionesOperacion.map((o) => {
+                  const sel = (pending.tipooperaciones || []).includes(o)
+                  return (
+                    <button
+                      key={o}
+                      type="button"
+                      onClick={() => {
+                        const cur = pending.tipooperaciones || []
+                        setF("tipooperaciones", sel ? cur.filter((x) => x !== o) : [...cur, o])
+                      }}
+                      className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                        sel
+                          ? "border-primary bg-primary text-primary-foreground"
+                          : "border-input bg-background text-foreground hover:bg-muted"
+                      }`}
+                    >
+                      {o}
+                    </button>
+                  )
+                })
+              )}
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              Sin marcar = todas. Para la factura del owner en cedis marca solo Cargue + Distribucion (deja fuera los descargues).
+            </p>
+          </div>
+
           <div className="flex items-center gap-2">
             <Button size="sm" className="h-8" onClick={aplicar}>
               <Filter className="mr-1 h-3 w-3" /> Aplicar
