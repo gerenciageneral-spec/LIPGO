@@ -266,7 +266,23 @@ export function CuadroControlFacturacion() {
     setFiltros(emptyFiltros())
   }
 
-  const owners = useMemo(() => (data?.porOwner || []).map((o) => o.owner), [data])
+  const owners = useMemo(() => [...new Set((data?.porOwner || []).map((o) => o.owner))], [data])
+  // Resumen agrupado por OWNER, con sus filas por operación y un subtotal por owner.
+  const porOwnerGrupos = useMemo(() => {
+    const m = new Map<string, { owner: string; filas: ControlFacturacion["porOwner"]; ordenes: number; toneladas: number; valor: number; fact: number; proc: number; sinG: number }>()
+    for (const o of data?.porOwner || []) {
+      const g = m.get(o.owner) || { owner: o.owner, filas: [] as ControlFacturacion["porOwner"], ordenes: 0, toneladas: 0, valor: 0, fact: 0, proc: 0, sinG: 0 }
+      g.filas.push(o)
+      g.ordenes += o.ordenes
+      g.toneladas += o.toneladas
+      g.valor += o.valor_a_facturar
+      g.fact += o.val_facturado
+      g.proc += o.val_en_proceso
+      g.sinG += o.val_sin_gestionar
+      m.set(o.owner, g)
+    }
+    return Array.from(m.values()).sort((a, b) => b.valor - a.valor)
+  }, [data])
   // Operaciones reales del proyecto seleccionado (para el filtro de Operación).
   const opcionesOperacion = useMemo(() => data?.operaciones || [], [data])
 
@@ -762,6 +778,7 @@ export function CuadroControlFacturacion() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Owner</TableHead>
+                        <TableHead>Operación</TableHead>
                         <TableHead className="text-right">Órdenes</TableHead>
                         <TableHead className="text-right">Toneladas</TableHead>
                         <TableHead className="text-right">Valor a facturar</TableHead>
@@ -771,18 +788,35 @@ export function CuadroControlFacturacion() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {data.porOwner.map((o) => (
-                        <TableRow key={o.owner}>
-                          <TableCell className="font-medium">{o.owner}</TableCell>
-                          <TableCell className="text-right tabular-nums">{o.ordenes}</TableCell>
-                          <TableCell className="text-right tabular-nums">{ton(o.toneladas)}</TableCell>
-                          <TableCell className="text-right font-semibold tabular-nums">{money(o.valor_a_facturar)}</TableCell>
-                          <TableCell className="text-right tabular-nums text-emerald-700">{money(o.val_facturado)}</TableCell>
-                          <TableCell className="text-right tabular-nums text-amber-700">{money(o.val_en_proceso)}</TableCell>
-                          <TableCell className={`text-right tabular-nums font-semibold ${o.val_sin_gestionar > 0 ? "bg-red-50 text-red-700 dark:bg-red-950/40" : "text-muted-foreground"}`}>
-                            {money(o.val_sin_gestionar)}
-                          </TableCell>
-                        </TableRow>
+                      {porOwnerGrupos.map((g) => (
+                        <Fragment key={g.owner}>
+                          {g.filas.map((o, i) => (
+                            <TableRow key={`${o.owner}-${o.operacion}`}>
+                              <TableCell className="font-medium">{i === 0 ? g.owner : ""}</TableCell>
+                              <TableCell className="text-xs">{o.operacion}</TableCell>
+                              <TableCell className="text-right tabular-nums">{o.ordenes}</TableCell>
+                              <TableCell className="text-right tabular-nums">{ton(o.toneladas)}</TableCell>
+                              <TableCell className="text-right font-semibold tabular-nums">{money(o.valor_a_facturar)}</TableCell>
+                              <TableCell className="text-right tabular-nums text-emerald-700">{money(o.val_facturado)}</TableCell>
+                              <TableCell className="text-right tabular-nums text-amber-700">{money(o.val_en_proceso)}</TableCell>
+                              <TableCell className={`text-right tabular-nums font-semibold ${o.val_sin_gestionar > 0 ? "bg-red-50 text-red-700 dark:bg-red-950/40" : "text-muted-foreground"}`}>
+                                {money(o.val_sin_gestionar)}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                          {g.filas.length > 1 && (
+                            <TableRow className="border-t bg-muted/40">
+                              <TableCell className="font-semibold">{g.owner}</TableCell>
+                              <TableCell className="text-xs font-semibold">Subtotal</TableCell>
+                              <TableCell className="text-right font-semibold tabular-nums">{g.ordenes}</TableCell>
+                              <TableCell className="text-right font-semibold tabular-nums">{ton(g.toneladas)}</TableCell>
+                              <TableCell className="text-right font-semibold tabular-nums">{money(g.valor)}</TableCell>
+                              <TableCell className="text-right font-semibold tabular-nums text-emerald-700">{money(g.fact)}</TableCell>
+                              <TableCell className="text-right font-semibold tabular-nums text-amber-700">{money(g.proc)}</TableCell>
+                              <TableCell className="text-right font-semibold tabular-nums">{money(g.sinG)}</TableCell>
+                            </TableRow>
+                          )}
+                        </Fragment>
                       ))}
                     </TableBody>
                   </Table>

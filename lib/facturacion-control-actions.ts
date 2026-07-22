@@ -48,6 +48,7 @@ export interface ControlFacturaFila {
 
 export interface ResumenOwner {
   owner: string
+  operacion: string // separa Cargue / Descargue / Distribucion dentro del owner
   ordenes: number
   toneladas: number
   valor_a_facturar: number
@@ -120,47 +121,84 @@ function servicioDe(
   return "Cargue recoge en bodega" // fallback (cargue de tercero)
 }
 
-// Tarifa que factura cada SERVICIO (desde tarifasoperacion). Clave: recoge en bodega
-// se cobra a la tarifa de DESCARGUE, no a la de cargue.
-//   Propio → Cargue · Recoge en bodega/Descargue → Descargue · Susanita → Descargue SUSANITA.
-function tarifaDeServicio(
-  servicio: Servicio,
-  tarifas: { cargue: number; descargue: number; susanita: number },
-): number {
-  switch (servicio) {
-    case "Cargue/Descargue propio":
-      return tarifas.cargue
-    case "Cargue recoge en bodega":
-    case "Descargue":
-      return tarifas.descargue
-    case "Susanita":
-      return tarifas.susanita
-  }
+// Tarifas de una empresa POR (operación, OWNER), leídas de `tarifasoperacion`.
+// Las tarifas varían por owner/empresafactura (ej. en Funza el Cargue de Molinos
+// es 17.318 y el de AVIMOL/Indupan 14.844). Todo sale de la tabla, sin hardcodear.
+export interface TarifasEmpresa {
+  cargue: Map<string, number>
+  distribucion: Map<string, number>
+  descargue: Map<string, number>
+  susanita: number
 }
 
-// Trae las tarifas POR SERVICIO de un proyecto desde tarifasoperacion
-// (Cargue/Distribución, Descargue, Descargue SUSANITA). Fuente única de la valoración
-// real, compartida por la prefactura y el cuadro de control.
-async function tarifasDeEmpresa(
-  sb: any,
-  idempresa: number,
-): Promise<{ cargue: number; descargue: number; susanita: number }> {
-  const tarifas = { cargue: 0, descargue: 0, susanita: 0 }
+// Normaliza un nombre de owner/empresafactura para casar la vista con tarifasoperacion.
+function ownerKey(s: string | null | undefined): string {
+  return String(s ?? "")
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+const maxMapa = (m: Map<string, number>): number => {
+  let mx = 0
+  for (const v of m.values()) if (v > mx) mx = v
+  return mx
+}
+
+async function tarifasDeEmpresa(sb: any, idempresa: number): Promise<TarifasEmpresa> {
+  const t: TarifasEmpresa = { cargue: new Map(), distribucion: new Map(), descargue: new Map(), susanita: 0 }
+  const setMax = (m: Map<string, number>, k: string, v: number) => m.set(k, Math.max(m.get(k) || 0, v))
   const { data: tar } = await sb
     .from("tarifasoperacion")
     .select("operacion, empresafactura, tarifa")
     .eq("empresaid", idempresa)
-  for (const t of tar || []) {
-    const op = String(t.operacion ?? "").trim().toLowerCase()
-    const fact = String(t.empresafactura ?? "").trim().toUpperCase()
-    const v = num(t.tarifa)
-    if (op === "cargue" || op === "distribucion") tarifas.cargue = Math.max(tarifas.cargue, v)
+  for (const r of tar || []) {
+    const op = String(r.operacion ?? "").trim().toLowerCase()
+    const owner = ownerKey(r.empresafactura)
+    const v = num(r.tarifa)
+    if (v <= 0) continue
+    if (op === "cargue") setMax(t.cargue, owner, v)
+    else if (op === "distribucion") setMax(t.distribucion, owner, v)
     else if (op === "descargue") {
-      if (fact === "SUSANITA") tarifas.susanita = Math.max(tarifas.susanita, v)
-      else tarifas.descargue = Math.max(tarifas.descargue, v)
+      if (owner === "SUSANITA") t.susanita = Math.max(t.susanita, v)
+      else setMax(t.descargue, owner, v)
     }
   }
-  return tarifas
+  return t
+}
+
+// Tarifa de UNA línea, por (servicio, operación real, OWNER del producto). Reglas:
+//   · Recoge en bodega (Cargue TERCEROS) se cobra a la tarifa de DESCARGUE del owner.
+//   · Susanita → Descargue SUSANITA.
+//   · Propio / Descargue / demás → la tarifa de SU operación real, por owner.
+// Si un owner no tiene tarifa propia para esa operación, cae al máximo de la operación.
+function tarifaDeServicio(
+  servicio: Servicio,
+  operacion: string | null,
+  owner: string,
+  tarifas: TarifasEmpresa,
+): number {
+  const k = ownerKey(owner)
+  const op = String(operacion ?? "").trim().toLowerCase()
+  const desc = tarifas.descargue.get(k) ?? maxMapa(tarifas.descargue)
+  const carg = tarifas.cargue.get(k) ?? maxMapa(tarifas.cargue)
+  const dist = tarifas.distribucion.get(k) ?? maxMapa(tarifas.distribucion)
+  switch (servicio) {
+    case "Susanita":
+      return tarifas.susanita || desc
+    case "Descargue":
+      return desc
+    case "Cargue recoge en bodega":
+      return desc // recoge en bodega = tarifa de descargue (por owner)
+    case "Cargue/Descargue propio":
+      // El vehículo propio hace cargue/distribución/descargue: usa la tarifa de SU operación.
+      if (op === "descargue") return desc
+      if (op === "distribucion") return dist || carg
+      return carg
+    default:
+      return carg
+  }
 }
 
 export interface PrefacturaLinea {
@@ -399,6 +437,7 @@ export async function getPrefactura(
         const owner = String(r.owner || "SIN OWNER")
         const est = estadoPorOrden.get(on)
         const estadofactura = est?.estado ?? null
+        const tServicio = tarifaDeServicio(servicio, r.tipooperacion, owner, tarifas)
         origen.push({
           fechaorden: r.fechaorden ?? null,
           fechacargue: r.fechacargue ?? null,
@@ -417,8 +456,8 @@ export async function getPrefactura(
           tarifa: r.tarifa ?? null,
           valor_a_facturar: num(r.valor_a_facturar),
           servicio,
-          tarifaServicio: tarifaDeServicio(servicio, tarifas),
-          valorServicio: num(r.toneladas) * tarifaDeServicio(servicio, tarifas),
+          tarifaServicio: tServicio,
+          valorServicio: num(r.toneladas) * tServicio,
           estadofactura,
           categoria: categoriaDeFactura(est?.facturasiigo, estadofactura),
         })
@@ -433,17 +472,17 @@ export async function getPrefactura(
     let totalToneladas = 0
     for (const l of origen) {
       const k = `${l.owner}|||${l.servicio}`
-      const tarifaServ = tarifaDeServicio(l.servicio as Servicio, tarifas)
       const r =
         map.get(k) ||
         {
-          owner: l.owner, servicio: l.servicio, toneladas: 0, tarifa: tarifaServ, valor: 0,
+          owner: l.owner, servicio: l.servicio, toneladas: 0, tarifa: l.tarifaServicio, valor: 0,
           tonPorFacturar: 0, valorPorFacturar: 0, tonEnProceso: 0, valorEnProceso: 0,
           tonFacturado: 0, valorFacturado: 0,
         }
-      const v = l.toneladas * tarifaServ
+      // Valor POR LÍNEA (ya calculado con la tarifa del owner/operación real).
+      const v = l.valorServicio
       r.toneladas += l.toneladas
-      r.tarifa = tarifaServ
+      r.valor += v
       if (l.categoria === "facturado") {
         r.tonFacturado += l.toneladas
         r.valorFacturado += v
@@ -459,7 +498,8 @@ export async function getPrefactura(
     }
     let totalValor = 0
     for (const r of map.values()) {
-      r.valor = r.toneladas * r.tarifa
+      // Tarifa EFECTIVA del grupo (valor/ton) — refleja tarifas por owner/operación.
+      r.tarifa = r.toneladas > 0 ? Math.round(r.valor / r.toneladas) : r.tarifa
       totalValor += r.valor
     }
     const resumen = Array.from(map.values()).sort(
@@ -633,7 +673,7 @@ export async function getControlFacturacion(
         // El propio también se atribuye al owner del producto, NO al del vehículo.
         const owner = String(r.owner || "SIN OWNER")
         const est = estadoPorOrden.get(on)
-        const tarifaServ = tarifaDeServicio(servicio, tarifas)
+        const tarifaServ = tarifaDeServicio(servicio, r.tipooperacion, owner, tarifas)
         const ton = num(r.toneladas)
         const val = ton * tarifaServ
         const sinTarifa = tarifaServ <= 0
@@ -683,12 +723,17 @@ export async function getControlFacturacion(
       val_facturado: 0, val_en_proceso: 0, val_sin_gestionar: 0,
       ordenes_sin_gestionar: 0, ordenes_sin_tarifa: 0,
     }
+    // Resumen por OWNER × TIPO DE OPERACIÓN (un owner puede tener Cargue, Descargue,
+    // Distribución y se muestran separados).
+    const grupoKey = (owner: string, op: string) => `${owner}|||${op}`
     for (const f of filas) {
       ordenesSet.add(f.numeroorden)
       if (f.categoria === "sin_gestionar") ordenesSinGestionar.add(f.numeroorden)
       if (f.sin_tarifa) ordenesSinTarifa.add(f.numeroorden)
-      const o = ownerMap.get(f.owner) || {
-        owner: f.owner, ordenes: 0, toneladas: 0, valor_a_facturar: 0,
+      const op = f.tipooperacion || "(sin operación)"
+      const gk = grupoKey(f.owner, op)
+      const o = ownerMap.get(gk) || {
+        owner: f.owner, operacion: op, ordenes: 0, toneladas: 0, valor_a_facturar: 0,
         val_facturado: 0, val_en_proceso: 0, val_sin_gestionar: 0,
       }
       o.toneladas += f.toneladas
@@ -696,27 +741,30 @@ export async function getControlFacturacion(
       if (f.categoria === "facturado") o.val_facturado += f.valor_a_facturar
       else if (f.categoria === "en_proceso") o.val_en_proceso += f.valor_a_facturar
       else o.val_sin_gestionar += f.valor_a_facturar
-      ownerMap.set(f.owner, o)
+      ownerMap.set(gk, o)
       t.toneladas += f.toneladas
       t.valor_a_facturar += f.valor_a_facturar
       if (f.categoria === "facturado") t.val_facturado += f.valor_a_facturar
       else if (f.categoria === "en_proceso") t.val_en_proceso += f.valor_a_facturar
       else t.val_sin_gestionar += f.valor_a_facturar
     }
-    // ordenes por owner (distintas)
-    const ordenesPorOwner = new Map<string, Set<string>>()
+    // órdenes distintas por owner × operación
+    const ordenesPorGrupo = new Map<string, Set<string>>()
     for (const f of filas) {
-      const s = ordenesPorOwner.get(f.owner) || new Set<string>()
+      const gk = grupoKey(f.owner, f.tipooperacion || "(sin operación)")
+      const s = ordenesPorGrupo.get(gk) || new Set<string>()
       s.add(f.numeroorden)
-      ordenesPorOwner.set(f.owner, s)
+      ordenesPorGrupo.set(gk, s)
     }
-    for (const [w, o] of ownerMap) o.ordenes = ordenesPorOwner.get(w)?.size || 0
+    for (const [gk, o] of ownerMap) o.ordenes = ordenesPorGrupo.get(gk)?.size || 0
 
     t.ordenes = ordenesSet.size
     t.ordenes_sin_gestionar = ordenesSinGestionar.size
     t.ordenes_sin_tarifa = ordenesSinTarifa.size
 
-    const porOwner = Array.from(ownerMap.values()).sort((a, b) => b.valor_a_facturar - a.valor_a_facturar)
+    const porOwner = Array.from(ownerMap.values()).sort(
+      (a, b) => a.owner.localeCompare(b.owner) || a.operacion.localeCompare(b.operacion),
+    )
     filas.sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)))
 
     return { success: true, data: { filas, porOwner, totales: t, operaciones } }
