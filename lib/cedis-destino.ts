@@ -14,9 +14,9 @@ export interface CediDestino {
 // SUSANITA SAS" cae en "TOSTADITOS SUSANITA").
 export const CEDIS_DESTINO: Record<string, CediDestino> = {
   "CEDI FUNZA": { idempresa: 3, label: "Cedi Funza" },
+  "CEDI BOGOTA": { idempresa: 3, label: "Cedi Funza (Bogotá)" }, // Funza sirve a Bogotá → mismo id 3
   "CEDI MEDELLIN": { idempresa: 4, label: "Cedi Medellín" },
   "TOSTADITOS SUSANITA": { idempresa: 4, transporte: "SUSANITA", label: "Tostaditos Susanita" },
-  // "CEDI BOGOTA": { idempresa: 3, label: "Cedi Bogotá" }, // confirmar empresa destino antes de activar
   // "CEDI BUCARAMANGA": EXCLUIDO a propósito (LIP no opera ese descargue).
 }
 
