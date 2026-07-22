@@ -383,6 +383,17 @@ export async function assignVehicleToLoadOrder(orderId: number, vehicleId: numbe
       return { success: false, error: updateError.message }
     }
 
+    // DISTRIBUCIÓN AUTOMÁTICA (+D): la placa ya quedó fijada en la orden. Si es un
+    // vehículo propio de distribución se genera el clon (mismo número + "D"). Se hace
+    // AQUÍ (apenas se asigna la placa) para garantizar que corra aunque falle un paso
+    // posterior (PDF/estado del vehículo). Idempotente y falla-seguro.
+    let distribucionOrderCode: string | null = null
+    try {
+      distribucionOrderCode = await generarDistribucionAutomatica(supabase, orderId)
+    } catch (distErr) {
+      console.error("[v0] Excepción en distribución automática al asignar vehículo:", distErr)
+    }
+
     const { data: detailsData, error: detailsError } = await supabase
       .from("detalleoc")
       .select("producto, cantidad, toneladas, cliente")
@@ -447,16 +458,6 @@ export async function assignVehicleToLoadOrder(orderId: number, vehicleId: numbe
     if (statusError) {
       console.error("[v0] Error updating vehicle status:", statusError)
       return { success: false, error: statusError.message }
-    }
-
-    // DISTRIBUCIÓN AUTOMÁTICA (+D): la placa se acaba de fijar en la orden. Si es un
-    // vehículo propio de distribución, se genera el clon de Distribución (mismo número
-    // + "D"). Idempotente y falla-seguro: no bloquea la asignación del vehículo.
-    let distribucionOrderCode: string | null = null
-    try {
-      distribucionOrderCode = await generarDistribucionAutomatica(supabase, orderId)
-    } catch (distErr) {
-      console.error("[v0] Excepción en distribución automática al asignar vehículo:", distErr)
     }
 
     return { success: true, distribucionOrderCode }
