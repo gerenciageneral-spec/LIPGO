@@ -158,6 +158,10 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
   })
   const [detallesConfirmacion, setDetallesConfirmacion] = useState<DetalleFacturacion[]>([])
   const [loadingDetallesConfirmacion, setLoadingDetallesConfirmacion] = useState(false)
+  // Amarrar la factura Siigo a un RANGO de fechas (varias solicitudes en una factura).
+  const [rangoDesde, setRangoDesde] = useState("")
+  const [rangoHasta, setRangoHasta] = useState("")
+  const [amarrandoRango, setAmarrandoRango] = useState(false)
   // Total calculado (MAX * MAX) para la vista de Confirmacion, empresas 1 y 2.
   const [totalCalculadoConfirmacion, setTotalCalculadoConfirmacion] = useState<number | null>(null)
 
@@ -617,6 +621,13 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
         setOrdenConfirmacion({ ...ordenConfirmacion, facturasiigo: result.url })
       }
 
+      // AMARRE POR RANGO: si hay un rango de fecha de cargue definido, esta misma factura
+      // Siigo se amarra a TODAS las órdenes "CF - Factura solicitada" de la empresa en ese
+      // rango (una factura de Siigo cubre varios días/solicitudes).
+      if (rangoDesde && rangoHasta && result.url) {
+        await amarrarRangoSiigo((orden as any).idempresa, result.url)
+      }
+
       setUploadingSiigoOrden(null)
       loadOrdenes(currentPage, searchTerm)
     } catch (error) {
@@ -817,6 +828,44 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
     } finally {
       setConfirmingPayment(false)
     }
+  }
+
+  // Amarra una factura Siigo (URL) a TODAS las órdenes "CF - Factura solicitada" de una
+  // empresa dentro del rango de FECHA DE CARGUE seleccionado. Se llama al cargar la factura.
+  const amarrarRangoSiigo = async (idempresa: number, facturasiigo: string) => {
+    if (!rangoDesde || !rangoHasta) return
+    setAmarrandoRango(true)
+    try {
+      const res = await fetch("/api/gestion-facturas/amarrar-rango", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idempresa, facturasiigo, desde: rangoDesde, hasta: rangoHasta }),
+      })
+      const result = await res.json()
+      if (!result.success) {
+        toast({ title: "Error al amarrar rango", description: result.error, variant: "destructive" })
+        return
+      }
+      toast({
+        title: "Factura amarrada al rango",
+        description: `${result.count} orden(es) 'Factura solicitada' del rango quedaron amarradas a la factura Siigo y cerradas.`,
+      })
+    } catch (error) {
+      console.error("Error amarrando rango:", error)
+      toast({ title: "Error", description: "Error al amarrar el rango", variant: "destructive" })
+    } finally {
+      setAmarrandoRango(false)
+    }
+  }
+
+  // ¿Una orden cae en el rango de facturación seleccionado (fecha de cargue) y está pendiente?
+  const enRangoSiigo = (orden: OrdenCargue): boolean => {
+    if (!rangoDesde || !rangoHasta) return false
+    if (orden.estadofactura !== "CF - Factura solicitada") return false
+    const f = (orden as any).fechacargue
+    if (!f) return false
+    const fc = String(f).slice(0, 10)
+    return fc >= rangoDesde && fc <= rangoHasta
   }
 
   // Calculate totals - ensure values are parsed as numbers.
@@ -1215,6 +1264,38 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
             </div>
           </div>
 
+          {/* RANGO FACTURA SIIGO: una factura de Siigo cubre varios días/solicitudes.
+              Al definir el rango (por FECHA DE CARGUE), las órdenes "Factura solicitada"
+              de ese rango se marcan "En rango"; al cargar la factura Siigo en cualquiera
+              de ellas, se amarra automáticamente a TODAS las de ese rango. */}
+          <div className="mb-3 flex flex-wrap items-end gap-3 rounded-md border border-blue-200 bg-blue-50/50 p-3 dark:bg-blue-950/20">
+            <div>
+              <div className="text-xs font-semibold text-blue-900 dark:text-blue-300">Rango factura Siigo (fecha de cargue)</div>
+              <p className="text-[11px] text-muted-foreground">
+                Marca las "Factura solicitada" del rango. Al cargar la factura Siigo, se amarra a todas ellas.
+              </p>
+            </div>
+            <div>
+              <Label className="text-[11px]">Desde</Label>
+              <Input type="date" value={rangoDesde} onChange={(e) => setRangoDesde(e.target.value)} className="h-8 w-40 text-xs" />
+            </div>
+            <div>
+              <Label className="text-[11px]">Hasta</Label>
+              <Input type="date" value={rangoHasta} onChange={(e) => setRangoHasta(e.target.value)} className="h-8 w-40 text-xs" />
+            </div>
+            {(rangoDesde || rangoHasta) && (
+              <Button variant="outline" size="sm" className="h-8" onClick={() => { setRangoDesde(""); setRangoHasta("") }}>
+                Limpiar rango
+              </Button>
+            )}
+            {rangoDesde && rangoHasta && (
+              <Badge className="bg-blue-600">
+                {ordenes.filter((o) => enRangoSiigo(o)).length} en rango (pág. actual)
+              </Badge>
+            )}
+            {amarrandoRango && <Loader2 className="h-4 w-4 animate-spin text-blue-600" />}
+          </div>
+
           {/* Table */}
           {loading ? (
             <div className="flex justify-center py-8">
@@ -1241,6 +1322,7 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
                         <TableHead className="text-xs font-semibold text-right">Peso Bascula</TableHead>
                         <TableHead className="text-xs font-semibold">Fecha Cargue</TableHead>
                         <TableHead className="text-xs font-semibold">Estado</TableHead>
+                        <TableHead className="text-xs font-semibold text-center">Rango Siigo</TableHead>
                         <TableHead className="text-xs font-semibold">Medio Pago</TableHead>
                         <TableHead className="text-xs font-semibold">Cuenta</TableHead>
                         {/* Columna adicional solo para empresas 1 y 2:
@@ -1266,6 +1348,19 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
                           <TableCell className="text-xs text-right">{orden.pesovascula?.toLocaleString() || "-"}</TableCell>
                           <TableCell className="text-xs">{formatDate(orden.fechacargue)}</TableCell>
                           <TableCell className="text-xs">{getEstadoBadge(orden.estadofactura)}</TableCell>
+                          <TableCell className="text-center text-xs">
+                            {orden.facturasiigo ? (
+                              <span className="inline-flex items-center gap-1 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950/40">
+                                ✓ Facturada
+                              </span>
+                            ) : enRangoSiigo(orden) ? (
+                              <span className="inline-flex items-center gap-1 rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700 dark:bg-blue-950/40">
+                                ● En rango
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground">-</span>
+                            )}
+                          </TableCell>
                           <TableCell className="text-xs">{orden.mediopago || "-"}</TableCell>
                           <TableCell className="text-xs">{orden.cuentatransferencia || "-"}</TableCell>
                           {(selectedEmpresaId === 1 || selectedEmpresaId === 2) && (
