@@ -3050,6 +3050,99 @@ export async function updateTolva(
   }
 }
 
+// INGRESO DE PT AL INVENTARIO DEL CEDI desde un DESCARGUE. Los CEDIs (id3/id4) NO
+// producen: reciben Producto Terminado de las plantas (o de terceros) vía DESCARGUE. Al
+// DAR INICIO al descargue (mismo evento que pone el PDF/iniciocargue), el producto entra
+// a Producción → "Aprobación de ingreso" como PENDIENTE por aprobar:
+//   - `invtrans` tipomov="Entrada", status=null (idéntico a un ingreso manual, así el
+//     submódulo lo lista solo). Una fila por producto+lote+cantidad.
+//   - LOTE: si el descargue viene de planta id1/id2 (`ordenorigen`), se trae del cargue
+//     madre (`historicolotes` por producto+cliente). Si viene de otra empresa, nace SIN
+//     lote y se completa manual (como hoy), porque el producto trae su propio lote.
+//   - `origen`/`ocargue` = código del descargue → trazabilidad + IDEMPOTENCIA (no duplica).
+// A futuro, el QR de la estiba se engancha a ESTA fila (campo `qrestiba`) — NO crea un
+// ingreso nuevo, así el producto entra al inventario UNA sola vez.
+async function generarIngresoProduccionDesdeDescargue(supabase: any, orderId: number) {
+  try {
+    const { data: oh } = await supabase
+      .from("cabeceraoc")
+      .select("id, idempresa, ordendecargue, ordenorigen, tipooperacion")
+      .eq("id", orderId)
+      .maybeSingle()
+    if (!oh) return
+    if (oh.tipooperacion !== "Descargue") return
+    if (oh.idempresa !== 3 && oh.idempresa !== 4) return // solo CEDIs receptores de PT
+
+    // Idempotente: si ya se generó el ingreso de este descargue, no repetir.
+    const { data: ya } = await supabase
+      .from("invtrans").select("id").eq("tipomov", "Entrada").eq("ocargue", oh.ordendecargue).limit(1).maybeSingle()
+    if (ya) return
+
+    const { data: det } = await supabase.from("detalleoc").select("producto, cantidad, cliente").eq("idorden", orderId)
+    if (!det || det.length === 0) return
+
+    const norm = (s: any) => String(s ?? "").trim().toUpperCase()
+
+    // Lotes del cargue madre por (producto+cliente) — SOLO si viene de planta (ordenorigen).
+    const lotesPorLinea = new Map<string, { lote: string; cantidad: number }[]>()
+    if (oh.ordenorigen) {
+      const { data: hl } = await supabase
+        .from("historicolotes").select("producto, cliente, lote, cantidad").eq("ordendecargue", oh.ordenorigen)
+      for (const r of hl ?? []) {
+        const k = norm(r.producto) + "|" + norm(r.cliente)
+        if (!lotesPorLinea.has(k)) lotesPorLinea.set(k, [])
+        lotesPorLinea.get(k)!.push({ lote: r.lote, cantidad: Number(r.cantidad) || 0 })
+      }
+    }
+
+    // Nombre de producto -> productos (idproducto, codproducto) para la forma estándar.
+    const nombres = [...new Set(det.map((d: any) => d.producto).filter(Boolean))]
+    const prodByNombre = new Map<string, { id: number; codigo: string }>()
+    if (nombres.length) {
+      const { data: prods } = await supabase.from("productos").select("id, codigo, nombre").in("nombre", nombres)
+      for (const p of prods ?? []) prodByNombre.set(norm(p.nombre), { id: p.id, codigo: p.codigo })
+    }
+
+    const creado = await getColombiaDateTime()
+    const filas: any[] = []
+    for (const d of det) {
+      const cant = Number(d.cantidad) || 0
+      if (cant <= 0) continue
+      const p = prodByNombre.get(norm(d.producto))
+      const base = {
+        idempresa: oh.idempresa,
+        idproducto: p?.id ?? null,
+        codproducto: p?.codigo ?? null,
+        nombreproducto: d.producto,
+        tipomov: "Entrada",
+        status: null, // PENDIENTE por aprobar
+        origen: `descargue ${oh.ordendecargue}`,
+        ocargue: oh.ordendecargue,
+        creado,
+        creadopor: "Auto (descargue PT)",
+      }
+      const lotes = lotesPorLinea.get(norm(d.producto) + "|" + norm(d.cliente))
+      if (lotes && lotes.length) {
+        // Un ingreso por lote (según la asignación de lotes del cargue madre).
+        for (const l of lotes) filas.push({ ...base, lote: l.lote, cantidad: l.cantidad })
+      } else {
+        // Sin lote (producto de otra empresa): se completa manual en el submódulo.
+        filas.push({ ...base, lote: null, cantidad: cant })
+      }
+    }
+    if (!filas.length) return
+
+    const { data: maxT } = await supabase.from("invtrans").select("id").order("id", { ascending: false }).limit(1).maybeSingle()
+    let nid = (maxT?.id || 0) + 1
+    const conId = filas.map((f) => ({ ...f, id: nid++ }))
+    const { error } = await supabase.from("invtrans").insert(conId)
+    if (error) console.error("[ingreso-descargue] error insert invtrans:", error.message)
+    else console.log("[ingreso-descargue] ingresos pendientes creados:", conId.length, "para", oh.ordendecargue)
+  } catch (e: any) {
+    console.error("[ingreso-descargue] excepción (no bloquea el inicio):", e?.message || e)
+  }
+}
+
 export async function updateOrderInitioCargue(orderId: number) {
   const supabase = await createClient()
 
@@ -3075,6 +3168,14 @@ export async function updateOrderInitioCargue(orderId: number) {
     }
 
     console.log("[v0] updateOrderInitioCargue: Iniciocargue updated successfully")
+
+    // Descargue de PT en un CEDI (id3/id4): al INICIAR, el producto entra a Producción →
+    // "Aprobación de ingreso" como pendiente. Falla-seguro (no bloquea el inicio).
+    try {
+      await generarIngresoProduccionDesdeDescargue(supabase, orderId)
+    } catch (ingErr) {
+      console.error("[v0] Error generando ingreso de producción desde descargue:", ingErr)
+    }
 
     return { success: true, message: "Hora de inicio registrada" }
   } catch (error) {
