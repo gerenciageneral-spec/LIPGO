@@ -16,6 +16,7 @@ import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { useAuth } from "@/components/auth-provider"
+import { getValoresNetosOrden } from "@/lib/facturacion-control-actions"
 
 interface GestionFacturasProps {
   onBack?: () => void
@@ -75,6 +76,8 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
   const { selectedEmpresaId } = useAuth()
   const [loading, setLoading] = useState(true)
   const [ordenes, setOrdenes] = useState<OrdenCargue[]>([])
+  // Valor NETO por orden (operación × tarifa por owner/id_empresa, igual que el cuadro).
+  const [valoresNetos, setValoresNetos] = useState<Record<string, number>>({})
   const [searchTerm, setSearchTerm] = useState("")
   const [searchInput, setSearchInput] = useState("")
   const [currentPage, setCurrentPage] = useState(1)
@@ -225,6 +228,16 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
     setCurrentPage(1)
     loadOrdenes(1, searchTerm, filters)
   }, [selectedEmpresaId, searchTerm])
+
+  // Cargar el valor NETO por orden del proyecto (se calcula igual que el cuadro de control).
+  useEffect(() => {
+    if (!selectedEmpresaId) { setValoresNetos({}); return }
+    let cancel = false
+    getValoresNetosOrden(selectedEmpresaId)
+      .then((r) => { if (!cancel && r.success) setValoresNetos(r.data) })
+      .catch(() => {})
+    return () => { cancel = true }
+  }, [selectedEmpresaId])
 
   const handlePageChange = (newPage: number) => {
     setCurrentPage(newPage)
@@ -1370,11 +1383,9 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
                         <TableHead className="text-xs font-semibold text-center">Rango Siigo</TableHead>
                         <TableHead className="text-xs font-semibold">Medio Pago</TableHead>
                         <TableHead className="text-xs font-semibold">Cuenta</TableHead>
-                        {/* Columna adicional solo para empresas 1 y 2:
-                            muestra MAX(peso_bascula) * MAX(tarifa) desde facturacion */}
-                        {(selectedEmpresaId === 1 || selectedEmpresaId === 2) && (
-                          <TableHead className="text-xs font-semibold text-right">Valor a Facturar</TableHead>
-                        )}
+                        {/* Valor NETO de la orden (operación × tarifa por owner/id_empresa,
+                            igual que el cuadro de control). Base antes de IVA/retefuente. */}
+                        <TableHead className="text-xs font-semibold text-right">Valor Neto Orden</TableHead>
                         <TableHead className="text-xs font-semibold text-right">Valor Pago</TableHead>
                         <TableHead className="text-xs font-semibold text-center">Comprobante</TableHead>
                         <TableHead className="text-xs font-semibold text-center">Acciones</TableHead>
@@ -1408,11 +1419,11 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
                           </TableCell>
                           <TableCell className="text-xs">{orden.mediopago || "-"}</TableCell>
                           <TableCell className="text-xs">{orden.cuentatransferencia || "-"}</TableCell>
-                          {(selectedEmpresaId === 1 || selectedEmpresaId === 2) && (
-                            <TableCell className="text-xs text-right font-medium text-primary">
-                              {formatCurrency(orden.valor_a_facturar_calculado ?? null)}
-                            </TableCell>
-                          )}
+                          <TableCell className="text-xs text-right font-semibold text-primary">
+                            {valoresNetos[orden.ordendecargue] != null
+                              ? formatCurrency(valoresNetos[orden.ordendecargue])
+                              : "-"}
+                          </TableCell>
                           <TableCell className="text-xs text-right">{formatCurrency(orden.valorpago)}</TableCell>
                           <TableCell className="text-center">
                             {orden.comprobante ? (

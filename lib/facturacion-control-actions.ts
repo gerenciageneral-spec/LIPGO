@@ -764,3 +764,22 @@ export async function getControlFacturacion(
     return { success: false, message: e?.message || "Error al calcular el control de facturación." }
   }
 }
+
+/**
+ * Valor NETO por orden de un proyecto (mismo cálculo del cuadro/prefactura: cada
+ * operación × tarifa por owner/id_empresa, báscula prorrateada en plantas). Devuelve
+ * un mapa { ordendecargue: valorNeto }. Es la base antes de IVA/retefuente (la factura
+ * de Siigo suma esos). Usado en Gestión de Facturas para mostrar el valor de la orden.
+ */
+export async function getValoresNetosOrden(
+  idempresa: number,
+): Promise<{ success: boolean; data: Record<string, number>; message?: string }> {
+  if (!idempresa) return { success: true, data: {} }
+  const r = await getControlFacturacion(idempresa, {})
+  if (!r.success || !r.data) return { success: false, data: {}, message: r.message }
+  const map: Record<string, number> = {}
+  for (const f of r.data.filas) {
+    map[f.numeroorden] = (map[f.numeroorden] || 0) + (Number(f.valor_a_facturar) || 0)
+  }
+  return { success: true, data: map }
+}
