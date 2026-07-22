@@ -599,24 +599,28 @@ export async function getOrderFiltersData() {
 async function autoGenerarDescarguesCedi(
   supabase: any,
   params: {
+    cargueId: number // id real de la cabeceraoc del cargue (fuente del clon exacto)
     orderCodeMadre: string
     sessionEmpresaId: number
-    placa: string | null
-    transporte: string | null
-    productsList: Array<{ producto: string; cantidad: number; toneladas: number; cliente: string }>
   },
 ) {
-  const { orderCodeMadre, sessionEmpresaId, placa, transporte, productsList } = params
+  const { cargueId, orderCodeMadre, sessionEmpresaId } = params
   if (!PLANTAS_ORIGEN.has(sessionEmpresaId)) return
 
-  // Agrupar las líneas del cargue por CEDI destino (ignora las que no van a un CEDI).
-  const grupos = new Map<number, { cedi: CediDestino; lineas: typeof productsList }>()
-  for (const p of productsList || []) {
-    if (!p || (Number(p.cantidad) || 0) <= 0) continue
-    const cedi = cediDeDestino(p.cliente)
+  // FILAS REALES del cargue: se clonan tal cual (cabecera + detalle), como el "+D".
+  const { data: origHeader } = await supabase.from("cabeceraoc").select("*").eq("id", cargueId).maybeSingle()
+  if (!origHeader) return
+  const { data: origDetails } = await supabase.from("detalleoc").select("*").eq("idorden", cargueId)
+  if (!origDetails || origDetails.length === 0) return
+
+  // Agrupar el DETALLE REAL por CEDI destino (el destino está en detalleoc.cliente).
+  const grupos = new Map<number, { cedi: CediDestino; det: any[] }>()
+  for (const d of origDetails) {
+    if ((Number(d.cantidad) || 0) <= 0) continue
+    const cedi = cediDeDestino(d.cliente)
     if (!cedi) continue
-    const g = grupos.get(cedi.idempresa) || { cedi, lineas: [] as typeof productsList }
-    g.lineas.push(p)
+    const g = grupos.get(cedi.idempresa) || { cedi, det: [] as any[] }
+    g.det.push(d)
     grupos.set(cedi.idempresa, g)
   }
   if (grupos.size === 0) return
@@ -627,13 +631,7 @@ async function autoGenerarDescarguesCedi(
   const d = String(colombiaTime.getDate()).padStart(2, "0")
   const fechaorden = await getColombiaDate()
 
-  // Contadores de id (una sola lectura del máximo de cada tabla).
-  const { data: lastH } = await supabase.from("cabeceraoc").select("id").order("id", { ascending: false }).limit(1).maybeSingle()
-  let nextId = lastH ? (lastH.id || 0) + 1 : 1
-  const { data: lastD } = await supabase.from("detalleoc").select("id").order("id", { ascending: false }).limit(1).maybeSingle()
-  let nextDetailId = lastD ? (lastD.id || 0) + 1 : 1
-
-  for (const { cedi, lineas } of grupos.values()) {
+  for (const { cedi, det } of grupos.values()) {
     try {
       // Dedup: ¿ya existe un descargue de esta orden madre en ese CEDI?
       const { data: existe } = await supabase
@@ -649,47 +647,44 @@ async function autoGenerarDescarguesCedi(
         continue
       }
 
-      // Código con el indicativo del CEDI destino.
       const { data: ind } = await supabase.from("indicativo").select("indicativo").eq("id", cedi.idempresa).maybeSingle()
       const indicativo = ind?.indicativo || "IND"
-      const headerId = nextId++
-      const orderCode = `${indicativo}${y}${m}${d}${headerId}`
-      const totalTon = lineas.reduce((s, l) => s + (Number(l.toneladas) || 0), 0)
+      const totalTon = det.reduce((s, x) => s + (Number(x.toneladas) || 0), 0)
 
-      const { error: hErr } = await supabase.from("cabeceraoc").insert({
-        id: headerId,
-        idempresa: cedi.idempresa,
-        ordendecargue: orderCode,
-        ordenorigen: orderCodeMadre, // enlace a la orden de cargue madre
-        tipooperacion: "Descargue",
-        transporte: cedi.transporte ?? transporte ?? null,
-        placa: placa ?? null,
-        fechaorden,
-        pesoorden: totalTon,
-        observaciones: `Auto desde cargue ${orderCodeMadre}`,
-        // status/fechacargue/pesajefinal sin fijar => nace PENDIENTE por atender.
-      })
-      if (hErr) {
-        console.error("[auto-descargue] error cabecera", cedi.label, hErr.message)
-        continue
+      // CABECERA = CLON EXACTO de la del cargue, con id FRESCO + reintento ante colisión.
+      // Se cambia solo: id, empresa DESTINO, número, ordenorigen, tipo, transporte, fecha, peso.
+      let headerId = 0, creada = false, orderCode = ""
+      for (let intento = 0; intento < 6 && !creada; intento++) {
+        const { data: maxH } = await supabase.from("cabeceraoc").select("id").order("id", { ascending: false }).limit(1).maybeSingle()
+        headerId = (maxH?.id || cargueId) + 1
+        orderCode = `${indicativo}${y}${m}${d}${headerId}`
+        const header = {
+          ...origHeader,
+          id: headerId,
+          idempresa: cedi.idempresa, // empresa DESTINO (CEDI)
+          ordendecargue: orderCode,
+          ordenorigen: orderCodeMadre, // enlace a la orden de cargue madre
+          tipooperacion: "Descargue",
+          transporte: cedi.transporte ?? origHeader.transporte ?? null,
+          fechaorden,
+          pesoorden: totalTon,
+          observaciones: `Auto desde cargue ${orderCodeMadre}`,
+          // fincargue/pesajefinal/pdfoc del cargue recién creado vienen nulos => nace PENDIENTE.
+        }
+        const { error: hErr } = await supabase.from("cabeceraoc").insert(header)
+        if (!hErr) creada = true
+        else if ((hErr as any).code === "23505") { console.warn("[auto-descargue] colisión id, reintento", intento + 1); continue }
+        else { console.error("[auto-descargue] error cabecera", cedi.label, hErr.message); break }
       }
+      if (!creada) { console.error("[auto-descargue] no se pudo crear cabecera tras reintentos", cedi.label); continue }
 
-      const detalles = lineas
-        .filter((l) => (Number(l.cantidad) || 0) > 0)
-        .map((l) => ({
-          id: nextDetailId++,
-          idorden: headerId,
-          numeroorden: orderCode,
-          producto: l.producto,
-          cantidad: l.cantidad,
-          toneladas: l.toneladas,
-          cliente: l.cliente ?? "", // CLON EXACTO: conserva el cliente de la orden de cargue
-        }))
-      if (detalles.length > 0) {
-        const { error: dErr } = await supabase.from("detalleoc").insert(detalles)
-        if (dErr) console.error("[auto-descargue] error detalle", cedi.label, dErr.message)
-      }
-      console.log("[auto-descargue] creado", orderCode, "en", cedi.label, "desde", orderCodeMadre, `(${totalTon} t)`)
+      // DETALLE = CLON EXACTO de las líneas del grupo (todas las columnas), con id fresco.
+      const { data: maxD } = await supabase.from("detalleoc").select("id").order("id", { ascending: false }).limit(1).maybeSingle()
+      let did = (maxD?.id || 0) + 1
+      const detalles = det.map((x: any) => ({ ...x, id: did++, idorden: headerId, numeroorden: orderCode }))
+      const { error: dErr } = await supabase.from("detalleoc").insert(detalles)
+      if (dErr) console.error("[auto-descargue] error detalle", cedi.label, dErr.message)
+      console.log("[auto-descargue] clon exacto", orderCode, "en", cedi.label, "desde", orderCodeMadre, `(${totalTon} t, ${detalles.length} líneas)`)
     } catch (e: any) {
       console.error("[auto-descargue] excepción (no bloquea cargue):", e?.message || e)
     }
@@ -1044,11 +1039,9 @@ export async function generateLoadOrder(orderData: {
     // Susanita). Crea el descargue PENDIENTE en el CEDI destino. Falla-seguro.
     try {
       await autoGenerarDescarguesCedi(supabase, {
+        cargueId: nextId, // id real de la cabecera del cargue → clon exacto desde BD
         orderCodeMadre: orderCode,
         sessionEmpresaId,
-        placa: orderData.sinVehiculo ? null : orderData.vehiculo,
-        transporte: orderData.sinVehiculo ? null : orderData.tipoTransporte,
-        productsList: orderData.productsList,
       })
     } catch (cediErr) {
       console.error("[v0] Excepción en descargue automático a CEDI (no bloquea el cargue):", cediErr)
