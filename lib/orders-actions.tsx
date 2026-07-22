@@ -596,20 +596,20 @@ export async function getOrderFiltersData() {
 // DESCARGUE(S) pendientes en el CEDI destino (idempresa 3/4). Igual que la
 // distribución "+D", pero CRUZANDO EMPRESAS. Mapeo en lib/cedis-destino.ts.
 // Idempotente (dedup por `ordenorigen`) y FALLA-SEGURO (nunca revierte el cargue).
-async function autoGenerarDescarguesCedi(
-  supabase: any,
-  params: {
-    cargueId: number // id real de la cabeceraoc del cargue (fuente del clon exacto)
-    orderCodeMadre: string
-    sessionEmpresaId: number
-  },
-) {
-  const { cargueId, orderCodeMadre, sessionEmpresaId } = params
-  if (!PLANTAS_ORIGEN.has(sessionEmpresaId)) return
-
-  // FILAS REALES del cargue: se clonan tal cual (cabecera + detalle), como el "+D".
+export async function autoGenerarDescarguesCedi(supabase: any, orderId: number) {
+  // El DESTINO a un CEDI vive en detalleoc.cliente ("CEDI FUNZA/BOGOTA"→id3,
+  // "CEDI MEDELLIN"→id4, "TOSTADITOS SUSANITA"→id4). NO depende de la placa. Se dispara
+  // al CREAR el cargue en la planta y también al ASIGNAR el vehículo (idempotente,
+  // dedup por `ordenorigen`), para garantizar el descargue pendiente en el CEDI destino.
+  const cargueId = orderId
   const { data: origHeader } = await supabase.from("cabeceraoc").select("*").eq("id", cargueId).maybeSingle()
   if (!origHeader) return
+  if (origHeader.tipooperacion !== "Cargue") return // solo desde órdenes de cargue
+  const sessionEmpresaId: number = origHeader.idempresa
+  const orderCodeMadre: string = origHeader.ordendecargue
+  if (!PLANTAS_ORIGEN.has(sessionEmpresaId)) return // solo plantas (Avimol/Indupan)
+
+  // FILAS REALES del cargue: se clonan tal cual (cabecera + detalle), como el "+D".
   const { data: origDetails } = await supabase.from("detalleoc").select("*").eq("idorden", cargueId)
   if (!origDetails || origDetails.length === 0) return
 
@@ -667,9 +667,24 @@ async function autoGenerarDescarguesCedi(
           tipooperacion: "Descargue",
           transporte: cedi.transporte ?? origHeader.transporte ?? null,
           fechaorden,
+          fechacargue: null,
           pesoorden: totalTon,
           observaciones: `Auto desde cargue ${orderCodeMadre}`,
-          // fincargue/pesajefinal/pdfoc del cargue recién creado vienen nulos => nace PENDIENTE.
+          // NACE PENDIENTE: se limpian TODOS los campos de proceso/cierre del cargue
+          // origen (por si el cargue ya venía finalizado). Así el descargue aparece como
+          // pendiente por atender en el CEDI destino hasta que lo procesen.
+          status: null,
+          iniciocargue: null,
+          fincargue: null,
+          pesajeinicial: null,
+          pesajefinal: null,
+          pesovascula: null,
+          tiquetebascula: null,
+          pdfoc: null,
+          fotospicking: null,
+          horapicking: null,
+          doccargue: null,
+          auxiliares: null,
         }
         const { error: hErr } = await supabase.from("cabeceraoc").insert(header)
         if (!hErr) creada = true
@@ -1008,11 +1023,7 @@ export async function generateLoadOrder(orderData: {
     // DESCARGUE AUTOMÁTICO EN CEDI DESTINO (Avimol/Indupan → CEDI Funza/Medellín/
     // Susanita). Crea el descargue PENDIENTE en el CEDI destino. Falla-seguro.
     try {
-      await autoGenerarDescarguesCedi(supabase, {
-        cargueId: nextId, // id real de la cabecera del cargue → clon exacto desde BD
-        orderCodeMadre: orderCode,
-        sessionEmpresaId,
-      })
+      await autoGenerarDescarguesCedi(supabase, nextId)
     } catch (cediErr) {
       console.error("[v0] Excepción en descargue automático a CEDI (no bloquea el cargue):", cediErr)
     }

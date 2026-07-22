@@ -3,7 +3,7 @@
 import { createClient } from "@/lib/supabase-client"
 import { getColombiaDate, getColombiaTime } from "@/lib/date-utils"
 import { generateAndUploadLoadOrderPDF } from "@/lib/pdf-actions"
-import { generarDistribucionAutomatica } from "@/lib/orders-actions"
+import { generarDistribucionAutomatica, autoGenerarDescarguesCedi } from "@/lib/orders-actions"
 import { getCurrentEmpresaIdForInsert } from "@/lib/user-context"
 import { getCurrentUser, getUserProfile } from "@/lib/auth-actions"
 
@@ -392,6 +392,14 @@ export async function assignVehicleToLoadOrder(orderId: number, vehicleId: numbe
       distribucionOrderCode = await generarDistribucionAutomatica(supabase, orderId)
     } catch (distErr) {
       console.error("[v0] Excepción en distribución automática al asignar vehículo:", distErr)
+    }
+
+    // DESCARGUE AUTOMÁTICO EN CEDI DESTINO (Avimol/Indupan → id3/id4). No depende de la
+    // placa; se basa en el destino del detalle. Idempotente (dedup por ordenorigen).
+    try {
+      await autoGenerarDescarguesCedi(supabase, orderId)
+    } catch (cediErr) {
+      console.error("[v0] Excepción en descargue automático a CEDI al asignar vehículo:", cediErr)
     }
 
     const { data: detailsData, error: detailsError } = await supabase
