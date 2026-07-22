@@ -141,6 +141,15 @@ function ownerKey(s: string | null | undefined): string {
     .trim()
 }
 
+// Normaliza la SUBCATEGORÍA a la categoría de tarifa. Los SUB-PRODUCTOS (Mogolla,
+// Salvado, Harina de Tercera) comparten la misma tarifa "Mogolla Kg." (confirmado por
+// el usuario); lo demás (Producto Terminado, etc.) queda con su nombre normalizado.
+function subcatKey(s: string | null | undefined): string {
+  const k = ownerKey(s)
+  if (k.includes("MOGOLLA") || k.includes("SALVADO") || k.includes("TERCERA")) return "MOGOLLA KG."
+  return k
+}
+
 async function tarifasDeEmpresa(sb: any, idempresa: number): Promise<TarifasEmpresa> {
   const t: TarifasEmpresa = { exact: new Map(), porOpOwner: new Map(), porOp: new Map(), susanita: 0 }
   const setMax = (m: Map<string, number>, k: string, v: number) => m.set(k, Math.max(m.get(k) || 0, v))
@@ -151,7 +160,7 @@ async function tarifasDeEmpresa(sb: any, idempresa: number): Promise<TarifasEmpr
   for (const r of tar || []) {
     const op = String(r.operacion ?? "").trim().toLowerCase()
     const owner = ownerKey(r.empresafactura)
-    const subcat = ownerKey(r.producto) // el JOIN de la vista es t.producto = subcategoría del producto
+    const subcat = subcatKey(r.producto) // el JOIN de la vista es t.producto = subcategoría del producto
     const v = num(r.tarifa)
     if (!op || v <= 0) continue
     // Descargue SUSANITA es una tarifa especial por cliente, no por owner/producto.
@@ -167,7 +176,7 @@ async function tarifasDeEmpresa(sb: any, idempresa: number): Promise<TarifasEmpr
 function lookupTarifa(operacion: string | null, owner: string, subcategoria: string | null, t: TarifasEmpresa): number {
   const op = String(operacion ?? "").trim().toLowerCase()
   const ok = ownerKey(owner)
-  const sk = ownerKey(subcategoria)
+  const sk = subcatKey(subcategoria)
   return (
     t.exact.get(`${op}|||${ok}|||${sk}`) ??
     t.porOpOwner.get(`${op}|||${ok}`) ??
