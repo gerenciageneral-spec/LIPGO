@@ -9,7 +9,6 @@
 // es el paso siguiente y NO se cruza aquí.
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
-import { ownerDeIdEmpresa } from "@/lib/owner-utils"
 import { esPlacaDistribucion } from "@/lib/distribucion-placas"
 import { PLACAS_EXCLUIDAS_FACTURAS } from "@/lib/facturas-exclusiones"
 
@@ -124,10 +123,9 @@ function servicioDe(
 // Tarifas de una empresa POR (operación, OWNER), leídas de `tarifasoperacion`.
 // Las tarifas varían por owner/empresafactura (ej. en Funza el Cargue de Molinos
 // es 17.318 y el de AVIMOL/Indupan 14.844). Todo sale de la tabla, sin hardcodear.
+// `porOp`: operación (minúsculas: cargue/descargue/distribucion/tolva/...) → owner → tarifa.
 export interface TarifasEmpresa {
-  cargue: Map<string, number>
-  distribucion: Map<string, number>
-  descargue: Map<string, number>
+  porOp: Map<string, Map<string, number>>
   susanita: number
 }
 
@@ -147,8 +145,7 @@ const maxMapa = (m: Map<string, number>): number => {
 }
 
 async function tarifasDeEmpresa(sb: any, idempresa: number): Promise<TarifasEmpresa> {
-  const t: TarifasEmpresa = { cargue: new Map(), distribucion: new Map(), descargue: new Map(), susanita: 0 }
-  const setMax = (m: Map<string, number>, k: string, v: number) => m.set(k, Math.max(m.get(k) || 0, v))
+  const t: TarifasEmpresa = { porOp: new Map(), susanita: 0 }
   const { data: tar } = await sb
     .from("tarifasoperacion")
     .select("operacion, empresafactura, tarifa")
@@ -157,48 +154,45 @@ async function tarifasDeEmpresa(sb: any, idempresa: number): Promise<TarifasEmpr
     const op = String(r.operacion ?? "").trim().toLowerCase()
     const owner = ownerKey(r.empresafactura)
     const v = num(r.tarifa)
-    if (v <= 0) continue
-    if (op === "cargue") setMax(t.cargue, owner, v)
-    else if (op === "distribucion") setMax(t.distribucion, owner, v)
-    else if (op === "descargue") {
-      if (owner === "SUSANITA") t.susanita = Math.max(t.susanita, v)
-      else setMax(t.descargue, owner, v)
-    }
+    if (!op || v <= 0) continue
+    // Descargue SUSANITA es una tarifa especial por cliente, no por owner-producto.
+    if (op === "descargue" && owner === "SUSANITA") { t.susanita = Math.max(t.susanita, v); continue }
+    let m = t.porOp.get(op)
+    if (!m) { m = new Map(); t.porOp.set(op, m) }
+    m.set(owner, Math.max(m.get(owner) || 0, v))
   }
   return t
 }
 
-// Tarifa de UNA línea, por (servicio, operación real, OWNER del producto). Reglas:
-//   · Recoge en bodega (Cargue TERCEROS) se cobra a la tarifa de DESCARGUE del owner.
-//   · Susanita → Descargue SUSANITA.
-//   · Propio / Descargue / demás → la tarifa de SU operación real, por owner.
-// Si un owner no tiene tarifa propia para esa operación, cae al máximo de la operación.
+// Tarifa de una operación para un owner (fallback = máximo de esa operación).
+function tarifaOpOwner(operacion: string | null, owner: string, t: TarifasEmpresa): number {
+  const m = t.porOp.get(String(operacion ?? "").trim().toLowerCase())
+  if (!m) return 0
+  return m.get(ownerKey(owner)) ?? maxMapa(m)
+}
+
+// Tarifa de UNA línea por (operación REAL, OWNER del producto), todo desde la tabla:
+//   · Susanita (cliente/transporte SUSANITA) → Descargue SUSANITA.
+//   · Recoge en bodega SOLO en cedis (Cargue + transporte TERCEROS, placa no propia) → tarifa de DESCARGUE.
+//   · Todo lo demás (Cargue/Descargue/Distribucion/Tolva…) → la tarifa de SU operación real, por owner.
 function tarifaDeServicio(
-  servicio: Servicio,
+  idempresa: number,
   operacion: string | null,
+  transporte: string | null,
+  cliente: string | null,
+  placa: string | null,
   owner: string,
   tarifas: TarifasEmpresa,
 ): number {
-  const k = ownerKey(owner)
   const op = String(operacion ?? "").trim().toLowerCase()
-  const desc = tarifas.descargue.get(k) ?? maxMapa(tarifas.descargue)
-  const carg = tarifas.cargue.get(k) ?? maxMapa(tarifas.cargue)
-  const dist = tarifas.distribucion.get(k) ?? maxMapa(tarifas.distribucion)
-  switch (servicio) {
-    case "Susanita":
-      return tarifas.susanita || desc
-    case "Descargue":
-      return desc
-    case "Cargue recoge en bodega":
-      return desc // recoge en bodega = tarifa de descargue (por owner)
-    case "Cargue/Descargue propio":
-      // El vehículo propio hace cargue/distribución/descargue: usa la tarifa de SU operación.
-      if (op === "descargue") return desc
-      if (op === "distribucion") return dist || carg
-      return carg
-    default:
-      return carg
+  const tr = String(transporte ?? "").trim().toUpperCase()
+  const cl = String(cliente ?? "").toUpperCase()
+  if (cl.includes("SUSANITA") || tr === "SUSANITA") return tarifas.susanita || tarifaOpOwner("descargue", owner, tarifas)
+  const esCedis = idempresa === 3 || idempresa === 4
+  if (esCedis && op === "cargue" && tr === "TERCEROS" && !esPlacaDistribucion(idempresa, placa)) {
+    return tarifaOpOwner("descargue", owner, tarifas) // recoge en bodega
   }
+  return tarifaOpOwner(op, owner, tarifas)
 }
 
 export interface PrefacturaLinea {
@@ -393,11 +387,11 @@ export async function getPrefactura(
     // El estado dice qué ya se gestionó (para el semáforo y NO facturar doble): en
     // Medellín los descargues ya se facturan a las transportadoras y quedan con estado.
     const procesadas = new Set<string>()
-    const estadoPorOrden = new Map<string, { estado: string | null; facturasiigo: string | null }>()
+    const estadoPorOrden = new Map<string, { estado: string | null; facturasiigo: string | null; pesovascula: number }>()
     for (let offset = 0; ; offset += 1000) {
       const { data, error } = await sb
         .from("cabeceraoc")
-        .select("ordendecargue, fincargue, facturar, tipooperacion, estadofactura, facturasiigo")
+        .select("ordendecargue, fincargue, facturar, tipooperacion, estadofactura, facturasiigo, pesovascula")
         .eq("idempresa", idempresa)
         .neq("tipooperacion", "proyeccion")
         .range(offset, offset + 999)
@@ -405,7 +399,7 @@ export async function getPrefactura(
       if (!data || data.length === 0) break
       for (const o of data) {
         const on = String(o.ordendecargue || "").trim()
-        estadoPorOrden.set(on, { estado: o.estadofactura ?? null, facturasiigo: o.facturasiigo ?? null })
+        estadoPorOrden.set(on, { estado: o.estadofactura ?? null, facturasiigo: o.facturasiigo ?? null, pesovascula: num(o.pesovascula) })
         if (o.fincargue && o.facturar !== false) procesadas.add(on)
       }
       if (data.length < 1000) break
@@ -437,7 +431,7 @@ export async function getPrefactura(
         const owner = String(r.owner || "SIN OWNER")
         const est = estadoPorOrden.get(on)
         const estadofactura = est?.estado ?? null
-        const tServicio = tarifaDeServicio(servicio, r.tipooperacion, owner, tarifas)
+        const tServicio = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, tarifas)
         origen.push({
           fechaorden: r.fechaorden ?? null,
           fechacargue: r.fechacargue ?? null,
@@ -463,6 +457,23 @@ export async function getPrefactura(
         })
       }
       if (data.length < 1000) break
+    }
+
+    // PLANTAS (id 1/2, con báscula): el peso a facturar es el de BÁSCULA (tiquete),
+    // prorrateado entre owners por su participación en el detalle. Se escala toneladas
+    // y valor de cada línea por (pesovascula / Σ detalle de la orden). Σ por owner = báscula.
+    if (idempresa === 1 || idempresa === 2) {
+      const totalDetOrden = new Map<string, number>()
+      for (const l of origen) totalDetOrden.set(l.numeroorden, (totalDetOrden.get(l.numeroorden) || 0) + l.toneladas)
+      for (const l of origen) {
+        const P = estadoPorOrden.get(l.numeroorden)?.pesovascula ?? 0
+        const totalDet = totalDetOrden.get(l.numeroorden) || 0
+        if (P > 0 && totalDet > 0) {
+          const scale = P / totalDet
+          l.toneladas = l.toneladas * scale
+          l.valorServicio = l.valorServicio * scale
+        }
+      }
     }
 
     // Resumen por owner × servicio, facturado a la TARIFA DEL SERVICIO (no la de la línea).
@@ -593,14 +604,12 @@ export async function getControlFacturacion(
       }
     }
 
-    // 3) Agregar según la FUENTE DE VERDAD del peso:
-    //   · ID 1/2 (plantas con báscula: Harinera Indupan, Avimol) → PESO DE BÁSCULA.
-    //     El cobro real es MAX(peso_báscula) × MAX(tarifa) por orden (regla vigente en
-    //     Gestión de Facturas). Una fila por ORDEN; owner = el de la planta.
-    //   · ID 3/4 y demás (cedis sin báscula: Funza, Medellín) → PESO DE LA ORDEN.
-    //     Una fila por ORDEN+OWNER: cantidad = Σ toneladas del detalle, total = Σ valor.
+    // 3) Agregar por ORDEN+OWNER. Toneladas por el id_empresa del PRODUCTO (dueño real);
+    //    valor = Σ(toneladas × tarifa por operación/owner). En PLANTAS (id 1/2, con báscula)
+    //    el peso a facturar es el de BÁSCULA (pesovascula, el del tiquete): se PRORRATEA
+    //    entre los owners según su participación en el detalle (Σ pesos por owner = báscula).
+    //    En CEDIS (sin báscula) se usa el peso del detalle de la orden.
     const esBascula = idempresa === 1 || idempresa === 2
-    const filasMap = new Map<string, ControlFacturaFila>()
 
     // WMP446 (u otras excluidas) NO las atiende LIP, SALVO cuando cargan a Susanita.
     const esExcluida = (r: any) => {
@@ -616,99 +625,65 @@ export async function getControlFacturacion(
       return !opSet.has(String(r.tipooperacion ?? "").trim().toLowerCase())
     }
 
-    if (esBascula) {
-      // Acumular por orden: tarifa máxima y datos de cabecera.
-      const porOrden = new Map<string, { tarifaMax: number; sinTarifa: boolean; r: any }>()
-      for (const r of facturas) {
-        const on = String(r.numeroorden || "").trim()
-        if (!on || !procesadas.has(on)) continue
-        if (esExcluida(r)) continue
-        if (filtraOperacion(r, null)) continue
-        const tNum = num(r.tarifa)
-        const sinTarifa = String(r.tarifa) === "SIN TARIFA EN MAESTRO" || r.tarifa == null
-        const prev = porOrden.get(on)
-        if (prev) {
-          if (tNum > prev.tarifaMax) prev.tarifaMax = tNum
-          prev.sinTarifa = prev.sinTarifa && sinTarifa
-        } else {
-          porOrden.set(on, { tarifaMax: tNum, sinTarifa, r })
+    const key = (o: string, w: string) => `${o}|||${w}`
+    type Acc = { on: string; owner: string; op: string; tonDet: number; valorDet: number; sinTarifa: boolean; r: any }
+    const accMap = new Map<string, Acc>()
+    const ordenTotalDet = new Map<string, number>() // Σ toneladas del detalle por orden (todos los owners)
+    for (const r of facturas) {
+      const on = String(r.numeroorden || "").trim()
+      if (!on || !procesadas.has(on)) continue
+      if (esExcluida(r)) continue
+      const servicio = servicioDe(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa)
+      if (filtraOperacion(r, servicio)) continue
+      const owner = String(r.owner || "SIN OWNER")
+      const ton = num(r.toneladas)
+      const tarifa = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, tarifas)
+      const sinTarifa = tarifa <= 0
+      const k = key(on, owner)
+      const a = accMap.get(k)
+      if (a) {
+        a.tonDet += ton
+        a.valorDet += ton * tarifa
+        a.sinTarifa = a.sinTarifa && sinTarifa
+      } else {
+        accMap.set(k, { on, owner, op: r.tipooperacion || "", tonDet: ton, valorDet: ton * tarifa, sinTarifa, r })
+      }
+      ordenTotalDet.set(on, (ordenTotalDet.get(on) || 0) + ton)
+    }
+
+    const filasMap = new Map<string, ControlFacturaFila>()
+    for (const [k, a] of accMap) {
+      const est = estadoPorOrden.get(a.on)
+      let toneladas = a.tonDet
+      let valor = a.valorDet
+      let fuente: "bascula" | "orden" = "orden"
+      if (esBascula) {
+        const P = est?.pesovascula ?? 0
+        const totalDet = ordenTotalDet.get(a.on) || 0
+        if (P > 0 && totalDet > 0) {
+          const scale = P / totalDet // reparte el peso de báscula por participación del detalle
+          toneladas = a.tonDet * scale
+          valor = a.valorDet * scale
+          fuente = "bascula"
         }
       }
-      const ownerPlanta = ownerDeIdEmpresa(idempresa)
-      for (const [on, v] of porOrden) {
-        const est = estadoPorOrden.get(on)
-        const cantidad = est?.pesovascula ?? 0 // peso de báscula (fuente de verdad)
-        const total = cantidad * v.tarifaMax
-        filasMap.set(on, {
-          numeroorden: on,
-          fecha: v.r.fechacargue ?? v.r.fechaorden ?? null,
-          placa: v.r.placa ?? null,
-          tiquete: v.r.tiquetebascula ?? null,
-          tipooperacion: v.r.tipooperacion ?? null,
-          cliente: v.r.cliente ?? null,
-          owner: ownerPlanta,
-          toneladas: cantidad,
-          fuente_peso: "bascula",
-          tarifa: v.tarifaMax || null,
-          valor_a_facturar: total,
-          sin_tarifa: v.tarifaMax <= 0,
-          estadofactura: est?.estado ?? null,
-          categoria: categoriaDeFactura(est?.facturasiigo, est?.estado),
-          valorpago: est?.valorpago ?? null,
-        })
-      }
-    } else {
-      // Cedis: por orden+owner, con toneladas del detalle (peso de la orden). El VALOR
-      // se calcula con la TARIFA DEL SERVICIO real (propio 18.942 / recoge en bodega y
-      // descargue 19.792 / Susanita 31.544) — la MISMA valoración que la prefactura, NO
-      // la tarifa cruda de la vista. Así "lo que se debe facturar" es real y coincide.
-      const key = (o: string, w: string) => `${o}|||${w}`
-      const acc = new Map<string, { valor: number; ton: number }>()
-      for (const r of facturas) {
-        const on = String(r.numeroorden || "").trim()
-        if (!on || !procesadas.has(on)) continue
-        if (esExcluida(r)) continue
-        const servicio = servicioDe(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa)
-        if (filtraOperacion(r, servicio)) continue
-        // Owner por el id_empresa del PRODUCTO (el dueño real, ya resuelto en la vista).
-        // El propio también se atribuye al owner del producto, NO al del vehículo.
-        const owner = String(r.owner || "SIN OWNER")
-        const est = estadoPorOrden.get(on)
-        const tarifaServ = tarifaDeServicio(servicio, r.tipooperacion, owner, tarifas)
-        const ton = num(r.toneladas)
-        const val = ton * tarifaServ
-        const sinTarifa = tarifaServ <= 0
-        const k = key(on, owner)
-        const prev = filasMap.get(k)
-        if (prev) {
-          const a = acc.get(k)!
-          a.valor += val
-          a.ton += ton
-          prev.toneladas = a.ton
-          prev.valor_a_facturar = a.valor
-          prev.tarifa = a.ton > 0 ? Math.round(a.valor / a.ton) : null
-          prev.sin_tarifa = prev.sin_tarifa || sinTarifa
-        } else {
-          acc.set(k, { valor: val, ton })
-          filasMap.set(k, {
-            numeroorden: on,
-            fecha: r.fechacargue ?? r.fechaorden ?? null,
-            placa: r.placa ?? null,
-            tiquete: r.tiquetebascula ?? null,
-            tipooperacion: r.tipooperacion ?? null,
-            cliente: r.cliente ?? null,
-            owner,
-            toneladas: ton,
-            fuente_peso: "orden",
-            tarifa: sinTarifa ? null : tarifaServ,
-            valor_a_facturar: val,
-            sin_tarifa: sinTarifa,
-            estadofactura: est?.estado ?? null,
-            categoria: categoriaDeFactura(est?.facturasiigo, est?.estado),
-            valorpago: est?.valorpago ?? null,
-          })
-        }
-      }
+      filasMap.set(k, {
+        numeroorden: a.on,
+        fecha: a.r.fechacargue ?? a.r.fechaorden ?? null,
+        placa: a.r.placa ?? null,
+        tiquete: a.r.tiquetebascula ?? null,
+        tipooperacion: a.op || null,
+        cliente: a.r.cliente ?? null,
+        owner: a.owner,
+        toneladas,
+        fuente_peso: fuente,
+        tarifa: a.sinTarifa || toneladas <= 0 ? null : Math.round(valor / toneladas),
+        valor_a_facturar: valor,
+        sin_tarifa: a.sinTarifa,
+        estadofactura: est?.estado ?? null,
+        categoria: categoriaDeFactura(est?.facturasiigo, est?.estado),
+        valorpago: est?.valorpago ?? null,
+      })
     }
 
     let filas = Array.from(filasMap.values())
