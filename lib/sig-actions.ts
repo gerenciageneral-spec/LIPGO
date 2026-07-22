@@ -3023,12 +3023,21 @@ export async function eliminarPQRSF(id: number): Promise<{ success: boolean; err
 export async function getPanelGestionHumanaLIP(
   proyectoId?: number | null,
   anio?: string | null,
+  mes?: string | null, // "01".."12" (opcional)
+  dia?: string | null, // "01".."31" (opcional, dentro del mes)
 ): Promise<{ success: boolean; data?: any; error?: string }> {
   try {
     const supabase: any = await getSupabaseAdmin()
     const clientes: number[] = proyectoId ? [proyectoId] : SIG_CLIENTES_LIP
     const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 1000) / 10 : 0)
-    const enAnio = (f: any) => !anio || String(f || "").slice(0, 4) === anio
+    // Filtro de periodo por año/mes/día sobre fechas ISO (YYYY-MM-DD).
+    const enPeriodo = (f: any) => {
+      const s = String(f || "")
+      if (anio && s.slice(0, 4) !== anio) return false
+      if (mes && s.slice(5, 7) !== mes) return false
+      if (dia && s.slice(8, 10) !== dia) return false
+      return true
+    }
 
     // --- Talento (headcount) ---
     const { data: hc } = await supabase
@@ -3050,7 +3059,7 @@ export async function getPanelGestionHumanaLIP(
         .select("headcount_id,aprobado,fecha")
         .in("headcount_id", hcIds)
       for (const it of intentos ?? []) {
-        if (!enAnio(it.fecha)) continue
+        if (!enPeriodo(it.fecha)) continue
         totalInt++
         if (it.aprobado) { aprob++; capacitadosSet.add(it.headcount_id) }
       }
@@ -3058,17 +3067,27 @@ export async function getPanelGestionHumanaLIP(
 
     // --- Asistencia diaria (registroasistencia) = fuente de verdad ---
     // Cubre los 4 proyectos. De aquí salen jornada, ausentismo y retiros.
-    const asisRows: any[] = []
+    // Rango de fechas según año/mes/día (para acotar la consulta). Con año fijo:
+    // mes+día = un día; solo mes = todo el mes; solo año = todo el año.
+    let rDesde: string | null = null, rHasta: string | null = null
+    if (anio) {
+      if (mes && dia) { rDesde = `${anio}-${mes}-${dia}`; rHasta = `${anio}-${mes}-${dia}` }
+      else if (mes) { rDesde = `${anio}-${mes}-01`; rHasta = `${anio}-${mes}-31` }
+      else { rDesde = `${anio}-01-01`; rHasta = `${anio}-12-31` }
+    }
+    const asisAll: any[] = []
     let aFrom = 0
     while (true) {
       let q = supabase.from("registroasistencia").select("fecha,puesto,asistencia,identificacion").in("idempresa", clientes).range(aFrom, aFrom + 999)
-      if (anio) q = q.gte("fecha", `${anio}-01-01`).lte("fecha", `${anio}-12-31`)
+      if (rDesde && rHasta) q = q.gte("fecha", rDesde).lte("fecha", rHasta)
       const { data } = await q
-      asisRows.push(...(data ?? []))
+      asisAll.push(...(data ?? []))
       if (!data || data.length < 1000) break
       aFrom += 1000
       if (aFrom > 120000) break
     }
+    // Filtro de período en memoria (cubre mes/día aunque no haya rango de consulta).
+    const asisRows = asisAll.filter((r) => enPeriodo(r.fecha))
     const esAusentismo = (a: any) => String(a || "").toLowerCase().includes("incapacidad") // ausentismo médico (incapacidades)
     const asisProgramados = asisRows.filter((r) => r.puesto !== null || r.asistencia !== null).length
     const asisPresentes = asisRows.filter((r) => r.asistencia === null && r.puesto !== null).length
@@ -3088,7 +3107,7 @@ export async function getPanelGestionHumanaLIP(
       .in("idempresa", clientes)
     let diasAT = 0, casosAT = 0, diasEG = 0, casosEG = 0, costos = 0, osteomuscular = 0
     for (const r of au ?? []) {
-      if (!enAnio(r.fecha_inicial)) continue
+      if (!enPeriodo(r.fecha_inicial)) continue
       const dias = Number(r.total_dias_incapacidad) || 0
       costos += Number(r.costos_empresa) || 0
       if (r.requiere_revision_sst) osteomuscular++

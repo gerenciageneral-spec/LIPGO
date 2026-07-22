@@ -26,12 +26,14 @@ export function PanelGestionHumanaLIP() {
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [anio, setAnio] = useState<string>("")
+  const [mes, setMes] = useState<string>("")
+  const [dia, setDia] = useState<string>("")
 
   useEffect(() => {
     let cancel = false
     setLoading(true)
     // Cliente/sitio definido por el SELECTOR GLOBAL (conector).
-    getPanelGestionHumanaLIP(selectedEmpresaId ?? null, anio || null).then((r) => {
+    getPanelGestionHumanaLIP(selectedEmpresaId ?? null, anio || null, mes || null, dia || null).then((r) => {
       if (cancel) return
       if (r.success) setData(r.data)
       else toast({ title: "No se pudo cargar el panel", description: r.error })
@@ -39,13 +41,19 @@ export function PanelGestionHumanaLIP() {
     })
     return () => { cancel = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedEmpresaId, anio])
+  }, [selectedEmpresaId, anio, mes, dia])
 
   const t = data?.talento, f = data?.formacion, j = data?.jornada, s = data?.sst
   const colPct = (v: number, meta: number, menor = false) =>
     menor ? (v <= meta ? SST_TOKENS.ok : v <= meta * 1.5 ? SST_TOKENS.warn : SST_TOKENS.bad)
           : (v >= meta ? SST_TOKENS.ok : v >= meta * 0.85 ? SST_TOKENS.warn : SST_TOKENS.bad)
   const anios = ["", "2026", "2025"]
+  const meses = [
+    { v: "", l: "Todos" }, { v: "01", l: "Enero" }, { v: "02", l: "Febrero" }, { v: "03", l: "Marzo" },
+    { v: "04", l: "Abril" }, { v: "05", l: "Mayo" }, { v: "06", l: "Junio" }, { v: "07", l: "Julio" },
+    { v: "08", l: "Agosto" }, { v: "09", l: "Septiembre" }, { v: "10", l: "Octubre" }, { v: "11", l: "Noviembre" }, { v: "12", l: "Diciembre" },
+  ]
+  const dias = ["", ...Array.from({ length: 31 }, (_, i) => String(i + 1).padStart(2, "0"))]
 
   return (
     <div className="space-y-5">
@@ -59,6 +67,20 @@ export function PanelGestionHumanaLIP() {
         <SigField label="Año">
           <select value={anio} onChange={(e) => setAnio(e.target.value)} className={sigControl}>
             {anios.map((a) => (<option key={a} value={a}>{a || "Todos"}</option>))}
+          </select>
+        </SigField>
+        <SigField label="Mes">
+          <select
+            value={mes}
+            onChange={(e) => { setMes(e.target.value); if (!e.target.value) setDia("") }}
+            className={sigControl}
+          >
+            {meses.map((m) => (<option key={m.v} value={m.v}>{m.l}</option>))}
+          </select>
+        </SigField>
+        <SigField label="Día">
+          <select value={dia} onChange={(e) => setDia(e.target.value)} className={sigControl} disabled={!mes}>
+            {dias.map((d) => (<option key={d} value={d}>{d || "Todos"}</option>))}
           </select>
         </SigField>
         {loading && <Loader2 className="h-4 w-4 animate-spin" style={{ color: SST_TOKENS.teal }} />}
