@@ -120,12 +120,14 @@ function servicioDe(
   return "Cargue recoge en bodega" // fallback (cargue de tercero)
 }
 
-// Tarifas de una empresa POR (operación, OWNER), leídas de `tarifasoperacion`.
-// Las tarifas varían por owner/empresafactura (ej. en Funza el Cargue de Molinos
-// es 17.318 y el de AVIMOL/Indupan 14.844). Todo sale de la tabla, sin hardcodear.
-// `porOp`: operación (minúsculas: cargue/descargue/distribucion/tolva/...) → owner → tarifa.
+// Tarifas de una empresa POR (operación, OWNER, SUBCATEGORÍA de producto), leídas de
+// `tarifasoperacion`. La tarifa varía por owner (empresafactura) Y por producto/subcategoría
+// (ej. en Avimol Cargue de PT=15.099 y de sub-producto Mogolla=19.416; en Funza Cargue
+// Molinos=17.318 vs AVIMOL/Indupan=14.844). Todo sale de la tabla, sin hardcodear.
 export interface TarifasEmpresa {
-  porOp: Map<string, Map<string, number>>
+  exact: Map<string, number> // `${op}|||${ownerK}|||${subcatK}` → tarifa
+  porOpOwner: Map<string, number> // `${op}|||${ownerK}` → máximo (fallback si no hay subcat)
+  porOp: Map<string, number> // `${op}` → máximo (fallback general)
   susanita: number
 }
 
@@ -138,43 +140,46 @@ function ownerKey(s: string | null | undefined): string {
     .replace(/\s+/g, " ")
     .trim()
 }
-const maxMapa = (m: Map<string, number>): number => {
-  let mx = 0
-  for (const v of m.values()) if (v > mx) mx = v
-  return mx
-}
 
 async function tarifasDeEmpresa(sb: any, idempresa: number): Promise<TarifasEmpresa> {
-  const t: TarifasEmpresa = { porOp: new Map(), susanita: 0 }
+  const t: TarifasEmpresa = { exact: new Map(), porOpOwner: new Map(), porOp: new Map(), susanita: 0 }
+  const setMax = (m: Map<string, number>, k: string, v: number) => m.set(k, Math.max(m.get(k) || 0, v))
   const { data: tar } = await sb
     .from("tarifasoperacion")
-    .select("operacion, empresafactura, tarifa")
+    .select("operacion, empresafactura, producto, tarifa")
     .eq("empresaid", idempresa)
   for (const r of tar || []) {
     const op = String(r.operacion ?? "").trim().toLowerCase()
     const owner = ownerKey(r.empresafactura)
+    const subcat = ownerKey(r.producto) // el JOIN de la vista es t.producto = subcategoría del producto
     const v = num(r.tarifa)
     if (!op || v <= 0) continue
-    // Descargue SUSANITA es una tarifa especial por cliente, no por owner-producto.
+    // Descargue SUSANITA es una tarifa especial por cliente, no por owner/producto.
     if (op === "descargue" && owner === "SUSANITA") { t.susanita = Math.max(t.susanita, v); continue }
-    let m = t.porOp.get(op)
-    if (!m) { m = new Map(); t.porOp.set(op, m) }
-    m.set(owner, Math.max(m.get(owner) || 0, v))
+    setMax(t.exact, `${op}|||${owner}|||${subcat}`, v)
+    setMax(t.porOpOwner, `${op}|||${owner}`, v)
+    setMax(t.porOp, op, v)
   }
   return t
 }
 
-// Tarifa de una operación para un owner (fallback = máximo de esa operación).
-function tarifaOpOwner(operacion: string | null, owner: string, t: TarifasEmpresa): number {
-  const m = t.porOp.get(String(operacion ?? "").trim().toLowerCase())
-  if (!m) return 0
-  return m.get(ownerKey(owner)) ?? maxMapa(m)
+// Tarifa por (operación, owner, subcategoría) con fallback: exacta → (op+owner) → (op).
+function lookupTarifa(operacion: string | null, owner: string, subcategoria: string | null, t: TarifasEmpresa): number {
+  const op = String(operacion ?? "").trim().toLowerCase()
+  const ok = ownerKey(owner)
+  const sk = ownerKey(subcategoria)
+  return (
+    t.exact.get(`${op}|||${ok}|||${sk}`) ??
+    t.porOpOwner.get(`${op}|||${ok}`) ??
+    t.porOp.get(op) ??
+    0
+  )
 }
 
-// Tarifa de UNA línea por (operación REAL, OWNER del producto), todo desde la tabla:
+// Tarifa de UNA línea por (operación REAL, OWNER, SUBCATEGORÍA del producto), todo desde la tabla:
 //   · Susanita (cliente/transporte SUSANITA) → Descargue SUSANITA.
 //   · Recoge en bodega SOLO en cedis (Cargue + transporte TERCEROS, placa no propia) → tarifa de DESCARGUE.
-//   · Todo lo demás (Cargue/Descargue/Distribucion/Tolva…) → la tarifa de SU operación real, por owner.
+//   · Todo lo demás (Cargue/Descargue/Distribucion/Tolva…) → tarifa de SU operación, por owner y subcategoría.
 function tarifaDeServicio(
   idempresa: number,
   operacion: string | null,
@@ -182,17 +187,18 @@ function tarifaDeServicio(
   cliente: string | null,
   placa: string | null,
   owner: string,
+  subcategoria: string | null,
   tarifas: TarifasEmpresa,
 ): number {
   const op = String(operacion ?? "").trim().toLowerCase()
   const tr = String(transporte ?? "").trim().toUpperCase()
   const cl = String(cliente ?? "").toUpperCase()
-  if (cl.includes("SUSANITA") || tr === "SUSANITA") return tarifas.susanita || tarifaOpOwner("descargue", owner, tarifas)
+  if (cl.includes("SUSANITA") || tr === "SUSANITA") return tarifas.susanita || lookupTarifa("descargue", owner, subcategoria, tarifas)
   const esCedis = idempresa === 3 || idempresa === 4
   if (esCedis && op === "cargue" && tr === "TERCEROS" && !esPlacaDistribucion(idempresa, placa)) {
-    return tarifaOpOwner("descargue", owner, tarifas) // recoge en bodega
+    return lookupTarifa("descargue", owner, subcategoria, tarifas) // recoge en bodega
   }
-  return tarifaOpOwner(op, owner, tarifas)
+  return lookupTarifa(op, owner, subcategoria, tarifas)
 }
 
 export interface PrefacturaLinea {
@@ -431,7 +437,7 @@ export async function getPrefactura(
         const owner = String(r.owner || "SIN OWNER")
         const est = estadoPorOrden.get(on)
         const estadofactura = est?.estado ?? null
-        const tServicio = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, tarifas)
+        const tServicio = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
         origen.push({
           fechaorden: r.fechaorden ?? null,
           fechacargue: r.fechacargue ?? null,
@@ -589,7 +595,7 @@ export async function getControlFacturacion(
       for (let offset = 0; ; offset += pageSize) {
         let q = sb
           .from("facturacion")
-          .select("numeroorden, fechacargue, fechaorden, placa, tiquetebascula, cliente, producto, toneladas, owner, transporte, tipooperacion, tarifa, valor_a_facturar")
+          .select("numeroorden, fechacargue, fechaorden, placa, tiquetebascula, cliente, producto, subcategoria, toneladas, owner, transporte, tipooperacion, tarifa, valor_a_facturar")
           .eq("idempresa", idempresa)
         if (filtros.desde) q = q.gte("fechacargue", filtros.desde)
         if (filtros.hasta) q = q.lte("fechacargue", filtros.hasta)
@@ -637,7 +643,7 @@ export async function getControlFacturacion(
       if (filtraOperacion(r, servicio)) continue
       const owner = String(r.owner || "SIN OWNER")
       const ton = num(r.toneladas)
-      const tarifa = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, tarifas)
+      const tarifa = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
       const sinTarifa = tarifa <= 0
       const k = key(on, owner)
       const a = accMap.get(k)
