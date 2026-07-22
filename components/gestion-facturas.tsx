@@ -229,15 +229,16 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
     loadOrdenes(1, searchTerm, filters)
   }, [selectedEmpresaId, searchTerm])
 
-  // Cargar el valor NETO por orden del proyecto (se calcula igual que el cuadro de control).
+  // Valor NETO solo de las órdenes de la página visible (ligero; se calcula igual que el cuadro).
   useEffect(() => {
-    if (!selectedEmpresaId) { setValoresNetos({}); return }
+    if (!selectedEmpresaId || ordenes.length === 0) { setValoresNetos({}); return }
     let cancel = false
-    getValoresNetosOrden(selectedEmpresaId)
+    const nums = ordenes.map((o) => o.ordendecargue).filter(Boolean)
+    getValoresNetosOrden(selectedEmpresaId, nums)
       .then((r) => { if (!cancel && r.success) setValoresNetos(r.data) })
       .catch(() => {})
     return () => { cancel = true }
-  }, [selectedEmpresaId])
+  }, [selectedEmpresaId, ordenes])
 
   const handlePageChange = (newPage: number) => {
     setCurrentPage(newPage)

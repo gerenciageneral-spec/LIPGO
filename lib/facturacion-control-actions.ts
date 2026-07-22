@@ -766,20 +766,68 @@ export async function getControlFacturacion(
 }
 
 /**
- * Valor NETO por orden de un proyecto (mismo cálculo del cuadro/prefactura: cada
- * operación × tarifa por owner/id_empresa, báscula prorrateada en plantas). Devuelve
- * un mapa { ordendecargue: valorNeto }. Es la base antes de IVA/retefuente (la factura
- * de Siigo suma esos). Usado en Gestión de Facturas para mostrar el valor de la orden.
+ * Valor NETO por orden (mismo cálculo del cuadro/prefactura: cada operación × tarifa por
+ * owner/id_empresa/subcategoría; báscula prorrateada en plantas). LIGERO: solo calcula
+ * las órdenes que se le pasan (la página visible de Gestión de Facturas). Base antes de
+ * IVA/retefuente (la factura de Siigo suma esos). Devuelve { ordendecargue: valorNeto }.
  */
 export async function getValoresNetosOrden(
   idempresa: number,
+  ordenes: string[],
 ): Promise<{ success: boolean; data: Record<string, number>; message?: string }> {
-  if (!idempresa) return { success: true, data: {} }
-  const r = await getControlFacturacion(idempresa, {})
-  if (!r.success || !r.data) return { success: false, data: {}, message: r.message }
-  const map: Record<string, number> = {}
-  for (const f of r.data.filas) {
-    map[f.numeroorden] = (map[f.numeroorden] || 0) + (Number(f.valor_a_facturar) || 0)
+  if (!idempresa || !ordenes?.length) return { success: true, data: {} }
+  try {
+    const sb: any = await getSupabaseAdmin()
+    const tarifas = await tarifasDeEmpresa(sb, idempresa)
+    const placasExcluidas = new Set((PLACAS_EXCLUIDAS_FACTURAS[idempresa] || []).map((p) => p.toUpperCase()))
+    const esBascula = idempresa === 1 || idempresa === 2
+    const nums = [...new Set(ordenes.map((o) => String(o || "").trim()).filter(Boolean))]
+    const chunks: string[][] = []
+    for (let i = 0; i < nums.length; i += 200) chunks.push(nums.slice(i, i + 200))
+
+    // Peso de báscula por orden (solo plantas, para prorratear).
+    const pesoV = new Map<string, number>()
+    if (esBascula) {
+      for (const chunk of chunks) {
+        const { data } = await sb.from("cabeceraoc").select("ordendecargue, pesovascula").eq("idempresa", idempresa).in("ordendecargue", chunk)
+        for (const o of data || []) pesoV.set(String(o.ordendecargue || "").trim(), num(o.pesovascula))
+      }
+    }
+
+    // Líneas de la vista SOLO de esas órdenes.
+    const valorAcc = new Map<string, number>()
+    const totalDet = new Map<string, number>()
+    for (const chunk of chunks) {
+      const { data } = await sb
+        .from("facturacion")
+        .select("numeroorden, owner, subcategoria, toneladas, tipooperacion, transporte, placa, cliente")
+        .eq("idempresa", idempresa)
+        .in("numeroorden", chunk)
+      for (const r of data || []) {
+        const on = String(r.numeroorden || "").trim()
+        const placa = String(r.placa ?? "").trim().toUpperCase()
+        const cl = String(r.cliente ?? "").toUpperCase()
+        if (placasExcluidas.has(placa) && !cl.includes("SUSANITA")) continue // WMP446 salvo Susanita
+        const owner = String(r.owner || "SIN OWNER")
+        const ton = num(r.toneladas)
+        const tarifa = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
+        valorAcc.set(on, (valorAcc.get(on) || 0) + ton * tarifa)
+        totalDet.set(on, (totalDet.get(on) || 0) + ton)
+      }
+    }
+
+    const map: Record<string, number> = {}
+    for (const [on, valor] of valorAcc) {
+      let v = valor
+      if (esBascula) {
+        const P = pesoV.get(on) || 0
+        const td = totalDet.get(on) || 0
+        if (P > 0 && td > 0) v = valor * (P / td) // prorratea el valor al peso de báscula
+      }
+      map[on] = Math.round(v)
+    }
+    return { success: true, data: map }
+  } catch (e: any) {
+    return { success: false, data: {}, message: e?.message || "Error al calcular valores netos." }
   }
-  return { success: true, data: map }
 }
