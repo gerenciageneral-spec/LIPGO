@@ -203,9 +203,10 @@ function tarifaDeServicio(
   const tr = String(transporte ?? "").trim().toUpperCase()
   const cl = String(cliente ?? "").toUpperCase()
   if (cl.includes("SUSANITA") || tr === "SUSANITA") return tarifas.susanita || lookupTarifa("descargue", owner, subcategoria, tarifas)
-  const esCedis = idempresa === 3 || idempresa === 4
-  if (esCedis && op === "cargue" && tr === "TERCEROS" && !esPlacaDistribucion(idempresa, placa)) {
-    return lookupTarifa("descargue", owner, subcategoria, tarifas) // recoge en bodega
+  // "Recoge en bodega" (Cargue TERCEROS cobrado a tarifa de DESCARGUE) es regla SOLO de
+  // Medellín (id4). En Funza (id3) y demás, un Cargue usa la tarifa de CARGUE normal.
+  if (idempresa === 4 && op === "cargue" && tr === "TERCEROS" && !esPlacaDistribucion(idempresa, placa)) {
+    return lookupTarifa("descargue", owner, subcategoria, tarifas) // recoge en bodega (Medellín)
   }
   return lookupTarifa(op, owner, subcategoria, tarifas)
 }
