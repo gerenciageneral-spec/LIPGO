@@ -42,6 +42,7 @@ import {
   type FiltrosControl,
   type Prefactura,
   type PrefacturaGuardada,
+  type SoporteLinea,
 } from "@/lib/facturacion-control-actions"
 import { getAccessibleEmpresesFromPermisos } from "@/lib/orders-actions"
 
@@ -69,6 +70,135 @@ const CAT_LABEL: Record<CategoriaFactura, string> = {
   en_proceso: "En proceso",
   sin_gestionar: "Sin gestionar",
 }
+// Agrupa el soporte (detalle de órdenes) por OWNER × OPERACIÓN, con subtotales.
+interface SoporteGrupo {
+  owner: string
+  operacion: string
+  lineas: SoporteLinea[]
+  ton: number
+  valor: number
+}
+function agruparSoporte(lineas: SoporteLinea[]): { grupos: SoporteGrupo[]; totalTon: number; totalVal: number } {
+  const map = new Map<string, SoporteGrupo>()
+  for (const l of lineas) {
+    const op = l.operacion || "(sin operación)"
+    const k = `${l.owner}|||${op}`
+    const g = map.get(k) || { owner: l.owner, operacion: op, lineas: [], ton: 0, valor: 0 }
+    g.lineas.push(l)
+    g.ton += Number(l.toneladas) || 0
+    g.valor += Number(l.valor) || 0
+    map.set(k, g)
+  }
+  const grupos = Array.from(map.values()).sort(
+    (a, b) => a.owner.localeCompare(b.owner) || a.operacion.localeCompare(b.operacion),
+  )
+  const totalTon = lineas.reduce((s, l) => s + (Number(l.toneladas) || 0), 0)
+  const totalVal = lineas.reduce((s, l) => s + (Number(l.valor) || 0), 0)
+  return { grupos, totalTon, totalVal }
+}
+
+// Documento de SOPORTE (anexo) en pantalla: un bloque por owner × operación con el
+// detalle de órdenes y su subtotal. Se usa para la prefactura actual y las guardadas.
+function SoporteAnexo({ lineas }: { lineas: SoporteLinea[] }) {
+  const { grupos, totalTon, totalVal } = agruparSoporte(lineas)
+  if (grupos.length === 0) return <div className="py-6 text-center text-xs text-muted-foreground">Sin soporte.</div>
+  return (
+    <div className="space-y-4">
+      {grupos.map((g) => (
+        <div key={`${g.owner}|||${g.operacion}`}>
+          <div className="mb-1 flex items-center justify-between">
+            <div className="text-xs font-bold uppercase tracking-wide">
+              {g.owner} · {g.operacion}
+            </div>
+            <div className="text-[11px] text-muted-foreground">{g.lineas.length} órdenes</div>
+          </div>
+          <div className="overflow-x-auto rounded-md border">
+            <table className="w-full text-[11px]">
+              <thead>
+                <tr className="border-b bg-muted/40 text-left text-muted-foreground">
+                  <th className="py-1 pl-2 font-medium">Fecha</th>
+                  <th className="py-1 font-medium">Orden</th>
+                  <th className="py-1 font-medium">Placa</th>
+                  <th className="py-1 font-medium">Cliente</th>
+                  <th className="py-1 font-medium">Producto</th>
+                  <th className="py-1 text-right font-medium">Ton</th>
+                  <th className="py-1 text-right font-medium">Tarifa</th>
+                  <th className="py-1 pr-2 text-right font-medium">Valor</th>
+                </tr>
+              </thead>
+              <tbody>
+                {g.lineas.map((l, i) => (
+                  <tr key={`${l.numeroorden}-${i}`} className="border-b last:border-0">
+                    <td className="py-1 pl-2 tabular-nums">{l.fecha ?? "-"}</td>
+                    <td className="py-1">{l.numeroorden}</td>
+                    <td className="py-1">{l.placa ?? "-"}</td>
+                    <td className="py-1">{l.cliente ?? "-"}</td>
+                    <td className="py-1">{l.producto ?? "-"}</td>
+                    <td className="py-1 text-right tabular-nums">{ton(l.toneladas)}</td>
+                    <td className="py-1 text-right tabular-nums text-muted-foreground">{money(l.tarifa)}</td>
+                    <td className="py-1 pr-2 text-right tabular-nums">{money(l.valor)}</td>
+                  </tr>
+                ))}
+                <tr className="border-t bg-muted/30 font-semibold">
+                  <td className="py-1 pl-2" colSpan={5}>
+                    Subtotal {g.owner} · {g.operacion}
+                  </td>
+                  <td className="py-1 text-right tabular-nums">{ton(g.ton)}</td>
+                  <td></td>
+                  <td className="py-1 pr-2 text-right tabular-nums">{money(g.valor)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ))}
+      <div className="flex items-center justify-between border-t-2 border-primary/40 pt-2">
+        <span className="text-sm font-bold">TOTAL SOPORTE</span>
+        <span className="text-base font-extrabold tabular-nums text-primary">
+          {ton(totalTon)} t · {money(totalVal)}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+// Exporta el soporte a Excel (una hoja por owner × operación) — opción, no el flujo.
+function exportarSoporteExcel(lineas: SoporteLinea[], nombre: string) {
+  const { grupos } = agruparSoporte(lineas)
+  const wb = XLSX.utils.book_new()
+  const usados = new Set<string>()
+  const abrev = (w: string) => {
+    const u = w.toUpperCase()
+    if (u.includes("MOLINOS")) return "MOLINOS"
+    if (u.includes("HARINERA") || u.includes("INDUPAN")) return "HARINERA"
+    if (u.includes("AVIMOL")) return "AVIMOL"
+    return w.substring(0, 12)
+  }
+  for (const g of grupos) {
+    const rows = g.lineas.map((l) => ({
+      Fecha: l.fecha ?? "",
+      Orden: l.numeroorden,
+      Placa: l.placa ?? "",
+      Cliente: l.cliente ?? "",
+      Producto: l.producto ?? "",
+      Servicio: l.servicio,
+      Toneladas: Number((Number(l.toneladas) || 0).toFixed(3)),
+      Tarifa: l.tarifa,
+      Valor: Math.round(Number(l.valor) || 0),
+    }))
+    rows.push({
+      Fecha: "", Orden: "", Placa: "", Cliente: "", Producto: "", Servicio: "SUBTOTAL",
+      Toneladas: Number(g.ton.toFixed(3)), Tarifa: "" as any, Valor: Math.round(g.valor),
+    })
+    let hoja = `${abrev(g.owner)} - ${g.operacion}`.substring(0, 31).replace(/[\\/?*[\]:]/g, "")
+    let i = 2
+    while (usados.has(hoja)) hoja = `${hoja.substring(0, 28)}(${i++})`
+    usados.add(hoja)
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), hoja || "Anexo")
+  }
+  XLSX.writeFile(wb, `Soporte_${nombre.replace(/[^a-zA-Z0-9]+/g, "_")}.xlsx`)
+}
+
 const emptyFiltros = (): FiltrosControl => ({
   desde: "",
   hasta: "",
@@ -100,6 +230,7 @@ export function CuadroControlFacturacion() {
   const [guardadas, setGuardadas] = useState<PrefacturaGuardada[]>([])
   const [obs, setObs] = useState("")
   const [expand, setExpand] = useState<Set<string>>(new Set()) // owner×servicio con detalle abierto
+  const [verSoporteId, setVerSoporteId] = useState<number | null>(null) // prefactura guardada cuyo soporte se ve
 
   useEffect(() => {
     getAccessibleEmpresesFromPermisos()
@@ -237,6 +368,27 @@ export function CuadroControlFacturacion() {
     }
   }, [pref, selKeys])
 
+  // SOPORTE (anexo) de la prefactura seleccionada: detalle de órdenes por owner×operación.
+  const soporteLineas = useMemo<SoporteLinea[]>(() => {
+    if (!pref || !prefSel) return []
+    return pref.origen
+      // solo lo seleccionado y POR FACTURAR (sin factura Siigo) — igual que lo que se factura
+      .filter((l) => prefSel.keys.has(keyRes(l.owner, l.servicio)) && l.categoria !== "facturado")
+      .map((l) => ({
+        owner: l.owner,
+        operacion: l.tipooperacion || "",
+        servicio: l.servicio,
+        fecha: l.fechacargue,
+        numeroorden: l.numeroorden,
+        placa: l.placa,
+        cliente: l.cliente,
+        producto: l.producto,
+        toneladas: Number((l.toneladas || 0).toFixed(3)),
+        tarifa: l.tarifaServicio,
+        valor: Math.round(l.valorServicio),
+      }))
+  }, [pref, prefSel])
+
   // Descarga la prefactura SELECCIONADA, bien formateada (encabezado por owner,
   // filas de servicio con nombre/tipo operación, subtotales, total) + TABLA ORIGEN.
   const descargarPrefacturaExcel = () => {
@@ -323,12 +475,15 @@ export function CuadroControlFacturacion() {
     }
     setGuardando(true)
     const proyecto = empresas.find((e) => e.id === empresaId)?.nombre || `Empresa ${empresaId}`
+    // Soporte CONGELADO = detalle de órdenes de lo por facturar (respaldo fiel).
+    const soporte = soporteLineas.filter((l) => l.valor > 0)
     const r = await guardarPrefactura({
       idempresa: empresaId,
       proyecto,
       periodo_desde: filtros.desde || null,
       periodo_hasta: filtros.hasta || null,
       lineas,
+      soporte,
       total: Math.round(prefSel.totalPorFacturar),
       toneladas: Number(lineas.reduce((s, l) => s + l.toneladas, 0).toFixed(3)),
       usuario: user?.email || user?.nombre || null,
@@ -947,6 +1102,27 @@ export function CuadroControlFacturacion() {
                 </Card>
               )}
 
+              {/* SOPORTE (anexo) EN PANTALLA: detalle de órdenes por owner × operación
+                  que respalda la prefactura. Se genera en la app; Excel es opcional. */}
+              {pref && soporteLineas.length > 0 && (
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+                    <div>
+                      <CardTitle className="text-sm">Soporte de la factura (anexo por owner × operación)</CardTitle>
+                      <p className="text-xs text-muted-foreground">
+                        Detalle de órdenes que respalda lo por facturar. Se guarda con la prefactura como respaldo.
+                      </p>
+                    </div>
+                    <Button size="sm" variant="outline" onClick={() => exportarSoporteExcel(soporteLineas, proyectoNombre)}>
+                      <Download className="mr-2 h-4 w-4" /> Excel (opcional)
+                    </Button>
+                  </CardHeader>
+                  <CardContent>
+                    <SoporteAnexo lineas={soporteLineas} />
+                  </CardContent>
+                </Card>
+              )}
+
               {/* Prefacturas guardadas del proyecto */}
               {guardadas.length > 0 && (
                 <Card>
@@ -989,6 +1165,14 @@ export function CuadroControlFacturacion() {
                             <TableCell className="text-xs text-muted-foreground">{p.usuario ?? "-"}</TableCell>
                             <TableCell className="text-right">
                               <div className="flex justify-end gap-1">
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-7 px-2 text-xs"
+                                  onClick={() => setVerSoporteId(verSoporteId === p.id ? null : p.id)}
+                                >
+                                  <FileText className="mr-1 h-3 w-3" /> {verSoporteId === p.id ? "Ocultar" : "Soporte"}
+                                </Button>
                                 {p.estado === "borrador" ? (
                                   <>
                                     <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => aprobar(p.id, "aprobada")}>
@@ -1009,6 +1193,34 @@ export function CuadroControlFacturacion() {
                         ))}
                       </TableBody>
                     </Table>
+
+                    {/* Soporte CONGELADO de la prefactura guardada seleccionada (respaldo). */}
+                    {verSoporteId != null && (() => {
+                      const p = guardadas.find((g) => g.id === verSoporteId)
+                      if (!p) return null
+                      const sop = p.soporte || []
+                      return (
+                        <div className="border-t bg-muted/20 p-4">
+                          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                            <div className="text-xs font-semibold">
+                              Soporte de la prefactura #{p.id} · {p.proyecto} · {p.periodo_desde || "inicio"} → {p.periodo_hasta || "fin"}
+                            </div>
+                            {sop.length > 0 && (
+                              <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => exportarSoporteExcel(sop, `${p.proyecto}_${p.id}`)}>
+                                <Download className="mr-1 h-3 w-3" /> Excel (opcional)
+                              </Button>
+                            )}
+                          </div>
+                          {sop.length === 0 ? (
+                            <p className="text-xs text-muted-foreground">
+                              Esta prefactura se guardó sin soporte (es anterior a esta función). Al guardar/aprobar una nueva, quedará el respaldo.
+                            </p>
+                          ) : (
+                            <SoporteAnexo lineas={sop} />
+                          )}
+                        </div>
+                      )
+                    })()}
                   </CardContent>
                 </Card>
               )}

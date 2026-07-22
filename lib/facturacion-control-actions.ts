@@ -181,6 +181,8 @@ export interface PrefacturaLinea {
   tarifa: string | number | null
   valor_a_facturar: number
   servicio: string
+  tarifaServicio: number // tarifa REAL del servicio (la que factura la prefactura)
+  valorServicio: number // toneladas × tarifaServicio (para que el soporte cuadre con el resumen)
   estadofactura: string | null
   categoria: CategoriaFactura // semáforo: sin_gestionar=por facturar · en_proceso · facturado
 }
@@ -213,6 +215,20 @@ export interface PrefacturaLineaGuardada {
   tarifa: number
   total: number
 }
+// Línea del SOPORTE (anexo) congelado: detalle de órdenes que respalda la factura.
+export interface SoporteLinea {
+  owner: string
+  operacion: string
+  servicio: string
+  fecha: string | null
+  numeroorden: string
+  placa: string | null
+  cliente: string | null
+  producto: string | null
+  toneladas: number
+  tarifa: number
+  valor: number
+}
 export interface PrefacturaGuardada {
   id: number
   idempresa: number
@@ -220,6 +236,7 @@ export interface PrefacturaGuardada {
   periodo_desde: string | null
   periodo_hasta: string | null
   lineas: PrefacturaLineaGuardada[]
+  soporte: SoporteLinea[]
   total: number
   toneladas: number
   estado: "borrador" | "aprobada"
@@ -234,6 +251,7 @@ export async function guardarPrefactura(payload: {
   periodo_desde?: string | null
   periodo_hasta?: string | null
   lineas: PrefacturaLineaGuardada[]
+  soporte?: SoporteLinea[] // detalle de órdenes que respalda la factura (congelado)
   total: number
   toneladas: number
   usuario?: string | null
@@ -251,6 +269,7 @@ export async function guardarPrefactura(payload: {
         periodo_desde: payload.periodo_desde || null,
         periodo_hasta: payload.periodo_hasta || null,
         lineas: payload.lineas,
+        soporte: payload.soporte ?? [],
         total: payload.total,
         toneladas: payload.toneladas,
         estado: "borrador",
@@ -398,6 +417,8 @@ export async function getPrefactura(
           tarifa: r.tarifa ?? null,
           valor_a_facturar: num(r.valor_a_facturar),
           servicio,
+          tarifaServicio: tarifaDeServicio(servicio, tarifas),
+          valorServicio: num(r.toneladas) * tarifaDeServicio(servicio, tarifas),
           estadofactura,
           categoria: categoriaDeFactura(est?.facturasiigo, estadofactura),
         })
