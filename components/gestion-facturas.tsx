@@ -858,6 +858,40 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
     }
   }
 
+  // DESHACER el amarre del rango: revierte las cerradas con factura Siigo del rango a
+  // "Factura solicitada" y les quita la factura (útil para pruebas).
+  const deshacerAmarreRango = async () => {
+    if (!rangoDesde || !rangoHasta) {
+      toast({ title: "Rango requerido", description: "Define el rango a deshacer.", variant: "destructive" })
+      return
+    }
+    if (!selectedEmpresaId) {
+      toast({ title: "Selecciona un proyecto", variant: "destructive" })
+      return
+    }
+    if (!confirm("¿Deshacer el amarre? Las órdenes cerradas con factura Siigo de este rango volverán a 'Factura solicitada' y se les quitará la factura.")) return
+    setAmarrandoRango(true)
+    try {
+      const res = await fetch("/api/gestion-facturas/amarrar-rango", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idempresa: selectedEmpresaId, desde: rangoDesde, hasta: rangoHasta, undo: true }),
+      })
+      const result = await res.json()
+      if (!result.success) {
+        toast({ title: "Error", description: result.error, variant: "destructive" })
+        return
+      }
+      toast({ title: "Amarre deshecho", description: `${result.count} orden(es) volvieron a 'Factura solicitada'.` })
+      loadOrdenes(currentPage, searchTerm)
+    } catch (error) {
+      console.error("Error deshaciendo amarre:", error)
+      toast({ title: "Error", description: "Error al deshacer el amarre", variant: "destructive" })
+    } finally {
+      setAmarrandoRango(false)
+    }
+  }
+
   // ¿Una orden cae en el rango de facturación seleccionado (fecha de cargue) y está pendiente?
   const enRangoSiigo = (orden: OrdenCargue): boolean => {
     if (!rangoDesde || !rangoHasta) return false
@@ -1286,6 +1320,11 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
             {(rangoDesde || rangoHasta) && (
               <Button variant="outline" size="sm" className="h-8" onClick={() => { setRangoDesde(""); setRangoHasta("") }}>
                 Limpiar rango
+              </Button>
+            )}
+            {rangoDesde && rangoHasta && (
+              <Button variant="outline" size="sm" className="h-8 border-red-300 text-red-700 hover:bg-red-50" onClick={deshacerAmarreRango} disabled={amarrandoRango}>
+                <RotateCcw className="mr-1 h-3 w-3" /> Deshacer amarre
               </Button>
             )}
             {rangoDesde && rangoHasta && (

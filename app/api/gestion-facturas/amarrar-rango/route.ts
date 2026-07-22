@@ -7,20 +7,42 @@ import { getSupabaseAdmin } from "@/lib/supabase-admin"
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { idempresa, facturasiigo, desde, hasta } = body as {
+    const { idempresa, facturasiigo, desde, hasta, undo } = body as {
       idempresa?: number
       facturasiigo?: string
       desde?: string
       hasta?: string
+      undo?: boolean
     }
 
     if (!idempresa) return NextResponse.json({ success: false, error: "idempresa es requerido" }, { status: 400 })
-    if (!facturasiigo) return NextResponse.json({ success: false, error: "Primero sube la factura de Siigo" }, { status: 400 })
     if (!desde || !hasta) return NextResponse.json({ success: false, error: "Rango de fechas requerido (desde y hasta)" }, { status: 400 })
+    if (!undo && !facturasiigo) return NextResponse.json({ success: false, error: "Primero sube la factura de Siigo" }, { status: 400 })
 
     const supabase = await getSupabaseAdmin()
 
-    // Órdenes objetivo: misma empresa, estado "CF - Factura solicitada", dentro del rango.
+    if (undo) {
+      // DESHACER: revierte las órdenes cerradas CON factura Siigo del rango a "Factura solicitada".
+      const { data: objetivo, error: selError } = await supabase
+        .from("cabeceraoc")
+        .select("id")
+        .eq("idempresa", idempresa)
+        .eq("estadofactura", "CF - Cerrado")
+        .not("facturasiigo", "is", null)
+        .gte("fechacargue", desde)
+        .lte("fechacargue", hasta)
+      if (selError) return NextResponse.json({ success: false, error: selError.message }, { status: 500 })
+      const ids = (objetivo || []).map((o: any) => o.id)
+      if (ids.length === 0) return NextResponse.json({ success: true, count: 0, message: "No hay órdenes amarradas en ese rango." })
+      const { error: updError } = await supabase
+        .from("cabeceraoc")
+        .update({ facturasiigo: null, estadofactura: "CF - Factura solicitada" })
+        .in("id", ids)
+      if (updError) return NextResponse.json({ success: false, error: updError.message }, { status: 500 })
+      return NextResponse.json({ success: true, count: ids.length })
+    }
+
+    // AMARRAR: órdenes "CF - Factura solicitada" del rango → factura Siigo + cerrar.
     const { data: objetivo, error: selError } = await supabase
       .from("cabeceraoc")
       .select("id, ordendecargue")
