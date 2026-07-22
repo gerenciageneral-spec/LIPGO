@@ -397,6 +397,12 @@ export async function generarBorradoresAusentismoDesdeControl(
   }
 }
 
+// Normaliza una cédula/identificación para casar ausentismosst.cedula con headcount.identificacion
+// (quita sufijo ".0" del Excel y deja solo dígitos).
+function normCedula(c: string | null | undefined): string {
+  return String(c ?? "").trim().replace(/\.0+$/, "").replace(/\D/g, "")
+}
+
 export async function getAusentismos(empresaId?: number | null): Promise<Ausentismo[]> {
   const supabase = await createClient()
   let query = supabase.from("ausentismosst").select("*").order("created_at", { ascending: false })
@@ -407,7 +413,38 @@ export async function getAusentismos(empresaId?: number | null): Promise<Ausenti
     console.error("[v0] Error fetching ausentismos:", error)
     return []
   }
-  return (data ?? []) as Ausentismo[]
+  const rows = (data ?? []) as Ausentismo[]
+
+  // ESTADO VIGENTE del colaborador desde headcount (por identificación). El
+  // estado_colaborador guardado en ausentismosst queda CONGELADO al crear la fila; si
+  // la persona se retira después (novedad de retiro → headcount Inactivo), el módulo
+  // debe reflejar ese retiro. Se sincroniza con el headcount vigente.
+  try {
+    const estadoHc = new Map<string, string>()
+    for (let off = 0; ; off += 1000) {
+      const { data: hc } = await supabase
+        .from("headcount")
+        .select("identificacion, estado, fecha_retiro")
+        .range(off, off + 999)
+      if (!hc || hc.length === 0) break
+      for (const h of hc) {
+        const k = normCedula(h.identificacion)
+        if (!k) continue
+        const est = String(h.estado ?? "").toUpperCase()
+        const retirado = est.includes("INACTIV") || est.includes("RETIR") || !!h.fecha_retiro
+        estadoHc.set(k, retirado ? "RETIRADO" : "ACTIVO")
+      }
+      if (hc.length < 1000) break
+    }
+    for (const r of rows) {
+      const k = normCedula(r.cedula)
+      if (k && estadoHc.has(k)) r.estado_colaborador = estadoHc.get(k)!
+    }
+  } catch (e) {
+    console.error("[v0] Error sincronizando estado con headcount:", e)
+  }
+
+  return rows
 }
 
 export async function createAusentismo(
