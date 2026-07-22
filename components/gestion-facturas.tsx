@@ -621,11 +621,17 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
         setOrdenConfirmacion({ ...ordenConfirmacion, facturasiigo: result.url })
       }
 
-      // AMARRE POR RANGO: si hay un rango de fecha de cargue definido, esta misma factura
-      // Siigo se amarra a TODAS las órdenes "CF - Factura solicitada" de la empresa en ese
-      // rango (una factura de Siigo cubre varios días/solicitudes).
       if (rangoDesde && rangoHasta && result.url) {
+        // AMARRE POR RANGO: la misma factura Siigo se amarra a TODAS las "CF - Factura
+        // solicitada" de la empresa en el rango y las cierra (una factura cubre varios días).
         await amarrarRangoSiigo((orden as any).idempresa, result.url)
+      } else if (result.url) {
+        // SIN RANGO: al cargar la factura Siigo, esta orden queda CERRADA (CF - Cerrado).
+        await fetch("/api/gestion-facturas", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ orderId: orden.id, estadofactura: "CF - Cerrado" }),
+        })
       }
 
       setUploadingSiigoOrden(null)
@@ -1467,8 +1473,11 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
                                 </Button>
                               )}
 
-                              {/* Paso 2 - Facturacion LiP (CON FACTURA): Factura solicitada → procesar */}
-                              {orden.estadofactura === "CF - Factura solicitada" && (
+                              {/* "Procesar Factura" OCULTO (petición del usuario): al cargar la factura
+                                  Siigo la orden queda cerrada; los valores IVA/retefuente no se usan por
+                                  ahora (se retomarán al integrar la API de Siigo). Para reactivarlo,
+                                  restaurar el botón con estadofactura === "CF - Factura solicitada". */}
+                              {false && orden.estadofactura === "CF - Factura solicitada" && (
                                 <Button
                                   size="sm"
                                   variant="default"
