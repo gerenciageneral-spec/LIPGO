@@ -395,8 +395,8 @@ export async function getPrefactura(
         const servicio = servicioDe(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa)
         // Filtro multi-operación (Susanita se conserva siempre, es factura del owner).
         if (opSet.size > 0 && servicio !== "Susanita" && !opSet.has(String(r.tipooperacion ?? "").trim().toLowerCase())) continue
-        // El propio (placa de distribución) se factura al owner del VEHÍCULO, no del producto.
-        const owner = servicio === "Cargue/Descargue propio" ? ownerDeIdEmpresa(idempresa) : String(r.owner || "SIN OWNER")
+        // Owner por el id_empresa del PRODUCTO (dueño real), incluido el propio.
+        const owner = String(r.owner || "SIN OWNER")
         const est = estadoPorOrden.get(on)
         const estadofactura = est?.estado ?? null
         origen.push({
@@ -629,9 +629,9 @@ export async function getControlFacturacion(
         if (esExcluida(r)) continue
         const servicio = servicioDe(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa)
         if (filtraOperacion(r, servicio)) continue
-        // El CARGUE/DESCARGUE PROPIO (placa de distribución) se factura al owner del
-        // VEHÍCULO (ej. LWY393 en id4 → Molinos), no al owner del producto.
-        const owner = servicio === "Cargue/Descargue propio" ? ownerDeIdEmpresa(idempresa) : String(r.owner || "SIN OWNER")
+        // Owner por el id_empresa del PRODUCTO (el dueño real, ya resuelto en la vista).
+        // El propio también se atribuye al owner del producto, NO al del vehículo.
+        const owner = String(r.owner || "SIN OWNER")
         const est = estadoPorOrden.get(on)
         const tarifaServ = tarifaDeServicio(servicio, tarifas)
         const ton = num(r.toneladas)
