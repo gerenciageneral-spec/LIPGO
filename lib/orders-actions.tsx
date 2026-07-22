@@ -9,6 +9,7 @@ import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { revalidatePath } from "next/cache"
 import { generateAndUploadLoadOrderPDF } from "./pdf-actions" // Added for generateLoadOrder
 import { esPlacaDistribucion, numeroOrdenDistribucion } from "@/lib/distribucion-placas"
+import { cediDeDestino, PLANTAS_ORIGEN, type CediDestino } from "@/lib/cedis-destino"
 
 /**
  * Obtiene los IDs de empresa accesibles para el usuario actual desde perfil_acceso_empresas
@@ -587,6 +588,114 @@ export async function getOrderFiltersData() {
   }
 }
 
+// ------------------------------------------------------------------------------
+// DESCARGUE AUTOMÁTICO EN CEDI DESTINO.
+// Cuando una planta (Avimol id2 / Indupan id1) crea un cargue con líneas cuyo
+// destino es un CEDI (el destino vive en detalleoc.cliente: "CEDI MEDELLIN",
+// "CEDI FUNZA", "TOSTADITOS SUSANITA..."), se genera automáticamente el/los
+// DESCARGUE(S) pendientes en el CEDI destino (idempresa 3/4). Igual que la
+// distribución "+D", pero CRUZANDO EMPRESAS. Mapeo en lib/cedis-destino.ts.
+// Idempotente (dedup por `ordenorigen`) y FALLA-SEGURO (nunca revierte el cargue).
+async function autoGenerarDescarguesCedi(
+  supabase: any,
+  params: {
+    orderCodeMadre: string
+    sessionEmpresaId: number
+    placa: string | null
+    transporte: string | null
+    productsList: Array<{ producto: string; cantidad: number; toneladas: number; cliente: string }>
+  },
+) {
+  const { orderCodeMadre, sessionEmpresaId, placa, transporte, productsList } = params
+  if (!PLANTAS_ORIGEN.has(sessionEmpresaId)) return
+
+  // Agrupar las líneas del cargue por CEDI destino (ignora las que no van a un CEDI).
+  const grupos = new Map<number, { cedi: CediDestino; lineas: typeof productsList }>()
+  for (const p of productsList || []) {
+    if (!p || (Number(p.cantidad) || 0) <= 0) continue
+    const cedi = cediDeDestino(p.cliente)
+    if (!cedi) continue
+    const g = grupos.get(cedi.idempresa) || { cedi, lineas: [] as typeof productsList }
+    g.lineas.push(p)
+    grupos.set(cedi.idempresa, g)
+  }
+  if (grupos.size === 0) return
+
+  const colombiaTime = await getColombiaDateTime()
+  const y = colombiaTime.getFullYear()
+  const m = String(colombiaTime.getMonth() + 1).padStart(2, "0")
+  const d = String(colombiaTime.getDate()).padStart(2, "0")
+  const fechaorden = await getColombiaDate()
+
+  // Contadores de id (una sola lectura del máximo de cada tabla).
+  const { data: lastH } = await supabase.from("cabeceraoc").select("id").order("id", { ascending: false }).limit(1).maybeSingle()
+  let nextId = lastH ? (lastH.id || 0) + 1 : 1
+  const { data: lastD } = await supabase.from("detalleoc").select("id").order("id", { ascending: false }).limit(1).maybeSingle()
+  let nextDetailId = lastD ? (lastD.id || 0) + 1 : 1
+
+  for (const { cedi, lineas } of grupos.values()) {
+    try {
+      // Dedup: ¿ya existe un descargue de esta orden madre en ese CEDI?
+      const { data: existe } = await supabase
+        .from("cabeceraoc")
+        .select("id")
+        .eq("ordenorigen", orderCodeMadre)
+        .eq("idempresa", cedi.idempresa)
+        .eq("tipooperacion", "Descargue")
+        .limit(1)
+        .maybeSingle()
+      if (existe) {
+        console.log("[auto-descargue] ya existe para", orderCodeMadre, "->", cedi.label)
+        continue
+      }
+
+      // Código con el indicativo del CEDI destino.
+      const { data: ind } = await supabase.from("indicativo").select("indicativo").eq("id", cedi.idempresa).maybeSingle()
+      const indicativo = ind?.indicativo || "IND"
+      const headerId = nextId++
+      const orderCode = `${indicativo}${y}${m}${d}${headerId}`
+      const totalTon = lineas.reduce((s, l) => s + (Number(l.toneladas) || 0), 0)
+
+      const { error: hErr } = await supabase.from("cabeceraoc").insert({
+        id: headerId,
+        idempresa: cedi.idempresa,
+        ordendecargue: orderCode,
+        ordenorigen: orderCodeMadre, // enlace a la orden de cargue madre
+        tipooperacion: "Descargue",
+        transporte: cedi.transporte ?? transporte ?? null,
+        placa: placa ?? null,
+        fechaorden,
+        pesoorden: totalTon,
+        observaciones: `Auto desde cargue ${orderCodeMadre}`,
+        // status/fechacargue/pesajefinal sin fijar => nace PENDIENTE por atender.
+      })
+      if (hErr) {
+        console.error("[auto-descargue] error cabecera", cedi.label, hErr.message)
+        continue
+      }
+
+      const detalles = lineas
+        .filter((l) => (Number(l.cantidad) || 0) > 0)
+        .map((l) => ({
+          id: nextDetailId++,
+          idorden: headerId,
+          numeroorden: orderCode,
+          producto: l.producto,
+          cantidad: l.cantidad,
+          toneladas: l.toneladas,
+          cliente: "", // trazabilidad por ordenorigen (igual que el descargue manual)
+        }))
+      if (detalles.length > 0) {
+        const { error: dErr } = await supabase.from("detalleoc").insert(detalles)
+        if (dErr) console.error("[auto-descargue] error detalle", cedi.label, dErr.message)
+      }
+      console.log("[auto-descargue] creado", orderCode, "en", cedi.label, "desde", orderCodeMadre, `(${totalTon} t)`)
+    } catch (e: any) {
+      console.error("[auto-descargue] excepción (no bloquea cargue):", e?.message || e)
+    }
+  }
+}
+
 export async function generateLoadOrder(orderData: {
   selectedOrderIds: number[]
   sinVehiculo?: boolean
@@ -900,6 +1009,21 @@ export async function generateLoadOrder(orderData: {
         console.error("[v0] Excepción en distribución automática (no bloquea el cargue):", distErr)
         distribucionOrderCode = null
       }
+    }
+
+    // ------------------------------------------------------------------
+    // DESCARGUE AUTOMÁTICO EN CEDI DESTINO (Avimol/Indupan → CEDI Funza/Medellín/
+    // Susanita). Crea el descargue PENDIENTE en el CEDI destino. Falla-seguro.
+    try {
+      await autoGenerarDescarguesCedi(supabase, {
+        orderCodeMadre: orderCode,
+        sessionEmpresaId,
+        placa: orderData.sinVehiculo ? null : orderData.vehiculo,
+        transporte: orderData.sinVehiculo ? null : orderData.tipoTransporte,
+        productsList: orderData.productsList,
+      })
+    } catch (cediErr) {
+      console.error("[v0] Excepción en descargue automático a CEDI (no bloquea el cargue):", cediErr)
     }
 
     if (!orderData.sinVehiculo && orderData.vehiculo) {
