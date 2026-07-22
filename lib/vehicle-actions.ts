@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase-client"
 import { getColombiaDate, getColombiaTime } from "@/lib/date-utils"
 import { generateAndUploadLoadOrderPDF } from "@/lib/pdf-actions"
+import { generarDistribucionAutomatica } from "@/lib/orders-actions"
 import { getCurrentEmpresaIdForInsert } from "@/lib/user-context"
 import { getCurrentUser, getUserProfile } from "@/lib/auth-actions"
 
@@ -448,7 +449,17 @@ export async function assignVehicleToLoadOrder(orderId: number, vehicleId: numbe
       return { success: false, error: statusError.message }
     }
 
-    return { success: true }
+    // DISTRIBUCIÓN AUTOMÁTICA (+D): la placa se acaba de fijar en la orden. Si es un
+    // vehículo propio de distribución, se genera el clon de Distribución (mismo número
+    // + "D"). Idempotente y falla-seguro: no bloquea la asignación del vehículo.
+    let distribucionOrderCode: string | null = null
+    try {
+      distribucionOrderCode = await generarDistribucionAutomatica(supabase, orderId)
+    } catch (distErr) {
+      console.error("[v0] Excepción en distribución automática al asignar vehículo:", distErr)
+    }
+
+    return { success: true, distribucionOrderCode }
   } catch (error) {
     console.error("[v0] Error in assignVehicleToLoadOrder:", error)
     return { success: false, error: "Error al asignar vehículo" }

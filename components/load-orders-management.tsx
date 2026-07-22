@@ -282,7 +282,9 @@ export function LoadOrdersManagement() {
     if (result.success) {
       toast({
         title: "Vehículo asignado",
-        description: "El vehículo ha sido asignado exitosamente a la orden",
+        description: (result as any).distribucionOrderCode
+          ? `Vehículo asignado. Se generó la orden de distribución ${(result as any).distribucionOrderCode}.`
+          : "El vehículo ha sido asignado exitosamente a la orden",
       })
       setShowAssignDialog(false)
       setAssigningOrderId(null)

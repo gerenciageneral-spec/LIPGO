@@ -691,6 +691,57 @@ async function autoGenerarDescarguesCedi(
   }
 }
 
+// DISTRIBUCIÓN AUTOMÁTICA (+D). Si la placa de un CARGUE es un vehículo propio que
+// hace distribución (lib/distribucion-placas.ts), duplica la orden como Distribución:
+// mismo número + "D", CLON EXACTO (cabecera + detalle). Idempotente (no duplica si ya
+// existe) y falla-seguro. Se invoca en DOS momentos porque la placa puede fijarse al
+// CREAR la orden (generateLoadOrder) o DESPUÉS al asignar el vehículo
+// (assignVehicleToLoadOrder): el flujo real crea la orden sin placa y la asigna luego,
+// por eso el clon debe generarse también en la asignación.
+export async function generarDistribucionAutomatica(
+  supabase: any,
+  orderId: number,
+): Promise<string | null> {
+  try {
+    const { data: origHeader } = await supabase.from("cabeceraoc").select("*").eq("id", orderId).maybeSingle()
+    if (!origHeader) return null
+    if (origHeader.tipooperacion !== "Cargue") return null // solo cargues
+    if (!esPlacaDistribucion(origHeader.idempresa, origHeader.placa)) return null // solo placas propias de distribución
+
+    const distCode = numeroOrdenDistribucion(origHeader.ordendecargue)
+    const { data: yaExiste } = await supabase.from("cabeceraoc").select("id").eq("ordendecargue", distCode).maybeSingle()
+    if (yaExiste) return distCode // idempotente: no duplica
+
+    // CABECERA = clon exacto con id FRESCO + reintento ante colisión de PK (23505).
+    let distId = 0, creada = false
+    for (let intento = 0; intento < 6 && !creada; intento++) {
+      const { data: maxH } = await supabase.from("cabeceraoc").select("id").order("id", { ascending: false }).limit(1).maybeSingle()
+      distId = (maxH?.id || orderId) + 1
+      const distHeader = { ...origHeader, id: distId, ordendecargue: distCode, tipooperacion: "Distribucion", facturar: true }
+      const { error } = await supabase.from("cabeceraoc").insert(distHeader)
+      if (!error) creada = true
+      else if ((error as any).code === "23505") { console.warn("[+D] colisión de id, reintento", intento + 1); continue }
+      else { console.error("[+D] error creando cabecera:", error.message); return null }
+    }
+    if (!creada) { console.error("[+D] no se pudo crear la cabecera tras varios reintentos"); return null }
+
+    // DETALLE = clon exacto de todas las líneas del cargue, con id fresco.
+    const { data: origDetails } = await supabase.from("detalleoc").select("*").eq("idorden", orderId)
+    if (origDetails && origDetails.length > 0) {
+      const { data: maxD } = await supabase.from("detalleoc").select("id").order("id", { ascending: false }).limit(1).maybeSingle()
+      let did = (maxD?.id || 0) + 1
+      const distDetails = origDetails.map((d: any) => ({ ...d, id: did++, idorden: distId, numeroorden: distCode }))
+      const { error: dErr } = await supabase.from("detalleoc").insert(distDetails)
+      if (dErr) console.error("[+D] error creando detalle:", dErr.message)
+    }
+    console.log("[+D] distribución automática creada:", distCode, "id", distId, "desde", origHeader.ordendecargue)
+    return distCode
+  } catch (e: any) {
+    console.error("[+D] excepción (no bloquea la orden):", e?.message || e)
+    return null
+  }
+}
+
 export async function generateLoadOrder(orderData: {
   selectedOrderIds: number[]
   sinVehiculo?: boolean
@@ -944,94 +995,13 @@ export async function generateLoadOrder(orderData: {
     console.log("[v0] Detalleoc inserted successfully")
 
     // ------------------------------------------------------------------
-    // DISTRIBUCIÓN AUTOMÁTICA. Si la placa es un vehículo propio del cliente
-    // que hace distribución (ver lib/distribucion-placas.ts), se DUPLICA esta
-    // misma orden como orden de Distribución: mismo número + "D", tipooperacion
-    // "Distribucion", copiando cliente/productos/cantidades de la orden original.
-    // Antes se hacía a mano en "Generar órdenes de distribución".
-    // Falla-seguro: si algo aquí falla, se registra pero NO se tumba la orden de
-    // cargue (que ya quedó creada correctamente).
+    // DISTRIBUCIÓN AUTOMÁTICA (+D). Caso "Generar órdenes de cargue" cuando la orden
+    // se crea YA con vehículo. Si la placa se asigna DESPUÉS en "Gestión de órdenes de
+    // cargue", el clon se genera en assignVehicleToLoadOrder. Helper idempotente y
+    // falla-seguro: si algo falla, NO se tumba la orden de cargue.
     let distribucionOrderCode: string | null = null
-    if (!orderData.sinVehiculo && esPlacaDistribucion(sessionEmpresaId, orderData.vehiculo)) {
-      try {
-        distribucionOrderCode = numeroOrdenDistribucion(orderCode)
-
-        // Idempotencia: si ya existe el +D (p.ej. reintento), no duplicar.
-        const { data: yaExiste } = await supabase
-          .from("cabeceraoc")
-          .select("id")
-          .eq("ordendecargue", distribucionOrderCode)
-          .maybeSingle()
-
-        // La orden de distribución debe ser IGUAL a la de cargue: se CLONAN las
-        // filas reales recién creadas (cabecera + todo el detalle: cada owner,
-        // producto, cantidad, cliente, peso), cambiando SOLO el id, el número
-        // (mismo + "D") y el tipo de operación. Así lleva exactamente lo mismo.
-        const { data: origHeader } = await supabase.from("cabeceraoc").select("*").eq("id", nextId).maybeSingle()
-
-        if (yaExiste) {
-          console.log("[v0] Distribución automática ya existe, no se duplica:", distribucionOrderCode)
-        } else if (!origHeader) {
-          console.error("[v0] Distribución automática: no se encontró la cabecera original", nextId)
-          distribucionOrderCode = null
-        } else {
-          // ID FRESCO en cada intento para evitar choque con órdenes creadas en
-          // paralelo (la causa de que el clon "no funcionara"). Reintenta si el id
-          // colisiona (PK duplicada, código 23505).
-          let distId = 0
-          let creada = false
-          for (let intento = 0; intento < 6 && !creada; intento++) {
-            const { data: maxH } = await supabase.from("cabeceraoc").select("id").order("id", { ascending: false }).limit(1).maybeSingle()
-            distId = (maxH?.id || nextId) + 1
-            const distHeader = {
-              ...origHeader,
-              id: distId,
-              ordendecargue: distribucionOrderCode,
-              // Valor SIN tilde: así está en la BD y en los filtros (getLoadOrders).
-              tipooperacion: "Distribucion",
-              // Se factura por defecto; en Packing la desmarcan si el conductor va solo.
-              facturar: true,
-            }
-            const { error: distHeaderError } = await supabase.from("cabeceraoc").insert(distHeader)
-            if (!distHeaderError) {
-              creada = true
-            } else if ((distHeaderError as any).code === "23505") {
-              console.warn("[v0] +D: colisión de id, reintento", intento + 1)
-              continue // reintentar con un id fresco
-            } else {
-              console.error("[v0] Error creando cabecera de distribución automática:", distHeaderError)
-              distribucionOrderCode = null
-              break
-            }
-          }
-          if (creada) {
-            // Detalle: clon EXACTO de todas las líneas de la orden de cargue
-            // (idorden identifica de forma única las líneas de la cargue), con id fresco.
-            const { data: origDetails } = await supabase.from("detalleoc").select("*").eq("idorden", nextId)
-            if (origDetails && origDetails.length > 0) {
-              const { data: maxD } = await supabase.from("detalleoc").select("id").order("id", { ascending: false }).limit(1).maybeSingle()
-              let did = (maxD?.id || nextDetailId - 1) + 1
-              const distDetails = origDetails.map((d: any) => ({
-                ...d,
-                id: did++,
-                idorden: distId,
-                numeroorden: distribucionOrderCode,
-              }))
-              const { error: distDetailError } = await supabase.from("detalleoc").insert(distDetails)
-              if (distDetailError) {
-                console.error("[v0] Error creando detalle de distribución automática:", distDetailError)
-              }
-            }
-            console.log("[v0] Orden de distribución automática creada:", distribucionOrderCode, "id", distId)
-          } else if (distribucionOrderCode) {
-            console.error("[v0] +D: no se pudo crear tras varios reintentos")
-            distribucionOrderCode = null
-          }
-        }
-      } catch (distErr) {
-        console.error("[v0] Excepción en distribución automática (no bloquea el cargue):", distErr)
-        distribucionOrderCode = null
-      }
+    if (!orderData.sinVehiculo) {
+      distribucionOrderCode = await generarDistribucionAutomatica(supabase, nextId)
     }
 
     // ------------------------------------------------------------------
