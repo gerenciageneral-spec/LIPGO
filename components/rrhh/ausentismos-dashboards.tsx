@@ -124,12 +124,20 @@ function ChartCard({
 /* ------------------------------------------------------------------ */
 /* Dashboard 1: Resumen (datos más relevantes)                         */
 /* ------------------------------------------------------------------ */
-export function AusentismosResumen({ items }: { items: Ausentismo[] }) {
+export function AusentismosResumen({
+  items,
+  casosAT: casosATProp,
+}: {
+  items: Ausentismo[]
+  // Conteo real de AT = investigaciones (sst_incidentes). Si no se pasa, se cae al
+  // conteo por filas (comportamiento antiguo, sobreestima por las prórrogas).
+  casosAT?: number
+}) {
   const data = useMemo(() => {
     const totalCasos = items.length
     const totalDias = items.reduce((s, a) => s + num(a.total_dias_incapacidad), 0)
     const casosEG = items.filter((a) => a.tipo_evento === "EG").length
-    const casosAT = items.filter((a) => a.tipo_evento === "AT").length
+    const casosAT = casosATProp ?? items.filter((a) => a.tipo_evento === "AT").length
     const casosSST = items.filter((a) => a.requiere_revision_sst).length
     const promedioDias = totalCasos ? totalDias / totalCasos : 0
 
@@ -174,7 +182,7 @@ export function AusentismosResumen({ items }: { items: Ausentismo[] }) {
       .sort((a, b) => b.casos - a.casos)
 
     return { totalCasos, totalDias, casosEG, casosAT, casosSST, promedioDias, porTipo, porMes, topDiag, porCentro }
-  }, [items])
+  }, [items, casosATProp])
 
   if (items.length === 0) {
     return (

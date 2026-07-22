@@ -447,6 +447,23 @@ export async function getAusentismos(empresaId?: number | null): Promise<Ausenti
   return rows
 }
 
+// AT REALES = investigaciones (sst_incidentes): una investigación por accidente. Las
+// prórrogas son filas extra en ausentismosst pero NO son AT nuevos. Devuelve fecha del
+// evento y estado (para contar por período y separar pendientes de cerradas).
+export async function getIncidentesAT(
+  empresaId?: number | null,
+): Promise<{ fecha_evento: string | null; estado: string | null }[]> {
+  const supabase = await createClient()
+  let q = supabase.from("sst_incidentes").select("fecha_evento, estado")
+  if (empresaId) q = q.eq("idempresa", empresaId)
+  const { data, error } = await q
+  if (error) {
+    console.error("[v0] Error fetching incidentes AT:", error)
+    return []
+  }
+  return (data ?? []) as { fecha_evento: string | null; estado: string | null }[]
+}
+
 export async function createAusentismo(
   data: Record<string, any>,
   empresaIdFromClient?: number | null,

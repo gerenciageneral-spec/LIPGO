@@ -3111,8 +3111,16 @@ export async function getPanelGestionHumanaLIP(
       const dias = Number(r.total_dias_incapacidad) || 0
       costos += Number(r.costos_empresa) || 0
       if (r.requiere_revision_sst) osteomuscular++
-      if (r.tipo_evento === "AT") { diasAT += dias; casosAT++ }
+      // Los DÍAS de AT sí suman todas las filas (la prórroga aumenta días); el CONTEO de
+      // AT NO se cuenta aquí (una misma lesión genera varias filas por prórroga).
+      if (r.tipo_evento === "AT") { diasAT += dias }
       else { diasEG += dias; casosEG++ }
+    }
+    // casosAT = ACCIDENTES REALES = investigaciones (una investigación por AT en
+    // `sst_incidentes`). Así las prórrogas (filas extra en ausentismosst) no inflan el conteo.
+    {
+      const { data: inc } = await supabase.from("sst_incidentes").select("fecha_evento").in("idempresa", clientes)
+      for (const r of inc ?? []) if (enPeriodo(r.fecha_evento)) casosAT++
     }
 
     // Distribución headcount por cargo (top).

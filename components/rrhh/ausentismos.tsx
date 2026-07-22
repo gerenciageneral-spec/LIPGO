@@ -39,6 +39,7 @@ import {
   searchDiagnosticos,
   importAusentismosFromExcel,
   getHeadcountColaboradores,
+  getIncidentesAT,
   type Ausentismo,
   type Diagnostico,
   type HeadcountColaborador,
@@ -117,6 +118,8 @@ export default function Ausentismos() {
   const { toast } = useToast()
 
   const [items, setItems] = useState<Ausentismo[]>([])
+  // AT reales = investigaciones (sst_incidentes): un accidente = una investigación.
+  const [incidentesAT, setIncidentesAT] = useState<{ fecha_evento: string | null; estado: string | null }[]>([])
   const [loading, setLoading] = useState(true)
   const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -148,8 +151,12 @@ export default function Ausentismos() {
   const loadData = async () => {
     setLoading(true)
     try {
-      const data = await getAusentismos(selectedEmpresaId)
+      const [data, inc] = await Promise.all([
+        getAusentismos(selectedEmpresaId),
+        getIncidentesAT(selectedEmpresaId),
+      ])
       setItems(data)
+      setIncidentesAT(inc)
     } finally {
       setLoading(false)
     }
@@ -444,6 +451,22 @@ export default function Ausentismos() {
       )
     })
   }, [items, search, tipoFiltro, soloRevision, anioFiltro, mesFiltro, estadoFiltro])
+
+  // Conteo REAL de Accidentes de Trabajo = investigaciones (sst_incidentes), no las
+  // filas de ausentismo (las prórrogas de un AT son filas extra pero NO son AT nuevos).
+  // Respeta los mismos filtros de año/mes que la tabla.
+  const casosATReal = useMemo(() => {
+    return incidentesAT.filter((r) => {
+      const f = (r.fecha_evento || "").slice(0, 10)
+      if (f.length < 7) return false
+      if (anioFiltro !== "todos" && f.slice(0, 4) !== anioFiltro) return false
+      if (mesFiltro !== "todos") {
+        const m = Number(f.slice(5, 7))
+        if (!(m >= 1 && m <= 12) || MESES[m - 1] !== mesFiltro) return false
+      }
+      return true
+    }).length
+  }, [incidentesAT, anioFiltro, mesFiltro])
 
   const totalRevision = useMemo(
     () => items.filter((i) => i.requiere_revision_sst).length,
@@ -1050,7 +1073,7 @@ export default function Ausentismos() {
         </TabsContent>
 
         <TabsContent value="resumen">
-          <AusentismosResumen items={filtered} />
+          <AusentismosResumen items={filtered} casosAT={casosATReal} />
         </TabsContent>
 
         {/* La hoja de Costos se movió al submódulo "Recobro de Incapacidades"
