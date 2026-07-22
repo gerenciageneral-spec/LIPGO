@@ -94,3 +94,32 @@ export function valoracionFromPct(pct: number): Valoracion {
   if (pct >= 60) return "moderadamente_aceptable"
   return "critico"
 }
+
+// Cálculo OFICIAL Res. 0312 Art. 27 (fuente ÚNICA para todos los tableros: matriz de
+// 60 estándares, auditoría 0312, BSC). Peso total = 100. Por cada ítem:
+//   - sin responder → 0
+//   - "no_cumple"   → 0
+//   - "cumple" / "no_aplica" → suma su peso completo
+// Devuelve el % total y el desglose por ciclo PHVA. Las respuestas deben venir con el
+// override de medición (3.3.1-3.3.6) ya aplicado si corresponde (getMatrizEstandares).
+const CICLOS_PHVA: CicloPHVA[] = ["PLANEAR", "HACER", "VERIFICAR", "ACTUAR"]
+export function computar0312(
+  items: EstandarItem[],
+  respuestas: Pick<Respuesta, "item_id" | "cumple">[],
+): { pct: number; obtenido: number; peso: number; porCiclo: CicloResumen[] } {
+  const rmap = new Map(respuestas.map((r) => [r.item_id, r.cumple]))
+  const puntajeOf = (it: EstandarItem): number => {
+    const c = rmap.get(it.id)
+    if (!c) return 0
+    return c === "no_cumple" ? 0 : it.peso || 0
+  }
+  const porCiclo: CicloResumen[] = CICLOS_PHVA.map((ciclo) => {
+    const its = items.filter((i) => i.ciclo === ciclo)
+    const peso_ciclo = its.reduce((s, i) => s + (i.peso || 0), 0)
+    const obtenido_ciclo = its.reduce((s, i) => s + puntajeOf(i), 0)
+    return { ciclo, peso_ciclo, obtenido_ciclo, pct_ciclo: peso_ciclo > 0 ? (obtenido_ciclo / peso_ciclo) * 100 : 0 }
+  })
+  const peso = items.reduce((s, i) => s + (i.peso || 0), 0)
+  const obtenido = items.reduce((s, i) => s + puntajeOf(i), 0)
+  return { pct: peso > 0 ? (obtenido / peso) * 100 : 0, obtenido, peso, porCiclo }
+}

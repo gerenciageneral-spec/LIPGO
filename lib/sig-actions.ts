@@ -15,6 +15,7 @@
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getResumenISO, type EstadoISO } from "@/lib/iso9001-actions"
 import { getMatrizEstandares } from "@/lib/sst-auditoria-actions"
+import { computar0312 } from "@/lib/sst-types"
 import type {
   SigNorma,
   SigRequisito,
@@ -1059,16 +1060,9 @@ export async function getAvance0312(
 ): Promise<{ success: boolean; pct: number; error?: string }> {
   try {
     const data = await getMatrizEstandares(empresaIdFromClient)
-    const resp = new Map<number, string>()
-    for (const r of data.respuestas) resp.set(r.item_id, r.cumple)
-    let peso = 0
-    let obtenido = 0
-    for (const it of data.items) {
-      peso += it.peso || 0
-      const c = resp.get(it.id)
-      if (c && c !== "no_cumple") obtenido += it.peso || 0
-    }
-    return { success: true, pct: peso > 0 ? Math.round((obtenido / peso) * 100) : 0 }
+    // Cálculo compartido (Art. 27) — misma fuente que la Matriz de 60 y la Auditoría.
+    const { pct } = computar0312(data.items, data.respuestas)
+    return { success: true, pct: Math.round(pct * 10) / 10 }
   } catch (err: any) {
     return { success: false, pct: 0, error: err?.message || "Error desconocido" }
   }
@@ -1606,18 +1600,12 @@ export async function getIndicadoresValores(
     const factPend = await contar("cabeceraoc", (q: any) => filtroFact(q).is("estadofactura", null))
     const lipFacturacion = pct(factTot - factPend, factTot)
 
-    // --- SG-SST 0312: puntaje de la autoevaluación de LIP (una sola, alcance LIP) ---
-    // La 0312 es de LIP (idempresa 100, sede CONSOLIDADA). Se filtra explícito
-    // para que un futuro registro de otro alcance no cambie el valor del BSC; es
-    // el MISMO puntaje_total que muestran la Matriz de 60 Estándares y Auditoría 0312.
-    const { data: aeSST } = await supabase
-      .from("sst_autoevaluaciones")
-      .select("puntaje_total")
-      .eq("idempresa", 100)
-      .order("anio", { ascending: false })
-      .limit(1)
-      .maybeSingle()
-    const sgsst0312 = Number(aeSST?.puntaje_total ?? 0)
+    // --- SG-SST 0312: % EN VIVO (Res. 0312 Art. 27), MISMA fuente que la Matriz de 60
+    // Estándares y la Auditoría 0312. Antes leía el `puntaje_total` denormalizado de
+    // sst_autoevaluaciones, que quedaba desactualizado frente a las respuestas (BSC 86
+    // vs matriz 91.5). Ahora los tres muestran el mismo número. ---
+    const av0312 = await getAvance0312(100)
+    const sgsst0312 = av0312.success ? av0312.pct : 0
 
     // --- NC cerradas a tiempo (SIG · LIP): cerradas dentro de compromiso / total ---
     let ncCerradas = 100

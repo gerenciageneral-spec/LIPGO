@@ -12,6 +12,7 @@ import type {
   MatrizData,
   Respuesta,
 } from "@/lib/sst-types"
+import { computar0312, valoracionFromPct } from "@/lib/sst-types"
 
 // El SG-SST (Resolución 0312) es ÚNICO de LIP (empresa 100). LIP es la única
 // empresa que se certifica; los ID 1-4 son proyectos/clientes donde LIP presta
@@ -195,12 +196,24 @@ export async function guardarRespuesta(input: {
     return { success: false, message: error.message }
   }
 
-  // Recalcular puntaje, PHVA y valoracion via RPC.
-  const { error: rpcError } = await supabase.rpc("sst_recalcular_autoevaluacion", {
-    p_autoeval_id: input.autoevaluacion_id,
-  })
-  if (rpcError) {
-    console.error("[v0] Error recalculando autoevaluacion:", rpcError.message)
+  // Recalcular y PERSISTIR el puntaje_total + valoracion con el cálculo OFICIAL
+  // (Art. 27: cumple y no_aplica suman peso; no_cumple = 0). NO se usa el RPC
+  // `sst_recalcular_autoevaluacion` porque cuenta el `no_aplica` como 0 (bug que
+  // desalineaba la Auditoría 0312 vs la Matriz de 60). Fuente única: computar0312.
+  try {
+    const { data: its } = await supabase.from("sst_estandar_items").select("id, ciclo, peso")
+    const { data: resp } = await supabase
+      .from("sst_autoeval_respuestas")
+      .select("item_id, cumple")
+      .eq("autoevaluacion_id", input.autoevaluacion_id)
+    const { pct } = computar0312((its ?? []) as any, (resp ?? []) as any)
+    const puntaje = Math.round(pct * 10) / 10
+    await supabase
+      .from("sst_autoevaluaciones")
+      .update({ puntaje_total: puntaje, valoracion: valoracionFromPct(pct) })
+      .eq("id", input.autoevaluacion_id)
+  } catch (e: any) {
+    console.error("[v0] Error recalculando autoevaluacion:", e?.message || e)
   }
   return { success: true }
 }
@@ -226,7 +239,15 @@ export async function getAuditoria0312(
   const { autoevaluacion, aniosDisponibles } = await getAutoevaluacion(supabase, empresaId, anio)
   if (!autoevaluacion) return { ...empty, aniosDisponibles }
 
-  const porCiclo = await getPorCiclo(supabase, autoevaluacion.id)
+  // % EN VIVO (Res. 0312 Art. 27), MISMA fuente que la Matriz de 60 Estándares —
+  // usa las respuestas CON el override de medición. Antes se mostraba el
+  // `puntaje_total` denormalizado de `sst_autoevaluaciones`, que quedaba desactualizado
+  // frente a las respuestas (p. ej. auditoría 86 vs matriz 91.5). Ahora ambos coinciden.
+  const matriz = await getMatrizEstandares(empresaIdFromClient, anio)
+  const calc = computar0312(matriz.items, matriz.respuestas)
+  autoevaluacion.puntaje_total = Math.round(calc.pct * 10) / 10
+  autoevaluacion.valoracion = valoracionFromPct(calc.pct)
+  const porCiclo = calc.porCiclo
 
   const { data: estData, error: estError } = await supabase
     .from("v_sst_auditoria_estandar")
