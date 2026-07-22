@@ -59,6 +59,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { getAusentismos, type Ausentismo } from "@/lib/ausentismos-actions"
+import { valorizarIncapacidad } from "@/lib/incapacidad-valor"
 import { actualizarRecobro } from "@/lib/recobros-actions"
 import { ESTADOS_RECOBRO, type EstadoRecobro } from "@/lib/recobros"
 import { AusentismosCostos } from "@/components/rrhh/ausentismos-dashboards"
@@ -67,9 +68,6 @@ import { AusentismosCostos } from "@/components/rrhh/ausentismos-dashboards"
 const num = (v: number | null | undefined) => (typeof v === "number" && !Number.isNaN(v) ? v : 0)
 const fmtCOP = (v: number) =>
   new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(v || 0)
-
-const PCT_EG = 0.6667 // % de incapacidad EG reconocido.
-const DIAS_EMPRESA_EG = 2 // días 1-2 a cargo del empleador (no recobrables).
 
 // Colores de estado (semáforo del recobro).
 const C_RECOBRADO = "#16a34a"
@@ -111,29 +109,24 @@ interface RecobroCalc {
 }
 
 function calcRecobro(a: Ausentismo): RecobroCalc {
-  const dias = num(a.total_dias_incapacidad)
-  const diaVal = num(a.salario_base_dia) || num(a.salario_base) / 30
-  const esAT = a.tipo_evento === "AT"
+  // Valorización compartida (días × valor día; EG 66.67% con días 1-2 a cargo de la
+  // empresa, AT 100% todos los días). getAusentismos completa el valor día por año.
+  const v = valorizarIncapacidad(a)
   const estadoStored = (a.estado_recobro as EstadoRecobro) || "PENDIENTE"
 
-  if (esAT) {
-    const recobrable = num(a.costos_arl) || Math.round(dias * diaVal)
-    const aplica = recobrable > 0
-    const recuperado = num(a.valor_recobrado) || (estadoStored === "RECOBRADO" ? recobrable : 0)
+  if (v.esAT) {
+    const aplica = v.recobrable > 0
+    const recuperado = num(a.valor_recobrado) || (estadoStored === "RECOBRADO" ? v.recobrable : 0)
     return {
-      esAT, entidad: "ARL", dias, diasRecobrables: dias, recobrable, empresa: 0,
+      esAT: true, entidad: "ARL", dias: v.dias, diasRecobrables: v.dias, recobrable: v.recobrable, empresa: 0,
       aplica, estado: aplica ? estadoStored : "NO_APLICA", recuperado: aplica ? recuperado : 0,
     }
   }
 
-  const diasRecobrables = Math.max(dias - DIAS_EMPRESA_EG, 0)
-  const diasEmpresa = Math.min(dias, DIAS_EMPRESA_EG)
-  const recobrable = num(a.costos_eps) || Math.round(diasRecobrables * diaVal * PCT_EG)
-  const empresa = num(a.costos_empresa) || Math.round(diasEmpresa * diaVal * PCT_EG)
-  const aplica = diasRecobrables > 0 && recobrable > 0
-  const recuperado = num(a.valor_recobrado) || (estadoStored === "RECOBRADO" ? recobrable : 0)
+  const aplica = v.diasRecobrables > 0 && v.recobrable > 0
+  const recuperado = num(a.valor_recobrado) || (estadoStored === "RECOBRADO" ? v.recobrable : 0)
   return {
-    esAT, entidad: "EPS", dias, diasRecobrables, recobrable, empresa,
+    esAT: false, entidad: "EPS", dias: v.dias, diasRecobrables: v.diasRecobrables, recobrable: v.recobrable, empresa: v.empresa,
     aplica, estado: aplica ? estadoStored : "NO_APLICA", recuperado: aplica ? recuperado : 0,
   }
 }

@@ -415,16 +415,30 @@ export async function getAusentismos(empresaId?: number | null): Promise<Ausenti
   }
   const rows = (data ?? []) as Ausentismo[]
 
-  // ESTADO VIGENTE del colaborador desde headcount (por identificación). El
-  // estado_colaborador guardado en ausentismosst queda CONGELADO al crear la fila; si
-  // la persona se retira después (novedad de retiro → headcount Inactivo), el módulo
-  // debe reflejar ese retiro. Se sincroniza con el headcount vigente.
+  // ESTADO VIGENTE + VALOR DÍA del colaborador desde headcount (por identificación).
+  //  - estado_colaborador queda CONGELADO al crear la fila; si la persona se retira
+  //    después (novedad de retiro → headcount Inactivo), el módulo debe reflejar el retiro.
+  //  - salario_base / salario_base_dia se completan con el salario del head count (piso
+  //    SMLV del año) para VALORIZAR cada incapacidad = días × valor día. Es el mismo
+  //    valor día que usa el cuadro de nómina (parafiscales/prestaciones): salario / 30.
   try {
+    // SMLV por año (para el piso del salario base). El SMLV más reciente sirve de default.
+    const smlvPorAnio = new Map<string, number>()
+    let smlvDefault = 0
+    const { data: pars } = await supabase.from("parametros_legales_anio").select("anio, smlv")
+    for (const p of pars ?? []) {
+      const s = Number(p.smlv) || 0
+      smlvPorAnio.set(String(p.anio), s)
+      if (s > smlvDefault) smlvDefault = s
+    }
+    if (!smlvDefault) smlvDefault = 1423500 // fallback 2026
+
     const estadoHc = new Map<string, string>()
+    const salarioHc = new Map<string, number>()
     for (let off = 0; ; off += 1000) {
       const { data: hc } = await supabase
         .from("headcount")
-        .select("identificacion, estado, fecha_retiro")
+        .select("identificacion, estado, fecha_retiro, salario")
         .range(off, off + 999)
       if (!hc || hc.length === 0) break
       for (const h of hc) {
@@ -433,15 +447,34 @@ export async function getAusentismos(empresaId?: number | null): Promise<Ausenti
         const est = String(h.estado ?? "").toUpperCase()
         const retirado = est.includes("INACTIV") || est.includes("RETIR") || !!h.fecha_retiro
         estadoHc.set(k, retirado ? "RETIRADO" : "ACTIVO")
+        const sal = Number(h.salario) || 0
+        if (sal > 0) salarioHc.set(k, sal)
       }
       if (hc.length < 1000) break
     }
+    const smlvActual = smlvDefault // SMLV vigente (año más reciente) = mínimo de hoy
     for (const r of rows) {
       const k = normCedula(r.cedula)
-      if (k && estadoHc.has(k)) r.estado_colaborador = estadoHc.get(k)!
+      if (!k) continue
+      if (estadoHc.has(k)) r.estado_colaborador = estadoHc.get(k)!
+      // Valor día por AÑO de la incapacidad. El head count solo guarda el salario
+      // VIGENTE, así que:
+      //   - Quien gana el mínimo (salario ≤ SMLV de hoy) se valoriza con el SMLV del
+      //     AÑO de la incapacidad (2025 usa SMLV 2025; 2026 usa SMLV 2026).
+      //   - Quien gana por encima del mínimo usa su salario (piso en el SMLV del año);
+      //     no hay histórico de salario, se toma el vigente como mejor aproximación.
+      const anioFila = String(r.fecha_inicial ?? "").slice(0, 4)
+      const smlvAnio = smlvPorAnio.get(anioFila) || smlvDefault
+      const salActual = salarioHc.get(k) || 0
+      const salarioBase = salActual > smlvActual ? Math.max(salActual, smlvAnio) : smlvAnio
+      if (salarioBase > 0) {
+        r.salario_base = salarioBase
+        // Valor día = salario / 30 (mismo divisor del cuadro de nómina).
+        r.salario_base_dia = Math.round(salarioBase / 30)
+      }
     }
   } catch (e) {
-    console.error("[v0] Error sincronizando estado con headcount:", e)
+    console.error("[v0] Error sincronizando estado/valor día con headcount:", e)
   }
 
   return rows

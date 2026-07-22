@@ -25,6 +25,7 @@ import {
   HeartPulse,
 } from "lucide-react"
 import type { Ausentismo } from "@/lib/ausentismos-actions"
+import { valorizarIncapacidad, costoIncapacidad } from "@/lib/incapacidad-valor"
 
 // Paleta acotada (azul = EG, naranja = AT, teal, rojo = revisión SST, slate).
 const COLOR_EG = "#2563eb"
@@ -310,27 +311,26 @@ export function AusentismosResumen({
 /* ------------------------------------------------------------------ */
 export function AusentismosCostos({ items }: { items: Ausentismo[] }) {
   const data = useMemo(() => {
-    const costoEmpresa = items.reduce((s, a) => s + num(a.costos_empresa), 0)
-    // EPS/ARL: lo que asumen las entidades (EPS en EG + ARL en AT).
-    const costoEps = items.reduce((s, a) => s + num(a.costos_eps) + num(a.costos_arl), 0)
-    const costoTotal = items.reduce(
-      (s, a) => s + (num(a.total_salario_pagado) || num(a.costos_empresa) + num(a.costos_eps) + num(a.costos_arl)),
-      0,
-    )
+    // Valorización compartida con el módulo de Recobro: días × valor día (EG 66.67%
+    // con días 1-2 a cargo de la empresa; AT 100% a la ARL). Consistente en todo GH/SST.
+    const val = (a: Ausentismo) => valorizarIncapacidad(a)
+    const costoEmpresa = items.reduce((s, a) => s + val(a).empresa, 0)
+    // EPS/ARL: lo que asumen las entidades (EG día 3+ a la EPS + AT 100% a la ARL).
+    const costoEps = items.reduce((s, a) => s + val(a).recobrable, 0)
+    const costoDe = (a: Ausentismo) => costoIncapacidad(a)
+    const costoTotal = items.reduce((s, a) => s + costoDe(a), 0)
     const totalDias = items.reduce((s, a) => s + num(a.total_dias_incapacidad), 0)
     const costoPorDia = totalDias ? costoTotal / totalDias : 0
     const costoPorCaso = items.length ? costoTotal / items.length : 0
-
-    const costoDe = (a: Ausentismo) =>
-      num(a.total_salario_pagado) || num(a.costos_empresa) + num(a.costos_eps) + num(a.costos_arl)
 
     // Costo empresa vs EPS/ARL por mes (stacked)
     const mesMap = new Map<string, { empresa: number; eps: number }>()
     for (const a of items) {
       const key = a.mes?.trim() || "Sin mes"
       const cur = mesMap.get(key) || { empresa: 0, eps: 0 }
-      cur.empresa += num(a.costos_empresa)
-      cur.eps += num(a.costos_eps) + num(a.costos_arl)
+      const v = val(a)
+      cur.empresa += v.empresa
+      cur.eps += v.recobrable
       mesMap.set(key, cur)
     }
     const porMes = Array.from(mesMap.entries())
