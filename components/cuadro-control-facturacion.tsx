@@ -330,7 +330,7 @@ export function CuadroControlFacturacion() {
       return
     }
     setPref(r.data)
-    setSelKeys(new Set(r.data.resumen.map((x) => keyRes(x.owner, x.servicio)))) // todo seleccionado
+    setSelKeys(new Set(r.data.resumen.map((x) => keyRes(x.owner, x.operacion)))) // todo seleccionado
   }
 
   const toggleSel = (k: string) =>
@@ -344,7 +344,7 @@ export function CuadroControlFacturacion() {
   // Desglosa POR FACTURAR (verde) vs YA FACTURADO (rojo, no recobrar) para no cobrar doble.
   const prefSel = useMemo(() => {
     if (!pref) return null
-    const rows = pref.resumen.filter((x) => selKeys.has(keyRes(x.owner, x.servicio)))
+    const rows = pref.resumen.filter((x) => selKeys.has(keyRes(x.owner, x.operacion)))
     type Grupo = {
       owner: string
       items: typeof rows
@@ -380,7 +380,7 @@ export function CuadroControlFacturacion() {
       totalPorFacturar,
       totalFacturado,
       totalEnProceso,
-      keys: new Set(rows.map((r) => keyRes(r.owner, r.servicio))),
+      keys: new Set(rows.map((r) => keyRes(r.owner, r.operacion))),
     }
   }, [pref, selKeys])
 
@@ -389,7 +389,7 @@ export function CuadroControlFacturacion() {
     if (!pref || !prefSel) return []
     return pref.origen
       // solo lo seleccionado y POR FACTURAR (sin factura Siigo) — igual que lo que se factura
-      .filter((l) => prefSel.keys.has(keyRes(l.owner, l.servicio)) && l.categoria !== "facturado")
+      .filter((l) => prefSel.keys.has(keyRes(l.owner, l.tipooperacion || "(sin operación)")) && l.categoria !== "facturado")
       .map((l) => ({
         owner: l.owner,
         operacion: l.tipooperacion || "",
@@ -421,7 +421,7 @@ export function CuadroControlFacturacion() {
     ]
     for (const g of prefSel.grupos) {
       for (const it of g.items) {
-        aoa.push([g.owner, it.servicio, Number(it.toneladas.toFixed(3)), it.tarifa, Math.round(it.valor)])
+        aoa.push([g.owner, it.operacion, Number(it.toneladas.toFixed(3)), it.tarifa, Math.round(it.valor)])
       }
       aoa.push(["", `Subtotal ${g.owner}`, Number(g.ton.toFixed(3)), "", Math.round(g.total)])
       aoa.push([])
@@ -431,7 +431,7 @@ export function CuadroControlFacturacion() {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), "PREFACTURA")
     // TABLA ORIGEN de lo SELECCIONADO (soporte).
     const origen = pref.origen
-      .filter((l) => prefSel.keys.has(keyRes(l.owner, l.servicio)))
+      .filter((l) => prefSel.keys.has(keyRes(l.owner, l.tipooperacion || "(sin operación)")))
       .map((l) => ({
         "Fecha Orden": l.fechaorden ?? "",
         "Fecha Cargue": l.fechacargue ?? "",
@@ -479,7 +479,7 @@ export function CuadroControlFacturacion() {
           .filter((it) => it.valorPorFacturar > 0)
           .map((it) => ({
             owner: g.owner,
-            servicio: it.servicio,
+            servicio: it.operacion,
             toneladas: Number(it.tonPorFacturar.toFixed(3)),
             tarifa: it.tarifa,
             total: Math.round(it.valorPorFacturar),
@@ -539,8 +539,8 @@ export function CuadroControlFacturacion() {
     })
 
   // Órdenes (líneas origen) detrás de un owner×servicio, para navegar el detalle.
-  const detalleDe = (owner: string, servicio: string) =>
-    (pref?.origen || []).filter((l) => l.owner === owner && l.servicio === servicio)
+  const detalleDe = (owner: string, operacion: string) =>
+    (pref?.origen || []).filter((l) => l.owner === owner && (l.tipooperacion || "(sin operación)") === operacion)
 
   const proyectoNombre = empresas.find((e) => e.id === empresaId)?.nombre || `Empresa ${empresaId}`
 
@@ -896,7 +896,7 @@ export function CuadroControlFacturacion() {
                     <div>
                       <div className="text-base font-bold">Prefactura</div>
                       <div className="text-xs text-muted-foreground">
-                        Se arma con las <strong>órdenes procesadas del período</strong> valoradas por servicio. Elige qué
+                        Se arma con las <strong>órdenes procesadas del período</strong>, por <strong>owner y tipo de operación</strong>, con su tarifa. Elige qué
                         incluir, revísala abajo, <strong>guárdala</strong> y <strong>apruébala</strong> (luego se enlaza a Siigo).
                       </div>
                     </div>
@@ -923,7 +923,7 @@ export function CuadroControlFacturacion() {
                           ¿Qué facturar? ({selKeys.size}/{pref.resumen.length} conceptos)
                         </span>
                         <div className="flex gap-3 text-xs">
-                          <button className="text-primary hover:underline" onClick={() => setSelKeys(new Set(pref.resumen.map((x) => keyRes(x.owner, x.servicio))))}>
+                          <button className="text-primary hover:underline" onClick={() => setSelKeys(new Set(pref.resumen.map((x) => keyRes(x.owner, x.operacion))))}>
                             Todo
                           </button>
                           <button className="text-primary hover:underline" onClick={() => setSelKeys(new Set())}>
@@ -933,14 +933,14 @@ export function CuadroControlFacturacion() {
                       </div>
                       <div className="grid gap-x-6 gap-y-1 p-3 sm:grid-cols-2 lg:grid-cols-3">
                         {pref.resumen.map((x) => {
-                          const k = keyRes(x.owner, x.servicio)
+                          const k = keyRes(x.owner, x.operacion)
                           const soloFacturado = x.valorPorFacturar === 0 && x.valorFacturado > 0
                           return (
                             <label key={k} className={`flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-xs hover:bg-muted/50 ${selKeys.has(k) ? "" : "opacity-50"}`}>
                               <input type="checkbox" className="h-3.5 w-3.5 accent-primary" checked={selKeys.has(k)} onChange={() => toggleSel(k)} />
                               <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${soloFacturado ? "bg-red-500" : x.valorFacturado > 0 ? "bg-amber-400" : "bg-emerald-500"}`} />
                               <span className="flex-1 truncate">
-                                <span className="font-medium">{x.owner}</span> · {x.servicio}
+                                <span className="font-medium">{x.owner}</span> · {x.operacion}
                                 {soloFacturado && <span className="ml-1 text-[10px] text-red-500">(ya facturado)</span>}
                               </span>
                               <span className="tabular-nums text-emerald-700">{money(x.valorPorFacturar)}</span>
@@ -1023,7 +1023,7 @@ export function CuadroControlFacturacion() {
                             <table className="w-full text-xs">
                               <thead>
                                 <tr className="border-b bg-muted/40 text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-                                  <th className="py-1.5 pl-2 font-medium">Servicio</th>
+                                  <th className="py-1.5 pl-2 font-medium">Operación</th>
                                   <th className="py-1.5 text-right font-medium">Cantidad (t)</th>
                                   <th className="py-1.5 text-right font-medium">Tarifa</th>
                                   <th className="py-1.5 text-right font-medium">Por facturar</th>
@@ -1033,9 +1033,9 @@ export function CuadroControlFacturacion() {
                               </thead>
                               <tbody>
                                 {g.items.map((it) => {
-                                  const k = keyRes(it.owner, it.servicio)
+                                  const k = keyRes(it.owner, it.operacion)
                                   const abierto = expand.has(k)
-                                  const det = abierto ? detalleDe(it.owner, it.servicio) : []
+                                  const det = abierto ? detalleDe(it.owner, it.operacion) : []
                                   return (
                                     <Fragment key={k}>
                                       <tr
@@ -1045,7 +1045,7 @@ export function CuadroControlFacturacion() {
                                         <td className="py-1.5 pl-2">
                                           <span className="inline-flex items-center gap-1">
                                             <ChevronRight className={`h-3 w-3 text-muted-foreground transition-transform ${abierto ? "rotate-90" : ""}`} />
-                                            {it.servicio}
+                                            {it.operacion}
                                           </span>
                                         </td>
                                         <td className="py-1.5 text-right tabular-nums">{ton(it.toneladas)}</td>

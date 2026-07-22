@@ -226,10 +226,10 @@ export interface PrefacturaLinea {
 }
 export interface PrefacturaResumen {
   owner: string
-  servicio: string
+  operacion: string // TIPO DE OPERACIÓN (Cargue / Descargue / Distribucion)
   toneladas: number
-  tarifa: number
-  valor: number // toneladas × tarifa del servicio (todo)
+  tarifa: number // tarifa efectiva del grupo (valor/ton), refleja tarifas por owner
+  valor: number // suma del valor por línea (tarifa real por owner/operación)
   // Desglose por estado de factura (para el semáforo y no facturar doble):
   tonPorFacturar: number
   valorPorFacturar: number // solo lo NO gestionado (verde)
@@ -471,11 +471,12 @@ export async function getPrefactura(
     const map = new Map<string, PrefacturaResumen>()
     let totalToneladas = 0
     for (const l of origen) {
-      const k = `${l.owner}|||${l.servicio}`
+      const op = l.tipooperacion || "(sin operación)"
+      const k = `${l.owner}|||${op}`
       const r =
         map.get(k) ||
         {
-          owner: l.owner, servicio: l.servicio, toneladas: 0, tarifa: l.tarifaServicio, valor: 0,
+          owner: l.owner, operacion: op, toneladas: 0, tarifa: l.tarifaServicio, valor: 0,
           tonPorFacturar: 0, valorPorFacturar: 0, tonEnProceso: 0, valorEnProceso: 0,
           tonFacturado: 0, valorFacturado: 0,
         }
@@ -503,7 +504,7 @@ export async function getPrefactura(
       totalValor += r.valor
     }
     const resumen = Array.from(map.values()).sort(
-      (a, b) => a.owner.localeCompare(b.owner) || a.servicio.localeCompare(b.servicio),
+      (a, b) => a.owner.localeCompare(b.owner) || a.operacion.localeCompare(b.operacion),
     )
 
     return { success: true, data: { origen, resumen, totalValor, totalToneladas } }
