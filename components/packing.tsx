@@ -601,7 +601,14 @@ export function Packing() {
                           </Button>
                           <Button
                             onClick={() => handleAssignPersonnel(order)}
-                            disabled={!order.iniciocargue || !!order.auxiliares}
+                            // Una DISTRIBUCIÓN marcada "no facturar" NO lleva auxiliares
+                            // (si no se factura, no se paga entrega) → se BLOQUEA asignar
+                            // personal. La orden se cierra igual con "Cargar Fotos".
+                            disabled={
+                              !order.iniciocargue ||
+                              !!order.auxiliares ||
+                              (order.tipooperacion === "Distribucion" && order.facturar === false)
+                            }
                             size="sm"
                             variant="secondary"
                             className="h-7 text-[10px] px-2"
@@ -611,7 +618,11 @@ export function Packing() {
                           </Button>
                           <Button
                             onClick={() => handleUploadPhotos(order)}
-                            disabled={!order.auxiliares}
+                            // Cierre por "Cargar Fotos" (escribe fincargue). Normalmente
+                            // requiere personal asignado, PERO una DISTRIBUCIÓN marcada
+                            // "no facturar" no lleva auxiliares (no se paga entrega), así
+                            // que se puede cerrar sin asignar personal.
+                            disabled={!order.auxiliares && !(order.tipooperacion === "Distribucion" && order.facturar === false)}
                             size="sm"
                             variant="outline"
                             className="h-7 text-[10px] px-2"
