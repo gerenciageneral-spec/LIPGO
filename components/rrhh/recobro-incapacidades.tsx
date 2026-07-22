@@ -11,7 +11,7 @@
 //     no genera recobro.
 //   * AT (ARL): la ARL reconoce el 100% desde el día 1 -> RECOBRABLE total.
 //   Valor recobrable = costos_eps (EG día 3+) + costos_arl (AT 100%); si no hay
-//   costo cargado se calcula con días × salario/día (× 66.67% en EG).
+//   costo cargado se calcula con días × salario/día (EG al 100%).
 // Evidencia de gestión (candados de ciclo):
 //   * RADICADO requiere adjuntar el CORREO enviado a la EPS/ARL.
 //   * RECOBRADO (cierre) requiere adjuntar el COMPROBANTE DE PAGO.
@@ -109,7 +109,7 @@ interface RecobroCalc {
 }
 
 function calcRecobro(a: Ausentismo): RecobroCalc {
-  // Valorización compartida (días × valor día; EG 66.67% con días 1-2 a cargo de la
+  // Valorización compartida (días × valor día; EG al 100% con días 1-2 a cargo de la
   // empresa, AT 100% todos los días). getAusentismos completa el valor día por año.
   const v = valorizarIncapacidad(a)
   const estadoStored = (a.estado_recobro as EstadoRecobro) || "PENDIENTE"

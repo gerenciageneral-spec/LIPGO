@@ -307,7 +307,6 @@ export async function generarBorradoresAusentismoDesdeControl(
     const { data: par } = await supabase.from("parametros_legales_anio").select("*").eq("anio", Number(anio)).maybeSingle()
     const smlv = Number(par?.smlv) || 1423500
     const diasEmpleador = Number(par?.dias_cargo_empleador ?? 2)
-    const pct = Number(par?.pct_pago_incapacidad ?? 66.67) / 100
 
     // Incapacidades del control diario (año + mes opcional).
     const rows: any[] = []
@@ -354,13 +353,14 @@ export async function generarBorradoresAusentismoDesdeControl(
       const esAT = String(ep.codigo).toLowerCase().includes("profesional")
       // Costo sugerido con el SMLV del año. Base salarial = salario real del
       // colaborador (headcount), con piso en el SMLV. EG: días 1-2 a cargo del
-      // empleador y el resto a cargo de la EPS, al % de ley. AT: lo asume la ARL.
+      // empleador y el resto a cargo de la EPS, ambos al 100% (LIP paga la EG al 100%
+      // y la EPS la reconoce al 100%). AT: lo asume la ARL al 100%.
       const salarioBase = Math.max(salarioById[ep.id] || 0, smlv)
       const salarioDia = Math.round(salarioBase / 30)
       const diasEmp = esAT ? 0 : Math.min(ep.dias, diasEmpleador)
       const diasEps = esAT ? 0 : Math.max(0, ep.dias - diasEmpleador)
-      const costosEmpresa = Math.round(diasEmp * salarioDia * pct)
-      const costosEps = Math.round(diasEps * salarioDia * pct)
+      const costosEmpresa = Math.round(diasEmp * salarioDia)
+      const costosEps = Math.round(diasEps * salarioDia)
       // AT: a cargo de la ARL al 100% del salario (para el análisis SST de costos).
       const costosArl = esAT ? Math.round(ep.dias * salarioDia) : 0
       return {

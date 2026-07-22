@@ -311,7 +311,7 @@ export function AusentismosResumen({
 /* ------------------------------------------------------------------ */
 export function AusentismosCostos({ items }: { items: Ausentismo[] }) {
   const data = useMemo(() => {
-    // Valorización compartida con el módulo de Recobro: días × valor día (EG 66.67%
+    // Valorización compartida con el módulo de Recobro: días × valor día (EG al 100%
     // con días 1-2 a cargo de la empresa; AT 100% a la ARL). Consistente en todo GH/SST.
     const val = (a: Ausentismo) => valorizarIncapacidad(a)
     const costoEmpresa = items.reduce((s, a) => s + val(a).empresa, 0)
