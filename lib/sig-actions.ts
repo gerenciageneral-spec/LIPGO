@@ -1069,6 +1069,135 @@ export async function getAvance0312(
 }
 
 // ---------------------------------------------------------------------------
+// EVALUACIÓN DE DESEMPEÑO POR ÁREA (despliegue del BSC a nivel LIP).
+// Cada indicador pesa dentro de su área (Σ = 100). La nota del área = Σ(cumplimiento ×
+// peso) → evalúa a la cabeza de área. Es el despliegue ISO 9001 6.2.1 de los objetivos.
+// La BSC gerencial/ eficacia del SIG siguen siendo GLOBALES (LIP 100), no por proyecto.
+// ---------------------------------------------------------------------------
+export interface IndicadorEval {
+  codigo: string
+  nombre: string
+  perspectiva: string | null
+  meta: number | null
+  sentido: string | null
+  valor: number | null
+  base: string | null
+  peso: number
+  cumplimiento: number | null // 0-100 (topado en 100); null = informativo (sin meta/valor)
+  aporte: number // cumplimiento × peso / 100 (puntos que aporta a la nota del área)
+}
+export interface AreaEval {
+  area: string
+  responsable: string | null
+  nota: number // 0-100, ponderada por los pesos de los indicadores con meta
+  pesoTotal: number
+  indicadores: IndicadorEval[]
+}
+
+// Cumplimiento 0-100 de un indicador según su meta y sentido (topado en 100%).
+function cumplimientoIndicador(valor: number | null, meta: number | null, sentido: string | null): number | null {
+  if (valor == null || meta == null) return null
+  const v = Number(valor), m = Number(meta)
+  if (Number.isNaN(v) || Number.isNaN(m)) return null
+  if (sentido === "menor_mejor") {
+    if (m === 0) return v <= 0 ? 100 : 0 // meta cero (ej. 0 accidentes): se cumple solo en 0
+    return v <= m ? 100 : Math.max(0, (m / v) * 100)
+  }
+  // mayor_mejor (default)
+  if (m === 0) return 100
+  return Math.min(100, (v / m) * 100)
+}
+
+export async function getEvaluacionAreas(): Promise<{ success: boolean; areas: AreaEval[]; global: number; error?: string }> {
+  try {
+    const supabase: any = await getSupabaseAdmin()
+    // Catálogo ÚNICO de LIP (100). La evaluación es GLOBAL, no por proyecto.
+    const baseSel = "codigo,nombre,area,responsable,meta,sentido,calculo_auto,valor_manual,perspectiva,orden"
+    const q = (sel: string) =>
+      supabase.from("sig_indicadores").select(sel).eq("idempresa", 100).eq("activo", true)
+        .order("area", { ascending: true }).order("orden", { ascending: true })
+    // Se intenta leer la columna `peso`; si aún no existe (falta correr el SQL), se cae a
+    // pesos iguales calculados en memoria (el módulo funciona igual).
+    let res = await q(baseSel + ",peso")
+    if (res.error && /peso/i.test(res.error.message || "")) res = await q(baseSel)
+    if (res.error) return { success: false, areas: [], global: 0, error: res.error.message }
+    const inds: any[] = res.data ?? []
+
+    // Valores REALES en vivo (misma fuente que la BSC), a nivel LIP global.
+    const vres = await getIndicadoresValores(100)
+    const valores: Record<string, any> = vres.success ? vres.valores : {}
+
+    const porArea = new Map<string, AreaEval>()
+    for (const it of inds ?? []) {
+      const area = it.area || "(sin área)"
+      const liveVal = it.calculo_auto ? valores[it.calculo_auto]?.valor ?? null : null
+      const valor = liveVal != null ? Number(liveVal) : it.valor_manual != null ? Number(it.valor_manual) : null
+      const base = it.calculo_auto ? valores[it.calculo_auto]?.base ?? null : null
+      const peso = Number(it.peso) || 0
+      const cumplimiento = cumplimientoIndicador(valor, it.meta, it.sentido)
+      const aporte = cumplimiento != null ? (cumplimiento * peso) / 100 : 0
+      const ind: IndicadorEval = {
+        codigo: it.codigo, nombre: it.nombre, perspectiva: it.perspectiva, meta: it.meta, sentido: it.sentido,
+        valor, base, peso, cumplimiento, aporte,
+      }
+      if (!porArea.has(area)) porArea.set(area, { area, responsable: it.responsable ?? null, nota: 0, pesoTotal: 0, indicadores: [] })
+      const a = porArea.get(area)!
+      a.indicadores.push(ind)
+      if (!a.responsable && it.responsable) a.responsable = it.responsable
+    }
+
+    // Nota por área = Σ(cumplimiento × peso) / Σ(peso de indicadores medibles).
+    const areas: AreaEval[] = []
+    for (const a of porArea.values()) {
+      const conMeta = a.indicadores.filter((i) => i.cumplimiento != null)
+      // FALLBACK: si el área aún no tiene pesos configurados (suman 0 o falta el SQL),
+      // se reparte 100% en partes iguales entre los indicadores medibles (en memoria).
+      if (conMeta.length > 0 && conMeta.reduce((s, i) => s + i.peso, 0) <= 0) {
+        const w = Math.round((100 / conMeta.length) * 100) / 100
+        conMeta.forEach((i) => { i.peso = w })
+      }
+      const medibles = a.indicadores.filter((i) => i.cumplimiento != null && i.peso > 0)
+      const pesoTotal = medibles.reduce((s, i) => s + i.peso, 0)
+      medibles.forEach((i) => { i.aporte = ((i.cumplimiento as number) * i.peso) / 100 })
+      const nota = pesoTotal > 0 ? medibles.reduce((s, i) => s + (i.cumplimiento as number) * i.peso, 0) / pesoTotal : 0
+      a.pesoTotal = Math.round(pesoTotal * 100) / 100
+      a.nota = Math.round(nota * 10) / 10
+      areas.push(a)
+    }
+    areas.sort((x, y) => x.area.localeCompare(y.area))
+    // Global LIP = promedio de las notas de las áreas con indicadores medibles.
+    const conNota = areas.filter((a) => a.pesoTotal > 0)
+    const global = conNota.length ? Math.round((conNota.reduce((s, a) => s + a.nota, 0) / conNota.length) * 10) / 10 : 0
+    return { success: true, areas, global }
+  } catch (err: any) {
+    return { success: false, areas: [], global: 0, error: err?.message || "Error desconocido" }
+  }
+}
+
+// Guarda los pesos de los indicadores de un área. Valida que sumen ~100 (tolerancia 0.5).
+export async function guardarPesosArea(
+  area: string,
+  pesos: { codigo: string; peso: number }[],
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const suma = pesos.reduce((s, p) => s + (Number(p.peso) || 0), 0)
+    if (Math.abs(suma - 100) > 0.5) return { success: false, error: `Los pesos del área deben sumar 100% (actual: ${Math.round(suma * 10) / 10}%).` }
+    const supabase: any = await getSupabaseAdmin()
+    for (const p of pesos) {
+      const { error } = await supabase
+        .from("sig_indicadores")
+        .update({ peso: Number(p.peso) || 0 })
+        .eq("idempresa", 100)
+        .eq("codigo", p.codigo)
+      if (error) return { success: false, error: error.message }
+    }
+    return { success: true }
+  } catch (err: any) {
+    return { success: false, error: err?.message || "Error desconocido" }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Mapa de Procesos (sig_procesos)
 // ---------------------------------------------------------------------------
 

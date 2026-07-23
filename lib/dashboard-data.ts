@@ -349,6 +349,7 @@ export const groups: Group[] = [
           { name: "Objetivos y Metas SIG", icon: ClipboardList, label: "Objetivos y Metas (6.2)" },
           { name: "No Conformidades SIG", icon: ClipboardList, label: "No Conformidades (10.2)" },
           { name: "Indicadores SIG", icon: Gauge, label: "BSC · Cuadro de Mando Integral" },
+          { name: "Evaluación por Área", icon: Gauge, label: "Evaluación de Desempeño por Área" },
           { name: "Mapa de Interacción del Proceso", icon: ClipboardCheck, label: "Mapa de Interacción del Proceso (LIPgo)" },
           { name: "Satisfacción y PQRSF", icon: ClipboardList, label: "Satisfacción y PQRSF (9.1.2)" },
         ],

@@ -118,6 +118,7 @@ import { AspectosAmbientales } from "@/components/sst/aspectos-ambientales"
 import { ObjetivosSIG } from "@/components/sst/objetivos-sig"
 import { NoConformidadesSIG } from "@/components/sst/no-conformidades-sig"
 import { IndicadoresSIG } from "@/components/sst/indicadores-sig"
+import { EvaluacionAreas } from "@/components/sst/evaluacion-areas"
 import { PanelOperacionLIP } from "@/components/sst/panel-operacion-lip"
 import { MapaInteraccionProceso } from "@/components/sst/mapa-interaccion-proceso"
 import { PanelInventarioLIP } from "@/components/sst/panel-inventario-lip"
@@ -865,6 +866,10 @@ export function MainContent({
           ) : selectedModule === "Indicadores SIG" ? (
             <PermissionGuard moduleName="Indicadores SIG">
               <IndicadoresSIG />
+            </PermissionGuard>
+          ) : selectedModule === "Evaluación por Área" ? (
+            <PermissionGuard moduleName="Evaluación por Área">
+              <EvaluacionAreas />
             </PermissionGuard>
           ) : selectedModule === "Panel LIP Operación" ? (
             <PermissionGuard moduleName="Panel LIP Operación">

@@ -370,6 +370,7 @@ export const MODULE_PERMISSION_MAP: Record<string, keyof UserPermissions> = {
   "Objetivos y Metas SIG": "sig_matriz",
   "No Conformidades SIG": "sig_matriz",
   "Indicadores SIG": "sig_matriz",
+  "Evaluación por Área": "sig_matriz",
   "Panel LIP Operación": "sig_matriz",
   "Mapa de Interacción del Proceso": "sig_matriz",
   "Satisfacción y PQRSF": "satisfaccion_pqrsf",
