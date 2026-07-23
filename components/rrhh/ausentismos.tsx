@@ -415,7 +415,15 @@ export default function Ausentismos() {
   // Mes de un registro: primero el campo de texto "mes"; si no, se deriva de la
   // fecha inicial (1 = Enero ... 12 = Diciembre).
   const mesDe = (a: Ausentismo): string => {
-    if (a.mes && a.mes.trim()) return a.mes.trim()
+    // El campo de texto "mes" viene del Excel con casing inconsistente
+    // ("ENERO" vs "Enero"); se NORMALIZA contra MESES para que el filtro coincida
+    // (antes "ENERO" !== "Enero" hacía que al filtrar por Enero no saliera nada).
+    if (a.mes && a.mes.trim()) {
+      const t = a.mes.trim().toLowerCase()
+      const canon = MESES.find((mm) => mm.toLowerCase() === t)
+      if (canon) return canon
+    }
+    // Respaldo confiable: derivar el mes de la fecha inicial (ISO YYYY-MM-DD).
     if (a.fecha_inicial) {
       const m = Number(a.fecha_inicial.slice(5, 7))
       if (m >= 1 && m <= 12) return MESES[m - 1]
@@ -451,6 +459,23 @@ export default function Ausentismos() {
       )
     })
   }, [items, search, tipoFiltro, soloRevision, anioFiltro, mesFiltro, estadoFiltro])
+
+  // La tabla se organiza por AÑO y luego por MES, de MENOR a MAYOR (ascendente).
+  const sorted = useMemo(() => {
+    const idxMes = (a: Ausentismo): number => {
+      const i = MESES.indexOf(mesDe(a))
+      return i >= 0 ? i + 1 : 99 // sin mes reconocible → al final
+    }
+    return [...filtered].sort((a, b) => {
+      const ya = anioDe(a) || "9999" // sin año → al final
+      const yb = anioDe(b) || "9999"
+      if (ya !== yb) return ya.localeCompare(yb) // año ascendente
+      const ma = idxMes(a)
+      const mb = idxMes(b)
+      if (ma !== mb) return ma - mb // mes ascendente
+      return (a.fecha_inicial || "").localeCompare(b.fecha_inicial || "") // desempate por fecha
+    })
+  }, [filtered])
 
   // Conteo REAL de Accidentes de Trabajo = investigaciones (sst_incidentes), no las
   // filas de ausentismo (las prórrogas de un AT son filas extra pero NO son AT nuevos).
@@ -1004,14 +1029,14 @@ export default function Ausentismos() {
                   <Loader2 className="mx-auto h-5 w-5 animate-spin" />
                 </TableCell>
               </TableRow>
-            ) : filtered.length === 0 ? (
+            ) : sorted.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
                   No hay ausentismos registrados.
                 </TableCell>
               </TableRow>
             ) : (
-              filtered.map((a) => (
+              sorted.map((a) => (
                 <TableRow
                   key={a.id}
                   className={a.requiere_revision_sst ? "bg-red-50 hover:bg-red-100" : ""}
