@@ -477,21 +477,15 @@ export default function Ausentismos() {
     })
   }, [filtered])
 
-  // Conteo REAL de Accidentes de Trabajo = investigaciones (sst_incidentes), no las
-  // filas de ausentismo (las prórrogas de un AT son filas extra pero NO son AT nuevos).
-  // Respeta los mismos filtros de año/mes que la tabla.
-  const casosATReal = useMemo(() => {
-    return incidentesAT.filter((r) => {
-      const f = (r.fecha_evento || "").slice(0, 10)
-      if (f.length < 7) return false
-      if (anioFiltro !== "todos" && f.slice(0, 4) !== anioFiltro) return false
-      if (mesFiltro !== "todos") {
-        const m = Number(f.slice(5, 7))
-        if (!(m >= 1 && m <= 12) || MESES[m - 1] !== mesFiltro) return false
-      }
-      return true
-    }).length
-  }, [incidentesAT, anioFiltro, mesFiltro])
+  // Conteo de Accidentes de Trabajo = EVENTOS NUEVOS por trabajador. Cada AT nuevo
+  // suma UNA vez; las PRÓRROGAS (continuaciones del mismo AT del mismo trabajador,
+  // marcadas con `prorroga` > 0, `dias_incapacidad` = 0) NO suman. Un trabajador
+  // puede tener varios AT nuevos y cada uno suma. Se cuenta sobre las filas YA
+  // filtradas (`filtered`), así respeta el filtro de mes/año/etc. y suma la tabla.
+  const casosATReal = useMemo(
+    () => filtered.filter((a) => a.tipo_evento === "AT" && (Number(a.prorroga) || 0) === 0).length,
+    [filtered],
+  )
 
   const totalRevision = useMemo(
     () => items.filter((i) => i.requiere_revision_sst).length,
