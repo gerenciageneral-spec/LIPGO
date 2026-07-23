@@ -4,6 +4,7 @@ import { Geist, Geist_Mono } from "next/font/google"
 import { Analytics } from "@vercel/analytics/next"
 import Script from "next/script"
 import { AuthProvider } from "@/components/auth-provider"
+import { SubmoduloFiltroProvider } from "@/components/submodulo-filtro-context"
 import GlobalLocationScheduler from "@/components/global-location-scheduler"
 import { PwaInstallPrompt } from "@/components/pwa-install-prompt"
 import { Toaster } from "@/components/ui/toaster"
@@ -69,7 +70,8 @@ export default function RootLayout({
           {/* Scheduler invisible: captura ubicacion a las 08:00, 14:00 y 17:00
               hora de Colombia (ver components/global-location-scheduler.tsx) */}
           <GlobalLocationScheduler />
-          {children}
+          {/* Filtro año/mes del submódulo compartido con la tira de KPIs del módulo. */}
+          <SubmoduloFiltroProvider>{children}</SubmoduloFiltroProvider>
           {/* Necesario para que useToast muestre feedback en toda la app. */}
           <Toaster />
         </AuthProvider>

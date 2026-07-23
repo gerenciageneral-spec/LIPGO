@@ -15,11 +15,15 @@ function hoyBogota(): string {
   return `${b.getFullYear()}-${String(b.getMonth() + 1).padStart(2, "0")}-${String(b.getDate()).padStart(2, "0")}`
 }
 
+const MESES_KPI = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+
 export async function getAreaKpisRapidas(
   groupKey: string,
   selectedEmpresaId?: number | null,
   userId?: string,
   moduleName?: string | null,
+  anioFiltro?: string | null,
+  mesFiltro?: string | null,
 ): Promise<{ items: AreaKpiItem[]; titulo?: string }> {
   const sb: any = await getSupabaseAdmin()
   const empresaId = selectedEmpresaId || (await getCurrentEmpresaIdForInsert())
@@ -37,7 +41,7 @@ export async function getAreaKpisRapidas(
   // Cada submódulo muestra SUS datos (según los SLA del BSC del módulo). La tira
   // general del grupo se conserva para la portada del módulo madre. Si el
   // submódulo actual tiene tira propia, se resuelve y se devuelve aquí.
-  const subKpis = await getSubmoduloKpis(sb, moduleName, empresaId)
+  const subKpis = await getSubmoduloKpis(sb, moduleName, empresaId, anioFiltro, mesFiltro)
   if (subKpis) return subKpis
 
   const items: AreaKpiItem[] = []
@@ -135,6 +139,8 @@ async function getSubmoduloKpis(
   sb: any,
   moduleName: string | null | undefined,
   empresaId: number,
+  anioFiltro?: string | null,
+  mesFiltro?: string | null,
 ): Promise<{ items: AreaKpiItem[]; titulo: string } | null> {
   if (!moduleName) return null
 
@@ -142,15 +148,21 @@ async function getSubmoduloKpis(
   // casos, días perdidos, accidentes de trabajo y casos por revisar (SST) del
   // año en curso, por empresa/cliente.
   if (moduleName === "Ausentismos") {
-    const anio = hoyBogota().slice(0, 4)
+    // Filtro AÑO/MES del submódulo (si el usuario filtró en la tabla); si no, el
+    // año en curso. Así las tarjetas de arriba reaccionan al filtro de mes/año.
+    const anio = anioFiltro && anioFiltro !== "todos" ? anioFiltro : hoyBogota().slice(0, 4)
+    const mesNum = mesFiltro ? MESES_KPI.indexOf(mesFiltro) + 1 : 0 // 1-12; 0 = todos
+    const desde = mesNum >= 1 ? `${anio}-${String(mesNum).padStart(2, "0")}-01` : `${anio}-01-01`
+    const hasta = mesNum >= 1 ? `${anio}-${String(mesNum).padStart(2, "0")}-31` : `${anio}-12-31`
+    const periodo = mesNum >= 1 ? `${mesFiltro} ${anio}` : anio
     let rows: any[] = []
     try {
       const { data } = await sb
         .from("ausentismosst")
         .select("total_dias_incapacidad, tipo_evento, requiere_revision_sst, dias_incapacidad")
         .eq("idempresa", empresaId)
-        .gte("fecha_inicial", `${anio}-01-01`)
-        .lte("fecha_inicial", `${anio}-12-31`)
+        .gte("fecha_inicial", desde)
+        .lte("fecha_inicial", hasta)
       rows = data || []
     } catch {
       rows = []
@@ -160,16 +172,15 @@ async function getSubmoduloKpis(
     // Accidentes de trabajo = EVENTOS NUEVOS: filas AT con incapacidad inicial
     // (`dias_incapacidad` > 0). Las PRÓRROGAS puras (continuación del mismo AT;
     // `dias_incapacidad` = 0, días en `prorroga`) NO suman — antes inflaban el
-    // conteo (Indupan 2026 sumaba 16 en vez de 5). NOTA: esta tira es ANUAL (resumen
-    // del año); el conteo por MES vive en la pestaña Registros del submódulo.
+    // conteo (Indupan 2026 sumaba 16 en vez de 5).
     const at = rows.filter((r) => r.tipo_evento === "AT" && (Number(r.dias_incapacidad) || 0) > 0).length
     const revSST = rows.filter((r) => r.requiere_revision_sst).length
     return {
-      titulo: `Ausentismo — resumen ${anio}`,
+      titulo: `Ausentismo — resumen ${periodo}`,
       items: [
-        { label: "Casos", value: String(casos), subtext: `incapacidades ${anio}`, variant: "primary", icon: "activity" },
-        { label: "Días de ausentismo", value: dias.toLocaleString("es-CO"), subtext: `días perdidos ${anio}`, variant: dias > 0 ? "warning" : "success", icon: "clock" },
-        { label: "Accidentes de trabajo", value: String(at), subtext: `AT ${anio}`, variant: at > 0 ? "danger" : "success", icon: "alert" },
+        { label: "Casos", value: String(casos), subtext: `incapacidades ${periodo}`, variant: "primary", icon: "activity" },
+        { label: "Días de ausentismo", value: dias.toLocaleString("es-CO"), subtext: `días perdidos ${periodo}`, variant: dias > 0 ? "warning" : "success", icon: "clock" },
+        { label: "Accidentes de trabajo", value: String(at), subtext: `AT ${periodo}`, variant: at > 0 ? "danger" : "success", icon: "alert" },
         { label: "Por revisar SST", value: String(revSST), subtext: "osteomuscular / requiere revisión", variant: revSST > 0 ? "warning" : "success", icon: "shield" },
       ],
     }

@@ -45,6 +45,7 @@ import {
   type HeadcountColaborador,
 } from "@/lib/ausentismos-actions"
 import { AusentismosResumen } from "@/components/rrhh/ausentismos-dashboards"
+import { useSubmoduloFiltro } from "@/components/submodulo-filtro-context"
 import { AusentismosAnalisisDiario } from "@/components/rrhh/ausentismos-analisis-diario"
 import {
   Plus,
@@ -116,6 +117,9 @@ const toNum = (v: string) => {
 export default function Ausentismos() {
   const { selectedEmpresaId } = useAuth()
   const { toast } = useToast()
+  // Publica el filtro año/mes a la tira de KPIs del módulo (tarjetas de arriba),
+  // para que reaccionen al filtro además del selector global de empresa.
+  const { setFiltro: setKpiFiltro } = useSubmoduloFiltro()
 
   const [items, setItems] = useState<Ausentismo[]>([])
   // AT reales = investigaciones (sst_incidentes): un accidente = una investigación.
@@ -135,6 +139,17 @@ export default function Ausentismos() {
   const [mesFiltro, setMesFiltro] = useState<string>("todos")
   // Filtro por estado del colaborador (ACTIVO / RETIRADO).
   const [estadoFiltro, setEstadoFiltro] = useState<string>("todos")
+
+  // Publicar el filtro año/mes a la tira de KPIs superior (reacciona al mes/año).
+  useEffect(() => {
+    setKpiFiltro({
+      anio: anioFiltro === "todos" ? null : anioFiltro,
+      mes: mesFiltro === "todos" ? null : mesFiltro,
+    })
+  }, [anioFiltro, mesFiltro, setKpiFiltro])
+  // Al salir del submódulo, limpiar el filtro para que otros módulos usen su
+  // resumen por defecto (año en curso).
+  useEffect(() => () => setKpiFiltro({ anio: null, mes: null }), [setKpiFiltro])
 
   const [form, setForm] = useState({ ...initialForm })
 

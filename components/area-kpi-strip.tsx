@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useAuth } from "@/components/auth-provider"
+import { useSubmoduloFiltro } from "@/components/submodulo-filtro-context"
 import { KpiCard } from "@/components/orders/dashboard-pedidos/kpi-card"
 import { getAreaKpisRapidas } from "@/lib/area-kpis-rapidas-actions"
 import { tituloAreaKpis, type AreaKpiItem } from "@/lib/area-kpis-util"
@@ -49,6 +50,9 @@ function Skeleton({ n }: { n: number }) {
 // del grupo (portada del módulo madre). Rápida (conteos) + skeleton.
 export function AreaKpiStrip({ groupKey, moduleName }: { groupKey: string; moduleName?: string | null }) {
   const { selectedEmpresaId, profile } = useAuth()
+  // Filtro año/mes publicado por el submódulo (p. ej. Ausentismos): la tira
+  // reacciona a él además del selector global.
+  const { filtro } = useSubmoduloFiltro()
   const [items, setItems] = useState<AreaKpiItem[] | null>(null)
   const [tituloResp, setTituloResp] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -62,12 +66,12 @@ export function AreaKpiStrip({ groupKey, moduleName }: { groupKey: string; modul
     }
     let cancel = false
     setLoading(true)
-    getAreaKpisRapidas(groupKey, selectedEmpresaId, profile?.id, moduleName)
+    getAreaKpisRapidas(groupKey, selectedEmpresaId, profile?.id, moduleName, filtro.anio, filtro.mes)
       .then((r) => { if (!cancel) { setItems(r.items); setTituloResp(r.titulo ?? null) } })
       .catch(() => { if (!cancel) { setItems([]); setTituloResp(null) } })
       .finally(() => { if (!cancel) setLoading(false) })
     return () => { cancel = true }
-  }, [groupKey, moduleName, selectedEmpresaId, profile?.id, tituloGrupo])
+  }, [groupKey, moduleName, selectedEmpresaId, profile?.id, tituloGrupo, filtro.anio, filtro.mes])
 
   const titulo = tituloResp ?? tituloGrupo
 
