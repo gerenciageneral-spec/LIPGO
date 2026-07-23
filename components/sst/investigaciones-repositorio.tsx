@@ -274,12 +274,11 @@ export function InvestigacionesRepositorio({ selectedEmpresaId: propEmpresaId }:
                           <FileDown className="h-3.5 w-3.5" /> Editable
                         </a>
                       ) : (
-                        <label className="inline-flex cursor-pointer items-center gap-1 text-[11px] text-muted-foreground hover:underline" title="Subir original editable (Excel/Word)">
+                        <label className="inline-flex cursor-pointer items-center gap-1 text-[11px] text-muted-foreground hover:underline" title="Subir soporte (cualquier formato)">
                           {subiendo === r.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />} Subir
                           <input
                             type="file"
                             className="hidden"
-                            accept=".xlsx,.xls,.doc,.docx,.pdf"
                             disabled={subiendo === r.id}
                             onChange={(e) => { const f = e.target.files?.[0]; if (f) subirDocumento(r, f); e.currentTarget.value = "" }}
                           />
