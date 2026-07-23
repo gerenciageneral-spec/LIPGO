@@ -50,19 +50,38 @@ export function SoportesDocumentales({
   }, [referenciaTipo, refId, empresaId])
 
   async function onFile(file: File) {
+    // Aviso temprano si el archivo supera el límite del Server Action (50MB).
+    if (file.size > 50 * 1024 * 1024) {
+      toast({
+        title: "Archivo muy grande",
+        description: "El máximo es 50 MB. Comprime el documento o súbelo por partes.",
+      })
+      return
+    }
     setSubiendo(true)
-    const res = await subirYRegistrarSoporte(
-      file,
-      { norma, modulo, referenciaTipo, referenciaId: refId, referenciaDesc: referenciaDesc ?? null },
-      empresaId ?? null,
-    )
-    setSubiendo(false)
-    if (res.success && res.url) {
-      toast({ title: "Soporte cargado", description: "Se guardó como evidencia (se conserva el historial)." })
-      onUploaded?.(res.url)
-      cargar()
-    } else {
-      toast({ title: "Error al subir", description: res.message })
+    try {
+      const res = await subirYRegistrarSoporte(
+        file,
+        { norma, modulo, referenciaTipo, referenciaId: refId, referenciaDesc: referenciaDesc ?? null },
+        empresaId ?? null,
+      )
+      if (res.success && res.url) {
+        toast({ title: "Soporte cargado", description: "Se guardó como evidencia (se conserva el historial)." })
+        onUploaded?.(res.url)
+        cargar()
+      } else {
+        toast({ title: "Error al subir", description: res.message || "No se pudo subir el archivo." })
+      }
+    } catch (e: any) {
+      // Falla-seguro: sin esto, un error del Server Action (p. ej. tamaño) dejaba
+      // el botón "Subiendo..." colgado para siempre.
+      console.error("[soportes] onFile:", e?.message ?? e)
+      toast({
+        title: "Error al subir",
+        description: "No se pudo subir el archivo (revisa el tamaño/conexión e inténtalo de nuevo).",
+      })
+    } finally {
+      setSubiendo(false)
     }
   }
 
