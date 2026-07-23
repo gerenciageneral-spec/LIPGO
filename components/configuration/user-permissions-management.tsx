@@ -1,19 +1,77 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
+import { Input } from "@/components/ui/input"
+import { Badge } from "@/components/ui/badge"
+import { Separator } from "@/components/ui/separator"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { getAllUsersWithPermissions, updateUserPermissions } from "@/lib/permissions-actions"
+import { crearUsuario, resetearPassword, eliminarUsuario, getAuthMetaUsuarios } from "@/lib/user-admin-actions"
+import type { AuthMetaUsuario } from "@/lib/user-admin-types"
+import {
+  getAllEmpresas,
+  getAllOwners,
+  getUserAccess,
+  grantUserAccess,
+  revokeUserAccess,
+  getUserOwnerAccess,
+  grantUserOwnerAccess,
+  revokeUserOwnerAccess,
+  type Empresa,
+  type Owner,
+} from "@/lib/user-access-actions"
 // El tipo `UserPermissions` se importa desde el modulo compartido (sin
-// "use server") para evitar problemas con re-exports en archivos de
-// server actions: Next.js no permite exportar valores no async desde
-// archivos con la directiva "use server".
+// "use server"): Next.js no permite exportar valores no async desde archivos
+// con la directiva "use server".
 import type { UserPermissions } from "@/lib/permissions-map"
 import { MODULE_PERMISSION_MAP } from "@/lib/permissions-map"
 import { groups } from "@/lib/dashboard-data"
-import { Loader2, Save, User } from "lucide-react"
+import {
+  Loader2,
+  Save,
+  User,
+  UserPlus,
+  KeyRound,
+  Trash2,
+  RefreshCw,
+  Eye,
+  EyeOff,
+  Search,
+  Building2,
+  Tags,
+  Copy,
+  ShieldCheck,
+  Users,
+  Clock,
+  CheckCircle2,
+  ArrowRight,
+} from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/components/auth-provider"
 
@@ -27,10 +85,8 @@ interface UserWithPermissions {
 // ---------------------------------------------------------------------------
 // El arbol de permisos se DERIVA de la estructura de navegacion real
 // (`groups` en lib/dashboard-data.ts) usando `MODULE_PERMISSION_MAP`. Asi la
-// pantalla de Accesos de Usuario refleja SIEMPRE los mismos grupos, subgrupos
-// y modulos que ve el usuario en el sidebar, sin listas paralelas que se
-// desincronicen. Cada modulo nuevo que se agregue al menu y al mapa aparece
-// aqui automaticamente.
+// pantalla refleja SIEMPRE los mismos grupos, subgrupos y modulos que ve el
+// usuario en el sidebar, sin listas paralelas que se desincronicen.
 // ---------------------------------------------------------------------------
 type PermItem = { key: keyof UserPermissions; label: string }
 type PermSection = { title: string | null; permissions: PermItem[] }
@@ -42,8 +98,6 @@ function collectPerms(modules: { name: string; label?: string }[]): PermItem[] {
   for (const m of modules) {
     const key = MODULE_PERMISSION_MAP[m.name] as keyof UserPermissions | undefined
     if (!key) continue
-    // Dedupe dentro de la seccion: varios modulos pueden compartir el mismo
-    // permiso (ej. "Examenes Médicos" y "Gestión de Contratos").
     if (seen.has(key as string)) continue
     seen.add(key as string)
     out.push({ key, label: m.label ?? m.name })
@@ -51,10 +105,7 @@ function collectPerms(modules: { name: string; label?: string }[]): PermItem[] {
   return out
 }
 
-// Permisos que NO son modulos del menu pero deben poder otorgarse aqui.
-// Caso SIG: las pestanas por norma viven dentro de un unico modulo
-// ("Matriz Integrada SIG"), pero cada una tiene su permiso. Se inyectan en su
-// subgrupo para que Gestion de Usuarios los exponga sin crear items de menu.
+// Permisos que NO son modulos del menu pero deben poder otorgarse aqui (SIG por norma).
 const EXTRA_PERMS_POR_SUBGRUPO: Record<string, PermItem[]> = {
   "Sistema Integrado (SIG)": [
     { key: "sig_iso9001", label: "— Pestaña ISO 9001:2015" },
@@ -78,97 +129,373 @@ const PERMISSION_TREE: PermGroup[] = groups
   })
   .filter((g) => g.sections.length > 0)
 
+// Genera una contraseña segura (14 caracteres, sin caracteres ambiguos) con el CSPRNG.
+function generarPasswordSegura(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%&*"
+  const n = 14
+  const arr = new Uint32Array(n)
+  window.crypto.getRandomValues(arr)
+  let out = ""
+  for (let i = 0; i < n; i++) out += chars[arr[i] % chars.length]
+  return out
+}
+
+// inactivo = >30 dias sin iniciar sesion (o nunca).
+function estadoConexion(meta?: AuthMetaUsuario): { activo: boolean; relativo: string; exacto: string | null } {
+  const raw = meta?.last_sign_in_at
+  if (!raw) return { activo: false, relativo: "Nunca", exacto: null }
+  const last = new Date(raw)
+  const dias = Math.floor((Date.now() - last.getTime()) / 86400000)
+  const exacto = last.toLocaleString("es-CO", { dateStyle: "medium", timeStyle: "short" })
+  const relativo = dias <= 0 ? "Hoy" : dias === 1 ? "Ayer" : `Hace ${dias} días`
+  return { activo: dias <= 30, relativo, exacto }
+}
+
+function iniciales(nombre: string): string {
+  const partes = nombre.trim().split(/\s+/).filter(Boolean)
+  if (partes.length === 0) return "?"
+  if (partes.length === 1) return partes[0].slice(0, 2).toUpperCase()
+  return (partes[0][0] + partes[partes.length - 1][0]).toUpperCase()
+}
+
+function extraerPermisos(u: UserWithPermissions): UserPermissions | undefined {
+  if (Array.isArray(u.permisos_usuarios)) return u.permisos_usuarios[0]
+  return u.permisos_usuarios ?? undefined
+}
+
+function permsDeUsuario(u: UserWithPermissions): Partial<UserPermissions> {
+  const src = extraerPermisos(u)
+  const out: Partial<UserPermissions> = {}
+  PERMISSION_TREE.forEach((g) =>
+    g.sections.forEach((s) =>
+      s.permissions.forEach((p) => {
+        ;(out as any)[p.key] = src?.[p.key] === true
+      }),
+    ),
+  )
+  return out
+}
+
 export function UserPermissionsManagement() {
-  const { selectedEmpresaId } = useAuth()
-  const [users, setUsers] = useState<UserWithPermissions[]>([])
-  const [selectedUser, setSelectedUser] = useState<UserWithPermissions | null>(null)
-  const [permissions, setPermissions] = useState<Partial<UserPermissions>>({})
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
+  const { selectedEmpresaId, user } = useAuth()
   const { toast } = useToast()
+
+  const [users, setUsers] = useState<UserWithPermissions[]>([])
+  const [authMeta, setAuthMeta] = useState<Record<string, AuthMetaUsuario>>({})
+  const [selectedUser, setSelectedUser] = useState<UserWithPermissions | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState("")
+
+  // Catálogos (empresas / owners)
+  const [empresas, setEmpresas] = useState<Empresa[]>([])
+  const [owners, setOwners] = useState<Owner[]>([])
+
+  // Permisos (copia de trabajo + snapshot original para detectar cambios)
+  const [permissions, setPermissions] = useState<Partial<UserPermissions>>({})
+  const [permOriginal, setPermOriginal] = useState<Partial<UserPermissions>>({})
+  const [permSearch, setPermSearch] = useState("")
+  const [openGroups, setOpenGroups] = useState<string[]>([])
+  const [copyFromId, setCopyFromId] = useState<string>("")
+  const [savingPerms, setSavingPerms] = useState(false)
+
+  // Accesos (empresa / owner) del usuario seleccionado
+  const [empresaAccess, setEmpresaAccess] = useState<number[]>([])
+  const [empresaOriginal, setEmpresaOriginal] = useState<number[]>([])
+  const [ownerAccess, setOwnerAccess] = useState<string[]>([])
+  const [ownerOriginal, setOwnerOriginal] = useState<string[]>([])
+  const [loadingAccess, setLoadingAccess] = useState(false)
+  const [savingAccess, setSavingAccess] = useState(false)
+
+  // Crear usuario
+  const [createOpen, setCreateOpen] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [showPwd, setShowPwd] = useState(false)
+  const [form, setForm] = useState({
+    email: "",
+    usuario: "",
+    password: "",
+    empresaId: "" as string,
+    empresasAdicionales: [] as number[],
+    owners: [] as string[],
+  })
+
+  // Resetear contraseña
+  const [resetOpen, setResetOpen] = useState(false)
+  const [resetPwd, setResetPwd] = useState("")
+  const [showResetPwd, setShowResetPwd] = useState(false)
+  const [resetting, setResetting] = useState(false)
+
+  // Eliminar
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
     if (selectedEmpresaId) {
-      loadUsers()
-      // Reset selected user when empresa changes
+      loadAll()
       setSelectedUser(null)
       setPermissions({})
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedEmpresaId])
 
-  const loadUsers = async () => {
+  const loadAll = async () => {
     setLoading(true)
-    const result = await getAllUsersWithPermissions(selectedEmpresaId)
-    if (result.success && result.data) {
-      setUsers(result.data as UserWithPermissions[])
-    }
+    const [result, meta, emp, own] = await Promise.all([
+      getAllUsersWithPermissions(selectedEmpresaId),
+      getAuthMetaUsuarios(),
+      empresas.length ? Promise.resolve(empresas) : getAllEmpresas(),
+      owners.length ? Promise.resolve(owners) : getAllOwners(),
+    ])
+    if (result.success && result.data) setUsers(result.data as UserWithPermissions[])
+    if (meta.success && meta.data) setAuthMeta(meta.data)
+    setEmpresas(emp)
+    setOwners(own)
     setLoading(false)
   }
 
-  const handleSelectUser = (user: UserWithPermissions) => {
-    setSelectedUser(user)
+  const handleSelectUser = async (u: UserWithPermissions) => {
+    setSelectedUser(u)
+    setPermSearch("")
+    setOpenGroups([])
+    setCopyFromId("")
+    const p = permsDeUsuario(u)
+    setPermissions(p)
+    setPermOriginal(p)
 
-    let userPermissions: UserPermissions | undefined
+    // Accesos
+    setLoadingAccess(true)
+    const [emp, own] = await Promise.all([getUserAccess(u.id), getUserOwnerAccess(u.id)])
+    setEmpresaAccess(emp)
+    setEmpresaOriginal(emp)
+    setOwnerAccess(own)
+    setOwnerOriginal(own)
+    setLoadingAccess(false)
+  }
 
-    if (Array.isArray(user.permisos_usuarios)) {
-      userPermissions = user.permisos_usuarios[0]
-    } else if (user.permisos_usuarios) {
-      userPermissions = user.permisos_usuarios
-    }
+  const filteredUsers = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return users
+    return users.filter(
+      (u) => u.usuario.toLowerCase().includes(q) || (authMeta[u.id]?.email ?? "").toLowerCase().includes(q),
+    )
+  }, [users, search, authMeta])
 
-    // Initialize all permissions with their current values or false as default
-    const initializedPermissions: Partial<UserPermissions> = {}
-    PERMISSION_TREE.forEach((group) => {
-      group.sections.forEach((section) => {
-        section.permissions.forEach((perm) => {
-          const permValue = userPermissions?.[perm.key]
-          // Cast type-only por índice dinámico sobre keyof union; lógica intacta.
-          ;(initializedPermissions as any)[perm.key] = permValue === true
-        })
-      })
+  const stats = useMemo(() => {
+    let activos = 0
+    let nunca = 0
+    users.forEach((u) => {
+      const e = estadoConexion(authMeta[u.id])
+      if (e.activo) activos++
+      if (!authMeta[u.id]?.last_sign_in_at) nunca++
     })
+    return { total: users.length, activos, inactivos: users.length - activos, nunca }
+  }, [users, authMeta])
 
-    setPermissions(initializedPermissions)
+  const filteredTree = useMemo(() => {
+    const q = permSearch.trim().toLowerCase()
+    if (!q) return PERMISSION_TREE
+    return PERMISSION_TREE.map((g) => {
+      const sections = g.sections
+        .map((s) => ({
+          ...s,
+          permissions: s.permissions.filter(
+            (p) =>
+              p.label.toLowerCase().includes(q) ||
+              (s.title ?? "").toLowerCase().includes(q) ||
+              g.title.toLowerCase().includes(q),
+          ),
+        }))
+        .filter((s) => s.permissions.length > 0)
+      return { ...g, sections }
+    }).filter((g) => g.sections.length > 0)
+  }, [permSearch])
+
+  // Al buscar, expandimos automáticamente los grupos con coincidencias.
+  useEffect(() => {
+    if (permSearch.trim()) setOpenGroups(filteredTree.map((g) => g.title))
+  }, [permSearch, filteredTree])
+
+  const permsDirty = useMemo(() => {
+    const keys = new Set([...Object.keys(permissions), ...Object.keys(permOriginal)])
+    for (const k of keys) if ((permissions as any)[k] !== (permOriginal as any)[k]) return true
+    return false
+  }, [permissions, permOriginal])
+
+  const accessDirty = useMemo(() => {
+    const eqSet = (a: (string | number)[], b: (string | number)[]) =>
+      a.length === b.length && a.every((x) => b.includes(x))
+    return !eqSet(empresaAccess, empresaOriginal) || !eqSet(ownerAccess, ownerOriginal)
+  }, [empresaAccess, empresaOriginal, ownerAccess, ownerOriginal])
+
+  const groupCount = (g: PermGroup) => {
+    let total = 0
+    let active = 0
+    g.sections.forEach((s) =>
+      s.permissions.forEach((p) => {
+        total++
+        if (permissions[p.key]) active++
+      }),
+    )
+    return { total, active }
   }
 
-  const handlePermissionChange = (key: string, checked: boolean) => {
-    setPermissions((prev) => ({
-      ...prev,
-      [key]: checked,
-    }))
-  }
+  const totalActivos = useMemo(
+    () => Object.values(permissions).filter(Boolean).length,
+    [permissions],
+  )
 
-  const handleSelectAll = (groupPermissions: PermItem[], checked: boolean) => {
+  const handlePermissionChange = (key: string, checked: boolean) =>
+    setPermissions((prev) => ({ ...prev, [key]: checked }))
+
+  const handleSelectAll = (items: PermItem[], checked: boolean) => {
     const updates: Partial<UserPermissions> = {}
-    groupPermissions.forEach((perm) => {
-      ;(updates as any)[perm.key] = checked
+    items.forEach((p) => {
+      ;(updates as any)[p.key] = checked
     })
-    setPermissions((prev) => ({
-      ...prev,
-      ...updates,
-    }))
+    setPermissions((prev) => ({ ...prev, ...updates }))
   }
 
-  const handleSave = async () => {
+  const handleGlobalAll = (checked: boolean) => {
+    const updates: Partial<UserPermissions> = {}
+    PERMISSION_TREE.forEach((g) =>
+      g.sections.forEach((s) => s.permissions.forEach((p) => ((updates as any)[p.key] = checked))),
+    )
+    setPermissions(updates)
+  }
+
+  const handleCopyFrom = (sourceId: string) => {
+    setCopyFromId(sourceId)
+    const src = users.find((u) => u.id === sourceId)
+    if (!src) return
+    setPermissions(permsDeUsuario(src))
+    toast({
+      title: "Permisos copiados",
+      description: `Se cargaron los permisos de ${src.usuario}. Revisa y presiona Guardar para aplicarlos.`,
+    })
+  }
+
+  const handleSavePerms = async () => {
     if (!selectedUser) return
-
-    setSaving(true)
+    setSavingPerms(true)
     const result = await updateUserPermissions(selectedUser.id, permissions)
-
+    setSavingPerms(false)
     if (result.success) {
-      toast({
-        title: "Permisos actualizados",
-        description: "Los permisos del usuario se han actualizado correctamente.",
-      })
-      await loadUsers()
+      toast({ title: "Permisos guardados", description: "Los cambios se aplicaron correctamente." })
+      setPermOriginal(permissions)
+      // Reflejar en la lista sin recargar todo.
+      setUsers((prev) =>
+        prev.map((u) => (u.id === selectedUser.id ? { ...u, permisos_usuarios: permissions as UserPermissions } : u)),
+      )
     } else {
-      toast({
-        title: "Error",
-        description: result.error || "No se pudieron actualizar los permisos.",
-        variant: "destructive",
-      })
+      toast({ title: "Error", description: result.error || "No se pudieron guardar los permisos.", variant: "destructive" })
     }
-    setSaving(false)
+  }
+
+  const handleSaveAccess = async () => {
+    if (!selectedUser) return
+    setSavingAccess(true)
+    const id = selectedUser.id
+    try {
+      const empGrant = empresaAccess.filter((e) => !empresaOriginal.includes(e))
+      const empRevoke = empresaOriginal.filter((e) => !empresaAccess.includes(e))
+      const ownGrant = ownerAccess.filter((o) => !ownerOriginal.includes(o))
+      const ownRevoke = ownerOriginal.filter((o) => !ownerAccess.includes(o))
+
+      for (const e of empGrant) await grantUserAccess(id, e)
+      for (const e of empRevoke) await revokeUserAccess(id, e)
+      for (const o of ownGrant) await grantUserOwnerAccess(id, o)
+      for (const o of ownRevoke) await revokeUserOwnerAccess(id, o)
+
+      setEmpresaOriginal(empresaAccess)
+      setOwnerOriginal(ownerAccess)
+      toast({ title: "Accesos guardados", description: "Los accesos por empresa y owner se actualizaron." })
+    } catch (error) {
+      console.error("[user-admin] Error guardando accesos:", error)
+      toast({ title: "Error", description: "No se pudieron guardar todos los accesos.", variant: "destructive" })
+    } finally {
+      setSavingAccess(false)
+    }
+  }
+
+  // ----- Crear usuario -----
+  const openCreate = () => {
+    setForm({
+      email: "",
+      usuario: "",
+      password: "",
+      empresaId: selectedEmpresaId ? String(selectedEmpresaId) : "",
+      empresasAdicionales: [],
+      owners: [],
+    })
+    setShowPwd(false)
+    setCreateOpen(true)
+  }
+
+  const handleCreate = async () => {
+    if (!form.email.trim() || !form.usuario.trim() || !form.password || !form.empresaId) {
+      toast({ title: "Datos incompletos", description: "Correo, usuario, contraseña y empresa son obligatorios.", variant: "destructive" })
+      return
+    }
+    if (form.password.length < 8) {
+      toast({ title: "Contraseña muy corta", description: "Usa al menos 8 caracteres.", variant: "destructive" })
+      return
+    }
+    setCreating(true)
+    const result = await crearUsuario({
+      email: form.email,
+      usuario: form.usuario,
+      password: form.password,
+      empresaId: Number(form.empresaId),
+      empresasAdicionales: form.empresasAdicionales,
+      owners: form.owners,
+    })
+    setCreating(false)
+    if (result.success) {
+      toast({ title: "Usuario creado", description: `${form.usuario} puede iniciar sesión con su correo (ya validado).` })
+      setCreateOpen(false)
+      const [refreshed, meta] = await Promise.all([getAllUsersWithPermissions(selectedEmpresaId), getAuthMetaUsuarios()])
+      const list = (refreshed.data as UserWithPermissions[]) || []
+      setUsers(list)
+      if (meta.success && meta.data) setAuthMeta(meta.data)
+      const nuevo = list.find((u) => u.id === result.userId)
+      if (nuevo) handleSelectUser(nuevo)
+    } else {
+      toast({ title: "No se pudo crear", description: result.error || "Error desconocido.", variant: "destructive" })
+    }
+  }
+
+  const handleReset = async () => {
+    if (!selectedUser) return
+    if (resetPwd.length < 8) {
+      toast({ title: "Contraseña muy corta", description: "Usa al menos 8 caracteres.", variant: "destructive" })
+      return
+    }
+    setResetting(true)
+    const result = await resetearPassword(selectedUser.id, resetPwd)
+    setResetting(false)
+    if (result.success) {
+      toast({ title: "Contraseña actualizada", description: `Comunícale la nueva contraseña a ${selectedUser.usuario}.` })
+      setResetOpen(false)
+      setResetPwd("")
+    } else {
+      toast({ title: "Error", description: result.error || "No se pudo cambiar la contraseña.", variant: "destructive" })
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!selectedUser) return
+    setDeleting(true)
+    const result = await eliminarUsuario(selectedUser.id)
+    setDeleting(false)
+    if (result.success) {
+      toast({ title: "Usuario eliminado", description: `${selectedUser.usuario} fue eliminado del sistema.` })
+      setDeleteOpen(false)
+      setSelectedUser(null)
+      setPermissions({})
+      await loadAll()
+    } else {
+      toast({ title: "Error", description: result.error || "No se pudo eliminar el usuario.", variant: "destructive" })
+    }
   }
 
   if (loading) {
@@ -179,153 +506,733 @@ export function UserPermissionsManagement() {
     )
   }
 
+  const isSelf = !!selectedUser && selectedUser.id === user?.id
+  const estadoSel = estadoConexion(selectedUser ? authMeta[selectedUser.id] : undefined)
+  const emailSel = selectedUser ? authMeta[selectedUser.id]?.email : null
+
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold text-foreground">Gestión de Usuarios y Permisos</h2>
-        <p className="text-sm text-muted-foreground mt-1">
-          Administra los permisos de acceso a módulos para cada usuario del sistema
-        </p>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Lista de usuarios */}
-        <Card className="lg:col-span-1">
-          <CardHeader>
-            <CardTitle className="text-lg">Usuarios</CardTitle>
-            <CardDescription>Selecciona un usuario para editar sus permisos</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2 max-h-[600px] overflow-y-auto">
-              {users.map((user) => (
-                <button
-                  key={user.id}
-                  onClick={() => handleSelectUser(user)}
-                  className={`w-full flex items-center gap-3 p-3 rounded-lg border transition-colors text-left ${
-                    selectedUser?.id === user.id
-                      ? "bg-primary/10 border-primary"
-                      : "bg-card hover:bg-accent border-border"
-                  }`}
-                >
-                  <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
-                    <User className="h-5 w-5 text-primary" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-sm truncate">{user.usuario}</p>
-                    <p className="text-xs text-muted-foreground">Empresa ID: {user.empresa_id}</p>
-                  </div>
-                </button>
-              ))}
+    <TooltipProvider delayDuration={200}>
+      <div className="space-y-6">
+        {/* ---------- Hero ---------- */}
+        <div className="relative overflow-hidden rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/10 via-card to-card shadow-sm">
+          <div className="pointer-events-none absolute -top-16 -right-10 h-56 w-56 rounded-full bg-primary/20 blur-3xl" />
+          <div className="relative flex flex-wrap items-center justify-between gap-4 p-5">
+            <div className="flex items-center gap-4">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-primary/70 text-primary-foreground shadow-md">
+                <Users className="h-6 w-6" />
+              </div>
+              <div>
+                <h2 className="text-2xl font-bold tracking-tight text-foreground">Usuarios y Accesos</h2>
+                <p className="text-sm text-muted-foreground mt-0.5">
+                  Crea usuarios, asigna permisos y otorga acceso por empresa y owner — todo en un solo lugar.
+                </p>
+              </div>
             </div>
-          </CardContent>
-        </Card>
+            <Button onClick={openCreate} size="lg" className="gap-2 shadow-md">
+              <UserPlus className="h-4 w-4" />
+              Crear Usuario
+            </Button>
+          </div>
+          <div className="relative grid grid-cols-2 sm:grid-cols-4 gap-px bg-border/60 border-t border-border/60">
+            {[
+              { label: "Usuarios", value: stats.total, icon: Users, tone: "text-primary" },
+              { label: "Activos", value: stats.activos, icon: CheckCircle2, tone: "text-emerald-600" },
+              { label: "Inactivos", value: stats.inactivos, icon: Clock, tone: "text-slate-500" },
+              { label: "Sin conexión", value: stats.nunca, icon: User, tone: "text-amber-600" },
+            ].map((s) => (
+              <div key={s.label} className="flex items-center gap-2.5 bg-card px-4 py-3">
+                <s.icon className={`h-4 w-4 ${s.tone}`} />
+                <div className="leading-none">
+                  <p className="text-xl font-extrabold tabular-nums text-foreground">{s.value}</p>
+                  <p className="text-[11px] uppercase tracking-wider text-muted-foreground mt-1">{s.label}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
 
-        {/* Panel de permisos */}
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle className="text-lg">
-              {selectedUser ? `Permisos de ${selectedUser.usuario}` : "Selecciona un usuario"}
-            </CardTitle>
-            <CardDescription>
-              {selectedUser
-                ? "Marca los módulos a los que este usuario tendrá acceso"
-                : "Selecciona un usuario de la lista para ver y editar sus permisos"}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* ---------- Maestro: lista de usuarios ---------- */}
+          <Card className="ulist-card lg:col-span-1 overflow-hidden border-border/60 shadow-md bg-gradient-to-br from-card to-muted/20">
+            <style>{`
+              .ulist-row{ position:relative; display:flex; align-items:center; gap:12px; width:100%; text-align:left;
+                cursor:pointer; border-radius:14px; border:1px solid transparent; background:var(--card); padding:10px;
+                overflow:hidden; transition:transform .18s ease, box-shadow .2s ease, border-color .2s ease, background .2s ease; }
+              /* Halo de color que aflora en hover */
+              .ulist-row::after{ content:""; position:absolute; top:-55%; right:-25%; width:130px; height:130px; border-radius:50%;
+                background:radial-gradient(closest-side, color-mix(in srgb, var(--primary) 30%, transparent), transparent);
+                opacity:0; transition:opacity .25s, transform .25s; pointer-events:none; }
+              /* Hairline degradado que se ilumina en hover / activo */
+              .ulist-row::before{ content:""; position:absolute; inset:0; border-radius:14px; padding:1.3px; pointer-events:none;
+                background:linear-gradient(135deg, color-mix(in srgb, var(--primary) 75%, transparent), transparent 60%);
+                -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+                -webkit-mask-composite:xor; mask-composite:exclude; opacity:0; transition:opacity .2s; }
+              .ulist-row:hover{ transform:translateY(-2px); border-color:transparent;
+                box-shadow:0 14px 30px color-mix(in srgb, var(--primary) 24%, transparent), 0 4px 10px rgba(20,42,68,.05); }
+              .ulist-row:hover::before{ opacity:1; }
+              .ulist-row:hover::after{ opacity:.75; transform:scale(1.12); }
+              .ulist-row.is-active{ background:color-mix(in srgb, var(--primary) 10%, var(--card));
+                box-shadow:0 8px 22px color-mix(in srgb, var(--primary) 20%, transparent); }
+              .ulist-row.is-active::before{ opacity:1; }
+              .ulist-row.is-active::after{ opacity:.5; }
+              .ulist-ava{ position:relative; z-index:1; transition:transform .2s, box-shadow .2s; }
+              .ulist-row:hover .ulist-ava{ transform:scale(1.08) rotate(-3deg); }
+              .ulist-enter{ display:inline-flex; align-items:center; gap:2px; font-size:10.5px; font-weight:800; color:var(--primary);
+                opacity:0; transform:translateX(-6px); transition:opacity .2s, transform .2s; white-space:nowrap; }
+              .ulist-row:hover .ulist-enter{ opacity:1; transform:none; }
+              .ulist-row.is-active .ulist-enter{ opacity:1; transform:none; }
+              @media (prefers-reduced-motion:reduce){ .ulist-row, .ulist-row *{ transition:none !important } .ulist-row:hover{ transform:none } }
+            `}</style>
+            <CardHeader className="pb-3 bg-gradient-to-r from-primary/10 via-muted/40 to-transparent border-b border-border/60">
+              <CardTitle className="text-sm font-bold uppercase tracking-wider text-muted-foreground flex items-center justify-between gap-2">
+                <span className="flex items-center gap-2">
+                  <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-primary/70 text-primary-foreground shadow-sm">
+                    <Users className="h-3.5 w-3.5" />
+                  </span>
+                  Usuarios
+                </span>
+                <Badge className="bg-primary/15 text-primary hover:bg-primary/15 border-0 h-5 px-1.5 text-[11px] tabular-nums">
+                  {filteredUsers.length}
+                </Badge>
+              </CardTitle>
+              <div className="relative mt-1">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Buscar por nombre o correo…"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="pl-8 h-9 bg-card focus-visible:ring-primary/40"
+                />
+              </div>
+            </CardHeader>
+            <CardContent className="pt-3">
+              <div className="space-y-2 max-h-[620px] overflow-y-auto px-0.5 -mx-0.5 py-0.5">
+                {filteredUsers.length === 0 && (
+                  <div className="flex flex-col items-center justify-center gap-2 py-10 text-center">
+                    <Search className="h-8 w-8 text-muted-foreground/40" />
+                    <p className="text-sm text-muted-foreground">Sin usuarios que coincidan.</p>
+                  </div>
+                )}
+                {filteredUsers.map((u) => {
+                  const estado = estadoConexion(authMeta[u.id])
+                  const email = authMeta[u.id]?.email
+                  const active = selectedUser?.id === u.id
+                  return (
+                    <button
+                      key={u.id}
+                      onClick={() => handleSelectUser(u)}
+                      className={`ulist-row ${active ? "is-active" : ""}`}
+                    >
+                      <Avatar className="ulist-ava h-10 w-10 flex-shrink-0 ring-2 ring-primary/25 shadow-sm">
+                        <AvatarFallback className="bg-gradient-to-br from-primary to-primary/55 text-primary-foreground text-xs font-bold">
+                          {iniciales(u.usuario)}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="relative z-[1] flex-1 min-w-0">
+                        <p className="font-semibold text-sm truncate text-foreground">{u.usuario}</p>
+                        {email && <p className="text-xs text-muted-foreground truncate">{email}</p>}
+                        <p className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1">
+                          <Clock className="h-3 w-3" />
+                          {estado.relativo}
+                        </p>
+                      </div>
+                      <div className="relative z-[1] flex flex-col items-end gap-1 flex-shrink-0">
+                        <span
+                          className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
+                            estado.activo
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                              : "bg-slate-50 text-slate-500 border-slate-200"
+                          }`}
+                          title={estado.activo ? "Activo" : "Inactivo (>30 días sin conexión)"}
+                        >
+                          <span className={`h-1.5 w-1.5 rounded-full ${estado.activo ? "bg-emerald-500" : "bg-slate-400"}`} />
+                          {estado.activo ? "Activo" : "Inactivo"}
+                        </span>
+                        <span className="ulist-enter">
+                          Editar <ArrowRight className="h-3 w-3" />
+                        </span>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* ---------- Detalle: perfil + permisos + accesos ---------- */}
+          <Card className="lg:col-span-2 overflow-hidden border-border/60 shadow-md bg-gradient-to-br from-card to-muted/20">
             {selectedUser ? (
-              <div className="space-y-6">
-                <div className="max-h-[500px] overflow-y-auto space-y-8 pr-4">
-                  {PERMISSION_TREE.map((group) => (
-                    <div key={group.title} className="space-y-4">
-                      <h3 className="text-sm font-bold text-foreground border-b border-border pb-1.5">
-                        {group.title}
-                      </h3>
-                      {group.sections.map((section) => (
-                        <div key={section.title ?? `${group.title}-general`} className="space-y-3">
-                          <div className="flex items-center justify-between">
-                            <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                              {section.title ?? "General"}
-                            </h4>
-                            <div className="flex gap-2">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleSelectAll(section.permissions, true)}
-                                className="h-7 text-xs"
-                              >
-                                Todos
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleSelectAll(section.permissions, false)}
-                                className="h-7 text-xs"
-                              >
-                                Ninguno
-                              </Button>
-                            </div>
-                          </div>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pl-4 border-l-2 border-border">
-                            {section.permissions.map((perm) => {
-                              const isEnabled = permissions[perm.key] || false
-                              return (
-                                <div
-                                  key={`${group.title}-${section.title ?? "general"}-${perm.key}`}
-                                  className={`flex items-center space-x-2 p-2 rounded-md transition-colors ${
-                                    isEnabled ? "bg-primary/5 border border-primary/20" : "hover:bg-accent/50"
-                                  }`}
-                                >
-                                  <Checkbox
-                                    id={`${selectedUser.id}-${group.title}-${section.title ?? "general"}-${perm.key}`}
-                                    checked={!!isEnabled}
-                                    onCheckedChange={(checked) =>
-                                      handlePermissionChange(perm.key as string, checked as boolean)
-                                    }
-                                  />
-                                  <Label
-                                    htmlFor={`${selectedUser.id}-${group.title}-${section.title ?? "general"}-${perm.key}`}
-                                    className={`text-sm cursor-pointer leading-tight flex-1 ${
-                                      isEnabled ? "font-medium text-primary" : ""
-                                    }`}
-                                  >
-                                    {perm.label}
-                                  </Label>
-                                </div>
-                              )
-                            })}
-                          </div>
+              <>
+                <div className="relative overflow-hidden border-b border-border/60 bg-gradient-to-r from-primary/10 via-card to-card p-5">
+                  <div className="pointer-events-none absolute -top-12 right-8 h-40 w-40 rounded-full bg-primary/10 blur-3xl" />
+                  <div className="relative flex flex-wrap items-start justify-between gap-3">
+                    <div className="flex items-center gap-3.5">
+                      <Avatar className="h-14 w-14 ring-2 ring-primary/30 shadow-sm">
+                        <AvatarFallback className="bg-gradient-to-br from-primary to-primary/60 text-primary-foreground text-lg font-bold">
+                          {iniciales(selectedUser.usuario)}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div>
+                        <h3 className="text-xl font-bold leading-tight text-foreground">{selectedUser.usuario}</h3>
+                        <p className="text-sm text-muted-foreground">{emailSel ?? "Sin correo"}</p>
+                        <div className="flex items-center gap-2 mt-1.5">
+                          <span
+                            className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full border ${
+                              estadoSel.activo
+                                ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                : "bg-slate-50 text-slate-500 border-slate-200"
+                            }`}
+                          >
+                            <span className={`h-1.5 w-1.5 rounded-full ${estadoSel.activo ? "bg-emerald-500" : "bg-slate-400"}`} />
+                            {estadoSel.activo ? "Activo" : "Inactivo"}
+                          </span>
+                          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground" title={estadoSel.exacto ?? undefined}>
+                            <Clock className="h-3 w-3" />
+                            {estadoSel.relativo}
+                          </span>
                         </div>
-                      ))}
+                      </div>
                     </div>
-                  ))}
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5 bg-card"
+                        onClick={() => {
+                          setResetPwd("")
+                          setShowResetPwd(false)
+                          setResetOpen(true)
+                        }}
+                      >
+                        <KeyRound className="h-3.5 w-3.5" />
+                        Contraseña
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5 bg-card text-destructive hover:text-destructive hover:bg-destructive/10 hover:border-destructive/40"
+                        disabled={isSelf}
+                        title={isSelf ? "No puedes eliminar tu propio usuario" : undefined}
+                        onClick={() => setDeleteOpen(true)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Eliminar
+                      </Button>
+                    </div>
+                  </div>
                 </div>
 
-                <div className="flex justify-end pt-4 border-t">
-                  <Button onClick={handleSave} disabled={saving} className="gap-2">
-                    {saving ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Guardando...
-                      </>
-                    ) : (
-                      <>
-                        <Save className="h-4 w-4" />
-                        Guardar Permisos
-                      </>
-                    )}
+                <CardContent className="pt-5">
+                  <Tabs defaultValue="permisos" className="w-full">
+                    <TabsList className="grid w-full grid-cols-2 h-11 p-1 bg-muted/60">
+                      <TabsTrigger value="permisos" className="gap-1.5 data-[state=active]:shadow-sm">
+                        <ShieldCheck className="h-4 w-4" />
+                        Permisos
+                        <Badge className="ml-1 h-5 px-1.5 text-[11px] bg-primary/15 text-primary hover:bg-primary/15 border-0">
+                          {totalActivos}
+                        </Badge>
+                      </TabsTrigger>
+                      <TabsTrigger value="accesos" className="gap-1.5 data-[state=active]:shadow-sm">
+                        <Building2 className="h-4 w-4" />
+                        Accesos
+                        <Badge className="ml-1 h-5 px-1.5 text-[11px] bg-primary/15 text-primary hover:bg-primary/15 border-0">
+                          {empresaAccess.length + ownerAccess.length}
+                        </Badge>
+                      </TabsTrigger>
+                    </TabsList>
+
+                    {/* ===== Permisos ===== */}
+                    <TabsContent value="permisos" className="mt-4 space-y-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="relative flex-1 min-w-[180px]">
+                          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                          <Input
+                            placeholder="Filtrar módulos…"
+                            value={permSearch}
+                            onChange={(e) => setPermSearch(e.target.value)}
+                            className="pl-8 h-9"
+                          />
+                        </div>
+                        <Select value={copyFromId} onValueChange={handleCopyFrom}>
+                          <SelectTrigger className="h-9 w-[190px]">
+                            <div className="flex items-center gap-1.5">
+                              <Copy className="h-3.5 w-3.5" />
+                              <SelectValue placeholder="Copiar permisos de…" />
+                            </div>
+                          </SelectTrigger>
+                          <SelectContent>
+                            {users
+                              .filter((u) => u.id !== selectedUser.id)
+                              .map((u) => (
+                                <SelectItem key={u.id} value={u.id}>
+                                  {u.usuario}
+                                </SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
+                        <Button variant="outline" size="sm" className="h-9" onClick={() => handleGlobalAll(true)}>
+                          Todo
+                        </Button>
+                        <Button variant="outline" size="sm" className="h-9" onClick={() => handleGlobalAll(false)}>
+                          Nada
+                        </Button>
+                      </div>
+
+                      <div className="max-h-[460px] overflow-y-auto pr-2 -mr-2">
+                        {filteredTree.length === 0 ? (
+                          <p className="text-sm text-muted-foreground text-center py-8">
+                            Ningún módulo coincide con “{permSearch}”.
+                          </p>
+                        ) : (
+                          <Accordion type="multiple" value={openGroups} onValueChange={setOpenGroups} className="space-y-2">
+                            {filteredTree.map((group) => {
+                              const { total, active } = groupCount(group)
+                              return (
+                                <AccordionItem
+                                  key={group.title}
+                                  value={group.title}
+                                  className="rounded-xl border border-border/60 bg-card px-3 data-[state=open]:border-primary/30 data-[state=open]:shadow-sm transition-colors"
+                                >
+                                  <AccordionTrigger className="hover:no-underline py-3">
+                                    <div className="flex items-center gap-2 flex-1 pr-2">
+                                      <span className={`h-2 w-2 rounded-full flex-shrink-0 ${active > 0 ? "bg-primary" : "bg-border"}`} />
+                                      <span className="font-semibold text-sm text-foreground">{group.title}</span>
+                                      <Badge
+                                        className={`h-5 px-1.5 text-[11px] border-0 ${
+                                          active > 0 ? "bg-primary/15 text-primary hover:bg-primary/15" : "bg-muted text-muted-foreground hover:bg-muted"
+                                        }`}
+                                      >
+                                        {active}/{total}
+                                      </Badge>
+                                    </div>
+                                  </AccordionTrigger>
+                                  <AccordionContent className="space-y-4 pt-1">
+                                    {group.sections.map((section) => (
+                                      <div key={section.title ?? `${group.title}-general`} className="space-y-2">
+                                        <div className="flex items-center justify-between">
+                                          <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                            {section.title ?? "General"}
+                                          </h4>
+                                          <div className="flex gap-1.5">
+                                            <Button
+                                              variant="ghost"
+                                              size="sm"
+                                              className="h-6 text-xs px-2"
+                                              onClick={() => handleSelectAll(section.permissions, true)}
+                                            >
+                                              Todos
+                                            </Button>
+                                            <Button
+                                              variant="ghost"
+                                              size="sm"
+                                              className="h-6 text-xs px-2"
+                                              onClick={() => handleSelectAll(section.permissions, false)}
+                                            >
+                                              Ninguno
+                                            </Button>
+                                          </div>
+                                        </div>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pl-3 border-l-2 border-border">
+                                          {section.permissions.map((perm) => {
+                                            const isEnabled = permissions[perm.key] || false
+                                            const htmlId = `${selectedUser.id}-${perm.key}`
+                                            return (
+                                              <div
+                                                key={perm.key as string}
+                                                className={`flex items-center space-x-2 p-1.5 rounded-md transition-colors ${
+                                                  isEnabled ? "bg-primary/5" : "hover:bg-accent/50"
+                                                }`}
+                                              >
+                                                <Checkbox
+                                                  id={htmlId}
+                                                  checked={!!isEnabled}
+                                                  onCheckedChange={(checked) =>
+                                                    handlePermissionChange(perm.key as string, checked as boolean)
+                                                  }
+                                                />
+                                                <Label
+                                                  htmlFor={htmlId}
+                                                  className={`text-sm cursor-pointer leading-tight flex-1 ${
+                                                    isEnabled ? "font-medium text-primary" : ""
+                                                  }`}
+                                                >
+                                                  {perm.label}
+                                                </Label>
+                                              </div>
+                                            )
+                                          })}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </AccordionContent>
+                                </AccordionItem>
+                              )
+                            })}
+                          </Accordion>
+                        )}
+                      </div>
+
+                      <div className="flex items-center justify-between pt-3 border-t">
+                        <span className="text-xs text-muted-foreground">
+                          {permsDirty ? "Tienes cambios sin guardar" : "Todo guardado"}
+                        </span>
+                        <Button onClick={handleSavePerms} disabled={savingPerms || !permsDirty} className="gap-2">
+                          {savingPerms ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                          Guardar Permisos
+                        </Button>
+                      </div>
+                    </TabsContent>
+
+                    {/* ===== Accesos ===== */}
+                    <TabsContent value="accesos" className="mt-4 space-y-5">
+                      {loadingAccess ? (
+                        <div className="flex items-center justify-center h-40">
+                          <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                        </div>
+                      ) : (
+                        <>
+                          {/* Empresas */}
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-2">
+                              <Building2 className="h-4 w-4 text-primary" />
+                              <h3 className="text-sm font-bold">Empresas</h3>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <button type="button" className="text-xs text-muted-foreground underline decoration-dotted">
+                                    ¿qué controla?
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-xs text-xs leading-relaxed">
+                                  Permiso maestro: define qué empresas ve el usuario en el selector global y, con ello,
+                                  qué datos ve y gestiona en casi todo el sistema (Pedidos, Inventario, Producción,
+                                  Financiera, GH, SST, SIG…). Cada módulo filtra por la empresa seleccionada.
+                                </TooltipContent>
+                              </Tooltip>
+                            </div>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1 rounded-xl border border-border/60 bg-card p-2.5">
+                              {empresas.map((e) => {
+                                const checked = empresaAccess.includes(e.id)
+                                return (
+                                  <label key={e.id} className="flex items-center gap-2 text-sm cursor-pointer p-1 rounded hover:bg-accent/50">
+                                    <Checkbox
+                                      checked={checked}
+                                      onCheckedChange={(c) =>
+                                        setEmpresaAccess((prev) => (c ? [...prev, e.id] : prev.filter((id) => id !== e.id)))
+                                      }
+                                    />
+                                    <span className="truncate">{e.nombre}</span>
+                                  </label>
+                                )
+                              })}
+                            </div>
+                          </div>
+
+                          <Separator />
+
+                          {/* Owners */}
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-2">
+                              <Tags className="h-4 w-4 text-primary" />
+                              <h3 className="text-sm font-bold">Owners</h3>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <button type="button" className="text-xs text-muted-foreground underline decoration-dotted">
+                                    ¿qué controla?
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-xs text-xs leading-relaxed">
+                                  Filtro adicional SOLO para Pedidos: restringe la Gestión y el Dashboard de Pedidos por
+                                  la razón social que factura. Solo aplica si el usuario tiene owners asignados; si no,
+                                  no se restringe por owner. No cambia el selector de empresa ni afecta otros módulos.
+                                </TooltipContent>
+                              </Tooltip>
+                            </div>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1 rounded-xl border border-border/60 bg-card p-2.5">
+                              {owners.map((o) => {
+                                const checked = ownerAccess.includes(o.nombre)
+                                return (
+                                  <label key={o.id} className="flex items-center gap-2 text-sm cursor-pointer p-1 rounded hover:bg-accent/50">
+                                    <Checkbox
+                                      checked={checked}
+                                      onCheckedChange={(c) =>
+                                        setOwnerAccess((prev) => (c ? [...prev, o.nombre] : prev.filter((n) => n !== o.nombre)))
+                                      }
+                                    />
+                                    <span className="truncate">{o.nombre}</span>
+                                  </label>
+                                )
+                              })}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between pt-3 border-t">
+                            <span className="text-xs text-muted-foreground">
+                              {accessDirty ? "Tienes cambios sin guardar" : "Todo guardado"}
+                            </span>
+                            <Button onClick={handleSaveAccess} disabled={savingAccess || !accessDirty} className="gap-2">
+                              {savingAccess ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                              Guardar Accesos
+                            </Button>
+                          </div>
+                        </>
+                      )}
+                    </TabsContent>
+                  </Tabs>
+                </CardContent>
+              </>
+            ) : (
+              <div className="flex flex-col items-center justify-center h-[420px] text-center px-6">
+                <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/15 to-primary/5 mb-4">
+                  <User className="h-8 w-8 text-primary" />
+                </div>
+                <h3 className="text-lg font-semibold text-foreground">Selecciona un usuario</h3>
+                <p className="text-sm text-muted-foreground mt-1 max-w-xs">
+                  Elige a alguien de la lista para editar sus permisos y accesos, o crea uno nuevo con “Crear Usuario”.
+                </p>
+              </div>
+            )}
+          </Card>
+        </div>
+
+        {/* ---------- Dialog: Crear Usuario ---------- */}
+        <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Crear usuario</DialogTitle>
+              <DialogDescription>
+                El correo queda validado automáticamente: el usuario podrá iniciar sesión de inmediato.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4 py-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="nu-email">Correo</Label>
+                <Input
+                  id="nu-email"
+                  type="email"
+                  autoComplete="off"
+                  placeholder="usuario@lip-sas.com"
+                  value={form.email}
+                  onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="nu-usuario">Nombre de usuario</Label>
+                <Input
+                  id="nu-usuario"
+                  autoComplete="off"
+                  placeholder="Nombre visible en el sistema"
+                  value={form.usuario}
+                  onChange={(e) => setForm((f) => ({ ...f, usuario: e.target.value }))}
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="nu-pwd">Contraseña</Label>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Input
+                      id="nu-pwd"
+                      type={showPwd ? "text" : "password"}
+                      autoComplete="new-password"
+                      placeholder="Mínimo 8 caracteres"
+                      value={form.password}
+                      onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+                      className="pr-9"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPwd((s) => !s)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      tabIndex={-1}
+                    >
+                      {showPwd ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="gap-1.5"
+                    onClick={() => {
+                      setForm((f) => ({ ...f, password: generarPasswordSegura() }))
+                      setShowPwd(true)
+                    }}
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                    Generar
                   </Button>
                 </div>
               </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center h-64 text-center">
-                <User className="h-12 w-12 text-muted-foreground mb-4" />
-                <p className="text-muted-foreground">Selecciona un usuario para comenzar</p>
+
+              <div className="space-y-1.5">
+                <Label>Empresa por defecto</Label>
+                <Select value={form.empresaId} onValueChange={(v) => setForm((f) => ({ ...f, empresaId: v }))}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecciona una empresa" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {empresas.map((e) => (
+                      <SelectItem key={e.id} value={String(e.id)}>
+                        {e.nombre}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
-            )}
-          </CardContent>
-        </Card>
+
+              {empresas.length > 0 && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+                    Empresas adicionales de acceso (opcional)
+                  </Label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-32 overflow-y-auto rounded-md border p-2">
+                    {empresas.map((e) => {
+                      const checked = form.empresasAdicionales.includes(e.id)
+                      return (
+                        <label key={e.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={(c) =>
+                              setForm((f) => ({
+                                ...f,
+                                empresasAdicionales: c
+                                  ? [...f.empresasAdicionales, e.id]
+                                  : f.empresasAdicionales.filter((id) => id !== e.id),
+                              }))
+                            }
+                          />
+                          <span className="truncate">{e.nombre}</span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {owners.length > 0 && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+                    Owners con acceso (opcional)
+                  </Label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-32 overflow-y-auto rounded-md border p-2">
+                    {owners.map((o) => {
+                      const checked = form.owners.includes(o.nombre)
+                      return (
+                        <label key={o.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={(c) =>
+                              setForm((f) => ({
+                                ...f,
+                                owners: c ? [...f.owners, o.nombre] : f.owners.filter((n) => n !== o.nombre),
+                              }))
+                            }
+                          />
+                          <span className="truncate">{o.nombre}</span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setCreateOpen(false)} disabled={creating}>
+                Cancelar
+              </Button>
+              <Button onClick={handleCreate} disabled={creating} className="gap-2">
+                {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+                Crear usuario
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ---------- Dialog: Resetear contraseña ---------- */}
+        <Dialog open={resetOpen} onOpenChange={setResetOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Resetear contraseña</DialogTitle>
+              <DialogDescription>
+                {selectedUser ? `Define una nueva contraseña para ${selectedUser.usuario}. Tendrá efecto inmediato.` : ""}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-1.5 py-2">
+              <Label htmlFor="rp-pwd">Nueva contraseña</Label>
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Input
+                    id="rp-pwd"
+                    type={showResetPwd ? "text" : "password"}
+                    autoComplete="new-password"
+                    placeholder="Mínimo 8 caracteres"
+                    value={resetPwd}
+                    onChange={(e) => setResetPwd(e.target.value)}
+                    className="pr-9"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowResetPwd((s) => !s)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    tabIndex={-1}
+                  >
+                    {showResetPwd ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="gap-1.5"
+                  onClick={() => {
+                    setResetPwd(generarPasswordSegura())
+                    setShowResetPwd(true)
+                  }}
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  Generar
+                </Button>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setResetOpen(false)} disabled={resetting}>
+                Cancelar
+              </Button>
+              <Button onClick={handleReset} disabled={resetting} className="gap-2">
+                {resetting ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
+                Guardar contraseña
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ---------- AlertDialog: Eliminar usuario ---------- */}
+        <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>¿Eliminar a {selectedUser?.usuario}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Esta acción es permanente. Se eliminará la cuenta de acceso, sus permisos y sus accesos a empresas y
+                owners. El usuario no podrá volver a iniciar sesión.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={(e) => {
+                  e.preventDefault()
+                  handleDelete()
+                }}
+                disabled={deleting}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Eliminar"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
-    </div>
+    </TooltipProvider>
   )
 }
