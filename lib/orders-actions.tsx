@@ -1338,6 +1338,10 @@ export async function getLoadOrdersForBascula() {
       )
       .eq("idempresa", empresaId) // Filter by empresa from session
       .neq("tipooperacion", "Tolva") // Exclude Tolva operations
+      // Los CLONES de distribución (+D) NO pasan por báscula: la orden madre ya se
+      // pesó. Sin esto aparecían aquí por nacer con pesajefinal null y placa heredada.
+      // Los clones solo se tramitan en Packing y se ven en el dashboard del día.
+      .neq("tipooperacion", "Distribucion")
       .is("pesajefinal", null)
       .not("placa", "is", null)
       .neq("placa", "")

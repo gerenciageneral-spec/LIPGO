@@ -79,6 +79,10 @@ export async function getAvailableLoadOrders(selectedEmpresaId?: number | null):
       .eq("idempresa", currentEmpresaId) // Filter by empresa_id from session
       .neq("tipooperacion", "Tolva") // Exclude orders with tipooperacion = "Tolva"
       .neq("tipooperacion", "proyeccion") // Exclude orders with tipooperacion = "proyeccion"
+      // Los CLONES de distribución (+D) NO asignan lotes: son copia exacta de la
+      // orden madre (que ya tiene sus lotes) y solo se tramitan en Packing y se ven
+      // en el dashboard del día. Sin esto aparecían aquí por nacer con horalote null.
+      .neq("tipooperacion", "Distribucion")
       .order("id", { ascending: false })
 
     if (error) {
