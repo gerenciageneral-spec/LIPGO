@@ -18,13 +18,28 @@ export const SLA_TIEMPO_CARGUE_MIN: Record<string, { PT: number | null; SUB: num
   Camioneta: { PT: 30, SUB: null }, // asimilada a Turbo (menor capacidad)
 }
 
-// Tiempo SLA aplicable a un vehículo/producto. Si no se conoce el producto,
-// usa PT (estándar de referencia del acuerdo).
-export function getSlaCargueMin(tipovehiculo?: string | null, producto: "PT" | "SUB" = "PT"): number | null {
+// AJUSTE DE TIEMPO POR SITIO (proyecto). Los CEDIs manejan tiempos MAYORES a las plantas
+// (más manipulación/cross-docking): el acuerdo replica el SLA de Indupan/Avimol pero
+// INCREMENTA el tiempo permitido en los CEDIs — Cedi Funza +15%, Cedi Medellín +35%.
+// Las plantas (Indupan/Avimol) usan el tiempo base (factor 1.0).
+export const FACTOR_TIEMPO_SITIO: Record<number, number> = { 1: 1.0, 2: 1.0, 3: 1.15, 4: 1.35 }
+export function factorTiempoSitio(empresaId?: number | null): number {
+  return (empresaId != null && FACTOR_TIEMPO_SITIO[empresaId]) || 1.0
+}
+
+// Tiempo SLA aplicable a un vehículo/producto EN UN SITIO. Si no se conoce el producto,
+// usa PT (estándar de referencia del acuerdo). Aplica el factor del sitio (CEDIs +%).
+export function getSlaCargueMin(
+  tipovehiculo?: string | null,
+  producto: "PT" | "SUB" = "PT",
+  empresaId?: number | null,
+): number | null {
   if (!tipovehiculo) return null
   const v = SLA_TIEMPO_CARGUE_MIN[tipovehiculo]
   if (!v) return null
-  return v[producto] ?? v.PT ?? null
+  const base = v[producto] ?? v.PT ?? null
+  if (base == null) return null
+  return Math.round(base * factorTiempoSitio(empresaId))
 }
 
 // Planta de personal ACORDADA por proyecto (headcount esperado). Fuente:

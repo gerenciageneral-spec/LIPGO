@@ -50,7 +50,7 @@ import type {
 } from "@/lib/sig-types"
 import { SIG_EMPRESA_LIP, SIG_CLIENTES_LIP } from "@/lib/sig-types"
 import { getMetaDiaForEmpresa } from "@/lib/empresa-meta-dia"
-import { getSlaCargueMin, PLANTA_ACORDADA } from "@/lib/sla-acordados"
+import { getSlaCargueMin, PLANTA_ACORDADA, factorTiempoSitio } from "@/lib/sla-acordados"
 
 // Mapea el estado del Centro de Evidencia ISO 9001 al estado de la matriz SIG.
 function isoEstadoASig(e: EstadoISO): SigEstadoCobertura {
@@ -1238,9 +1238,15 @@ export async function getEvaluacionCoordinadores(): Promise<{ success: boolean; 
         const liveVal = vals[it.calculo_auto]?.valor ?? null
         const valor = liveVal != null ? Number(liveVal) : null
         const peso = Number(it.peso) || 0
-        const cumplimiento = cumplimientoIndicador(valor, it.meta, it.sentido)
+        // META POR SITIO: el "tiempo de cargue" se relaja en los CEDIs (+15%/+35%),
+        // según el acuerdo (los CEDIs replican el SLA de las plantas con más tiempo).
+        const meta =
+          it.calculo_auto === "lip_tiempo_cargue" && it.meta != null
+            ? Math.round(Number(it.meta) * factorTiempoSitio(c.idempresa))
+            : it.meta
+        const cumplimiento = cumplimientoIndicador(valor, meta, it.sentido)
         return {
-          codigo: it.codigo, nombre: it.nombre, perspectiva: it.perspectiva, meta: it.meta, sentido: it.sentido,
+          codigo: it.codigo, nombre: it.nombre, perspectiva: it.perspectiva, meta, sentido: it.sentido,
           valor, base: vals[it.calculo_auto]?.base ?? null, peso, cumplimiento,
           aporte: cumplimiento != null ? (cumplimiento * peso) / 100 : 0,
         }
@@ -1691,7 +1697,7 @@ export async function getIndicadoresValores(
     // citasvehiculos (ocargue = cabeceraoc.ordendecargue).
     let qSla = supabase
       .from("cabeceraoc")
-      .select("ordendecargue,iniciocargue,fincargue")
+      .select("ordendecargue,iniciocargue,fincargue,idempresa")
       .in("idempresa", clientes)
       .not("iniciocargue", "is", null)
       .not("fincargue", "is", null)
@@ -1703,7 +1709,8 @@ export async function getIndicadoresValores(
     let slaOk = 0, slaTot = 0
     for (const r of slaRows ?? []) {
       const tv = tipoPorOc[String(r.ordendecargue)]
-      const max = getSlaCargueMin(tv, "PT")
+      // SLA de tiempo AJUSTADO POR SITIO (CEDIs +15%/+35% sobre el tiempo base).
+      const max = getSlaCargueMin(tv, "PT", (r as any).idempresa)
       if (!max) continue
       const real = aMin(r.fincargue) - aMin(r.iniciocargue)
       if (real <= 0 || real > 600) continue
