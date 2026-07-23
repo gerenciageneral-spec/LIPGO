@@ -596,11 +596,17 @@ export async function getOrderFiltersData() {
 // DESCARGUE(S) pendientes en el CEDI destino (idempresa 3/4). Igual que la
 // distribución "+D", pero CRUZANDO EMPRESAS. Mapeo en lib/cedis-destino.ts.
 // Idempotente (dedup por `ordenorigen`) y FALLA-SEGURO (nunca revierte el cargue).
-export async function autoGenerarDescarguesCedi(supabase: any, orderId: number) {
+export async function autoGenerarDescarguesCedi(_supabase: any, orderId: number) {
   // El DESTINO a un CEDI vive en detalleoc.cliente ("CEDI FUNZA/BOGOTA"→id3,
   // "CEDI MEDELLIN"→id4, "TOSTADITOS SUSANITA"→id4). NO depende de la placa. Se dispara
   // al CREAR el cargue en la planta y también al ASIGNAR el vehículo (idempotente,
   // dedup por `ordenorigen`), para garantizar el descargue pendiente en el CEDI destino.
+  //
+  // IMPORTANTE: usa el cliente SERVICE_ROLE (admin), NO el de la petición. Igual que
+  // el clon +D, el INSERT quedaba sujeto a RLS con el cliente de sesión y fallaba en
+  // silencio (falla-seguro), por eso los descargues no se generaban en producción. El
+  // admin bypassa RLS y garantiza la escritura en cualquier ruta.
+  const supabase = await getSupabaseAdmin()
   const cargueId = orderId
   const { data: origHeader } = await supabase.from("cabeceraoc").select("*").eq("id", cargueId).maybeSingle()
   if (!origHeader) return
@@ -740,7 +746,31 @@ export async function generarDistribucionAutomatica(
     for (let intento = 0; intento < 6 && !creada; intento++) {
       const { data: maxH } = await supabase.from("cabeceraoc").select("id").order("id", { ascending: false }).limit(1).maybeSingle()
       distId = (maxH?.id || orderId) + 1
-      const distHeader = { ...origHeader, id: distId, ordendecargue: distCode, tipooperacion: "Distribucion", facturar: true }
+      const distHeader = {
+        ...origHeader,
+        id: distId,
+        ordendecargue: distCode,
+        tipooperacion: "Distribucion",
+        facturar: true,
+        // NACE PENDIENTE: se limpian los campos de proceso/cierre del cargue
+        // origen (que ya puede venir FINALIZADO, p.ej. cuando el clon se genera
+        // por reconciliación desde un cargue ya cerrado). Es OBLIGATORIO: Packing
+        // (`getDistributionOrders`) solo muestra la distribución con `fincargue`
+        // NULL; sin esto el clon nace "finalizado" y NO se puede tramitar.
+        status: null,
+        iniciocargue: null,
+        fincargue: null,
+        pesajeinicial: null,
+        pesajefinal: null,
+        pesovascula: null,
+        tiquetebascula: null,
+        pdfoc: null,
+        fotospicking: null,
+        horapicking: null,
+        horalote: null,
+        doccargue: null,
+        auxiliares: null,
+      }
       const { error } = await supabase.from("cabeceraoc").insert(distHeader)
       if (!error) creada = true
       else if ((error as any).code === "23505") { console.warn("[+D] colisión de id, reintento", intento + 1); continue }
