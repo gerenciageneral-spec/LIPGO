@@ -12,32 +12,34 @@ export interface KpiDef {
 }
 
 export const KPI_DEFS: Record<string, KpiDef> = {
-  sla_tiempos: { nombre: "SLA de tiempos", fmt: "pct", meta: 90, higherBetter: true },
-  sla_global: { nombre: "Nivel de servicio", fmt: "pct", meta: 90, higherBetter: true },
-  desp_cumplimiento: { nombre: "Cumplim. de cargues", fmt: "pct", meta: 98, higherBetter: true },
-  desp_ciclo_cerrado: { nombre: "Ciclo cerrado", fmt: "pct", meta: 100, higherBetter: true },
+  // Metas SINCRONIZADAS con el BSC (sig_indicadores, LIP 100) — clase mundial 3PL.
+  // Fuente oficial de la meta = sig_indicadores; estas tiras deben mostrar lo mismo.
+  sla_tiempos: { nombre: "SLA de tiempos", fmt: "pct", meta: 98, higherBetter: true },
+  sla_global: { nombre: "Nivel de servicio", fmt: "pct", meta: 98, higherBetter: true },
+  desp_cumplimiento: { nombre: "Cumplim. de cargues", fmt: "pct", meta: 99, higherBetter: true },
+  desp_ciclo_cerrado: { nombre: "Ciclo cerrado", fmt: "pct", meta: 98, higherBetter: true },
   desp_meta_ton: { nombre: "Cumpl. meta toneladas", fmt: "pct", meta: 100, higherBetter: true },
   desp_ordenes: { nombre: "Órdenes", fmt: "num" },
   desp_toneladas: { nombre: "Toneladas", fmt: "ton" },
   vehiculos_atendidos: { nombre: "Vehículos atendidos", fmt: "num" },
   lip_tiempo_cargue: { nombre: "Tiempo de cargue", fmt: "min", higherBetter: false },
-  lip_evidencia: { nombre: "Evidencia de cargue", fmt: "pct", meta: 90, higherBetter: true },
-  lip_facturacion: { nombre: "Facturación gestionada", fmt: "pct", meta: 95, higherBetter: true },
-  inv_exactitud: { nombre: "Exactitud de inventario", fmt: "pct", meta: 98, higherBetter: true },
+  lip_evidencia: { nombre: "Evidencia de cargue", fmt: "pct", meta: 98, higherBetter: true },
+  lip_facturacion: { nombre: "Facturación gestionada", fmt: "pct", meta: 98, higherBetter: true },
+  inv_exactitud: { nombre: "Exactitud de inventario", fmt: "pct", meta: 99.5, higherBetter: true },
   inv_rechazos: { nombre: "Rechazos", fmt: "num", higherBetter: false },
   gh_activos: { nombre: "Colaboradores activos", fmt: "num" },
-  gh_ausentismo: { nombre: "Ausentismo médico", fmt: "pct", meta: 5, higherBetter: false },
+  gh_ausentismo: { nombre: "Ausentismo médico", fmt: "pct", meta: 3, higherBetter: false },
   gh_cobertura: { nombre: "Cobertura de planta", fmt: "pct", meta: 100, higherBetter: true },
-  gh_recobro: { nombre: "Recobro de incapacidades", fmt: "pct", meta: 90, higherBetter: true },
-  sat_conductor: { nombre: "Satisfacción conductor", fmt: "pct", meta: 85, higherBetter: true },
-  sat_cliente: { nombre: "Satisfacción cliente", fmt: "pct", meta: 85, higherBetter: true },
+  gh_recobro: { nombre: "Recobro de incapacidades", fmt: "pct", meta: 95, higherBetter: true },
+  sat_conductor: { nombre: "Satisfacción conductor", fmt: "pct", meta: 90, higherBetter: true },
+  sat_cliente: { nombre: "Satisfacción cliente", fmt: "pct", meta: 90, higherBetter: true },
   // SST (BSC del área): SG-SST 0312, accidentalidad y IPEVR.
-  // Meta = 86% (umbral "aceptable" de la Res. 0312, Art. 28). Debe coincidir con
-  // la ficha del BSC en sig_indicadores (IND-SST-0312), que es la fuente oficial.
+  // 0312 se mantiene en 86% (umbral "aceptable" Res. 0312 Art. 28) — fuente oficial
+  // sig_indicadores (IND-SST-0312). Si se sube a meta interna, cambiar en AMBOS lados.
   sgsst_0312: { nombre: "Cumplimiento SG-SST 0312", fmt: "pct", meta: 86, higherBetter: true },
   sst_at_count: { nombre: "Accidentes de trabajo", fmt: "num", meta: 0, higherBetter: false },
   sst_at_dias: { nombre: "Días perdidos por AT", fmt: "num", meta: 0, higherBetter: false },
-  sst_ipevr_cumpl: { nombre: "Intervención de peligros (IPEVR)", fmt: "pct", meta: 90, higherBetter: true },
+  sst_ipevr_cumpl: { nombre: "Intervención de peligros (IPEVR)", fmt: "pct", meta: 95, higherBetter: true },
 }
 
 // Qué indicadores muestra cada grupo del menú (por su `key`).
