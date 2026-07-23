@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { toast } from "@/components/ui/use-toast"
-import { Loader2, FileText, Receipt, Search, ChevronLeft, ChevronRight, DollarSign, Upload, Camera, Image, X, CheckCircle, CreditCard, Filter, RotateCcw, Download, Lock } from "lucide-react"
+import { Loader2, FileText, Receipt, Search, ChevronLeft, ChevronRight, DollarSign, Upload, Camera, Image, X, CheckCircle, CreditCard, Filter, RotateCcw, Download, Lock, Trash2 } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Textarea } from "@/components/ui/textarea"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
@@ -173,6 +173,8 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
   const [passwordInput, setPasswordInput] = useState("")
   const [passwordError, setPasswordError] = useState(false)
   const [pendingOrdenConfirmacion, setPendingOrdenConfirmacion] = useState<OrdenCargue | null>(null)
+  // Acción de Factura Siigo (montar/eliminar) pendiente de validar contraseña.
+  const [pendingSiigo, setPendingSiigo] = useState<{ orden: OrdenCargue; accion: "montar" | "eliminar" } | null>(null)
   const CONFIRM_PASSWORD = "Jeff123456"
 
   // Export state
@@ -671,6 +673,42 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
     setTimeout(() => facturaSiigoInputRef.current?.click(), 100)
   }
 
+  // Pide la CONTRASEÑA antes de montar o eliminar una factura Siigo. Ambas
+  // acciones (cargar/eliminar) quedan protegidas: solo quien tenga la clave
+  // puede montar o quitar facturas.
+  const handleRequestSiigo = (orden: OrdenCargue, accion: "montar" | "eliminar") => {
+    setPendingSiigo({ orden, accion })
+    setPasswordInput("")
+    setPasswordError(false)
+    setShowPasswordDialog(true)
+  }
+
+  // Elimina la factura Siigo de la orden: limpia el archivo y devuelve la orden
+  // a "CF - Factura solicitada" para poder montar otra. Protegida por contraseña.
+  const handleDeleteFacturaSiigo = async (orden: OrdenCargue) => {
+    try {
+      const res = await fetch("/api/gestion-facturas", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderId: orden.id,
+          estadofactura: "CF - Factura solicitada",
+          facturasiigo: null,
+        }),
+      })
+      const result = await res.json()
+      if (!result.success) {
+        toast({ title: "Error", description: result.error || "No se pudo eliminar la factura Siigo", variant: "destructive" })
+        return
+      }
+      toast({ title: "Factura Siigo eliminada", description: "La orden volvió a 'Factura solicitada'." })
+      loadOrdenes(currentPage, searchTerm)
+    } catch (error) {
+      console.error("Error eliminando factura siigo:", error)
+      toast({ title: "Error", description: "Error al eliminar la factura Siigo", variant: "destructive" })
+    }
+  }
+
   // Show password dialog before opening confirmation
   const handleRequestConfirmacion = (orden: OrdenCargue) => {
     setPendingOrdenConfirmacion(orden)
@@ -688,7 +726,19 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
     setShowPasswordDialog(false)
     setPasswordInput("")
     setPasswordError(false)
-    
+
+    // Acción de Factura Siigo (montar / eliminar) protegida por contraseña.
+    if (pendingSiigo) {
+      const { orden, accion } = pendingSiigo
+      setPendingSiigo(null)
+      if (accion === "montar") {
+        handleOpenFacturaSiigoUpload(orden)
+      } else {
+        await handleDeleteFacturaSiigo(orden)
+      }
+      return
+    }
+
     if (pendingOrdenConfirmacion) {
       await handleOpenConfirmacion(pendingOrdenConfirmacion)
       setPendingOrdenConfirmacion(null)
@@ -1517,20 +1567,32 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
                               {/* Factura SIIGO: disponible en todos los estados CON FACTURA (solicitada y cerrada) y en A credito (legacy) */}
                               {(orden.estadofactura === "CF - Factura solicitada" || orden.estadofactura === "CF - Cerrado" || orden.estadofactura === "A credito") && (
                                 orden.facturasiigo ? (
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={() => window.open(orden.facturasiigo!, "_blank")}
-                                    className="text-xs h-7 px-2 text-green-600"
-                                  >
-                                    <FileText className="h-3 w-3 mr-1" />
-                                    Ver Siigo
-                                  </Button>
+                                  <>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() => window.open(orden.facturasiigo!, "_blank")}
+                                      className="text-xs h-7 px-2 text-green-600"
+                                    >
+                                      <FileText className="h-3 w-3 mr-1" />
+                                      Ver Siigo
+                                    </Button>
+                                    {/* Eliminar factura Siigo — protegido por contraseña. */}
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() => handleRequestSiigo(orden, "eliminar")}
+                                      className="text-xs h-7 px-2 text-red-600 hover:bg-red-50"
+                                    >
+                                      <Trash2 className="h-3 w-3 mr-1" />
+                                      Eliminar
+                                    </Button>
+                                  </>
                                 ) : (
                                   <Button
                                     size="sm"
                                     variant="outline"
-                                    onClick={() => handleOpenFacturaSiigoUpload(orden)}
+                                    onClick={() => handleRequestSiigo(orden, "montar")}
                                     disabled={uploadingFacturaSiigo && uploadingSiigoOrden?.id === orden.id}
                                     className="text-xs h-7 px-2 border-amber-300 text-amber-700 hover:bg-amber-50"
                                   >
@@ -2418,6 +2480,7 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
           setPasswordInput("")
           setPasswordError(false)
           setPendingOrdenConfirmacion(null)
+          setPendingSiigo(null)
         }
       }}>
         <DialogContent className="sm:max-w-md">
@@ -2427,7 +2490,11 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
               Acceso Protegido
             </DialogTitle>
             <DialogDescription>
-              Ingrese la contrasena para acceder a la confirmacion de pago.
+              {pendingSiigo
+                ? pendingSiigo.accion === "eliminar"
+                  ? "Ingrese la contraseña para ELIMINAR la factura Siigo de esta orden."
+                  : "Ingrese la contraseña para MONTAR la factura Siigo de esta orden."
+                : "Ingrese la contrasena para acceder a la confirmacion de pago."}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -2460,6 +2527,7 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
               setPasswordInput("")
               setPasswordError(false)
               setPendingOrdenConfirmacion(null)
+              setPendingSiigo(null)
             }}>
               Cancelar
             </Button>

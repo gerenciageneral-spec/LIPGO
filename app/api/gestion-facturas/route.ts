@@ -252,7 +252,7 @@ export async function PUT(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   try {
     const body = await request.json()
-    const { orderId, estadofactura, cliente, iva, retefuente, valorpago, cuentatransferencia } = body
+    const { orderId, estadofactura, cliente, iva, retefuente, valorpago, cuentatransferencia, facturasiigo } = body
 
     if (!orderId) {
       return NextResponse.json({ success: false, error: "orderId es requerido" }, { status: 400 })
@@ -284,6 +284,11 @@ export async function PATCH(request: NextRequest) {
     // (aplica tambien para Credito cuando se elige en Procesar Factura)
     if (cuentatransferencia !== undefined) {
       updateData.cuentatransferencia = cuentatransferencia
+    }
+    // Permite LIMPIAR la factura Siigo (facturasiigo: null) al eliminarla desde
+    // Gestión de Facturas (acción protegida por contraseña).
+    if (facturasiigo !== undefined) {
+      updateData.facturasiigo = facturasiigo
     }
 
     const { data, error } = await supabase
