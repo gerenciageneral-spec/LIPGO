@@ -714,10 +714,18 @@ export async function autoGenerarDescarguesCedi(supabase: any, orderId: number) 
 // (assignVehicleToLoadOrder): el flujo real crea la orden sin placa y la asigna luego,
 // por eso el clon debe generarse también en la asignación.
 export async function generarDistribucionAutomatica(
-  supabase: any,
+  _supabase: any,
   orderId: number,
 ): Promise<string | null> {
   try {
+    // IMPORTANTE: usamos el cliente SERVICE_ROLE (admin) para leer y escribir el
+    // clon, NO el cliente de la petición. El clon casi nunca se creaba en
+    // producción pese a estar desplegado el enganche; el INSERT del clon queda
+    // sujeto a RLS con el cliente de sesión y fallaba en silencio (falla-seguro).
+    // El admin bypassa RLS y garantiza la escritura en cualquier ruta (creación,
+    // asignación de placa o reconciliación). El parámetro se conserva por
+    // compatibilidad de firma pero ya no se usa para escribir.
+    const supabase = await getSupabaseAdmin()
     const { data: origHeader } = await supabase.from("cabeceraoc").select("*").eq("id", orderId).maybeSingle()
     if (!origHeader) return null
     if (origHeader.tipooperacion !== "Cargue") return null // solo cargues
