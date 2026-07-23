@@ -147,7 +147,7 @@ async function getSubmoduloKpis(
     try {
       const { data } = await sb
         .from("ausentismosst")
-        .select("total_dias_incapacidad, tipo_evento, requiere_revision_sst, prorroga")
+        .select("total_dias_incapacidad, tipo_evento, requiere_revision_sst, dias_incapacidad")
         .eq("idempresa", empresaId)
         .gte("fecha_inicial", `${anio}-01-01`)
         .lte("fecha_inicial", `${anio}-12-31`)
@@ -157,10 +157,12 @@ async function getSubmoduloKpis(
     }
     const casos = rows.length
     const dias = rows.reduce((s, r) => s + (Number(r.total_dias_incapacidad) || 0), 0)
-    // Accidentes de trabajo = EVENTOS NUEVOS: filas AT que NO son prórroga
-    // (`prorroga` = 0). Las prórrogas (mismo trabajador, mismo AT; `prorroga` > 0)
-    // NO suman — antes inflaban el conteo (Indupan 2026 sumaba 16 en vez de 5).
-    const at = rows.filter((r) => r.tipo_evento === "AT" && (Number(r.prorroga) || 0) === 0).length
+    // Accidentes de trabajo = EVENTOS NUEVOS: filas AT con incapacidad inicial
+    // (`dias_incapacidad` > 0). Las PRÓRROGAS puras (continuación del mismo AT;
+    // `dias_incapacidad` = 0, días en `prorroga`) NO suman — antes inflaban el
+    // conteo (Indupan 2026 sumaba 16 en vez de 5). NOTA: esta tira es ANUAL (resumen
+    // del año); el conteo por MES vive en la pestaña Registros del submódulo.
+    const at = rows.filter((r) => r.tipo_evento === "AT" && (Number(r.dias_incapacidad) || 0) > 0).length
     const revSST = rows.filter((r) => r.requiere_revision_sst).length
     return {
       titulo: `Ausentismo — resumen ${anio}`,

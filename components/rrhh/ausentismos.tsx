@@ -478,12 +478,16 @@ export default function Ausentismos() {
   }, [filtered])
 
   // Conteo de Accidentes de Trabajo = EVENTOS NUEVOS por trabajador. Cada AT nuevo
-  // suma UNA vez; las PRÓRROGAS (continuaciones del mismo AT del mismo trabajador,
-  // marcadas con `prorroga` > 0, `dias_incapacidad` = 0) NO suman. Un trabajador
-  // puede tener varios AT nuevos y cada uno suma. Se cuenta sobre las filas YA
-  // filtradas (`filtered`), así respeta el filtro de mes/año/etc. y suma la tabla.
+  // suma UNA vez; las PRÓRROGAS (continuaciones del mismo AT) NO suman. Se cuenta
+  // sobre las filas YA filtradas (`filtered`), así respeta el filtro de mes/año.
+  //
+  // Un EVENTO tiene incapacidad inicial (`dias_incapacidad` > 0); una PRÓRROGA pura
+  // no (sus días viven en `prorroga`, `dias_incapacidad` = 0). Usamos
+  // `dias_incapacidad > 0` — robusto también para el formulario, donde una prórroga
+  // se agrega A LA MISMA incapacidad (aumenta `prorroga`) y esa fila sigue siendo el
+  // MISMO evento (no se debe descontar por tener `prorroga` > 0).
   const casosATReal = useMemo(
-    () => filtered.filter((a) => a.tipo_evento === "AT" && (Number(a.prorroga) || 0) === 0).length,
+    () => filtered.filter((a) => a.tipo_evento === "AT" && (Number(a.dias_incapacidad) || 0) > 0).length,
     [filtered],
   )
 
@@ -1001,6 +1005,31 @@ export default function Ausentismos() {
         </TabsList>
 
         <TabsContent value="registros">
+          {/* Resumen que RESPONDE a los filtros (mes/año/estado/tipo). El conteo de
+              AT aquí cuenta EVENTOS nuevos y CAMBIA con el filtro de mes — a
+              diferencia de la tira anual de arriba, que es un resumen del año. */}
+          <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="rounded-lg border bg-card p-2.5">
+              <p className="text-lg font-bold tabular-nums text-foreground">{sorted.length}</p>
+              <p className="text-[11px] text-muted-foreground">Incapacidades (filtro actual)</p>
+            </div>
+            <div className="rounded-lg border bg-card p-2.5">
+              <p className="text-lg font-bold tabular-nums text-orange-600">{casosATReal}</p>
+              <p className="text-[11px] text-muted-foreground">Accidentes de trabajo (eventos)</p>
+            </div>
+            <div className="rounded-lg border bg-card p-2.5">
+              <p className="text-lg font-bold tabular-nums text-blue-600">
+                {filtered.filter((a) => a.tipo_evento === "EG").length}
+              </p>
+              <p className="text-[11px] text-muted-foreground">Enfermedad general</p>
+            </div>
+            <div className="rounded-lg border bg-card p-2.5">
+              <p className="text-lg font-bold tabular-nums text-foreground">
+                {filtered.reduce((s, a) => s + (Number(a.total_dias_incapacidad) || 0), 0).toLocaleString("es-CO")}
+              </p>
+              <p className="text-[11px] text-muted-foreground">Días de ausentismo</p>
+            </div>
+          </div>
           {/* Tabla */}
           <div className="rounded-md border">
             <Table>
