@@ -251,6 +251,36 @@ export async function getDashboardOperacionesData(
       return iso === fechaFiltro
     })
 
+    // RESPALDO DE CLIENTE. El view `dashboardoperaciones` toma el cliente del
+    // PEDIDO (por `ocargue`, que se asigna al crear la orden en Gestionar Orden
+    // de Cargue). Los CLONES de distribución (código …D) NO tienen pedido con ese
+    // código, así que el view los deja SIN cliente. Pero el clon SÍ tiene el
+    // cliente en `detalleoc` (copiado del original). Aquí lo resolvemos desde
+    // `detalleoc` (por `numeroorden = ordendecargue`) para las filas sin cliente.
+    const sinCliente = filtered.filter(
+      (r: any) => !r.cliente || String(r.cliente).trim() === "",
+    )
+    if (sinCliente.length > 0) {
+      const codigos = Array.from(
+        new Set(sinCliente.map((r: any) => r.ordendecargue).filter(Boolean)),
+      )
+      const { data: det } = await supabase
+        .from("detalleoc")
+        .select("numeroorden, cliente")
+        .in("numeroorden", codigos as string[])
+      const mapCli = new Map<string, string>()
+      for (const d of det || []) {
+        const cli = (d as any).cliente
+        const num = (d as any).numeroorden
+        if (cli && num && !mapCli.has(num)) mapCli.set(num, cli)
+      }
+      for (const r of filtered as any[]) {
+        if ((!r.cliente || String(r.cliente).trim() === "") && mapCli.has(r.ordendecargue)) {
+          r.cliente = mapCli.get(r.ordendecargue)
+        }
+      }
+    }
+
     return { success: true, data: filtered as DashboardOperacionesData[] }
   } catch (error) {
     console.error("[v0] Error in getDashboardOperacionesData:", error)
@@ -354,7 +384,7 @@ export async function getDashboardOperacionesStats(
 
       const { data: clientesData, error: clientesError } = await supabase
         .from("dashboardoperaciones")
-        .select("cliente, iniciocargue, tiempo_en_proceso")
+        .select("cliente, iniciocargue, tiempo_en_proceso, ordendecargue")
         .eq("idempresa", empresaId)
         .eq("estado", "En proceso")
         .order("iniciocargue", { ascending: true })
@@ -363,9 +393,32 @@ export async function getDashboardOperacionesStats(
         console.error("[v0] Error fetching clientes en proceso:", clientesError)
       }
 
+      // Respaldo de cliente desde detalleoc para clones …D (ver nota en
+      // getDashboardOperacionesData): el view no trae cliente para el clon.
+      const mapCliProc = new Map<string, string>()
+      const codigosProc = Array.from(
+        new Set(
+          (clientesData || [])
+            .filter((c: any) => !c.cliente || String(c.cliente).trim() === "")
+            .map((c: any) => c.ordendecargue)
+            .filter(Boolean),
+        ),
+      )
+      if (codigosProc.length > 0) {
+        const { data: detProc } = await supabase
+          .from("detalleoc")
+          .select("numeroorden, cliente")
+          .in("numeroorden", codigosProc as string[])
+        for (const d of detProc || []) {
+          const cli = (d as any).cliente
+          const num = (d as any).numeroorden
+          if (cli && num && !mapCliProc.has(num)) mapCliProc.set(num, cli)
+        }
+      }
+
       clientesEnProceso = clientesData
-        ? clientesData.map((c) => ({
-            cliente: c.cliente || "Sin cliente",
+        ? clientesData.map((c: any) => ({
+            cliente: c.cliente || mapCliProc.get(c.ordendecargue) || "Sin cliente",
             iniciocargue: c.iniciocargue || "",
             tiempo_en_proceso: c.tiempo_en_proceso || "",
           }))
