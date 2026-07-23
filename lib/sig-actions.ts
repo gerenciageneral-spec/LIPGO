@@ -16,6 +16,7 @@ import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getResumenISO, type EstadoISO } from "@/lib/iso9001-actions"
 import { getMatrizEstandares } from "@/lib/sst-auditoria-actions"
 import { computar0312 } from "@/lib/sst-types"
+import { COORDINADORES_PROYECTO, AREA_OPERACIONES } from "@/lib/coordinadores-proyecto"
 import type {
   SigNorma,
   SigRequisito,
@@ -1123,8 +1124,10 @@ export async function getEvaluacionAreas(): Promise<{ success: boolean; areas: A
     if (res.error) return { success: false, areas: [], global: 0, error: res.error.message }
     const inds: any[] = res.data ?? []
 
-    // Valores REALES en vivo (misma fuente que la BSC), a nivel LIP global.
-    const vres = await getIndicadoresValores(100)
+    // Valores REALES en vivo (misma fuente que la BSC), a nivel LIP GLOBAL: null =
+    // agrega los clientes/sitios SIG (1-4). OJO: NO usar 100 (es el id del catálogo SIG,
+    // sin datos operativos; la operación vive en idempresa 1-4).
+    const vres = await getIndicadoresValores(null)
     const valores: Record<string, any> = vres.success ? vres.valores : {}
 
     const porArea = new Map<string, AreaEval>()
@@ -1194,6 +1197,65 @@ export async function guardarPesosArea(
     return { success: true }
   } catch (err: any) {
     return { success: false, error: err?.message || "Error desconocido" }
+  }
+}
+
+// EVALUACIÓN DE COORDINADORES POR PROYECTO. La Gerencia de Operaciones responde por el
+// resultado GLOBAL; cada COORDINADOR por su proyecto (ID de empresa). Se toman los
+// indicadores medibles del área Operaciones y se calculan POR PROYECTO con los valores
+// en vivo de ese idempresa (getIndicadoresValores(id)). Misma ponderación, distinto
+// alcance → nota por coordinador. Es el drill-down operativo del despliegue en cascada.
+export interface CoordinadorEval {
+  idempresa: number
+  proyecto: string
+  coordinador: string
+  nota: number
+  pesoTotal: number
+  indicadores: IndicadorEval[]
+}
+export async function getEvaluacionCoordinadores(): Promise<{ success: boolean; coordinadores: CoordinadorEval[]; error?: string }> {
+  try {
+    const supabase: any = await getSupabaseAdmin()
+    const baseSel = "codigo,nombre,meta,sentido,calculo_auto,perspectiva,orden"
+    const q = (sel: string) =>
+      supabase.from("sig_indicadores").select(sel).eq("idempresa", 100).eq("activo", true).eq("area", AREA_OPERACIONES).order("orden")
+    let res = await q(baseSel + ",peso")
+    if (res.error && /peso/i.test(res.error.message || "")) res = await q(baseSel)
+    if (res.error) return { success: false, coordinadores: [], error: res.error.message }
+    // Solo indicadores medibles (con meta) y automáticos (calculables por proyecto).
+    const inds: any[] = (res.data ?? []).filter((i: any) => i.meta != null && i.calculo_auto)
+    // Si aún no hay pesos, reparto igual entre los medibles.
+    if (inds.length && inds.reduce((s, i) => s + (Number(i.peso) || 0), 0) <= 0) {
+      const w = Math.round((100 / inds.length) * 100) / 100
+      inds.forEach((i) => (i.peso = w))
+    }
+
+    const coordinadores: CoordinadorEval[] = []
+    for (const c of COORDINADORES_PROYECTO) {
+      const vres = await getIndicadoresValores(c.idempresa)
+      const vals: Record<string, any> = vres.success ? vres.valores : {}
+      const indicadores: IndicadorEval[] = inds.map((it) => {
+        const liveVal = vals[it.calculo_auto]?.valor ?? null
+        const valor = liveVal != null ? Number(liveVal) : null
+        const peso = Number(it.peso) || 0
+        const cumplimiento = cumplimientoIndicador(valor, it.meta, it.sentido)
+        return {
+          codigo: it.codigo, nombre: it.nombre, perspectiva: it.perspectiva, meta: it.meta, sentido: it.sentido,
+          valor, base: vals[it.calculo_auto]?.base ?? null, peso, cumplimiento,
+          aporte: cumplimiento != null ? (cumplimiento * peso) / 100 : 0,
+        }
+      })
+      const medibles = indicadores.filter((i) => i.cumplimiento != null && i.peso > 0)
+      const pesoTotal = medibles.reduce((s, i) => s + i.peso, 0)
+      const nota = pesoTotal > 0 ? medibles.reduce((s, i) => s + (i.cumplimiento as number) * i.peso, 0) / pesoTotal : 0
+      coordinadores.push({
+        idempresa: c.idempresa, proyecto: c.proyecto, coordinador: c.coordinador,
+        nota: Math.round(nota * 10) / 10, pesoTotal: Math.round(pesoTotal * 100) / 100, indicadores,
+      })
+    }
+    return { success: true, coordinadores }
+  } catch (err: any) {
+    return { success: false, coordinadores: [], error: err?.message || "Error desconocido" }
   }
 }
 

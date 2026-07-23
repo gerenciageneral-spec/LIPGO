@@ -11,8 +11,8 @@ import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { getEvaluacionAreas, guardarPesosArea, type AreaEval } from "@/lib/sig-actions"
-import { Loader2, Target, Pencil, Save, X, TrendingUp } from "lucide-react"
+import { getEvaluacionAreas, guardarPesosArea, getEvaluacionCoordinadores, type AreaEval, type CoordinadorEval } from "@/lib/sig-actions"
+import { Loader2, Target, Pencil, Save, X, TrendingUp, Users } from "lucide-react"
 
 const colorNota = (n: number) => (n >= 90 ? "#16a34a" : n >= 75 ? "#0d9488" : n >= 60 ? "#f59e0b" : "#dc2626")
 const fmtNum = (v: number | null, dec = 1) =>
@@ -21,6 +21,7 @@ const fmtNum = (v: number | null, dec = 1) =>
 export function EvaluacionAreas() {
   const { toast } = useToast()
   const [areas, setAreas] = useState<AreaEval[]>([])
+  const [coordinadores, setCoordinadores] = useState<CoordinadorEval[]>([])
   const [global, setGlobal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [editArea, setEditArea] = useState<string | null>(null)
@@ -29,13 +30,14 @@ export function EvaluacionAreas() {
 
   const load = async () => {
     setLoading(true)
-    const r = await getEvaluacionAreas()
+    const [r, rc] = await Promise.all([getEvaluacionAreas(), getEvaluacionCoordinadores()])
     if (r.success) {
       setAreas(r.areas)
       setGlobal(r.global)
     } else {
       toast({ title: "Error", description: r.error, variant: "destructive" })
     }
+    if (rc.success) setCoordinadores(rc.coordinadores)
     setLoading(false)
   }
   useEffect(() => {
@@ -178,6 +180,56 @@ export function EvaluacionAreas() {
               )
             })}
           </div>
+
+          {/* Despliegue en cascada: la Gerencia responde por el global; cada coordinador
+              por su proyecto (mismos indicadores de gestión, calculados por ID de empresa). */}
+          {coordinadores.length > 0 && (
+            <Card className="p-4">
+              <SigSection
+                title="Desempeño de coordinadores por proyecto (Operaciones)"
+                right={<span className="text-[10px] text-muted-foreground">Gestión por ID de empresa · la Gerencia responde por el global</span>}
+              />
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b text-left text-[10px] uppercase tracking-wide text-muted-foreground">
+                      <th className="px-2 py-1">Proyecto</th>
+                      <th className="px-2 py-1">Coordinador</th>
+                      <th className="px-2 py-1 text-right">Nota</th>
+                      <th className="px-2 py-1">Indicadores de gestión (cumplimiento)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {coordinadores.map((c) => (
+                      <tr key={c.idempresa} className="border-b last:border-0 align-top">
+                        <td className="px-2 py-2 font-medium" style={{ color: SST_TOKENS.navy }}>{c.proyecto}</td>
+                        <td className="px-2 py-2">
+                          <span className="inline-flex items-center gap-1"><Users className="h-3 w-3 text-muted-foreground" />{c.coordinador}</span>
+                        </td>
+                        <td className="px-2 py-2 text-right">
+                          <span className="text-lg font-extrabold" style={{ color: colorNota(c.nota) }}>{c.pesoTotal > 0 ? fmtNum(c.nota) + "%" : "—"}</span>
+                        </td>
+                        <td className="px-2 py-2">
+                          <div className="flex flex-wrap gap-1">
+                            {c.indicadores.filter((i) => i.peso > 0).map((i) => (
+                              <span
+                                key={i.codigo}
+                                className="rounded px-1.5 py-0.5 text-[10px] text-white"
+                                style={{ background: i.cumplimiento == null ? "#94a3b8" : colorNota(i.cumplimiento) }}
+                                title={`${i.nombre}: ${i.valor ?? "—"} / meta ${i.meta} · peso ${i.peso}%`}
+                              >
+                                {i.nombre.length > 18 ? i.nombre.slice(0, 18) + "…" : i.nombre}: {i.cumplimiento == null ? "—" : fmtNum(i.cumplimiento, 0) + "%"}
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
         </>
       )}
     </div>
