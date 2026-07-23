@@ -48,11 +48,25 @@ export async function getAreaKpisRapidas(
   // (proyectoId = null). El resto reacciona al proyecto/empresa seleccionado.
   const scope = groupKey === "sst" || groupKey === "certificaciones_lip" ? null : (empresaId as number)
 
-  // Período: filtro año/mes del submódulo si viene; si no, el año en curso.
-  const anio = anioFiltro && anioFiltro !== "todos" ? anioFiltro : hoyBogota().slice(0, 4)
+  // Período (alineado con la portada del área, AreaKpis → monthRange):
+  //  - filtro de MES explícito (p. ej. Ausentismos) → ese mes.
+  //  - filtro de AÑO explícito sin mes → todo el año.
+  //  - sin filtro → MES EN CURSO (para que los números coincidan con la portada).
+  const hoy = hoyBogota()
+  const anio = anioFiltro && anioFiltro !== "todos" ? anioFiltro : hoy.slice(0, 4)
   const mesN = mesFiltro ? MESES_KPI.indexOf(mesFiltro) + 1 : 0
-  const desde = mesN >= 1 ? `${anio}-${String(mesN).padStart(2, "0")}-01` : `${anio}-01-01`
-  const hasta = mesN >= 1 ? `${anio}-${String(mesN).padStart(2, "0")}-31` : `${anio}-12-31`
+  let desde: string
+  let hasta: string
+  if (mesN >= 1) {
+    desde = `${anio}-${String(mesN).padStart(2, "0")}-01`
+    hasta = `${anio}-${String(mesN).padStart(2, "0")}-31`
+  } else if (anioFiltro && anioFiltro !== "todos") {
+    desde = `${anio}-01-01`
+    hasta = `${anio}-12-31`
+  } else {
+    desde = `${anio}-${hoy.slice(5, 7)}-01`
+    hasta = hoy
+  }
 
   let valores: Record<string, { valor: number; base?: string }> = {}
   try {

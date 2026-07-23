@@ -8,7 +8,6 @@ import { AreaKpis, type ValorBsc } from "@/components/area-kpis"
 import { PedidosKpiStrip } from "@/components/orders/pedidos-kpi-strip"
 import { DespachoKpiStrip } from "@/components/orders/despacho-kpi-strip"
 import { VehiculosNoProcesadosCard } from "@/components/vehiculos-no-procesados-card"
-import { AreaKpiStrip } from "@/components/area-kpi-strip"
 import { useAuth } from "@/components/auth-provider"
 import { getIndicadoresValores } from "@/lib/sig-actions"
 import { AREA_KPIS } from "@/lib/kpis-area"
@@ -180,11 +179,10 @@ export function ModulesView({ groupKey, onBack, onSelectModule }: ModulesViewPro
           <VehiculosNoProcesadosCard />
         </div>
       ) : (
-        <>
-          <AreaKpis groupKey={groupKey} valores={valores} loading={loading} />
-          {/* Tira rápida de "a revisar" del área (conteos), además del BSC. */}
-          <AreaKpiStrip groupKey={groupKey} />
-        </>
+        // Indicadores del BSC del área (módulo madre), período = mes actual, con
+        // enlaces "ver 3D". Los indicadores por SUBMÓDULO los pinta ModuleKpiHeader
+        // al entrar a cada submódulo (no se duplican aquí en la portada).
+        <AreaKpis groupKey={groupKey} valores={valores} loading={loading} />
       )}
 
       {/* Módulos directos */}
