@@ -752,26 +752,24 @@ export async function generarDistribucionAutomatica(
         ordendecargue: distCode,
         tipooperacion: "Distribucion",
         facturar: true,
-        // NACE PENDIENTE: se limpian los campos de proceso/cierre del cargue
-        // origen (que ya puede venir FINALIZADO, p.ej. cuando el clon se genera
-        // por reconciliación desde un cargue ya cerrado). Es OBLIGATORIO: Packing
-        // (`getDistributionOrders`) solo muestra la distribución con `fincargue`
-        // NULL; sin esto el clon nace "finalizado" y NO se puede tramitar.
+        // ES UN CLON: HEREDA de la orden madre TODO el contenido por el spread
+        // `...origHeader` — incluidos `horalote` (lotes) y los campos de PESAJE. NO
+        // se anulan, porque el clon NO re-asigna lotes ni vuelve a báscula (la madre
+        // ya lo hizo). Así tampoco reaparece en Asignación de Lotes (lista por
+        // `horalote IS NULL`) ni en Báscula (lista por `pesajefinal IS NULL`).
+        //
+        // Solo se dejan FRESCOS (null) los pasos PROPIOS de la distribución, que se
+        // tramitan en Packing (PDF -> Personal -> Fotos -> cierre): `fincargue` null
+        // es OBLIGATORIO para que aparezca pendiente en Packing; `iniciocargue` null
+        // permite generar el PDF de distribución; `auxiliares` null para asignar el
+        // personal de la ENTREGA (distinto al del cargue).
         status: null,
         iniciocargue: null,
         fincargue: null,
-        pesajeinicial: null,
-        pesajefinal: null,
-        pesovascula: null,
-        tiquetebascula: null,
         pdfoc: null,
+        doccargue: null,
         fotospicking: null,
         horapicking: null,
-        // OJO: NO se anula `horalote`. El clon NO pasa por Asignación de Lotes
-        // (hereda los lotes del madre); ese módulo lista por `horalote IS NULL`,
-        // así que anularlo lo metía indebidamente en la cola de lotes. Se conserva
-        // el `horalote` heredado del cargue madre.
-        doccargue: null,
         auxiliares: null,
       }
       const { error } = await supabase.from("cabeceraoc").insert(distHeader)
