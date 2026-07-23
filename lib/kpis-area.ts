@@ -74,6 +74,129 @@ export const AREA_KPIS: Record<string, string[]> = {
   // mrp / configuracion: sin indicadores de área en el BSC → no muestran KPIs.
 }
 
+// SUBMÓDULO → indicador(es) del BSC que ESE submódulo alimenta (su aporte al
+// indicador gerencial del área). Cada tarjeta del submódulo muestra el indicador
+// del área al que contribuye (valor real + meta + semáforo). Los submódulos que
+// NO estén aquí caen al set del módulo madre (AREA_KPIS del grupo). Máx ~4.
+export const SUBMODULO_KPIS: Record<string, string[]> = {
+  // --- Recepción y Despacho ---
+  "Generar Órdenes de Cargue": ["desp_ordenes", "desp_cumplimiento"],
+  "Generar Órdenes de Descargue": ["desp_ordenes"],
+  "Generar Orden de Distribución": ["desp_ordenes", "lip_facturacion"],
+  "Gestión de Ordenes": ["desp_cumplimiento", "sla_tiempos"],
+  "Recepción de Traslado": ["inv_exactitud"],
+  "Registrar Vehículos": ["vehiculos_atendidos"],
+  "Ver Vehículos": ["vehiculos_atendidos"],
+  "Registro sanitario": ["vehiculos_atendidos"],
+  "Ver historial de Inspección": ["vehiculos_atendidos"],
+  Báscula: ["desp_toneladas"],
+  "Historial Báscula": ["desp_toneladas"],
+  // --- Pedidos ---
+  "Entrada de pedidos": ["desp_ordenes"],
+  "Gestionar pedidos": ["sla_global", "desp_ordenes"],
+  "Gestión integral de pedidos": ["sla_global"],
+  // --- Almacenamiento ---
+  "Transacciones de Inventario": ["inv_exactitud"],
+  "Saldos de inventario": ["inv_exactitud"],
+  "Saldos por producto": ["inv_exactitud"],
+  "Traslados de producto": ["inv_exactitud"],
+  "Gestión de transacciones": ["inv_exactitud", "inv_rechazos"],
+  "Capacidad Bodega": ["inv_exactitud"],
+  "Montacargas y personal día": ["desp_toneladas"],
+  "Panel LIP Inventario": ["inv_eri", "inv_exactitud"],
+  "Cuadre de Inventario": ["inv_eri"],
+  "Auditoría de Inventario": ["inv_eri", "inv_exactitud"],
+  "Asignación de Lotes": ["inv_exactitud"],
+  "Historial de lotes": ["inv_exactitud"],
+  // --- Producción ---
+  "Ingreso de Producción": ["desp_toneladas"],
+  "Aprobación de ingreso de producción": ["desp_toneladas"],
+  "Dashboard de Producción": ["desp_meta_ton", "desp_toneladas"],
+  // --- Operación LIP ---
+  Picking: ["lip_evidencia", "lip_tiempo_cargue"],
+  Packing: ["lip_tiempo_cargue"],
+  "Ver Picking/Packing": ["lip_evidencia"],
+  "Registro de QR estibas": ["inv_exactitud"],
+  "Lectura de QR estibas": ["inv_exactitud"],
+  "Inventario por Estiba": ["inv_exactitud"],
+  "Gestión de Facturas": ["lip_facturacion"],
+  "Satisfacción y PQRSF": ["sat_cliente"],
+  "Calificación del Conductor": ["sat_conductor"],
+  "Registro de asistencia": ["gh_cobertura"],
+  "Programación de turnos": ["gh_cobertura"],
+  "Aprobar Turnos": ["gh_cobertura"],
+  "Solicitud de Personal": ["gh_cobertura"],
+  "Notificaciones al Personal": ["gh_cobertura"],
+  // --- Financiera ---
+  "Indicador de Facturación por Proyectos": ["lip_facturacion"],
+  "Facturación Proyectos": ["lip_facturacion"],
+  "Cuadro de Control Facturación": ["lip_facturacion"],
+  // --- Gestión Humana ---
+  "Head Count": ["gh_activos", "gh_cobertura"],
+  "Gestión de Colaboradores": ["gh_activos"],
+  "Carpetas de Trabajadores": ["gh_activos"],
+  "Panel LIP Gestión Humana": ["gh_ausentismo", "gh_cobertura", "gh_recobro"],
+  "Novedades de personal": ["gh_ausentismo"],
+  Inducciones: ["gh_formacion"],
+  "Evidencia de Inducciones": ["gh_formacion"],
+  "Gestión de Capacitaciones": ["gh_formacion"],
+  "Asistencia a Capacitaciones": ["gh_formacion"],
+  "Evaluaciones de Desempeño": ["gh_formacion"],
+  "Tabla Asistencia": ["gh_cobertura"],
+  Visor: ["gh_cobertura"],
+  "Gestión de Solicitudes": ["gh_cobertura"],
+  "Aprobación de Solicitudes de Personal": ["gh_cobertura"],
+  "Hojas de Vida": ["gh_cobertura"],
+  Antecedentes: ["gh_cobertura"],
+  Entrevistas: ["gh_cobertura"],
+  "Gestión de Contratos": ["gh_activos"],
+  // --- SIG / Certificaciones ---
+  "No Conformidades SIG": ["nc_cerradas"],
+  "Aspectos e Impactos ISO 14001": ["legal_cumplimiento"],
+  "Matriz Legal Ambiental": ["legal_cumplimiento"],
+  "Centro de Evidencia ISO 9001": ["sig_implementacion"],
+  "Repositorio ISO 9001": ["sig_implementacion"],
+  // --- SST ---
+  "Auditoría 0312": ["sgsst_0312"],
+  "Matriz de Estándares": ["sgsst_0312"],
+  "Repositorio de Soportes": ["sgsst_0312"],
+  "Plan de Mejoramiento": ["sgsst_0312"],
+  IPEVR: ["sst_ipevr_cumpl"],
+  "Investigación AT": ["sst_at_count", "sst_frecuencia"],
+  "Alertas de AT": ["sst_at_count"],
+  "Investigaciones Realizadas": ["sst_at_count"],
+  MEDEVAC: ["sst_at_count"],
+  "Comunicación SST": ["sgsst_0312"],
+  "Gestión del Cambio": ["sgsst_0312"],
+  "Actividades y Comités": ["sgsst_0312"],
+}
+
+// Ícono (nombre lucide, ver ICONS en area-kpi-strip) por indicador.
+const KPI_ICON: Record<string, string> = {
+  sla_tiempos: "shield", sla_global: "shield", desp_cumplimiento: "shield",
+  desp_ciclo_cerrado: "shield", sig_implementacion: "shield", nc_cerradas: "shield",
+  legal_cumplimiento: "shield", sgsst_0312: "shield", sst_ipevr_cumpl: "shield",
+  desp_meta_ton: "package", desp_toneladas: "package", desp_ordenes: "package",
+  inv_exactitud: "package", inv_eri: "package", inv_rechazos: "lock",
+  vehiculos_atendidos: "truck", lip_tiempo_cargue: "clock", lip_evidencia: "file",
+  lip_facturacion: "receipt", gh_recobro: "receipt",
+  gh_activos: "activity", gh_cobertura: "activity", sat_cliente: "activity", sat_conductor: "activity",
+  gh_ausentismo: "alert", sst_at_count: "alert", sst_at_dias: "alert", sst_frecuencia: "alert",
+  gh_formacion: "file",
+}
+
+export function kpiIcon(key: string): string {
+  return KPI_ICON[key] || "activity"
+}
+
+// Indicadores a mostrar para un módulo/submódulo: el set del submódulo si existe,
+// si no el del módulo madre (grupo). Vacío = no hay indicadores (mrp/configuración).
+export function kpisParaModulo(groupKey: string | null | undefined, moduleName: string | null | undefined): string[] {
+  if (moduleName && SUBMODULO_KPIS[moduleName]) return SUBMODULO_KPIS[moduleName]
+  if (groupKey && AREA_KPIS[groupKey]) return AREA_KPIS[groupKey]
+  return []
+}
+
 // Preguntas SUGERIDAS propias de cada área (grupo del menú). Cada una está
 // alineada a datos que LIPbot puede consultar/gestionar EN ESE módulo, para no
 // mostrar sugerencias fuera de contexto (ej. no ofrecer "pedidos" en RRHH).

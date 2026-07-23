@@ -1,9 +1,6 @@
 "use client"
 
 import { groups } from "@/lib/dashboard-data"
-import { PedidosKpiStrip } from "@/components/orders/pedidos-kpi-strip"
-import { DespachoKpiStrip } from "@/components/orders/despacho-kpi-strip"
-import { VehiculosNoProcesadosCard } from "@/components/vehiculos-no-procesados-card"
 import { AreaKpiStrip } from "@/components/area-kpi-strip"
 
 // Encabezado de KPIs del MÓDULO: se muestra en CUALQUIER submódulo del módulo, para
@@ -23,26 +20,10 @@ function groupKeyOf(moduleName: string | null): string | null {
 
 export function ModuleKpiHeader({ selectedModule }: { selectedModule: string | null }) {
   const gk = groupKeyOf(selectedModule)
-
-  if (gk === "pedidos") {
-    return (
-      <div className="mb-5 space-y-1">
-        <div className="text-sm font-semibold text-foreground">Cumplimiento de entregas</div>
-        <PedidosKpiStrip />
-      </div>
-    )
-  }
-  if (gk === "despachos") {
-    return (
-      <div className="mb-5 space-y-3">
-        <div className="text-sm font-semibold text-foreground">Operación y despacho del día</div>
-        <DespachoKpiStrip />
-        <VehiculosNoProcesadosCard />
-      </div>
-    )
-  }
-  // Resto de módulos: tira rápida. Se pasa el submódulo actual para que muestre
-  // SUS datos (si tiene tira propia); si no, cae a la tira general del grupo.
+  // Todos los módulos y submódulos muestran INDICADORES del BSC (valor + meta +
+  // semáforo): el módulo madre sus indicadores gerenciales, cada submódulo el
+  // indicador del área que alimenta. Se pasa el submódulo actual para resolver
+  // su mapeo (kpisParaModulo); si no lo tiene, cae a los del grupo madre.
   if (gk) return <AreaKpiStrip groupKey={gk} moduleName={selectedModule} />
   return null
 }

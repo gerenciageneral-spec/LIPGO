@@ -11,14 +11,21 @@ export interface AreaKpiItem {
   icon: string
 }
 
-// Título de la sección por grupo (define también qué grupos tienen tira).
+// Título de la sección por grupo (define también qué grupos tienen tira). Ahora
+// las tiras muestran INDICADORES del BSC (valor + meta + semáforo): el módulo
+// madre sus indicadores gerenciales, cada submódulo el indicador de su área que
+// alimenta. Los grupos sin indicadores (mrp, configuración) no aparecen → sin tira.
 export const AREA_KPI_TITULOS: Record<string, string> = {
-  inventarios: "Almacenamiento — a revisar",
-  lip: "Operación LIP — pendientes",
-  rrhh: "Gestión Humana — pendientes",
-  sst: "SST — a revisar",
-  financiera: "Gestión Financiera — pendientes",
-  certificaciones_lip: "SIG — a revisar",
+  integral: "Indicadores gerenciales",
+  pedidos: "Indicadores — Pedidos",
+  despachos: "Indicadores — Recepción y Despacho",
+  inventarios: "Indicadores — Almacenamiento",
+  produccion: "Indicadores — Producción",
+  lip: "Indicadores — Operación LIP",
+  financiera: "Indicadores — Gestión Financiera",
+  rrhh: "Indicadores — Gestión Humana",
+  certificaciones_lip: "Indicadores — SIG / Certificaciones",
+  sst: "Indicadores — SST",
 }
 
 export function tituloAreaKpis(groupKey: string): string {
