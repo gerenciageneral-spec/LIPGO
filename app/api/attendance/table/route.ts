@@ -103,7 +103,7 @@ export async function GET(request: Request) {
     const { data: assignedShifts, error: shiftsError } = await supabaseAdmin
       .from("registroasistencia")
       .select(
-        "identificacion, nombre, puesto, asistencia, horasalida, horaentradaprogramada",
+        "identificacion, nombre, puesto, asistencia, horasalida, horaentradaprogramada, foto_ingreso, foto_salida",
       )
       .eq("fecha", colombiaDate)
       .eq("idempresa", empresaId)
@@ -129,6 +129,8 @@ export async function GET(request: Request) {
         asistencia: string | null
         horasalida: string | null
         horaentradaprogramada: string | null
+        foto_ingreso: string | null
+        foto_salida: string | null
       }
     >()
     for (const s of assignedShifts ?? []) {
@@ -150,6 +152,8 @@ export async function GET(request: Request) {
         asistencia: s.asistencia,
         horasalida: s.horasalida,
         horaentradaprogramada: s.horaentradaprogramada,
+        foto_ingreso: (s as any).foto_ingreso ?? null,
+        foto_salida: (s as any).foto_salida ?? null,
       })
     }
 
@@ -201,6 +205,8 @@ export async function GET(request: Request) {
         puesto,
         asistencia,
         alreadyAssigned,
+        fotoIngreso: shift?.foto_ingreso ?? null,
+        fotoSalida: shift?.foto_salida ?? null,
       }
     })
 

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase-server"
+import { subirFotoAsistencia } from "@/lib/asistencia-foto"
 
 /**
  * POST /api/attendance/register-departure
@@ -20,7 +21,7 @@ import { createServerClient } from "@/lib/supabase-server"
  */
 export async function POST(request: Request) {
   try {
-    const { identificacion, idempresa } = await request.json()
+    const { identificacion, idempresa, foto } = await request.json()
 
     if (!identificacion || !idempresa) {
       return NextResponse.json(
@@ -108,6 +109,17 @@ export async function POST(request: Request) {
         { success: false, message: "Error al registrar la salida" },
         { status: 500 },
       )
+    }
+
+    // Foto de SALIDA (cámara) — update SEPARADO y best-effort: si falla (p.ej. la
+    // columna aún no existe) NO rompe el registro de salida ya persistido.
+    try {
+      const fotoSalidaUrl = await subirFotoAsistencia(foto, identificacion, "salida")
+      if (fotoSalidaUrl) {
+        await supabase.from("registroasistencia").update({ foto_salida: fotoSalidaUrl }).eq("id", existing[0].id)
+      }
+    } catch (fe) {
+      console.error("[v0] Error guardando foto_salida:", fe)
     }
 
     return NextResponse.json(

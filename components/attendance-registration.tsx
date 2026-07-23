@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -49,6 +49,60 @@ export default function AttendanceRegistration() {
     return () => clearInterval(id)
   }, [])
 
+  // CÁMARA SIEMPRE ACTIVA: se enciende al entrar al módulo y captura una foto
+  // automáticamente en cada marcación (ingreso y salida). Falla-segura: si el
+  // navegador niega el permiso o no hay cámara, la marcación funciona igual sin foto.
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const [camaraOk, setCamaraOk] = useState(false)
+  useEffect(() => {
+    let cancelado = false
+    ;(async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: false,
+        })
+        if (cancelado) {
+          stream.getTracks().forEach((t) => t.stop())
+          return
+        }
+        streamRef.current = stream
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream
+          await videoRef.current.play().catch(() => {})
+        }
+        setCamaraOk(true)
+      } catch (e) {
+        console.warn("[v0] Cámara no disponible para asistencia:", e)
+        setCamaraOk(false)
+      }
+    })()
+    return () => {
+      cancelado = true
+      streamRef.current?.getTracks().forEach((t) => t.stop())
+      streamRef.current = null
+    }
+  }, [])
+
+  // Captura un frame del video como JPEG comprimido (dataURL). null si no hay cámara.
+  const capturarFoto = (): string | null => {
+    const video = videoRef.current
+    const canvas = canvasRef.current
+    if (!video || !canvas || !video.videoWidth) return null
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    const ctx = canvas.getContext("2d")
+    if (!ctx) return null
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+    try {
+      return canvas.toDataURL("image/jpeg", 0.6)
+    } catch {
+      return null
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
@@ -84,13 +138,14 @@ export default function AttendanceRegistration() {
         return
       }
 
-      // If person is active, register attendance
+      // If person is active, register attendance (con foto de ingreso capturada).
       const registerResponse = await fetch("/api/attendance/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           identificacion: identificacion.trim(),
           idempresa: selectedEmpresaId,
+          foto: capturarFoto(),
         }),
       })
 
@@ -148,6 +203,7 @@ export default function AttendanceRegistration() {
         body: JSON.stringify({
           identificacion: identificacion.trim(),
           idempresa: selectedEmpresaId,
+          foto: capturarFoto(),
         }),
       })
 
@@ -233,6 +289,30 @@ export default function AttendanceRegistration() {
                 llegar o{" "}
                 <span className="font-semibold text-destructive">Salida</span> al irse.
               </p>
+            </div>
+
+            {/* Cámara SIEMPRE activa: al marcar ingreso/salida se toma una foto
+                automática. Preview en vivo para que la persona se ubique. */}
+            <div className="mb-5 flex flex-col items-center">
+              <div className="relative w-44 h-44 overflow-hidden rounded-full border-4 border-primary/30 bg-black/80 shadow-inner">
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="h-full w-full object-cover"
+                />
+                {!camaraOk && (
+                  <div className="absolute inset-0 flex items-center justify-center px-2 text-center text-[10px] text-white/80">
+                    Cámara no disponible (la marcación funciona igual)
+                  </div>
+                )}
+              </div>
+              <span className="mt-2 flex items-center gap-1 text-[11px] text-muted-foreground">
+                <span className={cn("h-2 w-2 rounded-full", camaraOk ? "bg-green-500 animate-pulse" : "bg-muted-foreground/40")} />
+                {camaraOk ? "Cámara activa — se tomará foto al marcar" : "Sin cámara"}
+              </span>
+              <canvas ref={canvasRef} className="hidden" />
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-5">

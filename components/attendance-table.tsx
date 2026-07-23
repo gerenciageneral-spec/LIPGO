@@ -30,6 +30,9 @@ interface AttendanceRecord {
   puesto: string | null
   asistencia: string | null
   alreadyAssigned: boolean // Added to track if already assigned today
+  // Fotos capturadas automáticamente por la cámara al marcar ingreso/salida.
+  fotoIngreso: string | null
+  fotoSalida: string | null
 }
 
 /**
@@ -388,6 +391,7 @@ export default function AttendanceTable() {
                   <TableHead>Programada</TableHead>
                   <TableHead>Llegada</TableHead>
                   <TableHead>Salida</TableHead>
+                  <TableHead className="text-center">Fotos</TableHead>
                   <TableHead>Puesto</TableHead>
                   <TableHead>Estado</TableHead>
                   <TableHead className="text-center">Operac.</TableHead>
@@ -398,7 +402,7 @@ export default function AttendanceTable() {
               <TableBody>
                 {records.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={10} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={11} className="text-center text-muted-foreground py-8">
                       No hay registros de personal activo
                     </TableCell>
                   </TableRow>
@@ -484,6 +488,25 @@ export default function AttendanceTable() {
                           ) : (
                             <span className="text-muted-foreground">-</span>
                           )}
+                        </TableCell>
+                        {/* Fotos automáticas de ingreso (verde) y salida (azul). Click = ampliar. */}
+                        <TableCell className="text-center">
+                          <div className="flex items-center justify-center gap-1">
+                            {record.fotoIngreso ? (
+                              <a href={record.fotoIngreso} target="_blank" rel="noreferrer" title="Foto de ingreso">
+                                <img src={record.fotoIngreso} alt="ingreso" className="h-8 w-8 rounded-full object-cover ring-2 ring-green-500" />
+                              </a>
+                            ) : (
+                              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-muted text-[9px] text-muted-foreground ring-1 ring-border">in</span>
+                            )}
+                            {record.fotoSalida ? (
+                              <a href={record.fotoSalida} target="_blank" rel="noreferrer" title="Foto de salida">
+                                <img src={record.fotoSalida} alt="salida" className="h-8 w-8 rounded-full object-cover ring-2 ring-blue-500" />
+                              </a>
+                            ) : (
+                              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-muted text-[9px] text-muted-foreground ring-1 ring-border">out</span>
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell>
                           {record.puesto ? (

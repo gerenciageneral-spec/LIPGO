@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase-server"
+import { subirFotoAsistencia } from "@/lib/asistencia-foto"
 
 export async function POST(request: Request) {
   try {
-    const { identificacion, idempresa } = await request.json()
+    const { identificacion, idempresa, foto } = await request.json()
 
     if (!identificacion || !idempresa) {
       return NextResponse.json({ error: "Datos incompletos" }, { status: 400 })
@@ -115,6 +116,9 @@ export async function POST(request: Request) {
     // bloqueamos la respuesta 200 del registro de ingreso (la fuente
     // de verdad ya quedo persistida en `asistencia`). Solo lo logueamos
     // para diagnostico.
+    // Foto de INGRESO (cámara del módulo). Falla-seguro: no bloquea el registro.
+    const fotoIngresoUrl = await subirFotoAsistencia(foto, identificacion, "ingreso")
+
     try {
       const { data: existingShift, error: shiftLookupError } = await supabase
         .from("registroasistencia")
@@ -130,6 +134,15 @@ export async function POST(request: Request) {
           shiftLookupError,
         )
       } else if (existingShift && existingShift.length > 0) {
+        // Foto de ingreso en update SEPARADO best-effort (no rompe la sync de hora
+        // si la columna aún no existe).
+        if (fotoIngresoUrl) {
+          try {
+            await supabase.from("registroasistencia").update({ foto_ingreso: fotoIngresoUrl }).eq("id", existingShift[0].id)
+          } catch (fe) {
+            console.error("[v0] Error guardando foto_ingreso:", fe)
+          }
+        }
         const { error: shiftUpdateError } = await supabase
           .from("registroasistencia")
           .update({ horaingreso: hora })
