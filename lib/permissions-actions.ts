@@ -122,15 +122,42 @@ export async function updateUserPermissions(userId: string, permissions: Partial
         return { success: false, error: error.message }
       }
     } else {
-      // Crear nuevos permisos
-      const { error } = await supabase.from("permisos_usuarios").insert({
-        usuario_id: userId,
-        ...permissions,
-      })
-
-      if (error) {
-        console.error("Error creating user permissions:", error)
-        return { success: false, error: error.message }
+      // Crear nuevos permisos.
+      //
+      // INSERT ROBUSTO: la secuencia SERIAL de `permisos_usuarios.id` está
+      // desincronizada en esta BD (max(id) por delante del nextval, por filas
+      // insertadas con id explícito en el pasado). Un insert SIN id choca con la
+      // PK (`permisos_usuarios_pkey`, 23505) y rompía la creación de usuarios.
+      // Insertamos con id EXPLÍCITO = max(id)+1 y reintentamos ante colisión, así
+      // no dependemos del estado de la secuencia.
+      let creado = false
+      let lastErr: any = null
+      for (let intento = 0; intento < 8 && !creado; intento++) {
+        const { data: maxRow } = await supabase
+          .from("permisos_usuarios")
+          .select("id")
+          .order("id", { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        const nextId = (maxRow?.id || 0) + 1
+        const { error } = await supabase.from("permisos_usuarios").insert({
+          id: nextId,
+          usuario_id: userId,
+          ...permissions,
+        })
+        if (!error) {
+          creado = true
+          break
+        }
+        lastErr = error
+        // 23505 = choque de PK por secuencia atrasada / carrera: reintentar con id fresco.
+        if ((error as any).code === "23505") continue
+        // Otro error: no insistir.
+        break
+      }
+      if (!creado) {
+        console.error("Error creating user permissions:", lastErr)
+        return { success: false, error: lastErr?.message || "No se pudieron crear los permisos" }
       }
     }
 
