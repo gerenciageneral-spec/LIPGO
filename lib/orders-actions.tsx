@@ -767,7 +767,10 @@ export async function generarDistribucionAutomatica(
         pdfoc: null,
         fotospicking: null,
         horapicking: null,
-        horalote: null,
+        // OJO: NO se anula `horalote`. El clon NO pasa por Asignación de Lotes
+        // (hereda los lotes del madre); ese módulo lista por `horalote IS NULL`,
+        // así que anularlo lo metía indebidamente en la cola de lotes. Se conserva
+        // el `horalote` heredado del cargue madre.
         doccargue: null,
         auxiliares: null,
       }
