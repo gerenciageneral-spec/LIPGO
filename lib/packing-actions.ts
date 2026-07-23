@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase-client"
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getCurrentEmpresaIdForInsert } from "@/lib/user-context"
 import { getColombiaDateTime } from "@/lib/inventory-actions"
+import { reconciliarDistribucionesFaltantes } from "@/lib/orders-actions"
 import {
   getCarguDescarguePersonnel as _getCarguDescarguePersonnel,
   assignPersonnelToOrder as _assignPersonnelToOrder,
@@ -95,6 +96,15 @@ export async function getPendingUnloadOrders(selectedEmpresaId?: number | null) 
 export async function getDistributionOrders(selectedEmpresaId?: number | null) {
   const supabase = await createClient()
   const empresaId = selectedEmpresaId || await getCurrentEmpresaIdForInsert()
+
+  // Auto-sanación: si algún cargue reciente con placa de distribución quedó sin
+  // su clon "D", se genera aquí (Packing es donde se trabaja la distribución),
+  // así aparece solo. Idempotente, acotada a días recientes, falla-segura.
+  try {
+    await reconciliarDistribucionesFaltantes(supabase, empresaId as number)
+  } catch (reconErr) {
+    console.error("[+D] reconciliación en getDistributionOrders (no bloquea):", reconErr)
+  }
 
   const { data, error } = await supabase
     .from("cabeceraoc")

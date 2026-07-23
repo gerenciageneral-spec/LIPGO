@@ -8,7 +8,7 @@ import { getCurrentEmpresaId } from "@/lib/company-filter"
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { revalidatePath } from "next/cache"
 import { generateAndUploadLoadOrderPDF } from "./pdf-actions" // Added for generateLoadOrder
-import { esPlacaDistribucion, numeroOrdenDistribucion } from "@/lib/distribucion-placas"
+import { esPlacaDistribucion, numeroOrdenDistribucion, PLACAS_DISTRIBUCION } from "@/lib/distribucion-placas"
 import { cediDeDestino, PLANTAS_ORIGEN, type CediDestino } from "@/lib/cedis-destino"
 
 /**
@@ -757,6 +757,61 @@ export async function generarDistribucionAutomatica(
   }
 }
 
+// ---------------------------------------------------------------------------
+// AUTO-SANACIÓN del clon +D (garantía de robustez).
+//
+// El clon de distribución se genera en línea al crear la orden con vehículo
+// (`generateLoadOrder`) y al asignar la placa después (`assignVehicleToLoadOrder`).
+// Si por cualquier motivo ese enganche no corrió (despliegue rezagado, un error
+// en un paso previo, un flujo de asignación no contemplado), la orden "D" no
+// aparece y toca hacerla a mano. Esta función RECONCILIA: busca cargues
+// RECIENTES (ventana de 2 días, para NO tocar históricos ya procesados) con
+// placa propia de distribución que NO tengan su `{código}D`, y lo genera.
+//
+// Es idempotente (no duplica), acotada (≤ ~50 filas por empresa, solo días
+// recientes) y falla-segura. Se invoca desde las lecturas donde la "D" se
+// consume (Gestión de Órdenes de Cargue y Packing), así el clon aparece solo
+// aunque el enganche de escritura hubiera fallado.
+// ---------------------------------------------------------------------------
+export async function reconciliarDistribucionesFaltantes(supabase: any, empresaId: number): Promise<number> {
+  try {
+    const lista = PLACAS_DISTRIBUCION[empresaId]
+    if (!lista || lista.length === 0) return 0 // empresa sin placas de distribución
+
+    // Ventana reciente: hoy y los 2 días previos (cubre rezagos de despliegue
+    // sin retroceder a órdenes históricas que pudieron gestionarse distinto).
+    const ahora = await getColombiaDateTime()
+    const cutoff = new Date(ahora.getTime() - 2 * 86400000)
+    const cutoffStr = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}-${String(cutoff.getDate()).padStart(2, "0")}`
+
+    const { data: cargues } = await supabase
+      .from("cabeceraoc")
+      .select("id, ordendecargue, placa, fechacargue")
+      .eq("idempresa", empresaId)
+      .eq("tipooperacion", "Cargue")
+      .in("placa", lista)
+      .gte("fechacargue", cutoffStr)
+      .order("id", { ascending: false })
+      .limit(50)
+
+    if (!cargues || cargues.length === 0) return 0
+
+    let creados = 0
+    for (const c of cargues) {
+      const distCode = numeroOrdenDistribucion(c.ordendecargue)
+      const { data: ya } = await supabase.from("cabeceraoc").select("id").eq("ordendecargue", distCode).maybeSingle()
+      if (ya) continue // ya tiene su +D
+      const code = await generarDistribucionAutomatica(supabase, c.id)
+      if (code) creados++
+    }
+    if (creados > 0) console.log(`[+D] reconciliación: ${creados} distribución(es) faltante(s) generada(s) para empresa ${empresaId}`)
+    return creados
+  } catch (e: any) {
+    console.error("[+D] reconciliación falló (no bloquea la lectura):", e?.message || e)
+    return 0
+  }
+}
+
 export async function generateLoadOrder(orderData: {
   selectedOrderIds: number[]
   sinVehiculo?: boolean
@@ -1191,6 +1246,15 @@ export async function getLoadOrders(statusFilter: "pendiente" | "finalizada" | "
   try {
     // Use selectedEmpresaId if provided, otherwise fall back to current user's empresa_id
     const empresaId = selectedEmpresaId ?? await getCurrentEmpresaIdForInsert()
+
+    // Auto-sanación del clon +D: garantiza que las órdenes de cargue recientes
+    // con placa de distribución tengan su "D", aunque el enganche en creación/
+    // asignación no hubiera corrido. Idempotente, acotada y falla-segura.
+    try {
+      await reconciliarDistribucionesFaltantes(supabase, empresaId as number)
+    } catch (reconErr) {
+      console.error("[+D] reconciliación en getLoadOrders (no bloquea):", reconErr)
+    }
 
     let query = supabase
       .from("cabeceraoc")
