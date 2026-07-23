@@ -16,7 +16,9 @@ export async function listPerfilSociodemografico(
   const supabase: any = await getSupabaseAdmin()
   const empresaId = await resolveEmpresaId(empresaIdFromClient)
   let q = supabase.from("sst_perfil_sociodemografico").select("*").order("apellidos", { ascending: true })
-  if (empresaId) q = q.eq("idempresa", empresaId) // filtra por proyecto (selector global)
+  // SST transversal (LIP): se lista TODO el perfil sociodemográfico sin filtrar
+  // por el ID del cliente; la info de SST es la misma para todos los proyectos.
+  void empresaId
   const { data, error } = await q
   if (error) {
     console.error("[v0] listPerfilSociodemografico:", error.message)

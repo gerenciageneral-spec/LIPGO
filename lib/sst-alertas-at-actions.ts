@@ -43,13 +43,13 @@ export async function getAlertasAT(empresaIdFromClient?: number | null): Promise
       .select(
         "id,nombre_colaborador,cedula,cargo,area,centro_trabajo,fecha_inicial,parte_cuerpo,descripcion_diagnostico,dias_incapacidad",
       )
-      .eq("idempresa", empresaId)
+      // SST transversal (LIP): TODAS las alertas AT de LIP, sin filtrar por el ID
+      // del cliente (la info de cumplimiento es la misma para todos los proyectos).
       .eq("tipo_evento", "AT")
       .order("fecha_inicial", { ascending: false }),
     supabase
       .from("sst_incidentes")
-      .select("id,ausentismo_id,estado,documento_numero")
-      .eq("idempresa", empresaId),
+      .select("id,ausentismo_id,estado,documento_numero"),
   ])
 
   const soloDigitos = (v: any) => String(v ?? "").replace(/[^0-9]/g, "")
@@ -133,14 +133,17 @@ export async function crearInvestigacionDesdeAusentismo(
   const { data: a, error: aErr } = await supabase
     .from("ausentismosst")
     .select(
-      "nombre_colaborador,cargo,area,centro_trabajo,fecha_inicial,parte_cuerpo,descripcion_diagnostico,dias_incapacidad,codigo_diagnostico",
+      "idempresa,nombre_colaborador,cargo,area,centro_trabajo,fecha_inicial,parte_cuerpo,descripcion_diagnostico,dias_incapacidad,codigo_diagnostico",
     )
     .eq("id", ausentismoId)
     .maybeSingle()
   if (aErr || !a) return { success: false, message: aErr?.message ?? "Ausentismo no encontrado" }
 
   const row: Partial<IncidenteRow> = {
-    idempresa: empresaId,
+    // La investigación se etiqueta con el proyecto REAL del ausentismo (no el del
+    // selector), para que los indicadores SIG/KPIs de AT por proyecto sigan
+    // contándola correctamente. Si el ausentismo no trae empresa, cae al selector.
+    idempresa: (a as any).idempresa ?? empresaId,
     ausentismo_id: ausentismoId,
     tipo: "accidente",
     trabajador: a.nombre_colaborador,

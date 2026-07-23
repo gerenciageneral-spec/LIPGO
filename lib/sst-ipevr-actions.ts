@@ -16,7 +16,8 @@ export async function listIpevr(empresaIdFromClient?: number | null): Promise<Ip
   const { data, error } = await supabase
     .from("sst_ipevr")
     .select("*")
-    .eq("idempresa", empresaId)
+    // SST transversal (LIP): NO se filtra por el ID del cliente; se lee toda la
+    // información de cumplimiento (misma para todos los proyectos).
     .order("id", { ascending: false })
   if (error) {
     console.error("[v0] listIpevr:", error.message)

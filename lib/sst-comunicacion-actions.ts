@@ -13,7 +13,8 @@ async function listAll<T>(table: string, order: string, empresaIdFromClient?: nu
   const supabase = await createClient()
   const empresaId = await resolveEmpresaId(empresaIdFromClient)
   if (!empresaId) return []
-  const { data, error } = await supabase.from(table).select("*").eq("idempresa", empresaId).order(order, { ascending: false })
+  // SST transversal (LIP): no se filtra por el ID del cliente; se lee toda la data.
+  const { data, error } = await supabase.from(table).select("*").order(order, { ascending: false })
   if (error) {
     console.error("[v0] list " + table + ":", error.message)
     return []

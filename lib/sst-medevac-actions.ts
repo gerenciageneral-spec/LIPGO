@@ -16,9 +16,10 @@ async function resolveEmpresaId(fromClient?: number | null): Promise<number | nu
 export async function listMedevac(empresaIdFromClient?: number | null): Promise<MedevacRow[]> {
   const supabase: any = await getSupabaseAdmin()
   const empresaId = await resolveEmpresaId(empresaIdFromClient)
-  let q = supabase.from("sst_medevac").select("*").order("nombres", { ascending: true })
-  // Con selector global: filtra por proyecto. Sin selección: consolidado.
-  if (empresaId) q = q.eq("idempresa", empresaId)
+  const q = supabase.from("sst_medevac").select("*").order("nombres", { ascending: true })
+  // SST transversal (LIP): se listan TODOS los registros MEDEVAC sin filtrar por
+  // el ID del cliente; la info de SST es la misma para todos los proyectos.
+  void empresaId
   const { data, error } = await q
   if (error) {
     console.error("[v0] listMedevac:", error.message)

@@ -16,7 +16,7 @@ export async function listEpp(empresaIdFromClient?: number | null): Promise<EppR
   const { data, error } = await supabase
     .from("sst_entrega_epp")
     .select("*")
-    .eq("idempresa", empresaId)
+    // SST transversal (LIP): no se filtra por el ID del cliente.
     .order("fecha", { ascending: false })
   if (error) {
     console.error("[v0] listEpp:", error.message)

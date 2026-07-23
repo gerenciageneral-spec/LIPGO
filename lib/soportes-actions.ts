@@ -26,7 +26,7 @@ export async function listSoportes(
   const { data, error } = await supabase
     .from("soportes_documentales")
     .select("*")
-    .eq("idempresa", empresaId)
+    // SST transversal (LIP): no se filtra por el ID del cliente.
     .eq("referencia_tipo", referenciaTipo)
     .eq("referencia_id", referenciaId)
     .order("created_at", { ascending: false })
@@ -48,7 +48,7 @@ export async function listSoportesByModulo(
   const { data, error } = await supabase
     .from("soportes_documentales")
     .select("*")
-    .eq("idempresa", empresaId)
+    // SST transversal (LIP): no se filtra por el ID del cliente.
     .eq("modulo", modulo)
     .order("created_at", { ascending: false })
   if (error) {
@@ -87,7 +87,7 @@ export async function subirYRegistrarSoporte(
     await supabase
       .from("soportes_documentales")
       .update({ vigente: false })
-      .eq("idempresa", empresaId)
+      // SST transversal (LIP): la vigencia se maneja a nivel LIP, no por cliente.
       .eq("referencia_tipo", meta.referenciaTipo)
       .eq("referencia_id", meta.referenciaId)
 

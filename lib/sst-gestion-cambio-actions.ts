@@ -16,7 +16,7 @@ export async function listGestionCambio(empresaIdFromClient?: number | null): Pr
   const { data, error } = await supabase
     .from("sst_gestion_cambio")
     .select("*")
-    .eq("idempresa", empresaId)
+    // SST transversal (LIP): no se filtra por el ID del cliente.
     .order("fecha_reporte", { ascending: false })
   if (error) {
     console.error("[v0] listGestionCambio:", error.message)

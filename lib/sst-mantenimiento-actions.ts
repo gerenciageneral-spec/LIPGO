@@ -16,7 +16,7 @@ export async function listEquipos(empresaIdFromClient?: number | null): Promise<
   const { data, error } = await supabase
     .from("sst_equipos")
     .select("*")
-    .eq("idempresa", empresaId)
+    // SST transversal (LIP): no se filtra por el ID del cliente.
     .order("identificacion")
   if (error) {
     console.error("[v0] listEquipos:", error.message)
@@ -42,7 +42,7 @@ export async function listMantenimientos(empresaIdFromClient?: number | null): P
   const { data, error } = await supabase
     .from("sst_mantenimientos")
     .select("*, sst_equipos(identificacion,tipo,sede)")
-    .eq("idempresa", empresaId)
+    // SST transversal (LIP): no se filtra por el ID del cliente.
     .order("fecha_programada", { ascending: false })
   if (error) {
     console.error("[v0] listMantenimientos:", error.message)

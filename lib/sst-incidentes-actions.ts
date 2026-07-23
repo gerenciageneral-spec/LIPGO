@@ -16,7 +16,8 @@ export async function listIncidentes(empresaIdFromClient?: number | null): Promi
   const { data, error } = await supabase
     .from("sst_incidentes")
     .select("*")
-    .eq("idempresa", empresaId)
+    // SST transversal (LIP): se listan TODAS las investigaciones AT sin filtrar
+    // por el ID del cliente (misma info para todos los proyectos).
     .order("fecha_evento", { ascending: false })
   if (error) {
     console.error("[v0] listIncidentes:", error.message)
