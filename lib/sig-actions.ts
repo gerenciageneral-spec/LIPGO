@@ -1589,19 +1589,54 @@ export async function eliminarIndicador(id: number): Promise<{ success: boolean;
  * Es lo que hace que el tablero 9.1 muestre "resultados por sitio".
  */
 // Cache en memoria del BSC: el cálculo es pesado (~30 indicadores en vivo, ~10s).
-// Se cachea por empresa+fechas unos minutos para que la portada no lo recalcule en
-// cada visita. TTL corto (los KPIs no cambian segundo a segundo).
+// Se cachea por empresa+fechas para que ni la portada ni las tiras de KPIs del
+// encabezado (presentes en CADA submódulo) lo recalculen en cada navegación.
 const _ivCache = new Map<string, { value: any; exp: number }>()
-const IV_TTL_MS = 3 * 60 * 1000 // 3 minutos
+// Llamadas en vuelo por clave: dedupe para que varios montajes simultáneos NO
+// disparen varios cálculos pesados en paralelo (comparten la misma promesa).
+type IvRes = { success: boolean; valores: Record<string, SigIndicadorValor>; error?: string }
+const _ivInflight = new Map<string, Promise<IvRes>>()
+const IV_TTL_MS = 10 * 60 * 1000 // 10 minutos
 
+// Fachada con caché + dedupe + stale-while-revalidate: la PRIMERA vez por
+// (proyecto, periodo) se calcula en frío (única espera de ~10s); las siguientes
+// son INSTANTÁNEAS, y si el valor venció se sirve el último bueno y se refresca en
+// segundo plano SIN esperar. Así el encabezado de KPIs nunca bloquea la navegación.
 export async function getIndicadoresValores(
   proyectoId?: number | null,
   desde?: string | null,
   hasta?: string | null,
-): Promise<{ success: boolean; valores: Record<string, SigIndicadorValor>; error?: string }> {
+): Promise<IvRes> {
   const _ivKey = `${proyectoId ?? "all"}|${desde ?? ""}|${hasta ?? ""}`
   const _ivHit = _ivCache.get(_ivKey)
-  if (_ivHit && _ivHit.exp > Date.now()) return _ivHit.value
+  if (_ivHit && _ivHit.exp > Date.now()) return _ivHit.value // fresco → instantáneo
+  const refrescar = (): Promise<IvRes> => {
+    const enVuelo = _ivInflight.get(_ivKey)
+    if (enVuelo) return enVuelo
+    const p = _computeIndicadoresValores(proyectoId, desde, hasta)
+      .then((r) => {
+        if (r.success) _ivCache.set(_ivKey, { value: r, exp: Date.now() + IV_TTL_MS })
+        return r
+      })
+      .catch((err: any): IvRes => ({ success: false, valores: {}, error: err?.message || "Error" }))
+      .finally(() => _ivInflight.delete(_ivKey))
+    _ivInflight.set(_ivKey, p)
+    return p
+  }
+  // Vencido pero con valor previo → servir stale al instante y refrescar en bg.
+  if (_ivHit) {
+    void refrescar()
+    return _ivHit.value
+  }
+  // Frío (nunca calculado para este alcance) → se espera el cálculo una sola vez.
+  return refrescar()
+}
+
+async function _computeIndicadoresValores(
+  proyectoId?: number | null,
+  desde?: string | null,
+  hasta?: string | null,
+): Promise<IvRes> {
   try {
     const supabase: any = await getSupabaseAdmin()
     // IDs de cliente sobre los que se calcula (solo clientes ACTIVOS del SIG).
@@ -2015,9 +2050,7 @@ export async function getIndicadoresValores(
       lipgo_registros: { valor: lipgoRegistros, base: "operaciones digitalizadas en LIPgo" },
       legal_cumplimiento: { valor: legalCumpl, base: "requisitos legales cumplidos" },
     }
-    const _ivRes = { success: true, valores }
-    _ivCache.set(_ivKey, { value: _ivRes, exp: Date.now() + IV_TTL_MS })
-    return _ivRes
+    return { success: true, valores }
   } catch (err: any) {
     return { success: false, valores: {}, error: err?.message || "Error desconocido" }
   }
