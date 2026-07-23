@@ -157,7 +157,22 @@ async function getSubmoduloKpis(
     }
     const casos = rows.length
     const dias = rows.reduce((s, r) => s + (Number(r.total_dias_incapacidad) || 0), 0)
-    const at = rows.filter((r) => r.tipo_evento === "AT").length
+    // Accidentes de trabajo REALES = investigaciones (sst_incidentes), NO las filas
+    // de ausentismo: las prórrogas son filas extra del MISMO AT y antes inflaban el
+    // conteo (p.ej. Indupan 2026 sumaba 16 en vez de 2). Mismo criterio que el
+    // submódulo Ausentismos (casosATReal). Se cuenta por fecha_evento del año.
+    let at = 0
+    try {
+      const { count } = await sb
+        .from("sst_incidentes")
+        .select("*", { count: "exact", head: true })
+        .eq("idempresa", empresaId)
+        .gte("fecha_evento", `${anio}-01-01`)
+        .lte("fecha_evento", `${anio}-12-31`)
+      at = count || 0
+    } catch {
+      at = 0
+    }
     const revSST = rows.filter((r) => r.requiere_revision_sst).length
     return {
       titulo: `Ausentismo — resumen ${anio}`,
