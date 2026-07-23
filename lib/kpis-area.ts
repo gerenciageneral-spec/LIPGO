@@ -40,20 +40,37 @@ export const KPI_DEFS: Record<string, KpiDef> = {
   sst_at_count: { nombre: "Accidentes de trabajo", fmt: "num", meta: 0, higherBetter: false },
   sst_at_dias: { nombre: "Días perdidos por AT", fmt: "num", meta: 0, higherBetter: false },
   sst_ipevr_cumpl: { nombre: "Intervención de peligros (IPEVR)", fmt: "pct", meta: 95, higherBetter: true },
+  sst_frecuencia: { nombre: "Frecuencia de accidentalidad", fmt: "num", meta: 9, higherBetter: false },
+  // Indicadores adicionales (misma fuente en vivo, metas sincronizadas con el BSC).
+  inv_eri: { nombre: "Exactitud inventario físico (ERI)", fmt: "pct", meta: 99.5, higherBetter: true },
+  gh_formacion: { nombre: "Formación aprobada", fmt: "pct", meta: 95, higherBetter: true },
+  nc_cerradas: { nombre: "NC cerradas a tiempo", fmt: "pct", meta: 95, higherBetter: true },
+  legal_cumplimiento: { nombre: "Cumplimiento legal", fmt: "pct", meta: 100, higherBetter: true },
+  sig_implementacion: { nombre: "Implementación del SIG", fmt: "pct", meta: 100, higherBetter: true },
 }
 
-// Qué indicadores muestra cada grupo del menú (por su `key`).
+// Qué indicadores muestra cada grupo del menú (por su `key`). Curados a los MÁS
+// IMPORTANTES de cada área según el análisis de clase mundial (3PL): resultado de
+// servicio + eficiencia + calidad. Todas las metas salen de KPI_DEFS (sincronizadas
+// con el BSC/sig_indicadores). Máx ~5 por área para que la tira sea legible.
 export const AREA_KPIS: Record<string, string[]> = {
-  integral: ["sla_global", "desp_meta_ton", "desp_cumplimiento"],
-  pedidos: ["desp_ordenes", "desp_toneladas"],
-  despachos: ["sla_tiempos", "desp_cumplimiento", "desp_meta_ton", "vehiculos_atendidos"],
-  inventarios: ["inv_exactitud", "inv_rechazos", "desp_toneladas"],
+  // Gerencia / vista integral: los resultados estratégicos de LIP.
+  integral: ["sla_global", "sat_cliente", "desp_cumplimiento", "desp_meta_ton", "sgsst_0312"],
+  pedidos: ["desp_ordenes", "desp_toneladas", "desp_cumplimiento"],
+  // Operaciones (Cargue/Descargue): servicio, cumplimiento, calidad, volumen.
+  despachos: ["desp_cumplimiento", "sla_tiempos", "lip_evidencia", "desp_meta_ton", "sat_conductor"],
+  // Almacenamiento e Inventarios: exactitud world-class.
+  inventarios: ["inv_eri", "inv_exactitud", "inv_rechazos"],
   produccion: ["desp_meta_ton", "desp_toneladas"],
-  lip: ["sla_tiempos", "sat_conductor", "desp_cumplimiento", "lip_tiempo_cargue"],
+  // Operación LIP (SLA de servicio de outsourcing).
+  lip: ["sla_tiempos", "desp_cumplimiento", "lip_evidencia", "lip_tiempo_cargue", "lip_facturacion"],
   financiera: ["lip_facturacion"],
-  rrhh: ["gh_activos", "gh_ausentismo", "gh_cobertura", "gh_recobro"],
-  certificaciones_lip: ["sla_global", "sat_cliente", "sat_conductor"],
-  sst: ["sgsst_0312", "sst_at_count", "sst_at_dias", "sst_ipevr_cumpl"],
+  // Gestión Humana: rotación/ausentismo/cobertura/recobro/formación.
+  rrhh: ["gh_ausentismo", "gh_cobertura", "gh_recobro", "gh_formacion"],
+  // SIG / Certificaciones (transversal, ISO 9001·14001·45001).
+  certificaciones_lip: ["sgsst_0312", "sig_implementacion", "nc_cerradas", "legal_cumplimiento", "sat_cliente"],
+  // SST: cumplimiento SG-SST + accidentalidad + intervención de peligros.
+  sst: ["sgsst_0312", "sst_ipevr_cumpl", "sst_frecuencia", "sst_at_count", "sst_at_dias"],
   // mrp / configuracion: sin indicadores de área en el BSC → no muestran KPIs.
 }
 
