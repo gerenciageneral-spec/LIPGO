@@ -15,6 +15,24 @@ function hoyISO(): string {
 
 const norm = (c: any) => String(c ?? "").trim().replace(/\.0+$/, "").replace(/\D/g, "")
 
+// Festivos (Colombia) como set de fechas ISO en un rango, para descontarlos de los
+// días hábiles de vacaciones. Tabla `festivos` { id, fecha }.
+async function festivosSet(sb: any, desde: string, hasta: string): Promise<Set<string>> {
+  const { data } = await sb.from("festivos").select("fecha").gte("fecha", desde).lte("fecha", hasta)
+  return new Set((data ?? []).map((r: any) => String(r.fecha).slice(0, 10)))
+}
+
+// Lista de festivos (fechas ISO) para que la UI calcule los días hábiles en vivo.
+export async function getFestivos(): Promise<string[]> {
+  try {
+    const sb: any = await getSupabaseAdmin()
+    const { data } = await sb.from("festivos").select("fecha")
+    return (data ?? []).map((r: any) => String(r.fecha).slice(0, 10))
+  } catch {
+    return []
+  }
+}
+
 // ---------------------------------------------------------------------------
 // RESUMEN de vacaciones por trabajador ACTIVO: causados / disfrutados / saldo.
 // ---------------------------------------------------------------------------
@@ -157,7 +175,8 @@ export async function crearSolicitudVacaciones(
     const emp = empresaId || (await getCurrentEmpresaIdForInsert())
     if (!emp) return { success: false, message: "Sin empresa seleccionada" }
     if (!input.cedula || !input.fecha_inicio || !input.fecha_fin) return { success: false, message: "Faltan datos" }
-    const dias = diasHabilesEntre(input.fecha_inicio, input.fecha_fin).length
+    const fest = await festivosSet(sb, input.fecha_inicio, input.fecha_fin)
+    const dias = diasHabilesEntre(input.fecha_inicio, input.fecha_fin, fest).length
     if (dias <= 0) return { success: false, message: "El rango no tiene días hábiles" }
     const { error } = await sb.from("vacaciones_solicitudes").insert({
       idempresa: emp,
@@ -199,7 +218,10 @@ export async function aprobarSolicitudVacaciones(id: string, aprobadoPor?: strin
     const { data: s } = await sb.from("vacaciones_solicitudes").select("*").eq("id", id).maybeSingle()
     if (!s) return { success: false, message: "Solicitud no encontrada" }
 
-    const dias = diasHabilesEntre(String(s.fecha_inicio).slice(0, 10), String(s.fecha_fin).slice(0, 10))
+    const ini = String(s.fecha_inicio).slice(0, 10)
+    const fin = String(s.fecha_fin).slice(0, 10)
+    const fest = await festivosSet(sb, ini, fin)
+    const dias = diasHabilesEntre(ini, fin, fest)
     const NOVEDAD = "31- Vacaciones disfrutadas"
 
     // Filas ya existentes de esa persona en el rango (para no duplicar).

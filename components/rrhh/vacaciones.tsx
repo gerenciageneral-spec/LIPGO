@@ -49,6 +49,7 @@ import {
   aprobarSolicitudVacaciones,
   rechazarSolicitudVacaciones,
   registrarLiquidacionVacaciones,
+  getFestivos,
 } from "@/lib/vacaciones-actions"
 import { diasHabilesEntre, type VacacionResumen, type SolicitudVacaciones } from "@/lib/vacaciones-types"
 
@@ -61,6 +62,7 @@ export default function Vacaciones() {
   const [solicitudes, setSolicitudes] = useState<SolicitudVacaciones[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
+  const [festivos, setFestivos] = useState<string[]>([])
 
   // Diálogo de solicitud
   const [openSol, setOpenSol] = useState(false)
@@ -91,6 +93,10 @@ export default function Vacaciones() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedEmpresaId])
 
+  useEffect(() => {
+    getFestivos().then(setFestivos).catch(() => setFestivos([]))
+  }, [])
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     if (!q) return resumen
@@ -105,8 +111,8 @@ export default function Vacaciones() {
   }, [resumen])
 
   const diasSolicitud = useMemo(
-    () => (solForm.fecha_inicio && solForm.fecha_fin ? diasHabilesEntre(solForm.fecha_inicio, solForm.fecha_fin).length : 0),
-    [solForm.fecha_inicio, solForm.fecha_fin],
+    () => (solForm.fecha_inicio && solForm.fecha_fin ? diasHabilesEntre(solForm.fecha_inicio, solForm.fecha_fin, festivos).length : 0),
+    [solForm.fecha_inicio, solForm.fecha_fin, festivos],
   )
 
   const abrirSolicitud = (r?: VacacionResumen) => {
@@ -453,7 +459,7 @@ export default function Vacaciones() {
               </div>
             </div>
             <div className="text-sm text-muted-foreground">
-              Días hábiles (lun–vie): <strong className="text-foreground">{diasSolicitud}</strong>
+              Días hábiles (lun–sáb, sin festivos): <strong className="text-foreground">{diasSolicitud}</strong>
             </div>
             <div className="space-y-1.5">
               <Label>Observaciones</Label>
