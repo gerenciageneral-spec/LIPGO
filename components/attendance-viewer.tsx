@@ -9,6 +9,7 @@ import { Loader2, Search, Pencil, LayoutDashboard, CalendarDays, TableProperties
 import { useAuth } from "@/components/auth-provider"
 import { createClient } from "@/lib/supabase-client"
 import { procesarNovedadRetiro } from "@/lib/retiro-actions"
+import { sincronizarBorradorAusentismo } from "@/lib/ausentismos-actions"
 import { AttendanceDailyDashboard } from "@/components/attendance-daily-dashboard"
 import { AttendanceHistoricalDashboard } from "@/components/attendance-historical-dashboard"
 import VisorUbicaciones from "@/components/visor-ubicaciones"
@@ -241,6 +242,17 @@ export function AttendanceViewer() {
           asistencia: editingNotice,
         })
         bajaAplicada = !!r.aplicado
+      }
+
+      // Puente automático: reconcilia el borrador de ausentismo de esta persona
+      // (incapacidad EG/AT o licencia → crea/actualiza borrador; si la novedad se
+      // cambió a algo que no es ausentismo, limpia el borrador huérfano). No bloquea.
+      if (selectedEmpresaId && editingRecord.identificacion && editingRecord.fecha) {
+        try {
+          await sincronizarBorradorAusentismo(selectedEmpresaId, editingRecord.identificacion, editingRecord.fecha)
+        } catch (e) {
+          console.error("[v0] sincronizarBorradorAusentismo:", e)
+        }
       }
 
       toast({

@@ -46,6 +46,8 @@ import {
   ExternalLink,
   Upload,
   Settings2,
+  FileWarning,
+  FileCheck2,
 } from "lucide-react"
 import { useAuth } from "@/components/auth-provider"
 import { useToast } from "@/hooks/use-toast"
@@ -59,6 +61,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { getAusentismos, type Ausentismo } from "@/lib/ausentismos-actions"
+import { esCategoriaMedica } from "@/lib/ausentismo-categorias"
 import { valorizarIncapacidad } from "@/lib/incapacidad-valor"
 import { actualizarRecobro } from "@/lib/recobros-actions"
 import { ESTADOS_RECOBRO, type EstadoRecobro } from "@/lib/recobros"
@@ -187,9 +190,20 @@ export default function RecobroIncapacidades() {
     [items],
   )
 
+  // Borradores del puente (médicos) aún por completar: NO entran al recobro hasta
+  // validarse, pero se avisan para que el analista los complete en Ausentismos.
+  const borradoresPendientes = useMemo(
+    () => items.filter((a) => a.estado_registro === "BORRADOR" && (!a.categoria || esCategoriaMedica(a.categoria))).length,
+    [items],
+  )
+
   const filtered = useMemo(
     () =>
       items.filter((a) => {
+        // El recobro SOLO aplica a incapacidades MÉDICAS (EG/AT) validadas: se
+        // excluyen los borradores del puente y las ausencias no médicas (licencias).
+        if (a.estado_registro === "BORRADOR") return false
+        if (a.categoria && !esCategoriaMedica(a.categoria)) return false
         if (anio !== "todos" && anioDe(a) !== anio) return false
         if (mes !== "todos" && (a.mes || "").trim().toLowerCase() !== mes) return false
         if (tipo !== "todos" && a.tipo_evento !== tipo) return false
@@ -480,6 +494,18 @@ export default function RecobroIncapacidades() {
               </Card>
             </div>
 
+            {/* Aviso: borradores del puente por completar (no entran al recobro aún). */}
+            {borradoresPendientes > 0 && (
+              <div className="flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+                <FileWarning className="h-4 w-4 shrink-0" />
+                <span>
+                  {borradoresPendientes} {borradoresPendientes === 1 ? "incapacidad" : "incapacidades"} en{" "}
+                  <strong>borrador</strong> por completar en el módulo de Ausentismos (diagnóstico + soporte); aún no
+                  entran al recobro.
+                </span>
+              </div>
+            )}
+
             {/* Tabla de gestión del recobro */}
             <Card className="p-4">
               <SigSection title="Gestión del recobro caso a caso" right={<span className="text-xs text-muted-foreground">{data.calcs.length} registros</span>} />
@@ -614,6 +640,30 @@ export default function RecobroIncapacidades() {
               {/* Soportes de gestión */}
               <div className="space-y-2">
                 <SigSection title="Soportes de gestión" />
+
+                {/* 1er eslabón: soporte clínico de la incapacidad (se carga en
+                    Ausentismos). Aquí es de solo lectura, encabeza la cadena. */}
+                <div className="flex items-center justify-between gap-2 rounded-md border px-3 py-2">
+                  <div className="flex items-center gap-2 text-sm">
+                    <FileCheck2 className="h-4 w-4" style={{ color: gestion?.soporte_incapacidad_url ? C_RECOBRADO : "#cbd5e1" }} />
+                    <div>
+                      <div className="font-medium" style={{ color: SST_TOKENS.ink }}>Soporte de la incapacidad</div>
+                      <div className="text-[11px] text-muted-foreground">Documento clínico (se adjunta en Ausentismos)</div>
+                    </div>
+                  </div>
+                  {gestion?.soporte_incapacidad_url ? (
+                    <a
+                      href={gestion.soporte_incapacidad_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-sm text-green-700 underline"
+                    >
+                      <ExternalLink className="h-4 w-4" /> Ver
+                    </a>
+                  ) : (
+                    <span className="text-[11px] text-muted-foreground">Sin soporte</span>
+                  )}
+                </div>
 
                 {/* Correo a EPS/ARL (requisito para RADICADO) */}
                 <SoporteRow

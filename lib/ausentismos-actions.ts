@@ -7,6 +7,13 @@ import { createClient } from "@/lib/supabase-client"
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getCurrentEmpresaIdForInsert } from "@/lib/user-context"
 import diagnosticos from "@/lib/diagnosticos-cie10.json"
+import {
+  categoriaDeNovedad,
+  esCategoriaMedica,
+  tipoEventoDeCategoria,
+  etiquetaCategoria,
+  type CategoriaAusentismo,
+} from "@/lib/ausentismo-categorias"
 
 // Archivo fuente SST-MAT-06 guardado en el proyecto.
 const EXCEL_RELATIVE_PATH =
@@ -29,7 +36,8 @@ export interface Ausentismo {
   area: string | null
   estado_colaborador: string | null
   centro_trabajo: string | null
-  tipo_evento: "EG" | "AT"
+  // tipo_evento solo aplica a las MÉDICAS (EG/AT); NULL en licencias.
+  tipo_evento: "EG" | "AT" | null
   eps: string | null
   fecha_inicial: string | null
   fecha_final: string | null
@@ -58,6 +66,11 @@ export interface Ausentismo {
   // Soportes de gestión del recobro (SQL 28): correo a EPS/ARL y comprobante de pago.
   soporte_radicado_url?: string | null
   soporte_pago_url?: string | null
+  // Puente automático + gestión SST (SQL 52).
+  categoria?: string | null // CategoriaAusentismo (amplia: médicas + licencias)
+  estado_registro?: string | null // 'BORRADOR' | 'COMPLETO'
+  origen?: string | null // 'CONTROL_DIARIO' | 'MANUAL' | 'IMPORT'
+  soporte_incapacidad_url?: string | null // documento clínico (1er eslabón del recobro)
   created_at: string
 }
 
@@ -65,6 +78,213 @@ export interface Ausentismo {
 // estos casos deben ir en rojo para revision del profesional de SST.
 function requiereRevisionSST(codigo?: string | null) {
   return !!codigo && codigo.trim().toUpperCase().startsWith("M")
+}
+
+// ---------------------------------------------------------------------------
+// PUENTE automático Visor/Control diario → Ausentismos (borrador). SQL 52.
+// Cuando en el Visor se marca una novedad de ausentismo (incapacidad EG/AT o una
+// licencia), se crea/actualiza AUTOMÁTICAMENTE un BORRADOR en `ausentismosst` para
+// que el analista SST lo complete y suba el soporte. Idempotente (upsert por
+// episodio); nunca pisa filas COMPLETO/MANUAL/IMPORT. Las vacaciones NO entran.
+// ---------------------------------------------------------------------------
+
+const _diaMs = 86400000
+const difDias = (a: string, b: string) => Math.round((new Date(b).getTime() - new Date(a).getTime()) / _diaMs)
+const isoDate = (d: Date) => d.toISOString().slice(0, 10)
+
+interface EpisodioAus {
+  cedula: string
+  cat: CategoriaAusentismo
+  nombre: string
+  ini: string
+  fin: string
+  dias: number
+}
+
+// Agrupa novedades ya clasificadas en episodios por (cédula + categoría) y días
+// contiguos (gap ≤ 4). Misma lógica que el backfill masivo.
+function construirEpisodiosCategoria(
+  rows: { fecha: string; nombre?: string | null; identificacion: string; cat: CategoriaAusentismo }[],
+): EpisodioAus[] {
+  const porKey: Record<string, typeof rows> = {}
+  for (const r of rows) {
+    if (!r.fecha) continue
+    const k = `${normCedula(r.identificacion)}|${r.cat}`
+    ;(porKey[k] = porKey[k] || []).push(r)
+  }
+  const eps: EpisodioAus[] = []
+  for (const k of Object.keys(porKey)) {
+    const lista = porKey[k].slice().sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)))
+    let ep: EpisodioAus | null = null
+    for (const x of lista) {
+      if (ep && difDias(ep.fin, x.fecha) <= 4) {
+        ep.fin = x.fecha
+        ep.dias++
+      } else {
+        if (ep) eps.push(ep)
+        ep = { cedula: String(x.identificacion), cat: x.cat, nombre: x.nombre ?? String(x.identificacion), ini: x.fecha, fin: x.fecha, dias: 1 }
+      }
+    }
+    if (ep) eps.push(ep)
+  }
+  return eps
+}
+
+interface CtxCostos {
+  centro: string | null
+  cargo: string | null
+  salario: number
+  smlv: number
+  diasEmpleador: number
+}
+
+async function contextoCostosAusentismo(sb: any, empresaId: number, cedula: string, anio: string): Promise<CtxCostos> {
+  const [{ data: emp }, { data: hc }, { data: par }] = await Promise.all([
+    sb.from("empresas").select("nombre").eq("id", empresaId).maybeSingle(),
+    sb.from("headcount").select("cargo,salario").eq("idempresa", empresaId).eq("identificacion", cedula).maybeSingle(),
+    sb.from("parametros_legales_anio").select("smlv,dias_cargo_empleador").eq("anio", Number(anio)).maybeSingle(),
+  ])
+  return {
+    centro: emp?.nombre ?? null,
+    cargo: hc?.cargo ?? null,
+    salario: Number(hc?.salario) || 0,
+    smlv: Number(par?.smlv) || 1423500,
+    diasEmpleador: Number(par?.dias_cargo_empleador ?? 2),
+  }
+}
+
+// Construye la fila-borrador de un episodio. Las médicas calculan costos (recobro);
+// las licencias van con costos en 0 y tipo_evento NULL (no recobrables).
+function filaBorradorEpisodio(ep: EpisodioAus, ctx: CtxCostos, empresaId: number): Record<string, any> {
+  const med = esCategoriaMedica(ep.cat)
+  const esAT = ep.cat === "ACCIDENTE_LABORAL"
+  const salarioBase = med ? Math.max(ctx.salario, ctx.smlv) : 0
+  const salarioDia = med ? Math.round(salarioBase / 30) : 0
+  const diasEmp = med && !esAT ? Math.min(ep.dias, ctx.diasEmpleador) : 0
+  const diasEps = med && !esAT ? Math.max(0, ep.dias - ctx.diasEmpleador) : 0
+  const m = Number(String(ep.ini).slice(5, 7))
+  return {
+    idempresa: empresaId,
+    mes: MESES_NOMBRE[m] ?? null,
+    nombre_colaborador: ep.nombre,
+    cedula: ep.cedula,
+    cargo: ctx.cargo,
+    centro_trabajo: ctx.centro,
+    categoria: ep.cat,
+    tipo_evento: tipoEventoDeCategoria(ep.cat), // NULL para licencias
+    fecha_inicial: ep.ini,
+    fecha_final: ep.fin,
+    dias_incapacidad: ep.dias,
+    total_dias_incapacidad: ep.dias,
+    dias_empresa: diasEmp,
+    dias_eps: diasEps,
+    salario_base: salarioBase || null,
+    salario_base_dia: salarioDia || null,
+    costos_empresa: Math.round(diasEmp * salarioDia),
+    costos_eps: Math.round(diasEps * salarioDia),
+    costos_arl: esAT ? Math.round(ep.dias * salarioDia) : 0,
+    requiere_revision_sst: false,
+    estado_registro: "BORRADOR",
+    origen: "CONTROL_DIARIO",
+    observaciones: `[Borrador desde control diario · ${etiquetaCategoria(ep.cat)}] completar y adjuntar soporte`,
+  }
+}
+
+// Reconcilia los borradores de UNA persona alrededor de `fechaRef` (ventana ±31d).
+// Se llama tras guardar una novedad en el Visor / Novedades de Personal.
+export async function sincronizarBorradorAusentismo(
+  empresaId: number,
+  cedula: string,
+  fechaRef: string,
+): Promise<{ created: number; updated: number; deleted: number; skipped: number; error?: string }> {
+  const base = { created: 0, updated: 0, deleted: 0, skipped: 0 }
+  try {
+    if (!empresaId || !cedula || !fechaRef) return base
+    const sb: any = await getSupabaseAdmin()
+    const ced = normCedula(cedula)
+    const ref = new Date(`${String(fechaRef).slice(0, 10)}T00:00:00`)
+    if (Number.isNaN(ref.getTime())) return base
+    const desde = isoDate(new Date(ref.getTime() - 31 * _diaMs))
+    const hasta = isoDate(new Date(ref.getTime() + 31 * _diaMs))
+
+    // 1) Novedades del control diario de esa persona en la ventana → clasificar.
+    const { data: raRows } = await sb
+      .from("registroasistencia")
+      .select("fecha,nombre,identificacion,asistencia")
+      .eq("idempresa", empresaId)
+      .gte("fecha", desde)
+      .lte("fecha", hasta)
+      .not("asistencia", "is", null)
+    const clasificadas = (raRows ?? [])
+      .filter((r: any) => normCedula(r.identificacion) === ced)
+      .map((r: any) => ({ ...r, cat: categoriaDeNovedad(r.asistencia) }))
+      .filter((r: any) => r.cat) as { fecha: string; nombre?: string; identificacion: string; cat: CategoriaAusentismo }[]
+    const episodios = construirEpisodiosCategoria(clasificadas)
+
+    // 2) Filas existentes de esa persona que solapen la ventana.
+    const { data: exRows } = await sb
+      .from("ausentismosst")
+      .select("id,cedula,fecha_inicial,fecha_final,origen,estado_registro")
+      .eq("idempresa", empresaId)
+      .gte("fecha_inicial", desde)
+      .lte("fecha_inicial", hasta)
+    const existentes = (exRows ?? []).filter((r: any) => normCedula(r.cedula) === ced)
+    const esBorradorPuente = (r: any) => r.origen === "CONTROL_DIARIO" && r.estado_registro === "BORRADOR"
+    const noBorrador = existentes.filter((r: any) => !esBorradorPuente(r))
+    const borradores = existentes.filter(esBorradorPuente)
+
+    const solapa = (aIni: string, aFin: string, bIni: string, bFin: string) =>
+      !(difDias(aFin, bIni) > 4 || difDias(bFin, aIni) > 4)
+
+    const ctx = await contextoCostosAusentismo(sb, empresaId, cedula, String(fechaRef).slice(0, 4))
+    const borradoresUsados = new Set<string>()
+    let { created, updated, deleted, skipped } = base
+
+    for (const ep of episodios) {
+      // Si el analista ya lo registró (COMPLETO/MANUAL/IMPORT) → no crear paralelo.
+      if (noBorrador.some((r: any) => solapa(ep.ini, ep.fin, r.fecha_inicial, r.fecha_final || r.fecha_inicial))) {
+        skipped++
+        continue
+      }
+      const fila = filaBorradorEpisodio(ep, ctx, empresaId)
+      const b = borradores.find((r: any) => !borradoresUsados.has(r.id) && solapa(ep.ini, ep.fin, r.fecha_inicial, r.fecha_final || r.fecha_inicial))
+      if (b) {
+        borradoresUsados.add(b.id)
+        await sb.from("ausentismosst").update(fila).eq("id", b.id)
+        updated++
+      } else {
+        const { error } = await sb.from("ausentismosst").insert(fila)
+        if (!error) created++
+      }
+    }
+
+    // 3) Limpieza: borradores del puente en la ventana que ya no tienen episodio
+    // que los respalde (p. ej. la novedad se cambió a "Descanso") → eliminar.
+    for (const b of borradores) {
+      if (!borradoresUsados.has(b.id)) {
+        await sb.from("ausentismosst").delete().eq("id", b.id)
+        deleted++
+      }
+    }
+
+    return { created, updated, deleted, skipped }
+  } catch (err: any) {
+    return { ...base, error: err?.message || "Error" }
+  }
+}
+
+// Marca un ausentismo como COMPLETO (validado por el analista).
+export async function marcarAusentismoCompleto(id: string) {
+  const sb = await createClient()
+  const { error } = await sb.from("ausentismosst").update({ estado_registro: "COMPLETO" }).eq("id", id)
+  return error ? { success: false, message: error.message } : { success: true }
+}
+
+// Persiste la URL del soporte clínico de la incapacidad (1er eslabón del recobro).
+export async function setSoporteIncapacidad(id: string, url: string) {
+  const sb = await createClient()
+  const { error } = await sb.from("ausentismosst").update({ soporte_incapacidad_url: url }).eq("id", id)
+  return error ? { success: false, message: error.message } : { success: true }
 }
 
 // Busca diagnosticos CIE-10 por codigo o descripcion (server-side para no
@@ -370,6 +590,7 @@ export async function generarBorradoresAusentismoDesdeControl(
         cedula: ep.id,
         cargo: cargoById[ep.id] ?? null,
         centro_trabajo: centro,
+        categoria: esAT ? "ACCIDENTE_LABORAL" : "ENFERMEDAD_GENERAL",
         tipo_evento: esAT ? "AT" : "EG",
         fecha_inicial: ep.ini,
         fecha_final: ep.fin,
@@ -383,6 +604,8 @@ export async function generarBorradoresAusentismoDesdeControl(
         costos_eps: costosEps,
         costos_arl: costosArl,
         requiere_revision_sst: false,
+        estado_registro: "BORRADOR",
+        origen: "CONTROL_DIARIO",
         observaciones: `[Borrador desde control diario · SMLV ${anio}] completar diagnóstico/AT-EG; costo estimado`,
       }
     })
@@ -515,6 +738,10 @@ export async function createAusentismo(
       ...rest,
       idempresa: empresaId,
       requiere_revision_sst: requiereRevisionSST(rest.codigo_diagnostico),
+      // Alta manual = fila validada por el analista.
+      origen: rest.origen ?? "MANUAL",
+      estado_registro: rest.estado_registro ?? "COMPLETO",
+      categoria: rest.categoria ?? (rest.tipo_evento === "AT" ? "ACCIDENTE_LABORAL" : "ENFERMEDAD_GENERAL"),
     })
     .select()
 

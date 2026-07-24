@@ -40,10 +40,13 @@ import {
   importAusentismosFromExcel,
   getHeadcountColaboradores,
   getIncidentesAT,
+  setSoporteIncapacidad,
+  marcarAusentismoCompleto,
   type Ausentismo,
   type Diagnostico,
   type HeadcountColaborador,
 } from "@/lib/ausentismos-actions"
+import { etiquetaCategoria, esCategoriaMedica } from "@/lib/ausentismo-categorias"
 import { AusentismosResumen } from "@/components/rrhh/ausentismos-dashboards"
 import { useSubmoduloFiltro } from "@/components/submodulo-filtro-context"
 import { AusentismosAnalisisDiario } from "@/components/rrhh/ausentismos-analisis-diario"
@@ -57,6 +60,10 @@ import {
   FileDown,
   ListChecks,
   BarChart3,
+  Paperclip,
+  Upload,
+  CheckCircle2,
+  FileCheck2,
 } from "lucide-react"
 
 // Meses para el selector de "Mes de la incapacidad".
@@ -133,6 +140,8 @@ export default function Ausentismos() {
   const [search, setSearch] = useState("")
   const [tipoFiltro, setTipoFiltro] = useState<"todos" | "EG" | "AT">("todos")
   const [soloRevision, setSoloRevision] = useState(false)
+  const [soloBorradores, setSoloBorradores] = useState(false)
+  const [subiendoSoporte, setSubiendoSoporte] = useState(false)
   // Filtro por centro de trabajo (proyecto en el que se está trabajando).
   // Filtros por año y mes (se derivan de la fecha inicial / campo mes).
   const [anioFiltro, setAnioFiltro] = useState<string>("todos")
@@ -402,6 +411,58 @@ export default function Ausentismos() {
     }
   }
 
+  // Sube el soporte clínico de la incapacidad (1er eslabón del recobro). Reutiliza
+  // la ruta genérica de soportes de recobro con tipo="incapacidad".
+  const handleSubirSoporteIncap = async (file: File | null) => {
+    if (!file) return
+    if (!editingId) {
+      toast({ title: "Guarda primero", description: "Guarda el ausentismo antes de adjuntar el soporte." })
+      return
+    }
+    setSubiendoSoporte(true)
+    try {
+      const fd = new FormData()
+      fd.append("file", file)
+      fd.append("id", editingId)
+      fd.append("tipo", "incapacidad")
+      const res = await fetch("/api/recobro/upload", { method: "POST", body: fd })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error || "No se pudo subir")
+      const r = await setSoporteIncapacidad(editingId, json.url)
+      if (!r.success) throw new Error(r.message)
+      toast({ title: "Soporte cargado" })
+      await loadData()
+    } catch (e: any) {
+      toast({ title: "Error", description: e?.message || "No se pudo subir el soporte." })
+    } finally {
+      setSubiendoSoporte(false)
+    }
+  }
+
+  // Marca el ausentismo como COMPLETO (validado) → entra al pipeline de recobro.
+  const handleMarcarCompleto = async () => {
+    if (!editingId) return
+    const row = items.find((a) => a.id === editingId)
+    const med = esCategoriaMedica(row?.categoria)
+    // Las médicas requieren diagnóstico; la no-remunerada (sin soporte médico) no.
+    if (med && !form.codigo_diagnostico.trim()) {
+      toast({ title: "Falta el diagnóstico", description: "Las incapacidades médicas requieren código CIE-10." })
+      return
+    }
+    if (toNum(form.total_dias_incapacidad) <= 0) {
+      toast({ title: "Faltan días", description: "Indica los días antes de marcar como completo." })
+      return
+    }
+    const r = await marcarAusentismoCompleto(editingId)
+    if (r.success) {
+      toast({ title: "Ausentismo marcado como completo" })
+      setOpen(false)
+      loadData()
+    } else {
+      toast({ title: "Error", description: r.message })
+    }
+  }
+
   const handleDelete = async (id: string) => {
     if (!confirm("¿Eliminar este registro de ausentismo?")) return
     const result = await deleteAusentismo(id)
@@ -465,6 +526,7 @@ export default function Ausentismos() {
         return false
       if (tipoFiltro !== "todos" && a.tipo_evento !== tipoFiltro) return false
       if (soloRevision && !a.requiere_revision_sst) return false
+      if (soloBorradores && a.estado_registro !== "BORRADOR") return false
       if (!q) return true
       return (
         a.nombre_colaborador.toLowerCase().includes(q) ||
@@ -473,7 +535,7 @@ export default function Ausentismos() {
         (a.descripcion_diagnostico?.toLowerCase().includes(q) ?? false)
       )
     })
-  }, [items, search, tipoFiltro, soloRevision, anioFiltro, mesFiltro, estadoFiltro])
+  }, [items, search, tipoFiltro, soloRevision, soloBorradores, anioFiltro, mesFiltro, estadoFiltro])
 
   // La tabla se organiza por AÑO y luego por MES, de MENOR a MAYOR (ascendente).
   const sorted = useMemo(() => {
@@ -898,6 +960,60 @@ export default function Ausentismos() {
                 </div>
               </section>
 
+              {/* Soporte del ausentismo (documento clínico / soporte de la novedad).
+                  Es el 1er eslabón de la cadena de recobro para las incapacidades. */}
+              {editingId &&
+                (() => {
+                  const row = items.find((a) => a.id === editingId)
+                  return (
+                    <section className="space-y-2 rounded-lg border p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-sm font-semibold">Soporte del ausentismo</div>
+                        {row?.estado_registro === "BORRADOR" ? (
+                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
+                            Borrador · por completar
+                          </span>
+                        ) : (
+                          <span className="rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-800">
+                            Completo
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {row?.soporte_incapacidad_url ? (
+                          <a
+                            href={row.soporte_incapacidad_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-sm text-green-700 underline"
+                          >
+                            <FileCheck2 className="h-4 w-4" /> Ver soporte cargado
+                          </a>
+                        ) : (
+                          <span className="text-sm text-muted-foreground">Sin soporte adjunto</span>
+                        )}
+                        <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm hover:bg-muted">
+                          {subiendoSoporte ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Upload className="h-4 w-4" />
+                          )}
+                          {row?.soporte_incapacidad_url ? "Reemplazar" : "Subir soporte"}
+                          <input
+                            type="file"
+                            className="hidden"
+                            disabled={subiendoSoporte}
+                            onChange={(e) => handleSubirSoporteIncap(e.target.files?.[0] ?? null)}
+                          />
+                        </label>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        El soporte clínico alimenta el módulo de Recobro (incapacidad → radicado EPS/ARL → pago).
+                      </p>
+                    </section>
+                  )
+                })()}
+
               <div className="space-y-1.5">
                 <Label htmlFor="obs">Observaciones</Label>
                 <Textarea
@@ -913,6 +1029,11 @@ export default function Ausentismos() {
               <Button variant="outline" onClick={() => setOpen(false)} disabled={saving}>
                 Cancelar
               </Button>
+              {editingId && items.find((a) => a.id === editingId)?.estado_registro === "BORRADOR" && (
+                <Button variant="secondary" onClick={handleMarcarCompleto} disabled={saving}>
+                  <CheckCircle2 className="mr-2 h-4 w-4" /> Marcar como completo
+                </Button>
+              )}
               <Button onClick={handleSave} disabled={saving}>
                 {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {saving ? "Guardando..." : editingId ? "Actualizar" : "Guardar"}
@@ -1000,6 +1121,14 @@ export default function Ausentismos() {
           <AlertTriangle className="h-4 w-4" />
           Solo revisión SST
         </Button>
+        <Button
+          variant={soloBorradores ? "default" : "outline"}
+          onClick={() => setSoloBorradores((s) => !s)}
+          className="gap-2"
+        >
+          <FileCheck2 className="h-4 w-4" />
+          Solo borradores
+        </Button>
       </div>
 
       {/* Pestañas: registros, resumen y costos */}
@@ -1057,19 +1186,20 @@ export default function Ausentismos() {
               <TableHead>Tipo</TableHead>
               <TableHead>Diagnóstico</TableHead>
               <TableHead className="text-center">Días</TableHead>
+              <TableHead className="text-center">Soporte</TableHead>
               <TableHead className="text-right">Acciones</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
+                <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
                   <Loader2 className="mx-auto h-5 w-5 animate-spin" />
                 </TableCell>
               </TableRow>
             ) : sorted.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
+                <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
                   No hay ausentismos registrados.
                 </TableCell>
               </TableRow>
@@ -1077,22 +1207,43 @@ export default function Ausentismos() {
               sorted.map((a) => (
                 <TableRow
                   key={a.id}
-                  className={a.requiere_revision_sst ? "bg-red-50 hover:bg-red-100" : ""}
+                  className={
+                    a.requiere_revision_sst
+                      ? "bg-red-50 hover:bg-red-100"
+                      : a.estado_registro === "BORRADOR"
+                        ? "bg-amber-50 hover:bg-amber-100"
+                        : ""
+                  }
                 >
                   <TableCell>{a.mes || "-"}</TableCell>
-                  <TableCell className="font-medium">{a.nombre_colaborador}</TableCell>
+                  <TableCell className="font-medium">
+                    <div className="flex items-center gap-1.5">
+                      <span>{a.nombre_colaborador}</span>
+                      {a.estado_registro === "BORRADOR" && (
+                        <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
+                          Borrador
+                        </span>
+                      )}
+                    </div>
+                  </TableCell>
                   <TableCell>{a.cedula || "-"}</TableCell>
                   <TableCell>{a.centro_trabajo || "-"}</TableCell>
                   <TableCell>
-                    <span
-                      className={`inline-block rounded-full px-2 py-1 text-xs font-medium ${
-                        a.tipo_evento === "AT"
-                          ? "bg-orange-100 text-orange-800"
-                          : "bg-blue-100 text-blue-800"
-                      }`}
-                    >
-                      {a.tipo_evento}
-                    </span>
+                    {a.tipo_evento ? (
+                      <span
+                        className={`inline-block rounded-full px-2 py-1 text-xs font-medium ${
+                          a.tipo_evento === "AT"
+                            ? "bg-orange-100 text-orange-800"
+                            : "bg-blue-100 text-blue-800"
+                        }`}
+                      >
+                        {a.tipo_evento}
+                      </span>
+                    ) : (
+                      <span className="inline-block rounded-full bg-purple-100 px-2 py-1 text-xs font-medium text-purple-800">
+                        {etiquetaCategoria(a.categoria)}
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell className={a.requiere_revision_sst ? "text-red-700" : ""}>
                     {a.codigo_diagnostico ? (
@@ -1108,6 +1259,20 @@ export default function Ausentismos() {
                     )}
                   </TableCell>
                   <TableCell className="text-center">{a.total_dias_incapacidad ?? 0}</TableCell>
+                  <TableCell className="text-center">
+                    {a.soporte_incapacidad_url ? (
+                      <a
+                        href={a.soporte_incapacidad_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        title="Ver soporte"
+                      >
+                        <Paperclip className="mx-auto h-4 w-4 text-green-600" />
+                      </a>
+                    ) : (
+                      <Paperclip className="mx-auto h-4 w-4 text-muted-foreground/40" />
+                    )}
+                  </TableCell>
                   <TableCell>
                     <div className="flex justify-end gap-2">
                       <Button variant="outline" size="sm" onClick={() => handleEdit(a)} title="Editar">

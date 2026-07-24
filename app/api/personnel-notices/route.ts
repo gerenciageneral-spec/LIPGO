@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase-server"
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { procesarNovedadRetiro } from "@/lib/retiro-actions"
+import { sincronizarBorradorAusentismo } from "@/lib/ausentismos-actions"
 
 export async function GET(request: NextRequest) {
   try {
@@ -195,6 +196,23 @@ export async function POST(request: NextRequest) {
           }
         }
       }
+    }
+
+    // Puente automático: reconciliar los borradores de ausentismo de las personas
+    // afectadas (incapacidad/licencia → crea/actualiza borrador; vacaciones/otros →
+    // no aplica). Idempotente; una novedad de N días converge a UN episodio.
+    try {
+      const ids = Array.from(new Set(records.map((r: any) => r.identificacion).filter(Boolean)))
+      const refDates = new Set<string>()
+      for (const r of records) refDates.add(String(r.fecha || todayDate).slice(0, 10))
+      if (dateRange?.startDate) refDates.add(new Date(dateRange.startDate).toISOString().slice(0, 10))
+      if (dateRange?.endDate) refDates.add(new Date(dateRange.endDate).toISOString().slice(0, 10))
+      const fechas = Array.from(refDates)
+      await Promise.all(
+        ids.flatMap((id: any) => fechas.map((f) => sincronizarBorradorAusentismo(Number(empresaId), String(id), f))),
+      )
+    } catch (e) {
+      console.error("[v0] sync borrador ausentismo (personnel-notices):", e)
     }
 
     return NextResponse.json({
