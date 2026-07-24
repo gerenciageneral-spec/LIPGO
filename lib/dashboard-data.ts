@@ -295,6 +295,9 @@ export const groups: Group[] = [
           { name: "Visor", icon: Eye, label: "Visor de Asistencia" },
           { name: "Turnos", icon: Clock, label: "Turnos por Puesto" },
           { name: "Asignación horas extra", icon: Clock, label: "Asignación de Horas Extra" },
+          // Control de vacaciones: causación desde fecha de ingreso, disfrute
+          // (novedad del control diario), saldo y liquidación.
+          { name: "Vacaciones", icon: CalendarClock },
         ],
       },
       {

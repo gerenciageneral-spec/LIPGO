@@ -92,6 +92,7 @@ import Antecedentes from "@/components/rrhh/antecedentes"
 import ExamenesMedicos from "@/components/rrhh/examenes-medicos"
 import Ausentismos from "@/components/rrhh/ausentismos"
 import RecobroIncapacidades from "@/components/rrhh/recobro-incapacidades"
+import Vacaciones from "@/components/rrhh/vacaciones"
 import { Auditoria0312 } from "@/components/sst/auditoria-0312"
 import { Matriz60Estandares } from "@/components/sst/matriz-60-estandares"
 import { RepositorioSoportes } from "@/components/sst/repositorio-soportes"
@@ -766,6 +767,10 @@ export function MainContent({
           ) : selectedModule === "Recobro de Incapacidades" ? (
             <PermissionGuard moduleName="Recobro de Incapacidades">
               <RecobroIncapacidades />
+            </PermissionGuard>
+          ) : selectedModule === "Vacaciones" ? (
+            <PermissionGuard moduleName="Vacaciones">
+              <Vacaciones />
             </PermissionGuard>
           ) : selectedModule === "Auditoría 0312" ? (
             <PermissionGuard moduleName="Auditoría 0312">

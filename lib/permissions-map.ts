@@ -114,6 +114,7 @@ export interface UserPermissions {
   // independiente en Gestión de Usuarios (antes compartía 'ausentismos' y el
   // dedupe del árbol lo ocultaba).
   recobro_incapacidades: boolean
+  vacaciones: boolean
   visor: boolean
   // RRHH LIP
   gestion_contratos: boolean
@@ -321,6 +322,7 @@ export const MODULE_PERMISSION_MAP: Record<string, keyof UserPermissions> = {
   Ausentismos: "ausentismos",
   // Permiso propio para que sea gestionable por separado en Gestión de Usuarios.
   "Recobro de Incapacidades": "recobro_incapacidades",
+  Vacaciones: "vacaciones",
   Turnos: "gestionturnos",
   "Programación de turnos": "programacionturnos",
   "Notificaciones al Personal": "notificaciones",
