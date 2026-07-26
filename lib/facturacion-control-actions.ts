@@ -9,7 +9,7 @@
 // es el paso siguiente y NO se cruza aquí.
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
-import { esPlacaDistribucion } from "@/lib/distribucion-placas"
+import { esPlacaDistribucion, cargarPlacasDistribucion } from "@/lib/distribucion-placas"
 import { PLACAS_EXCLUIDAS_FACTURAS } from "@/lib/facturas-exclusiones"
 
 export type CategoriaFactura = "facturado" | "en_proceso" | "sin_gestionar"
@@ -390,6 +390,7 @@ export async function getPrefactura(
   if (!idempresa) return { success: false, message: "Selecciona un proyecto/empresa." }
   try {
     const sb: any = await getSupabaseAdmin()
+    await cargarPlacasDistribucion() // caché de placas de distribución para servicioDe/tarifaDe
 
     // Tarifas por servicio desde tarifasoperacion (Cargue, Descargue, Descargue SUSANITA).
     const tarifas = await tarifasDeEmpresa(sb, idempresa)
@@ -553,6 +554,7 @@ export async function getControlFacturacion(
   if (!idempresa) return { success: false, message: "Selecciona un proyecto/empresa." }
   try {
     const sb: any = await getSupabaseAdmin()
+    await cargarPlacasDistribucion() // caché de placas de distribución para servicioDe/tarifaDe
 
     // Tarifas POR SERVICIO (misma valoración que la prefactura) y placas que LIP no
     // atiende (WMP446), para que "lo que se debe facturar" sea REAL y consistente.
@@ -778,6 +780,7 @@ export async function getValoresNetosOrden(
   if (!idempresa || !ordenes?.length) return { success: true, data: {} }
   try {
     const sb: any = await getSupabaseAdmin()
+    await cargarPlacasDistribucion() // caché de placas de distribución para tarifaDeServicio
     const tarifas = await tarifasDeEmpresa(sb, idempresa)
     const placasExcluidas = new Set((PLACAS_EXCLUIDAS_FACTURAS[idempresa] || []).map((p) => p.toUpperCase()))
     const esBascula = idempresa === 1 || idempresa === 2

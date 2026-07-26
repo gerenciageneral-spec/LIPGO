@@ -468,6 +468,7 @@ export const groups: Group[] = [
           { name: "Gestión de Usuarios", icon: Users },
           { name: "Accesos de Usuario", icon: Lock },
           { name: "Bitácora de Auditoría", icon: History },
+          { name: "Placas de Distribución", icon: Truck },
         ],
       },
     ],

@@ -8,7 +8,7 @@ import { getCurrentEmpresaId } from "@/lib/company-filter"
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { revalidatePath } from "next/cache"
 import { generateAndUploadLoadOrderPDF } from "./pdf-actions" // Added for generateLoadOrder
-import { esPlacaDistribucion, numeroOrdenDistribucion, PLACAS_DISTRIBUCION } from "@/lib/distribucion-placas"
+import { esPlacaDistribucion, numeroOrdenDistribucion, getPlacasEmpresa, cargarPlacasDistribucion } from "@/lib/distribucion-placas"
 import { cediDeDestino, PLANTAS_ORIGEN, type CediDestino } from "@/lib/cedis-destino"
 
 /**
@@ -732,6 +732,7 @@ export async function generarDistribucionAutomatica(
     // asignación de placa o reconciliación). El parámetro se conserva por
     // compatibilidad de firma pero ya no se usa para escribir.
     const supabase = await getSupabaseAdmin()
+    await cargarPlacasDistribucion() // calienta el caché de placas (tabla, fallback a DEFAULT)
     const { data: origHeader } = await supabase.from("cabeceraoc").select("*").eq("id", orderId).maybeSingle()
     if (!origHeader) return null
     if (origHeader.tipooperacion !== "Cargue") return null // solo cargues
@@ -821,7 +822,8 @@ export async function generarDistribucionAutomatica(
 // ---------------------------------------------------------------------------
 export async function reconciliarDistribucionesFaltantes(supabase: any, empresaId: number): Promise<number> {
   try {
-    const lista = PLACAS_DISTRIBUCION[empresaId]
+    await cargarPlacasDistribucion() // caché de placas (tabla, fallback a DEFAULT)
+    const lista = getPlacasEmpresa(empresaId)
     if (!lista || lista.length === 0) return 0 // empresa sin placas de distribución
 
     // Ventana reciente: hoy y los 2 días previos (cubre rezagos de despliegue

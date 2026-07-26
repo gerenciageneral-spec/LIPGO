@@ -58,6 +58,7 @@ import { ArrowLeft } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { UserPermissionsManagement } from "@/components/configuration/user-permissions-management"
 import BitacoraAuditoria from "@/components/configuration/bitacora-auditoria"
+import PlacasDistribucion from "@/components/configuration/placas-distribucion"
 import { PermissionGuard } from "@/components/permission-guard"
 import { UserAccessModule } from "@/components/user-access-module"
 import HeadcountManagement from "@/components/headcount-management" // Added Head Count component import
@@ -723,6 +724,10 @@ export function MainContent({
           ) : selectedModule === "Bitácora de Auditoría" ? (
             <PermissionGuard moduleName="Bitácora de Auditoría">
               <BitacoraAuditoria />
+            </PermissionGuard>
+          ) : selectedModule === "Placas de Distribución" ? (
+            <PermissionGuard moduleName="Placas de Distribución">
+              <PlacasDistribucion />
             </PermissionGuard>
           ) : selectedModule === "Head Count" ? (
             <PermissionGuard moduleName="Head Count">
