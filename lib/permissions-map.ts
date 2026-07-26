@@ -163,6 +163,7 @@ export interface UserPermissions {
   config_localizaciones: boolean
   gestion_usuarios: boolean
   accesos_usuario: boolean
+  bitacora_auditoria: boolean
   facturacion_proyectos: boolean
   cuadro_facturacion: boolean
   // ---------------------------------------------------------------------------
@@ -344,6 +345,7 @@ export const MODULE_PERMISSION_MAP: Record<string, keyof UserPermissions> = {
   Localizaciones: "config_localizaciones",
   "Gestión de Usuarios": "gestion_usuarios",
   "Accesos de Usuario": "accesos_usuario",
+  "Bitácora de Auditoría": "bitacora_auditoria",
   // --- Certificaciones LIP · SST ---
   "Auditoría 0312": "sst_auditoria",
   "Matriz de Estándares": "sst_autoevaluacion",
