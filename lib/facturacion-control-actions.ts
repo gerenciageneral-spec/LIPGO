@@ -87,6 +87,23 @@ const num = (v: any) => {
   return Number.isFinite(n) ? n : 0
 }
 
+// Peso de báscula del tiquete para el DESCARGUE de cedis (id3/4) = FUENTE DE VERDAD.
+// Se NORMALIZA a TONELADAS (la unidad estándar del sistema): el campo `pesovascula`
+// viene capturado a mano por el coordinador y a veces está en KILOS (~34000) en vez
+// de toneladas (~34); si es ~1000× el detalle, se divide entre 1000. Guarda de
+// seguridad: si tras normalizar sigue absurdo vs el detalle (dato corrupto), se
+// devuelve 0 para caer al peso del detalle (nunca facturar un valor disparatado).
+function basculaTiqueteDescargue(pesovascula: number, detalle: number): number {
+  if (pesovascula <= 0) return 0
+  let p = pesovascula
+  if (detalle > 0 && p / detalle > 50) p = p / 1000 // venía en kilos → toneladas
+  if (detalle > 0) {
+    const ratio = p / detalle
+    if (ratio < 0.1 || ratio > 10) return 0 // corrupto → usar detalle
+  }
+  return p
+}
+
 export type Servicio =
   | "Cargue/Descargue propio"
   | "Cargue recoge en bodega"
@@ -491,6 +508,22 @@ export async function getPrefactura(
           l.valorServicio = l.valorServicio * scale
         }
       }
+    } else if (idempresa === 3 || idempresa === 4) {
+      // CEDIS (sin báscula): SOLO el DESCARGUE se prorratea por el peso del tiquete
+      // (pesovascula digitado del origen). Cargue/Distribución siguen con el detalle.
+      const esDesc = (l: any) => String(l.tipooperacion).trim().toLowerCase() === "descargue"
+      const totalDetOrden = new Map<string, number>()
+      for (const l of origen) if (esDesc(l)) totalDetOrden.set(l.numeroorden, (totalDetOrden.get(l.numeroorden) || 0) + l.toneladas)
+      for (const l of origen) {
+        if (!esDesc(l)) continue
+        const totalDet = totalDetOrden.get(l.numeroorden) || 0
+        const P = basculaTiqueteDescargue(estadoPorOrden.get(l.numeroorden)?.pesovascula ?? 0, totalDet)
+        if (P > 0 && totalDet > 0) {
+          const scale = P / totalDet
+          l.toneladas = l.toneladas * scale
+          l.valorServicio = l.valorServicio * scale
+        }
+      }
     }
 
     // Resumen por owner × servicio, facturado a la TARIFA DEL SERVICIO (no la de la línea).
@@ -675,9 +708,18 @@ export async function getControlFacturacion(
       let toneladas = a.tonDet
       let valor = a.valorDet
       let fuente: "bascula" | "orden" = "orden"
-      if (esBascula) {
-        const P = est?.pesovascula ?? 0
+      // Plantas id1/2: SIEMPRE báscula. Cedis id3/4 (sin báscula): SOLO el DESCARGUE
+      // se prorratea por el peso del tiquete (pesovascula digitado del origen), para que
+      // el valor cuadre con lo realmente descargado; Cargue/Distribución de cedis siguen
+      // con el peso del detalle. Fallback: si no hay pesovascula (P<=0) usa el detalle.
+      const esDescargueCedi =
+        (idempresa === 3 || idempresa === 4) && String(a.op).trim().toLowerCase() === "descargue"
+      if (esBascula || esDescargueCedi) {
         const totalDet = ordenTotalDet.get(a.on) || 0
+        // Cedis: báscula del tiquete NORMALIZADA a toneladas (con guarda). Plantas: cruda.
+        const P = esDescargueCedi
+          ? basculaTiqueteDescargue(est?.pesovascula ?? 0, totalDet)
+          : est?.pesovascula ?? 0
         if (P > 0 && totalDet > 0) {
           const scale = P / totalDet // reparte el peso de báscula por participación del detalle
           toneladas = a.tonDet * scale
@@ -788,12 +830,19 @@ export async function getValoresNetosOrden(
     const chunks: string[][] = []
     for (let i = 0; i < nums.length; i += 200) chunks.push(nums.slice(i, i + 200))
 
-    // Peso de báscula por orden (solo plantas, para prorratear).
+    // Peso de báscula + tipo por orden. Plantas id1/2 prorratean todo; cedis id3/4 SOLO
+    // el descargue (por el pesovascula del tiquete), consistente con el Cuadro/Prefactura.
     const pesoV = new Map<string, number>()
-    if (esBascula) {
+    const tipoOrden = new Map<string, string>()
+    const esCedi = idempresa === 3 || idempresa === 4
+    if (esBascula || esCedi) {
       for (const chunk of chunks) {
-        const { data } = await sb.from("cabeceraoc").select("ordendecargue, pesovascula").eq("idempresa", idempresa).in("ordendecargue", chunk)
-        for (const o of data || []) pesoV.set(String(o.ordendecargue || "").trim(), num(o.pesovascula))
+        const { data } = await sb.from("cabeceraoc").select("ordendecargue, pesovascula, tipooperacion").eq("idempresa", idempresa).in("ordendecargue", chunk)
+        for (const o of data || []) {
+          const on = String(o.ordendecargue || "").trim()
+          pesoV.set(on, num(o.pesovascula))
+          tipoOrden.set(on, String(o.tipooperacion ?? "").trim().toLowerCase())
+        }
       }
     }
 
@@ -822,9 +871,11 @@ export async function getValoresNetosOrden(
     const map: Record<string, number> = {}
     for (const [on, valor] of valorAcc) {
       let v = valor
-      if (esBascula) {
-        const P = pesoV.get(on) || 0
+      const esDescCedi = esCedi && tipoOrden.get(on) === "descargue"
+      if (esBascula || esDescCedi) {
         const td = totalDet.get(on) || 0
+        // Cedis descargue: báscula del tiquete normalizada a toneladas (con guarda).
+        const P = esDescCedi ? basculaTiqueteDescargue(pesoV.get(on) || 0, td) : pesoV.get(on) || 0
         if (P > 0 && td > 0) v = valor * (P / td) // prorratea el valor al peso de báscula
       }
       map[on] = Math.round(v)
