@@ -737,6 +737,13 @@ export async function generarDistribucionAutomatica(
     if (origHeader.tipooperacion !== "Cargue") return null // solo cargues
     if (!esPlacaDistribucion(origHeader.idempresa, origHeader.placa)) return null // solo placas propias de distribución
 
+    // EL CLON SOLO SE GENERA CUANDO LA MADRE YA TIENE LOTE ASIGNADO (horalote).
+    // Así hereda ese horalote por el spread y NUNCA aparece como pendiente en
+    // Asignación de Lotes (que lista por `horalote IS NULL`). Si la madre aún no
+    // tiene lote, se omite: se generará al aprobar el lote (approveBatchAllocation)
+    // o en la reconciliación (que solo actúa cuando la madre ya tiene horalote).
+    if (!origHeader.horalote) return null
+
     const distCode = numeroOrdenDistribucion(origHeader.ordendecargue)
     const { data: yaExiste } = await supabase.from("cabeceraoc").select("id").eq("ordendecargue", distCode).maybeSingle()
     if (yaExiste) return distCode // idempotente: no duplica
@@ -825,7 +832,7 @@ export async function reconciliarDistribucionesFaltantes(supabase: any, empresaI
 
     const { data: cargues } = await supabase
       .from("cabeceraoc")
-      .select("id, ordendecargue, placa, fechacargue")
+      .select("id, ordendecargue, placa, fechacargue, horalote")
       .eq("idempresa", empresaId)
       .eq("tipooperacion", "Cargue")
       .in("placa", lista)
@@ -836,14 +843,26 @@ export async function reconciliarDistribucionesFaltantes(supabase: any, empresaI
     if (!cargues || cargues.length === 0) return 0
 
     let creados = 0
+    let sanados = 0
     for (const c of cargues) {
       const distCode = numeroOrdenDistribucion(c.ordendecargue)
-      const { data: ya } = await supabase.from("cabeceraoc").select("id").eq("ordendecargue", distCode).maybeSingle()
-      if (ya) continue // ya tiene su +D
+      const { data: ya } = await supabase.from("cabeceraoc").select("id, horalote").eq("ordendecargue", distCode).maybeSingle()
+      if (ya) {
+        // SANACIÓN: clones creados con la lógica antigua nacieron con horalote null
+        // (antes de que la madre tuviera lote). Si la madre YA tiene horalote y el
+        // clon no, se lo heredamos para que desaparezca de Asignación de Lotes.
+        if (!ya.horalote && c.horalote) {
+          await supabase.from("cabeceraoc").update({ horalote: c.horalote }).eq("id", ya.id)
+          sanados++
+        }
+        continue // ya tiene su +D
+      }
+      // Solo genera si la madre ya tiene lote (guard dentro de generarDistribucionAutomatica).
       const code = await generarDistribucionAutomatica(supabase, c.id)
       if (code) creados++
     }
-    if (creados > 0) console.log(`[+D] reconciliación: ${creados} distribución(es) faltante(s) generada(s) para empresa ${empresaId}`)
+    if (creados > 0 || sanados > 0)
+      console.log(`[+D] reconciliación empresa ${empresaId}: ${creados} generada(s), ${sanados} sanada(s) (horalote heredado)`)
     return creados
   } catch (e: any) {
     console.error("[+D] reconciliación falló (no bloquea la lectura):", e?.message || e)
@@ -1302,9 +1321,12 @@ export async function getLoadOrders(statusFilter: "pendiente" | "finalizada" | "
       .in("tipooperacion", ["Cargue", "Descargue", "Distribucion"]) // Only show Cargue, Descargue and Distribucion operations
       .order("id", { ascending: false })
 
-    // Only apply horalote NULL filter when explicitly requested (e.g., from Asignación de Lotes)
+    // Only apply horalote NULL filter when explicitly requested (e.g., from Asignación de Lotes).
+    // Defensa en profundidad: en ese contexto de LOTES se excluyen los clones +D
+    // (Distribucion), que nunca asignan lotes; así no reaparecen aquí si un clon
+    // antiguo quedó con horalote null.
     if (onlyWithoutBatch) {
-      query = query.is("horalote", null)
+      query = query.is("horalote", null).neq("tipooperacion", "Distribucion")
     }
 
     if (statusFilter === "pendiente") {
