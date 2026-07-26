@@ -17,6 +17,21 @@ create or replace view public.pagonomina as
             cabeceraoc.idempresa,
             cabeceraoc.tipooperacion,
                 CASE
+                    -- Cedis id3/4 DESCARGUE: peso de BÁSCULA del tiquete normalizado a
+                    -- toneladas (IGUAL que el cobro), con fallback al detalle. Ver
+                    -- pagonomina_reemplazo.sql / toneladasauxiliarespago_no_facturable.sql.
+                    WHEN ((cabeceraoc.idempresa = ANY (ARRAY[3, 4])) AND (cabeceraoc.tipooperacion = 'Descargue'::text)) THEN
+                        CASE
+                            WHEN (COALESCE(cabeceraoc.pesovascula, (0)::numeric) <= (0)::numeric) THEN cabeceraoc.pesoorden
+                            WHEN ((
+                                CASE WHEN ((cabeceraoc.pesovascula / NULLIF(cabeceraoc.pesoorden, (0)::numeric)) > (50)::numeric)
+                                     THEN (cabeceraoc.pesovascula / (1000)::numeric) ELSE cabeceraoc.pesovascula END
+                                ) / NULLIF(cabeceraoc.pesoorden, (0)::numeric) NOT BETWEEN (0.1)::numeric AND (10)::numeric) THEN cabeceraoc.pesoorden
+                            ELSE (
+                                CASE WHEN ((cabeceraoc.pesovascula / NULLIF(cabeceraoc.pesoorden, (0)::numeric)) > (50)::numeric)
+                                     THEN (cabeceraoc.pesovascula / (1000)::numeric) ELSE cabeceraoc.pesovascula END
+                                )
+                        END
                     WHEN (cabeceraoc.idempresa = ANY (ARRAY[3, 4])) THEN cabeceraoc.pesoorden
                     ELSE cabeceraoc.pesovascula
                 END AS peso_base_calculo,
@@ -589,6 +604,21 @@ create or replace view public.toneladasauxiliarespago as
             cabeceraoc.idempresa,
             cabeceraoc.tipooperacion,
                 CASE
+                    -- Cedis id3/4 DESCARGUE: peso de BÁSCULA del tiquete normalizado a
+                    -- toneladas (IGUAL que el cobro), con fallback al detalle. Ver
+                    -- pagonomina_reemplazo.sql / toneladasauxiliarespago_no_facturable.sql.
+                    WHEN ((cabeceraoc.idempresa = ANY (ARRAY[3, 4])) AND (cabeceraoc.tipooperacion = 'Descargue'::text)) THEN
+                        CASE
+                            WHEN (COALESCE(cabeceraoc.pesovascula, (0)::numeric) <= (0)::numeric) THEN cabeceraoc.pesoorden
+                            WHEN ((
+                                CASE WHEN ((cabeceraoc.pesovascula / NULLIF(cabeceraoc.pesoorden, (0)::numeric)) > (50)::numeric)
+                                     THEN (cabeceraoc.pesovascula / (1000)::numeric) ELSE cabeceraoc.pesovascula END
+                                ) / NULLIF(cabeceraoc.pesoorden, (0)::numeric) NOT BETWEEN (0.1)::numeric AND (10)::numeric) THEN cabeceraoc.pesoorden
+                            ELSE (
+                                CASE WHEN ((cabeceraoc.pesovascula / NULLIF(cabeceraoc.pesoorden, (0)::numeric)) > (50)::numeric)
+                                     THEN (cabeceraoc.pesovascula / (1000)::numeric) ELSE cabeceraoc.pesovascula END
+                                )
+                        END
                     WHEN (cabeceraoc.idempresa = ANY (ARRAY[3, 4])) THEN cabeceraoc.pesoorden
                     ELSE cabeceraoc.pesovascula
                 END AS peso_base_calculo,

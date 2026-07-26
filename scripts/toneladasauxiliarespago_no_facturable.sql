@@ -14,6 +14,21 @@ create or replace view public.toneladasauxiliarespago as
             cabeceraoc.idempresa,
             cabeceraoc.tipooperacion,
                 CASE
+                    -- Cedis id3/4 DESCARGUE: se paga con el peso de BÁSCULA del tiquete
+                    -- (normalizado a toneladas, IGUAL que el cobro), cayendo al detalle si
+                    -- no hay báscula o el dato es corrupto. Cargue/plantas sin cambio.
+                    WHEN ((cabeceraoc.idempresa = ANY (ARRAY[3, 4])) AND (cabeceraoc.tipooperacion = 'Descargue'::text)) THEN
+                        CASE
+                            WHEN (COALESCE(cabeceraoc.pesovascula, (0)::numeric) <= (0)::numeric) THEN cabeceraoc.pesoorden
+                            WHEN ((
+                                CASE WHEN ((cabeceraoc.pesovascula / NULLIF(cabeceraoc.pesoorden, (0)::numeric)) > (50)::numeric)
+                                     THEN (cabeceraoc.pesovascula / (1000)::numeric) ELSE cabeceraoc.pesovascula END
+                                ) / NULLIF(cabeceraoc.pesoorden, (0)::numeric) NOT BETWEEN (0.1)::numeric AND (10)::numeric) THEN cabeceraoc.pesoorden
+                            ELSE (
+                                CASE WHEN ((cabeceraoc.pesovascula / NULLIF(cabeceraoc.pesoorden, (0)::numeric)) > (50)::numeric)
+                                     THEN (cabeceraoc.pesovascula / (1000)::numeric) ELSE cabeceraoc.pesovascula END
+                                )
+                        END
                     WHEN (cabeceraoc.idempresa = ANY (ARRAY[3, 4])) THEN cabeceraoc.pesoorden
                     ELSE cabeceraoc.pesovascula
                 END AS peso_base_calculo,
