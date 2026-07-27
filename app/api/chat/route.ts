@@ -80,6 +80,11 @@ const TABLAS = [
   "detalleoc",
   "saldoinvdetalle",
   "registroasistencia",
+  // Solo-lectura (sin escritura por LIPbot): colaboradores, parámetros legales del
+  // año y facturación de turnos. Habilitan consultas de las funcionalidades nuevas.
+  "headcount",
+  "parametros_legales_anio",
+  "facturacionturnos",
 ] as const
 type Tabla = (typeof TABLAS)[number]
 
@@ -97,6 +102,9 @@ const TABLA_PERMISOS: Record<Tabla, string[]> = {
   detalleoc: ["generar_ordenes_cargue", "generar_ordenes_descargue", "distribucion", "gestion_ordenes", "dashboardrecepcion"],
   saldoinvdetalle: ["saldos_inventario", "saldos_producto", "transacciones_inventario", "gestion_transacciones", "auditoria_inventario"],
   registroasistencia: ["novedades_personal", "asignacion_horas_extra", "attendance_registration", "attendance_table", "aprobacionturnos"],
+  headcount: ["headcount"],
+  parametros_legales_anio: ["tarifas", "parafiscales"],
+  facturacionturnos: ["facturacion_proyectos"],
 }
 
 /** Tablas que este usuario SÍ puede consultar según sus permisos. */
@@ -140,7 +148,12 @@ function getColumnaEmpresa(tabla: Tabla): string | null {
     case "cabeceraoc":
     case "saldoinvdetalle":
     case "registroasistencia":
+    case "headcount":
+    case "facturacionturnos":
       return "idempresa"
+    case "parametros_legales_anio":
+      // Parámetros legales GLOBALES por año (SMLV, auxilio, etc.): sin empresa.
+      return null
     case "detalleoc":
       // detalleoc no tiene columna de empresa propia. Para seguridad
       // estricta requeriria un INNER JOIN con cabeceraoc filtrando por
@@ -279,6 +292,32 @@ COLUMNAS CLAVE (cablea cada pregunta a su tabla + columna EXACTA):
     - Cantidad ("¿cuántos...?", "número de") -> contar:true.
     - Total de una magnitud ("¿cuántas toneladas?", "¿cuánto vendí?") -> sumar:"<columna numérica>".
     - Ver detalle o ejemplos -> lista normal (devuelve hasta 50 filas).
+
+DATOS Y FUNCIONALIDADES NUEVAS (tablas y reglas recientes — úsalas igual que las de arriba, siempre según los permisos del usuario):
+
+    COLABORADORES / PERSONAL (Tabla: headcount):
+    - Maestro de trabajadores del proyecto. Sinónimos: 'colaboradores', 'empleados', 'personal', 'trabajadores', 'quién trabaja', 'cargo de', 'está activo/retirado'.
+    - Columnas: "identificacion" (cédula), "nombre", "cargo", "salario", "estado" (activo/inactivo), "fecha_retiro", "admin" (true = administrativo), "contratosiigo". Para "cuántos colaboradores" usa contar:true; filtra por "estado" o "cargo".
+    - El "salario" es información SENSIBLE: entrégalo solo si lo piden explícitamente (el permiso ya lo controla). Solo LECTURA (no se edita el head count por el chat).
+
+    VACACIONES (Tabla: vacaciones_solicitudes):
+    - Solicitudes por trabajador. Columnas: "cedula", "nombre", "cargo", "fecha_inicio", "fecha_fin", "dias_habiles", "estado" ('PENDIENTE' | 'APROBADA' | 'RECHAZADA'), "aprobado_por".
+    - Días hábiles = lunes a sábado, EXCLUYENDO domingos y festivos (causación 15/año). Puedes LISTAR/CONTAR solicitudes (pendientes, aprobadas) aquí; pero el SALDO exacto (causado − disfrutado) lo CALCULA el submódulo Vacaciones: si piden el saldo, ofréceles abrir el submódulo Vacaciones.
+    - ACCIÓN (con confirmación): registrar una solicitud (ejecutar_accion insert) o aprobar/rechazar (update "estado").
+
+    AUSENTISMOS / RECOBRO (Tabla: ausentismosst):
+    - Incapacidades y licencias por trabajador (base del recobro a EPS/ARL). Columnas: "cedula", "nombre_colaborador", "categoria" (ENFERMEDAD_GENERAL, ACCIDENTE_LABORAL, LICENCIA, …), "fecha_inicial", "fecha_final", "dias_incapacidad", "total_dias_incapacidad", "costos_empresa", "costos_eps", "costos_arl", "estado_registro" ('BORRADOR' | 'COMPLETO'), "requiere_revision_sst".
+    - Los accidentes de trabajo (AT) se cuentan por INVESTIGACIÓN, no por prórrogas.
+
+    PARÁMETROS LEGALES DEL AÑO (Tabla: parametros_legales_anio):
+    - Valores legales GLOBALES por año (no por proyecto). Columnas: "anio", "smlv", "auxilio_transporte", "dias_cargo_empleador". Útil para el SMLV/auxilio de un año.
+
+    FACTURACIÓN DE TURNOS (Tabla: facturacionturnos):
+    - Facturación de turnos por persona/fecha. Columnas: "fecha", "nombre", "puesto", "facturacion_total", "costo_total", "utilidad". Para totales usa sumar:"facturacion_total" / "costo_total" / "utilidad" con filtro de fecha.
+
+    CUADROS CALCULADOS (Parafiscales/PILA, Cuadro de Control de Facturación, Evaluación por Área, saldo de Vacaciones): son cálculos de su módulo, NO una tabla simple. Para "cómo va el cuadro de facturación", "la planilla de parafiscales" o "la evaluación de un área", responde los indicadores con consultar_indicadores y, para el detalle completo, ofrece abrir el submódulo correspondiente (Cuadro de Control Facturación, Parafiscales, Evaluación por Área, Vacaciones).
+
+    REGLA DEL DESCARGUE POR BÁSCULA (proyectos/cedis id 3 y 4): en los cedis, el DESCARGUE se cobra y se paga por el PESO DE BÁSCULA del tiquete ("pesovascula", ya en toneladas), no por el peso del detalle. El CARGUE de esos cedis y las plantas (id 1 y 2) mantienen su lógica. Si preguntan por toneladas descargadas en un cedi, usa "pesovascula" con filtro tipooperacion='Descargue'.
 
 REGLA DE ORO (INQUEBRANTABLE, SIN EXCEPCIÓN):
 

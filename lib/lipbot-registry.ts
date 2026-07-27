@@ -40,6 +40,9 @@ export const REGISTRO_ACCIONES: Record<string, AccionTabla> = {
   capacitaciones: { colEmpresa: "idempresa", permisos: ["capacitaciones", "inducciones"], insert: true, update: true },
   capacitaciones_asistencia: { colEmpresa: "idempresa", permisos: ["asistencia_capacitaciones"], insert: true, update: true },
   ausentismosst: { colEmpresa: "idempresa", permisos: ["ausentismos", "recobro_incapacidades"], insert: true, update: true },
+  // Vacaciones: solicitud/aprobación de un periodo (PK uuid). LIPbot puede registrar
+  // una solicitud (insert) y aprobar/rechazar (update estado), con confirmación previa.
+  vacaciones_solicitudes: { colEmpresa: "idempresa", permisos: ["vacaciones"], insert: true, update: true },
   vacantes: { colEmpresa: "idempresa", permisos: ["solicitud_personal", "gestionsolicitudes"], insert: true, update: true },
   hojas_de_vida: { colEmpresa: "idempresa", permisos: ["gestionsolicitudes"], insert: false, update: true },
   solicitudesturnos: { colEmpresa: "idempresa", permisos: ["aprobacionturnos", "solicitudturnos"], insert: true, update: true },
