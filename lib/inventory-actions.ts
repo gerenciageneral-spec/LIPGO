@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase-client"
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
+import { fetchAllRows } from "@/lib/fetch-all-rows"
 import * as XLSX from "xlsx"
 import { generateAndUploadProductionEntryPDF } from "@/lib/pdf-actions"
 import { getColombiaDate } from "@/lib/date-utils"
@@ -718,46 +719,34 @@ export async function getInventoryBalanceDetails(
       empresaId,
     )
 
-    let query = supabase
-      .from("saldoinvdetalle")
-      .select(
-        "idproducto, codproducto, nombreproducto, lote, location, stock_disp, stock_res, stock_actual, categoria, subcategoria",
-      )
-      .gt("stock_disp", 0)
-      // Orden primario por `idproducto` ASC. Los criterios secundario y
-      // terciario (letra/numero de la localizacion) se aplican EN MEMORIA
-      // mas abajo, porque `saldoinvdetalle` solo tiene `location`
-      // (codigo string); las columnas `letra`/`numero` viven en
-      // `locations` y deben resolverse contra esa tabla.
-      .order("idproducto", { ascending: true })
-      .order("lote", { ascending: true })
-
-    if (empresaId) {
-      query = query.eq("idempresa", empresaId)
+    // Consulta re-construible por página: `saldoinvdetalle` supera 1000 filas por
+    // empresa (misma tabla que getWarehouseCapacities ya pagina), así que sin paginar
+    // el saldo mostrado y el Excel salían TRUNCADOS en silencio. Orden estable
+    // (idproducto, lote, location) para que las páginas no se solapen ni salten. El
+    // orden fino por letra/número de localización se resuelve en memoria más abajo.
+    const makeQuery = (from: number, to: number) => {
+      let query = supabase
+        .from("saldoinvdetalle")
+        .select(
+          "idproducto, codproducto, nombreproducto, lote, location, stock_disp, stock_res, stock_actual, categoria, subcategoria",
+        )
+        .gt("stock_disp", 0)
+        .order("idproducto", { ascending: true })
+        .order("lote", { ascending: true })
+        .order("location", { ascending: true })
+      if (empresaId) query = query.eq("idempresa", empresaId)
+      if (productFilter && productFilter.trim() !== "") query = query.ilike("nombreproducto", `%${productFilter}%`)
+      if (locationFilter && locationFilter.trim() !== "" && locationFilter !== "all") query = query.eq("location", locationFilter)
+      if (categoriaFilter && categoriaFilter !== "all") query = query.eq("categoria", categoriaFilter)
+      if (subcategoriaFilter && subcategoriaFilter !== "all") query = query.eq("subcategoria", subcategoriaFilter)
+      return query.range(from, to)
     }
 
-    if (productFilter && productFilter.trim() !== "") {
-      query = query.ilike("nombreproducto", `%${productFilter}%`)
-    }
-
-    if (locationFilter && locationFilter.trim() !== "" && locationFilter !== "all") {
-      query = query.eq("location", locationFilter)
-    }
-
-    if (categoriaFilter && categoriaFilter !== "all") {
-      console.log("[v0] Applying categoria filter:", categoriaFilter)
-      query = query.eq("categoria", categoriaFilter)
-    }
-
-    if (subcategoriaFilter && subcategoriaFilter !== "all") {
-      console.log("[v0] Applying subcategoria filter:", subcategoriaFilter)
-      query = query.eq("subcategoria", subcategoriaFilter)
-    }
-
-    const { data, error } = await query
-
-    if (error) {
-      console.error("[v0] Error fetching inventory balance details:", error)
+    let data: any[]
+    try {
+      data = await fetchAllRows(makeQuery)
+    } catch (err: any) {
+      console.error("[v0] Error fetching inventory balance details:", err?.message || err)
       return []
     }
 
@@ -1522,7 +1511,8 @@ export async function approveProductionEntry(
       cantidad: entryData.cantidad,
       observaciones: observaciones || entryData.observaciones || null,
       fechahorafab: entryData.fechaprod || null,
-      fechahoraaprob: getColombiaDateTime(),
+      fechahoraaprob: await getColombiaDateTime(), // MUST await: es async; sin await se
+      // insertaba una Promise -> el registro en historialaprobaciones fallaba en silencio.
       aprobadopor: "admin",
     }
 
@@ -2590,21 +2580,10 @@ export async function registerQRPalletFromTransaction(data: {
       throw cabeceraError
     }
 
-    // Get next ID for qrestibadetalle
-    const { data: lastDetalleRecords, error: lastDetalleError } = await supabase
-      .from("qrestibadetalle")
-      .select("id")
-      .order("id", { ascending: false })
-      .limit(1)
-
-    let nextDetalleId = 1
-    if (!lastDetalleError && lastDetalleRecords && lastDetalleRecords.length > 0) {
-      nextDetalleId = lastDetalleRecords[0].id + 1
-    }
-
-    // Insert into qrestibadetalle
+    // Insert into qrestibadetalle SIN id explícito: la columna es SERIAL. Fijarlo a
+    // mano (max+1) NO avanza la secuencia y colisiona con las rutas que insertan por
+    // nextval (verificación QR en Picking, traslado de estibas) -> 'duplicate key'.
     const detalleRecord = {
-      id: nextDetalleId,
       idqr: data.qrId,
       codproducto: data.codproducto,
       nombreproducto: data.nombreproducto,

@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Loader2, Search, Pencil, LayoutDashboard, CalendarDays, TableProperties, MapPin } from "lucide-react"
 import { useAuth } from "@/components/auth-provider"
 import { createClient } from "@/lib/supabase-client"
+import { fetchAllRows } from "@/lib/fetch-all-rows"
 import { procesarNovedadRetiro } from "@/lib/retiro-actions"
 import { sincronizarBorradorAusentismo } from "@/lib/ausentismos-actions"
 import { AttendanceDailyDashboard } from "@/components/attendance-daily-dashboard"
@@ -113,18 +114,26 @@ export function AttendanceViewer() {
     
     try {
       const supabase = await createClient()
-      const { data, error } = await supabase
-        .from("registroasistencia")
-        .select("id, fecha, nombre, identificacion, puesto, asistencia")
-        .eq("idempresa", selectedEmpresaId)
-        .order("fecha", { ascending: false })
-
-      if (error) {
-        console.error("[v0] Error loading attendance records:", error)
+      // Paginado: registroasistencia supera 1000 filas por empresa en ~1 mes; sin
+      // paginar, la tabla, las estadísticas y el filtro por rango se calculaban solo
+      // sobre los ~1000 días más recientes. Orden estable (fecha desc, id desc).
+      let data: any[]
+      try {
+        data = await fetchAllRows((from, to) =>
+          supabase
+            .from("registroasistencia")
+            .select("id, fecha, nombre, identificacion, puesto, asistencia")
+            .eq("idempresa", selectedEmpresaId)
+            .order("fecha", { ascending: false })
+            .order("id", { ascending: false })
+            .range(from, to),
+        )
+      } catch (err: any) {
+        console.error("[v0] Error loading attendance records:", err?.message || err)
         return
       }
 
-      console.log("[v0] Attendance records loaded:", data?.length)
+      console.log("[v0] Attendance records loaded:", data.length)
       setRecords(data || [])
       applyFilters(data || [])
     } catch (error) {

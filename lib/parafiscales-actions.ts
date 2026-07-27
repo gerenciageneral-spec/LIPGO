@@ -166,10 +166,25 @@ export async function getParafiscales(
 
     // Personal: quien tenga contrato (nº SIIGO). Se incluyen los retirados del
     // mes — sus días trabajados también cotizan.
-    let q = admin.from("headcount").select("identificacion, nombre, admin, salario, idempresa, contratosiigo")
-    if (idempresa) q = q.eq("idempresa", idempresa)
-    const { data: personal, error: hErr } = await q
-    if (hErr) return { success: false, data: [], message: hErr.message }
+    // Paginado (Supabase topa en 1000): en modo Consolidado (sin idempresa) headcount
+    // suma las 4 empresas + TODOS los retirados Inactivo (que nunca se borran), así que
+    // supera 1000 filas y algunos cotizantes quedaban fuera → planilla PILA subreportada.
+    // Orden estable (idempresa, identificacion). Mismo patrón que la nómina de abajo.
+    const hcPage = 1000
+    let personal: any[] = []
+    for (let offset = 0; ; offset += hcPage) {
+      let q = admin
+        .from("headcount")
+        .select("identificacion, nombre, admin, salario, idempresa, contratosiigo")
+        .order("idempresa", { ascending: true })
+        .order("identificacion", { ascending: true })
+      if (idempresa) q = q.eq("idempresa", idempresa)
+      const { data, error: hErr } = await q.range(offset, offset + hcPage - 1)
+      if (hErr) return { success: false, data: [], message: hErr.message }
+      if (!data || data.length === 0) break
+      personal = personal.concat(data)
+      if (data.length < hcPage) break
+    }
 
     const infoPorNombre = new Map<
       string,

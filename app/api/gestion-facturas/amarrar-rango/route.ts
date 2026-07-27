@@ -21,51 +21,40 @@ export async function POST(request: NextRequest) {
 
     const supabase = await getSupabaseAdmin()
 
+    // UPDATE directo por FILTROS (no por lista de ids): un SELECT previo se topa en
+    // 1000 filas y dejaba el resto del rango sin amarrar/deshacer en silencio. El
+    // UPDATE por filtros afecta TODAS las filas que cumplen y `count: "exact"` devuelve
+    // el total real actualizado, sin el tope de 1000 de las lecturas.
     if (undo) {
       // DESHACER: revierte las órdenes cerradas CON factura Siigo del rango a "Factura solicitada".
-      const { data: objetivo, error: selError } = await supabase
+      const { count, error: updError } = await supabase
         .from("cabeceraoc")
-        .select("id")
+        .update({ facturasiigo: null, estadofactura: "CF - Factura solicitada" }, { count: "exact" })
         .eq("idempresa", idempresa)
         .eq("estadofactura", "CF - Cerrado")
         .not("facturasiigo", "is", null)
         .gte("fechacargue", desde)
         .lte("fechacargue", hasta)
-      if (selError) return NextResponse.json({ success: false, error: selError.message }, { status: 500 })
-      const ids = (objetivo || []).map((o: any) => o.id)
-      if (ids.length === 0) return NextResponse.json({ success: true, count: 0, message: "No hay órdenes amarradas en ese rango." })
-      const { error: updError } = await supabase
-        .from("cabeceraoc")
-        .update({ facturasiigo: null, estadofactura: "CF - Factura solicitada" })
-        .in("id", ids)
       if (updError) return NextResponse.json({ success: false, error: updError.message }, { status: 500 })
-      return NextResponse.json({ success: true, count: ids.length })
+      if (!count) return NextResponse.json({ success: true, count: 0, message: "No hay órdenes amarradas en ese rango." })
+      return NextResponse.json({ success: true, count })
     }
 
     // AMARRAR: órdenes "CF - Factura solicitada" del rango → factura Siigo + cerrar.
-    const { data: objetivo, error: selError } = await supabase
+    const { count, error: updError } = await supabase
       .from("cabeceraoc")
-      .select("id, ordendecargue")
+      .update({ facturasiigo, estadofactura: "CF - Cerrado" }, { count: "exact" })
       .eq("idempresa", idempresa)
       .eq("estadofactura", "CF - Factura solicitada")
       .gte("fechacargue", desde)
       .lte("fechacargue", hasta)
 
-    if (selError) return NextResponse.json({ success: false, error: selError.message }, { status: 500 })
-
-    const ids = (objetivo || []).map((o: any) => o.id)
-    if (ids.length === 0) {
+    if (updError) return NextResponse.json({ success: false, error: updError.message }, { status: 500 })
+    if (!count) {
       return NextResponse.json({ success: true, count: 0, message: "No hay órdenes 'Factura solicitada' en ese rango." })
     }
 
-    const { error: updError } = await supabase
-      .from("cabeceraoc")
-      .update({ facturasiigo, estadofactura: "CF - Cerrado" })
-      .in("id", ids)
-
-    if (updError) return NextResponse.json({ success: false, error: updError.message }, { status: 500 })
-
-    return NextResponse.json({ success: true, count: ids.length })
+    return NextResponse.json({ success: true, count })
   } catch (error) {
     console.error("Error en amarrar-rango:", error)
     return NextResponse.json({ success: false, error: "Error interno del servidor" }, { status: 500 })

@@ -1667,10 +1667,30 @@ async function _computeIndicadoresValores(
     // Evidencia fotográfica del cargue (control/trazabilidad de LIP).
     const conEvidencia = await contar("cabeceraoc", (q: any) => filtroFechaOrden(q).not("fotospicking", "is", null))
 
+    // Lee TODAS las filas paginando (Supabase topa en 1000), degradando a [] ante error
+    // (mismo criterio que el bloque de registroasistencia de más abajo) para no tumbar el
+    // cálculo del BSC. cabeceraoc supera 1000 órdenes históricas por proyecto, así que sin
+    // paginar estos indicadores (toneladas, tiempo de cargue, SLA) y las citas se calculaban
+    // sobre un subconjunto viejo -> se calificaba a jefes de área con datos truncados.
+    const pagAll = async (make: (from: number, to: number) => any): Promise<any[]> => {
+      const acc: any[] = []
+      for (let f = 0; ; f += 1000) {
+        const { data } = await make(f, f + 999)
+        acc.push(...(data ?? []))
+        if (!data || data.length < 1000) break
+        if (f > 500000) break
+      }
+      return acc
+    }
+
     // Toneladas (suma en memoria: pesovascula) + meta del periodo por sede.
-    let qTon = supabase.from("cabeceraoc").select("pesovascula,idempresa,fechaorden").in("idempresa", clientes)
-    qTon = filtroFechaOrden(qTon)
-    const { data: tonRows } = await qTon
+    const tonRows = await pagAll((from, to) =>
+      filtroFechaOrden(
+        supabase.from("cabeceraoc").select("pesovascula,idempresa,fechaorden").in("idempresa", clientes),
+      )
+        .order("id", { ascending: true })
+        .range(from, to),
+    )
     const toneladas = (tonRows ?? []).reduce((s: number, r: any) => s + (Number(r.pesovascula) || 0), 0)
     // Cumplimiento de meta de tonelaje = ton / (meta_día por sede × días operativos).
     const diasPorCliente: Record<number, Set<string>> = {}
@@ -1684,14 +1704,18 @@ async function _computeIndicadoresValores(
     const cumplimientoMetaTon = metaPeriodo > 0 ? Math.round((toneladas / metaPeriodo) * 1000) / 10 : 0
 
     // Tiempo de cargue LIP (iniciocargue -> fincargue), promedio en minutos.
-    let qDur = supabase
-      .from("cabeceraoc")
-      .select("iniciocargue,fincargue")
-      .in("idempresa", clientes)
-      .not("iniciocargue", "is", null)
-      .not("fincargue", "is", null)
-    qDur = filtroFechaOrden(qDur)
-    const { data: durRows } = await qDur
+    const durRows = await pagAll((from, to) =>
+      filtroFechaOrden(
+        supabase
+          .from("cabeceraoc")
+          .select("iniciocargue,fincargue")
+          .in("idempresa", clientes)
+          .not("iniciocargue", "is", null)
+          .not("fincargue", "is", null),
+      )
+        .order("id", { ascending: true })
+        .range(from, to),
+    )
     const aMin = (s: string) => {
       const [h, m, sec] = String(s).split(":").map(Number)
       return h * 60 + m + (sec || 0) / 60
@@ -1730,15 +1754,27 @@ async function _computeIndicadoresValores(
     // % de despachos cuyo tiempo efectivo (fincargue−iniciocargue) está dentro
     // del tiempo acordado para su tipo de vehículo. Tipo de vehículo desde
     // citasvehiculos (ocargue = cabeceraoc.ordendecargue).
-    let qSla = supabase
-      .from("cabeceraoc")
-      .select("ordendecargue,iniciocargue,fincargue,idempresa")
-      .in("idempresa", clientes)
-      .not("iniciocargue", "is", null)
-      .not("fincargue", "is", null)
-    qSla = filtroFechaOrden(qSla)
-    const { data: slaRows } = await qSla
-    const { data: citas } = await supabase.from("citasvehiculos").select("ocargue,tipovehiculo").in("idempresa", clientes)
+    const slaRows = await pagAll((from, to) =>
+      filtroFechaOrden(
+        supabase
+          .from("cabeceraoc")
+          .select("ordendecargue,iniciocargue,fincargue,idempresa")
+          .in("idempresa", clientes)
+          .not("iniciocargue", "is", null)
+          .not("fincargue", "is", null),
+      )
+        .order("id", { ascending: true })
+        .range(from, to),
+    )
+    // Mapa ocargue -> tipovehiculo. Orden por ocargue (estable para armar el mapa).
+    const citas = await pagAll((from, to) =>
+      supabase
+        .from("citasvehiculos")
+        .select("ocargue,tipovehiculo")
+        .in("idempresa", clientes)
+        .order("ocargue", { ascending: true })
+        .range(from, to),
+    )
     const tipoPorOc: Record<string, string> = {}
     for (const c of citas ?? []) if (c.ocargue) tipoPorOc[String(c.ocargue)] = c.tipovehiculo
     let slaOk = 0, slaTot = 0

@@ -488,7 +488,11 @@ export function ComprehensiveOrdersManagement() {
   const handleExportExcel = () => {
     const wsData = orders
       .filter((order) => {
-        const matchAprobado = aprobadoFilter === "todos" || order.aprobado === aprobadoFilter
+        // 'aprobado' se guarda en minúscula ('si') o null; el filtro compara normalizado
+        // (antes las opciones eran 'Si'/'No' y nunca coincidían -> tabla/Excel en 0).
+        const matchAprobado =
+          aprobadoFilter === "todos" ||
+          (aprobadoFilter === "si") === ((order.aprobado || "").toLowerCase() === "si")
         const matchCliente = clienteFilter === "todos" || order.cliente === clienteFilter
         const matchVendedor = vendedorFilter === "todos" || order.vendedor === vendedorFilter
         const matchDestino = destinoFilter === "todos" || order.destino === destinoFilter
@@ -616,8 +620,8 @@ export function ComprehensiveOrdersManagement() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="todos">Todos</SelectItem>
-                  <SelectItem value="Si">Si</SelectItem>
-                  <SelectItem value="No">No</SelectItem>
+                  <SelectItem value="si">Si</SelectItem>
+                  <SelectItem value="no">No</SelectItem>
                 </SelectContent>
               </Select>
             </div>

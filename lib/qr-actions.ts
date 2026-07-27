@@ -193,19 +193,10 @@ export async function savePalletRegistration(data: {
       throw cabeceraError
     }
 
-    const { data: lastRecords, error: lastIdError } = await supabase
-      .from("qrestibadetalle")
-      .select("id")
-      .order("id", { ascending: false })
-      .limit(1)
-
-    let nextId = 1
-    if (!lastIdError && lastRecords && lastRecords.length > 0) {
-      nextId = lastRecords[0].id + 1
-    }
-
-    const detalleRecords = data.lotes.map((lote, index) => ({
-      id: nextId + index,
+    // SIN id explícito: qrestibadetalle.id es SERIAL. Fijarlo a mano (max+1) NO avanza
+    // la secuencia y colisiona con las rutas que insertan por nextval (verificación QR
+    // en Picking, traslado de estibas) -> 'duplicate key'. Que el SERIAL asigne el id.
+    const detalleRecords = data.lotes.map((lote) => ({
       idqr: data.id,
       codproducto: data.codproducto,
       nombreproducto: data.nombreproducto,

@@ -3,6 +3,7 @@
 import type React from "react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { supabase } from "@/lib/supabase"
+import { fetchAllRows } from "@/lib/fetch-all-rows"
 import { useAuth } from "@/components/auth-provider"
 import { getParos, type ParoComentario } from "@/lib/paros-actions"
 import { detectarParos } from "@/lib/paros-produccion"
@@ -1404,15 +1405,21 @@ function MonthlyTab({ nombreProducto }: { nombreProducto: (id: number) => string
       setLoading(true)
       try {
         const { start, end } = monthRange(year, month)
-        const { data, error } = await supabase
-          .from("produccion")
-          .select("id, fecha_hora, producto, tipo_empaque, bultos_procesados, averias")
-          .gte("fecha_hora", start)
-          .lt("fecha_hora", end)
-          .order("fecha_hora", { ascending: true })
+        // Paginado: `produccion` es una fila por registro/estiba y un mes de alto
+        // volumen supera 1000 filas; sin paginar, los KPIs y la tendencia diaria se
+        // subcontaban. Orden estable (fecha_hora, id).
+        const data = await fetchAllRows((from, to) =>
+          supabase
+            .from("produccion")
+            .select("id, fecha_hora, producto, tipo_empaque, bultos_procesados, averias")
+            .gte("fecha_hora", start)
+            .lt("fecha_hora", end)
+            .order("fecha_hora", { ascending: true })
+            .order("id", { ascending: true })
+            .range(from, to),
+        )
         if (!active) return
-        if (error) console.log("[v0] Control Piso mensual error:", error.message)
-        setRows(((data as ProduccionRow[]) || []).filter(Boolean))
+        setRows((data as ProduccionRow[]).filter(Boolean))
       } catch (e: any) {
         console.log("[v0] Control Piso mensual exception:", e?.message)
       } finally {
@@ -1654,15 +1661,21 @@ function AnnualTab({ nombreProducto }: { nombreProducto: (id: number) => string 
       setLoading(true)
       try {
         const { start, end } = yearRange(year)
-        const { data, error } = await supabase
-          .from("produccion")
-          .select("id, fecha_hora, producto, tipo_empaque, bultos_procesados, averias")
-          .gte("fecha_hora", start)
-          .lt("fecha_hora", end)
-          .order("fecha_hora", { ascending: true })
+        // Paginado: un año de `produccion` supera holgadamente 1000 filas; sin paginar
+        // llegaban solo ene/feb y la agregación anual (Unidades, Desperdicio YTD, Mejor
+        // Mes, Mix) quedaba gravemente subcontada. Orden estable (fecha_hora, id).
+        const data = await fetchAllRows((from, to) =>
+          supabase
+            .from("produccion")
+            .select("id, fecha_hora, producto, tipo_empaque, bultos_procesados, averias")
+            .gte("fecha_hora", start)
+            .lt("fecha_hora", end)
+            .order("fecha_hora", { ascending: true })
+            .order("id", { ascending: true })
+            .range(from, to),
+        )
         if (!active) return
-        if (error) console.log("[v0] Control Piso anual error:", error.message)
-        setRows(((data as ProduccionRow[]) || []).filter(Boolean))
+        setRows((data as ProduccionRow[]).filter(Boolean))
       } catch (e: any) {
         console.log("[v0] Control Piso anual exception:", e?.message)
       } finally {
@@ -1967,16 +1980,22 @@ function ReportTab({ nombreProducto }: { nombreProducto: (id: number) => string 
       // Rango [desde 00:00, dia_siguiente_de_hasta 00:00) en hora literal UTC.
       const desdeISO = `${desde}T00:00:00Z`
       const hastaISO = `${nextDateStr(hasta)}T00:00:00Z`
-      const { data, error } = await supabase
-        .from("produccion")
-        .select(
-          "id, fecha_hora, producto, bodega, localizacion, tipo_empaque, lote, bultos_procesados, cantidad_meta, averias",
-        )
-        .gte("fecha_hora", desdeISO)
-        .lt("fecha_hora", hastaISO)
-        .order("fecha_hora", { ascending: false })
-      if (error) console.log("[v0] Control Piso reporte error:", error.message)
-      setRows(((data as ReporteRow[]) || []).filter(Boolean))
+      // Paginado: un rango amplio supera 1000 filas; sin paginar, los KPIs del reporte
+      // y el CSV exportado salían truncados (y el CSV aparentaba estar completo).
+      // Orden estable (fecha_hora desc, id desc).
+      const data = await fetchAllRows((from, to) =>
+        supabase
+          .from("produccion")
+          .select(
+            "id, fecha_hora, producto, bodega, localizacion, tipo_empaque, lote, bultos_procesados, cantidad_meta, averias",
+          )
+          .gte("fecha_hora", desdeISO)
+          .lt("fecha_hora", hastaISO)
+          .order("fecha_hora", { ascending: false })
+          .order("id", { ascending: false })
+          .range(from, to),
+      )
+      setRows((data as ReporteRow[]).filter(Boolean))
     } catch (e: any) {
       console.log("[v0] Control Piso reporte exception:", e?.message)
     } finally {

@@ -679,7 +679,40 @@ export async function getControlFacturacion(
     const key = (o: string, w: string) => `${o}|||${w}`
     type Acc = { on: string; owner: string; op: string; tonDet: number; valorDet: number; sinTarifa: boolean; r: any }
     const accMap = new Map<string, Acc>()
+    // Denominador del prorrateo de báscula = Σ toneladas del detalle COMPLETO de la orden
+    // (TODOS los owners), INDEPENDIENTE de los filtros de owner/placa/cliente. Si esos
+    // filtros están activos, `facturas` viene recortado y el denominador quedaría parcial
+    // -> inflaría el peso/valor del owner filtrado en plantas id1/2. Cuando hay filtro se
+    // relee el detalle completo (mismo empresa+rango) SOLO para el denominador; la
+    // presentación (accMap/filas) sigue filtrada. NO afecta getPrefactura (lo que se factura).
+    const hayFiltroDetalle = !!(filtros.owner || filtros.placa || filtros.cliente)
+    let detalleParaDenominador = facturas
+    if (hayFiltroDetalle) {
+      detalleParaDenominador = []
+      for (let offset = 0; ; offset += 1000) {
+        let q = sb
+          .from("facturacion")
+          .select("numeroorden, toneladas, tipooperacion, transporte, cliente, placa")
+          .eq("idempresa", idempresa)
+        if (filtros.desde) q = q.gte("fechacargue", filtros.desde)
+        if (filtros.hasta) q = q.lte("fechacargue", filtros.hasta)
+        const { data, error } = await q.range(offset, offset + 999)
+        if (error) return { success: false, message: error.message }
+        if (!data || data.length === 0) break
+        detalleParaDenominador = detalleParaDenominador.concat(data)
+        if (data.length < 1000) break
+      }
+    }
     const ordenTotalDet = new Map<string, number>() // Σ toneladas del detalle por orden (todos los owners)
+    for (const r of detalleParaDenominador) {
+      const on = String(r.numeroorden || "").trim()
+      if (!on || !procesadas.has(on)) continue
+      if (esExcluida(r)) continue
+      const servicio = servicioDe(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa)
+      if (filtraOperacion(r, servicio)) continue
+      ordenTotalDet.set(on, (ordenTotalDet.get(on) || 0) + num(r.toneladas))
+    }
+
     for (const r of facturas) {
       const on = String(r.numeroorden || "").trim()
       if (!on || !procesadas.has(on)) continue
@@ -699,7 +732,6 @@ export async function getControlFacturacion(
       } else {
         accMap.set(k, { on, owner, op: r.tipooperacion || "", tonDet: ton, valorDet: ton * tarifa, sinTarifa, r })
       }
-      ordenTotalDet.set(on, (ordenTotalDet.get(on) || 0) + ton)
     }
 
     const filasMap = new Map<string, ControlFacturaFila>()
