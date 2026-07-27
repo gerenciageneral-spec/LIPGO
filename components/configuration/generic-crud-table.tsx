@@ -731,7 +731,8 @@ if (moduleDef.tableName === "almacenes" && selectedEmpresaId) {
   }
 
   const exportToExcel = () => {
-    if (data.length === 0) {
+    const filas = filteredData
+    if (filas.length === 0) {
       toast({
         title: "Sin datos",
         description: "No hay datos para exportar.",
@@ -741,17 +742,24 @@ if (moduleDef.tableName === "almacenes" && selectedEmpresaId) {
     }
 
     const visibleFieldsForExport = moduleDef.fields.filter((f) => !f.hidden)
-    const headers = visibleFieldsForExport.map((f) => f.label).join("\t")
-    const rows = data
-      .map((row) => visibleFieldsForExport.map((field) => row[field.name] || "").join("\t"))
+    // CSV real con comillas (soporta comas, ; y saltos), BOM `﻿` para que Excel
+    // muestre bien los acentos (ó/í/ñ), y `?? ""` para NO convertir 0/false en vacío.
+    // Exporta lo FILTRADO (lo que el usuario ve tras búsqueda/filtros), no todo.
+    const esc = (v: unknown) => {
+      const s = v === null || v === undefined ? "" : String(v)
+      return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+    }
+    const headers = visibleFieldsForExport.map((f) => esc(f.label)).join(",")
+    const rows = filas
+      .map((row) => visibleFieldsForExport.map((field) => esc(row[field.name] ?? "")).join(","))
       .join("\n")
 
-    const tsv = `${headers}\n${rows}`
-    const blob = new Blob([tsv], { type: "text/tab-separated-values;charset=utf-8;" })
+    const csv = `﻿${headers}\n${rows}`
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" })
     const url = URL.createObjectURL(blob)
     const link = document.createElement("a")
     link.href = url
-    link.download = `${moduleDef.name}_${new Date().toISOString().split("T")[0]}.xls`
+    link.download = `${moduleDef.name}_${new Date().toISOString().split("T")[0]}.csv`
     link.click()
     URL.revokeObjectURL(url)
   }

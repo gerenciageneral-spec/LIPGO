@@ -19,6 +19,14 @@ function hoyBogota(): string {
 
 const MESES_KPI = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
 
+// Último día REAL del mes (28-31). Nunca usar día 31 fijo: para meses cortos
+// (feb/abr/jun/sep/nov) genera fechas inexistentes ('2026-04-31') que Postgres
+// rechaza contra columnas `date` → la consulta falla y los KPIs quedan en 0.
+function finDeMes(anio: string | number, mes: number): string {
+  const last = new Date(Number(anio), mes, 0).getDate() // día 0 del mes+1 = último del mes
+  return `${anio}-${String(mes).padStart(2, "0")}-${String(last).padStart(2, "0")}`
+}
+
 export async function getAreaKpisRapidas(
   groupKey: string,
   selectedEmpresaId?: number | null,
@@ -59,7 +67,7 @@ export async function getAreaKpisRapidas(
   let hasta: string
   if (mesN >= 1) {
     desde = `${anio}-${String(mesN).padStart(2, "0")}-01`
-    hasta = `${anio}-${String(mesN).padStart(2, "0")}-31`
+    hasta = finDeMes(anio, mesN)
   } else if (anioFiltro && anioFiltro !== "todos") {
     desde = `${anio}-01-01`
     hasta = `${anio}-12-31`
@@ -116,7 +124,7 @@ async function getSubmoduloKpis(
     const anio = anioFiltro && anioFiltro !== "todos" ? anioFiltro : hoyBogota().slice(0, 4)
     const mesNum = mesFiltro ? MESES_KPI.indexOf(mesFiltro) + 1 : 0 // 1-12; 0 = todos
     const desde = mesNum >= 1 ? `${anio}-${String(mesNum).padStart(2, "0")}-01` : `${anio}-01-01`
-    const hasta = mesNum >= 1 ? `${anio}-${String(mesNum).padStart(2, "0")}-31` : `${anio}-12-31`
+    const hasta = mesNum >= 1 ? finDeMes(anio, mesNum) : `${anio}-12-31`
     const periodo = mesNum >= 1 ? `${mesFiltro} ${anio}` : anio
     let rows: any[] = []
     try {

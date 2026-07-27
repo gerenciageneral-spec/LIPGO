@@ -37,7 +37,14 @@ async function resolverActorId(): Promise<string | null> {
     const store = await cookies()
     const auth = store.getAll().filter((c) => /sb-.*-auth-token(\.\d+)?$/.test(c.name))
     if (auth.length === 0) return null
-    auth.sort((a, b) => a.name.localeCompare(b.name)) // reensamblar chunks .0 .1 …
+    // Reensamblar chunks en ORDEN NUMÉRICO del sufijo (.0 .1 … .10 .11): el base
+    // (sin sufijo) va primero. localeCompare lexicográfico pondría .10 antes de .2 y
+    // con 11+ chunks corrompería el JWT → el actor caería a 'sistema' (pérdida de traza).
+    const chunkIdx = (name: string) => {
+      const m = name.match(/\.(\d+)$/)
+      return m ? Number(m[1]) : -1
+    }
+    auth.sort((a, b) => chunkIdx(a.name) - chunkIdx(b.name))
     let raw = auth.map((c) => c.value).join("")
     if (raw.startsWith("base64-")) {
       raw = Buffer.from(raw.slice("base64-".length), "base64").toString("utf8")

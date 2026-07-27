@@ -141,17 +141,10 @@ export async function POST(request: NextRequest) {
       if (endDate > colombiaDate) {
         const futureRecords = []
 
-        // Get the last ID from registroasistencia table
-        const { data: lastRecord } = await supabaseAdmin
-          .from("registroasistencia")
-          .select("id")
-          .order("id", { ascending: false })
-          .limit(1)
-          .maybeSingle()
-
-        let nextId = lastRecord ? lastRecord.id + 1 : 1
-
-        // Create records for each person and each date in range
+        // Create records for each person and each date in range. NO fijamos `id`:
+        // registroasistencia.id es SERIAL y Postgres lo asigna vía la secuencia.
+        // Fijar el id a mano (max+1) NO avanza la secuencia y colisiona con los
+        // inserts que usan nextval (turnos, programación) y con guardados simultáneos.
         for (const record of records) {
           const currentDate = new Date(Math.max(tomorrow.getTime(), startDate.getTime()))
 
@@ -172,7 +165,6 @@ export async function POST(request: NextRequest) {
             // un puesto previo, que distorsiona los reportes y rompe
             // las reglas de "Procesado" del modulo Tabla Asistencia.
             futureRecords.push({
-              id: nextId++,
               idempresa: empresaId,
               fecha: dateStr,
               nombre: record.nombre,

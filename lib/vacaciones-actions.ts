@@ -235,10 +235,11 @@ export async function aprobarSolicitudVacaciones(id: string, aprobadoPor?: strin
     const idPorFecha = new Map<string, number>()
     for (const r of exist ?? []) idPorFecha.set(String(r.fecha).slice(0, 10), r.id)
 
-    // Actualiza las que existan; inserta las que falten (con id incremental).
+    // Actualiza las que existan; inserta las que falten SIN fijar `id`: la columna
+    // es SERIAL PRIMARY KEY y Postgres asigna el id vía la secuencia. Fijar el id a
+    // mano (max+1) NO avanza la secuencia y colisiona con los caminos que sí usan
+    // nextval (register-shifts, programación de turnos) y entre aprobaciones simultáneas.
     const nuevos: any[] = []
-    const { data: last } = await sb.from("registroasistencia").select("id").order("id", { ascending: false }).limit(1).maybeSingle()
-    let nextId = last ? Number(last.id) + 1 : 1
     for (const f of dias) {
       const rid = idPorFecha.get(f)
       if (rid) {
@@ -248,7 +249,6 @@ export async function aprobarSolicitudVacaciones(id: string, aprobadoPor?: strin
           .eq("id", rid)
       } else {
         nuevos.push({
-          id: nextId++,
           idempresa: s.idempresa,
           fecha: f,
           nombre: s.nombre || s.cedula,

@@ -22,68 +22,58 @@ export async function GET(request: NextRequest) {
 
     const supabase = await getSupabaseAdmin()
 
-    // Build query with all filters
-    let query = supabase
-      .from("cabeceraoc")
-      .select("id, ordendecargue, fechaorden, placa, transporte, tipooperacion, pesoorden, tiquetebascula, pesovascula, fechacargue, estadofactura, mediopago, valorpago, iva, comprobante, cuentatransferencia, retefuente, cliente")
-      .neq("tipooperacion", "proyeccion")
-      .order("id", { ascending: false })
-
-    // Órdenes marcadas como NO facturables (personal de carga no-LIP): fuera del cobro.
-    query = excluirNoFacturable(query)
-    if (empresaId) {
-      const emp = parseInt(empresaId, 10)
-      query = query.eq("idempresa", emp)
-      // Placas que LIP no atiende en el cargue de este proyecto: se excluyen.
-      query = excluirPlacasFacturas(query, emp)
-    }
-    if (search) {
-      query = query.or(`ordendecargue.ilike.%${search}%,placa.ilike.%${search}%,transporte.ilike.%${search}%`)
-    }
-    if (ordenFilter) {
-      query = query.ilike("ordendecargue", `%${ordenFilter}%`)
-    }
-    if (fechaCargueDesde) {
-      query = query.gte("fechacargue", fechaCargueDesde)
-    }
-    if (fechaCargueHasta) {
-      query = query.lte("fechacargue", fechaCargueHasta)
-    }
-    if (placaFilter) {
-      query = query.ilike("placa", `%${placaFilter}%`)
-    }
-    if (transporteFilter) {
-      query = query.ilike("transporte", `%${transporteFilter}%`)
-    }
-    if (estadoFilter && estadoFilter !== "all") {
-      if (estadoFilter === "pendiente") {
-        query = query.is("estadofactura", null)
-      } else if (estadoFilter === "facturado") {
-        query = query.eq("estadofactura", "Facturado - por validar")
-      } else if (estadoFilter === "credito") {
-        query = query.eq("estadofactura", "A credito")
-      } else if (estadoFilter === "validado") {
-        query = query.ilike("estadofactura", "%validado%")
+    // Construimos la consulta (con TODOS los filtros) en una función para poder
+    // PAGINAR: PostgREST topa cada respuesta en 1000 filas, así que un único request
+    // truncaría el Excel en silencio (y contradiría el total mostrado en pantalla).
+    // Iteramos por páginas de 1000 hasta agotar los datos.
+    const makeQuery = () => {
+      let query = supabase
+        .from("cabeceraoc")
+        .select("id, ordendecargue, fechaorden, placa, transporte, tipooperacion, pesoorden, tiquetebascula, pesovascula, fechacargue, estadofactura, mediopago, valorpago, iva, comprobante, cuentatransferencia, retefuente, cliente")
+        .neq("tipooperacion", "proyeccion")
+        .order("id", { ascending: false })
+      // Órdenes marcadas como NO facturables (personal de carga no-LIP): fuera del cobro.
+      query = excluirNoFacturable(query)
+      if (empresaId) {
+        const emp = parseInt(empresaId, 10)
+        query = query.eq("idempresa", emp)
+        // Placas que LIP no atiende en el cargue de este proyecto: se excluyen.
+        query = excluirPlacasFacturas(query, emp)
       }
-    }
-    if (tipoOperacionFilter && tipoOperacionFilter !== "all") {
-      query = query.eq("tipooperacion", tipoOperacionFilter)
-    }
-    if (medioPagoFilter && medioPagoFilter !== "all") {
-      query = query.eq("mediopago", medioPagoFilter)
-    }
-    if (cuentaFilter && cuentaFilter !== "all") {
-      query = query.eq("cuentatransferencia", cuentaFilter)
+      if (search) {
+        query = query.or(`ordendecargue.ilike.%${search}%,placa.ilike.%${search}%,transporte.ilike.%${search}%`)
+      }
+      if (ordenFilter) query = query.ilike("ordendecargue", `%${ordenFilter}%`)
+      if (fechaCargueDesde) query = query.gte("fechacargue", fechaCargueDesde)
+      if (fechaCargueHasta) query = query.lte("fechacargue", fechaCargueHasta)
+      if (placaFilter) query = query.ilike("placa", `%${placaFilter}%`)
+      if (transporteFilter) query = query.ilike("transporte", `%${transporteFilter}%`)
+      if (estadoFilter && estadoFilter !== "all") {
+        if (estadoFilter === "pendiente") query = query.is("estadofactura", null)
+        else if (estadoFilter === "facturado") query = query.eq("estadofactura", "Facturado - por validar")
+        else if (estadoFilter === "credito") query = query.eq("estadofactura", "A credito")
+        else if (estadoFilter === "validado") query = query.ilike("estadofactura", "%validado%")
+      }
+      if (tipoOperacionFilter && tipoOperacionFilter !== "all") query = query.eq("tipooperacion", tipoOperacionFilter)
+      if (medioPagoFilter && medioPagoFilter !== "all") query = query.eq("mediopago", medioPagoFilter)
+      if (cuentaFilter && cuentaFilter !== "all") query = query.eq("cuentatransferencia", cuentaFilter)
+      return query
     }
 
-    const { data, error } = await query
-
-    if (error) {
-      console.error("Error fetching data for export:", error)
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 })
+    const PAGE = 1000
+    const data: any[] = []
+    for (let from = 0; ; from += PAGE) {
+      const { data: page, error } = await makeQuery().range(from, from + PAGE - 1)
+      if (error) {
+        console.error("Error fetching data for export:", error)
+        return NextResponse.json({ success: false, error: error.message }, { status: 500 })
+      }
+      if (!page || page.length === 0) break
+      data.push(...page)
+      if (page.length < PAGE) break
     }
 
-    if (!data || data.length === 0) {
+    if (data.length === 0) {
       return NextResponse.json({ success: false, error: "No hay datos para exportar" }, { status: 400 })
     }
 

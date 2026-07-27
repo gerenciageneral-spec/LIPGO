@@ -60,10 +60,19 @@ export async function getAuditoriaModulos(): Promise<string[]> {
   try {
     if (!(await checkModulePermission(MODULO))) return []
     const sb = await getSupabaseAdminAsSystem()
-    const [{ data: cat }, { data: usados }] = await Promise.all([
+    // Módulos usados = DISTINCT server-side vía vista (auditoria_modulos_usados);
+    // evita el tope de 1000 filas de PostgREST (un `.limit(2000)` igual se corta en
+    // 1000 y omitiría módulos usados recientes). Si la vista aún no existe, cae a un
+    // muestreo acotado para no romper el desplegable.
+    const [{ data: cat }, distinctRes] = await Promise.all([
       sb.from("auditoria_modulos").select("modulo"),
-      sb.from("auditoria").select("modulo").not("modulo", "is", null).limit(2000),
+      sb.from("auditoria_modulos_usados").select("modulo"),
     ])
+    let usados = distinctRes.data as { modulo: string }[] | null
+    if (distinctRes.error || !usados) {
+      const { data: sample } = await sb.from("auditoria").select("modulo").not("modulo", "is", null).limit(1000)
+      usados = (sample as any) ?? []
+    }
     const set = new Set<string>()
     for (const r of cat ?? []) if (r.modulo) set.add(r.modulo)
     for (const r of usados ?? []) if (r.modulo) set.add(r.modulo)

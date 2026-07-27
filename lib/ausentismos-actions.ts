@@ -204,37 +204,51 @@ export async function sincronizarBorradorAusentismo(
     const ced = normCedula(cedula)
     const ref = new Date(`${String(fechaRef).slice(0, 10)}T00:00:00`)
     if (Number.isNaN(ref.getTime())) return base
+    // Ventana de ACCIÓN (±31d): sobre qué episodios se crea/reconcilia un borrador.
     const desde = isoDate(new Date(ref.getTime() - 31 * _diaMs))
     const hasta = isoDate(new Date(ref.getTime() + 31 * _diaMs))
+    // Ventana AMPLIA (±180d) SOLO para reconstruir/cotejar, no para actuar:
+    //  · reconstruye el episodio COMPLETO aunque fechaRef caiga al inicio o al fin de
+    //    una incapacidad larga → su fecha_inicial es ESTABLE (mismo borrador desde
+    //    ambos extremos, sin duplicar aunque el guardado dispare inicio y fin a la vez).
+    //  · trae filas ya existentes que SOLAPEN por intervalo aunque empiecen antes de la
+    //    ventana → no se crea un borrador paralelo a un COMPLETO/MANUAL/IMPORT previo.
+    const scanDesde = isoDate(new Date(ref.getTime() - 180 * _diaMs))
+    const scanHasta = isoDate(new Date(ref.getTime() + 180 * _diaMs))
 
-    // 1) Novedades del control diario de esa persona en la ventana → clasificar.
+    // Solape de dos intervalos con tolerancia de 4 días (continuidad de episodio).
+    const solapa = (aIni: string, aFin: string, bIni: string, bFin: string) =>
+      !(difDias(aFin, bIni) > 4 || difDias(bFin, aIni) > 4)
+
+    // 1) Novedades del control diario en la ventana AMPLIA → clasificar y armar
+    //    episodios completos; se ACTÚA solo sobre los que solapan la ventana de acción.
     const { data: raRows } = await sb
       .from("registroasistencia")
       .select("fecha,nombre,identificacion,asistencia")
       .eq("idempresa", empresaId)
-      .gte("fecha", desde)
-      .lte("fecha", hasta)
+      .gte("fecha", scanDesde)
+      .lte("fecha", scanHasta)
       .not("asistencia", "is", null)
     const clasificadas = (raRows ?? [])
       .filter((r: any) => normCedula(r.identificacion) === ced)
       .map((r: any) => ({ ...r, cat: categoriaDeNovedad(r.asistencia) }))
       .filter((r: any) => r.cat) as { fecha: string; nombre?: string; identificacion: string; cat: CategoriaAusentismo }[]
-    const episodios = construirEpisodiosCategoria(clasificadas)
+    const episodios = construirEpisodiosCategoria(clasificadas).filter((ep) =>
+      solapa(ep.ini, ep.fin, desde, hasta),
+    )
 
-    // 2) Filas existentes de esa persona que solapen la ventana.
+    // 2) Filas existentes que SOLAPEN por intervalo (no solo por fecha_inicial dentro
+    //    de la ventana): fecha_inicial ≤ scanHasta Y (fecha_final ≥ scanDesde o sin cierre).
     const { data: exRows } = await sb
       .from("ausentismosst")
       .select("id,cedula,fecha_inicial,fecha_final,origen,estado_registro")
       .eq("idempresa", empresaId)
-      .gte("fecha_inicial", desde)
-      .lte("fecha_inicial", hasta)
+      .lte("fecha_inicial", scanHasta)
+      .or(`fecha_final.gte.${scanDesde},fecha_final.is.null`)
     const existentes = (exRows ?? []).filter((r: any) => normCedula(r.cedula) === ced)
     const esBorradorPuente = (r: any) => r.origen === "CONTROL_DIARIO" && r.estado_registro === "BORRADOR"
     const noBorrador = existentes.filter((r: any) => !esBorradorPuente(r))
     const borradores = existentes.filter(esBorradorPuente)
-
-    const solapa = (aIni: string, aFin: string, bIni: string, bFin: string) =>
-      !(difDias(aFin, bIni) > 4 || difDias(bFin, aIni) > 4)
 
     const ctx = await contextoCostosAusentismo(sb, empresaId, cedula, String(fechaRef).slice(0, 4))
     const borradoresUsados = new Set<string>()
@@ -261,10 +275,12 @@ export async function sincronizarBorradorAusentismo(
     // 3) Limpieza: borradores del puente en la ventana que ya no tienen episodio
     // que los respalde (p. ej. la novedad se cambió a "Descanso") → eliminar.
     for (const b of borradores) {
-      if (!borradoresUsados.has(b.id)) {
-        await sb.from("ausentismosst").delete().eq("id", b.id)
-        deleted++
-      }
+      if (borradoresUsados.has(b.id)) continue
+      // Solo se limpian borradores del puente dentro de la ventana de ACCIÓN; los
+      // traídos por la ventana amplia (de otros episodios) no se tocan aquí.
+      if (!solapa(b.fecha_inicial, b.fecha_final || b.fecha_inicial, desde, hasta)) continue
+      await sb.from("ausentismosst").delete().eq("id", b.id)
+      deleted++
     }
 
     return { created, updated, deleted, skipped }

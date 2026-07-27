@@ -746,7 +746,10 @@ export async function generarDistribucionAutomatica(
     if (!origHeader.horalote) return null
 
     const distCode = numeroOrdenDistribucion(origHeader.ordendecargue)
-    const { data: yaExiste } = await supabase.from("cabeceraoc").select("id").eq("ordendecargue", distCode).maybeSingle()
+    // `.limit(1)` ANTES de maybeSingle: si por una carrera previa ya hubiera 2 clones
+    // con el mismo código, maybeSingle sin límite lanzaría error (múltiples filas) y
+    // yaExiste caería a null → se crearía un TERCERO. Con limit(1) es idempotente.
+    const { data: yaExiste } = await supabase.from("cabeceraoc").select("id").eq("ordendecargue", distCode).limit(1).maybeSingle()
     if (yaExiste) return distCode // idempotente: no duplica
 
     // CABECERA = clon exacto con id FRESCO + reintento ante colisión de PK (23505).
@@ -848,7 +851,7 @@ export async function reconciliarDistribucionesFaltantes(supabase: any, empresaI
     let sanados = 0
     for (const c of cargues) {
       const distCode = numeroOrdenDistribucion(c.ordendecargue)
-      const { data: ya } = await supabase.from("cabeceraoc").select("id, horalote").eq("ordendecargue", distCode).maybeSingle()
+      const { data: ya } = await supabase.from("cabeceraoc").select("id, horalote").eq("ordendecargue", distCode).limit(1).maybeSingle()
       if (ya) {
         // SANACIÓN: clones creados con la lógica antigua nacieron con horalote null
         // (antes de que la madre tuviera lote). Si la madre YA tiene horalote y el

@@ -73,7 +73,10 @@ export function ModulesView({ groupKey, onBack, onSelectModule }: ModulesViewPro
   // los KPIs del área Y las tareas del día del submódulo, así siempre coinciden.
   useEffect(() => {
     const keys = AREA_KPIS[groupKey] ?? []
-    if (keys.length === 0 || !selectedEmpresaId) {
+    // SST y SIG/Certificaciones son TRANSVERSALES a LIP → agregado LIP (scope null),
+    // idéntico en todos los IDs. El resto reacciona a la empresa seleccionada.
+    const transversal = groupKey === "sst" || groupKey === "certificaciones_lip"
+    if (keys.length === 0 || (!selectedEmpresaId && !transversal)) {
       setValores({})
       setLoading(false)
       return
@@ -82,7 +85,10 @@ export function ModulesView({ groupKey, onBack, onSelectModule }: ModulesViewPro
     const load = async () => {
       try {
         const { desde, hasta } = monthRange()
-        const r = await getIndicadoresValores(selectedEmpresaId, desde, hasta)
+        // Mismo alcance que las tiras de submódulo (area-kpis-rapidas): así la
+        // portada y cada submódulo muestran EXACTAMENTE la misma cifra del BSC.
+        const scope = transversal ? null : selectedEmpresaId
+        const r = await getIndicadoresValores(scope, desde, hasta)
         if (!cancel && r.success) setValores(r.valores as Record<string, ValorBsc>)
       } catch {
         // silencioso
