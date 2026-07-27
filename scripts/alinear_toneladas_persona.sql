@@ -113,8 +113,8 @@ create or replace view public.operaciones_desglosadas as
             array_length(string_to_array(c.auxiliares, ','::text), 1) AS cantidad_auxiliares,
             TRIM(BOTH FROM regexp_split_to_table(c.auxiliares, ','::text)) AS operador
            FROM cabeceraoc c
-             JOIN detalleoc d ON c.ordendecargue = d.numeroorden
-             JOIN det_orden do2 ON do2.numeroorden = c.ordendecargue
+             LEFT JOIN detalleoc d ON c.ordendecargue = d.numeroorden   -- LEFT: incluye órdenes SIN detalle (proyección/descargue) para que cuenten igual que el portal
+             LEFT JOIN det_orden do2 ON do2.numeroorden = c.ordendecargue
              LEFT JOIN productos p ON d.producto = p.nombre
           WHERE c.fincargue IS NOT NULL AND c.fincargue::text <> ''::text
         )
@@ -125,7 +125,12 @@ create or replace view public.operaciones_desglosadas as
     tipooperacion AS "Tipo de Operacion",
     cantidad_auxiliares AS "Cantidad Auxiliares en Operacion",
     count(*) AS "Total Viajes/Tickets",
-    sum((peso_bascula * (det_producto / NULLIF(det_total, (0)::numeric))) / NULLIF(cantidad_auxiliares, 0)::numeric) AS "Toneladas Cargadas"
+    sum(
+        (CASE
+            WHEN det_total IS NULL OR det_total <= (0)::numeric THEN peso_bascula   -- sin detalle (p.ej. proyección): todo el peso a "Sin Categoría"
+            ELSE peso_bascula * (det_producto / NULLIF(det_total, (0)::numeric))    -- con detalle: prorrateo por producto
+        END) / NULLIF(cantidad_auxiliares, 0)::numeric
+    ) AS "Toneladas Cargadas"
    FROM base
   WHERE operador IS NOT NULL AND operador <> ''::text
   GROUP BY fecha, operador, proyecto_id, tipo_producto, tipooperacion, cantidad_auxiliares
