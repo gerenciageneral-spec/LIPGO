@@ -25,11 +25,18 @@ declare
   v_desc   text;
   v_campos text[];
 begin
-  -- 1) Actor: header directo (robusto) con fallback a GUC pre-request.
+  -- 1) Actor, en orden de prioridad:
+  --    a) header `x-audit-user` → escrituras service-role (getSupabaseAdmin).
+  --    b) `request.jwt.claims->>'sub'` → escrituras con cliente anon @supabase/ssr
+  --       (rutas app/api/** que llevan el JWT del usuario): PostgREST publica los
+  --       claims validados del bearer aquí. Los writes service-role SIN header traen
+  --       un JWT sin `sub` de usuario → cae a NULL → 'sistema' (sin mis-atribución).
+  --    c) GUC `app.audit_user` (fallback pre-request, hoy sin uso).
   begin
     v_actor := nullif(
       coalesce(
         current_setting('request.headers', true)::json ->> 'x-audit-user',
+        current_setting('request.jwt.claims', true)::json ->> 'sub',
         current_setting('app.audit_user', true)
       ), ''
     )::uuid;

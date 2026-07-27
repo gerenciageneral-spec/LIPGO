@@ -1,7 +1,8 @@
 "use server"
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js"
-import { cookies } from "next/headers"
+import { createServerClient } from "@/lib/supabase-server"
+import { cache } from "react"
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -28,45 +29,24 @@ function buildClient(auditUser?: string): DBClient {
   })
 }
 
-// Resuelve el UUID del usuario logueado DECODIFICANDO localmente el JWT de la
-// cookie de sesión de Supabase (`sb-*-auth-token`, claim `sub`). Sin red y sin
-// riesgo de misattribution entre usuarios (cada request lee su propia cookie).
-// Devuelve null en cualquier fallo o fuera de contexto de request (→ 'sistema').
-async function resolverActorId(): Promise<string | null> {
+// Resuelve el UUID del usuario logueado con el MISMO mecanismo probado que usa el
+// resto de la app (permisos, filtro por empresa): el cliente `@supabase/ssr` +
+// `auth.getUser()`, que reensambla y valida la cookie de sesión correctamente. El
+// parseo manual anterior de la cookie fallaba y dejaba TODA la auditoría como
+// 'sistema'. Memoizado por request (React `cache`) porque getSupabaseAdmin se llama
+// en cada escritura → una sola validación por request. Devuelve null fuera de sesión
+// (cron/jobs/contextos sin cookie) → auditoría 'sistema'.
+const resolverActorId = cache(async (): Promise<string | null> => {
   try {
-    const store = await cookies()
-    const auth = store.getAll().filter((c) => /sb-.*-auth-token(\.\d+)?$/.test(c.name))
-    if (auth.length === 0) return null
-    // Reensamblar chunks en ORDEN NUMÉRICO del sufijo (.0 .1 … .10 .11): el base
-    // (sin sufijo) va primero. localeCompare lexicográfico pondría .10 antes de .2 y
-    // con 11+ chunks corrompería el JWT → el actor caería a 'sistema' (pérdida de traza).
-    const chunkIdx = (name: string) => {
-      const m = name.match(/\.(\d+)$/)
-      return m ? Number(m[1]) : -1
-    }
-    auth.sort((a, b) => chunkIdx(a.name) - chunkIdx(b.name))
-    let raw = auth.map((c) => c.value).join("")
-    if (raw.startsWith("base64-")) {
-      raw = Buffer.from(raw.slice("base64-".length), "base64").toString("utf8")
-    } else {
-      try {
-        raw = decodeURIComponent(raw)
-      } catch {
-        /* valor ya sin url-encode */
-      }
-    }
-    const session: any = JSON.parse(raw)
-    const accessToken: unknown = Array.isArray(session) ? session[0] : session?.access_token
-    if (typeof accessToken !== "string") return null
-    const payloadB64 = accessToken.split(".")[1]
-    if (!payloadB64) return null
-    const norm = payloadB64.replace(/-/g, "+").replace(/_/g, "/")
-    const payload: any = JSON.parse(Buffer.from(norm, "base64").toString("utf8"))
-    return typeof payload?.sub === "string" ? payload.sub : null
+    const sb = createServerClient()
+    const {
+      data: { user },
+    } = await sb.auth.getUser()
+    return user?.id ?? null
   } catch {
     return null
   }
-}
+})
 
 // Cliente admin service-role del usuario actual (para ESCRITURAS → auditoría con
 // el actor correcto). Misma firma de siempre; el interior ahora inyecta el actor.
