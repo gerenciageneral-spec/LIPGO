@@ -59,5 +59,6 @@ create or replace view public.toneladasauxiliarespago as
     sum(pago_fila) AS total_pago_dia,
     count(*) AS total_operaciones_realizadas
    FROM liquidacion_individual
+  WHERE nombre_auxiliar !~* 'prueba'   -- fuera los auxiliares de PRUEBA (todos los ID): no se pagan
   GROUP BY fechacargue, idempresa, nombre_auxiliar
   ORDER BY fechacargue DESC, nombre_auxiliar;

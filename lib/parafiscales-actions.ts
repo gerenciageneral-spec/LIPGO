@@ -176,6 +176,7 @@ export async function getParafiscales(
       let q = admin
         .from("headcount")
         .select("identificacion, nombre, admin, salario, idempresa, contratosiigo")
+        .not("nombre", "ilike", "%prueba%") // fuera los auxiliares de PRUEBA (todos los ID): no cotizan
         .order("idempresa", { ascending: true })
         .order("identificacion", { ascending: true })
       if (idempresa) q = q.eq("idempresa", idempresa)
@@ -192,7 +193,8 @@ export async function getParafiscales(
     >()
     for (const h of personal || []) {
       const nombre = String(h.nombre || "").trim()
-      if (!nombre || !String(h.contratosiigo || "").trim()) continue
+      // Sin contrato SIIGO no cotiza; y los auxiliares de PRUEBA nunca entran a PILA.
+      if (!nombre || !String(h.contratosiigo || "").trim() || /prueba/i.test(nombre)) continue
       infoPorNombre.set(nombre, {
         identificacion: String(h.identificacion || "").trim(),
         esAdmin: h.admin === true,

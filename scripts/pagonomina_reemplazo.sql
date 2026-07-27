@@ -355,6 +355,8 @@ create or replace view public.pagonomina as
         END) + recargodominical) AS total_liquidado_dia
    FROM pre_calculo_valores pc
   WHERE (fecha <= CURRENT_DATE)
+    -- Auxiliares de PRUEBA (todos los ID): NUNCA entran a la nómina a pagar.
+    AND (pc.persona !~* 'prueba')
     -- Estado / vínculo laboral: excluye días FUERA del vínculo — la persona tiene
     -- contrato(s) en colaboradores_th pero NINGUNO cubre esa fecha (antes de
     -- iniciar o después de terminar). Falla hacia pagar: si no se puede vincular su

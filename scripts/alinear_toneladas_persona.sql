@@ -70,6 +70,7 @@ create or replace view public.toneladasauxiliares as
  SELECT ordendecargue, fechacargue, idempresa, tipooperacion, nombre_auxiliar,
         peso_total_operacion, cantidad_auxiliares, toneladas_auxiliar, tarifa_aplicada, pago_total
    FROM liquidacion_final
+  WHERE nombre_auxiliar !~* 'prueba'   -- fuera los auxiliares de PRUEBA (todos los ID)
   ORDER BY fechacargue DESC, ordendecargue;
 
 -- ---------------------------------------------------------------------
@@ -133,5 +134,6 @@ create or replace view public.operaciones_desglosadas as
     ) AS "Toneladas Cargadas"
    FROM base
   WHERE operador IS NOT NULL AND operador <> ''::text
+    AND operador !~* 'prueba'   -- fuera los auxiliares de PRUEBA (todos los ID)
   GROUP BY fecha, operador, proyecto_id, tipo_producto, tipooperacion, cantidad_auxiliares
   ORDER BY fecha DESC, operador, proyecto_id;
