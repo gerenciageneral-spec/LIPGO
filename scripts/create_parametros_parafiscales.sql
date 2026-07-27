@@ -25,8 +25,8 @@ create table if not exists public.parametros_parafiscales (
   tope_ibc_smlv           numeric not null default 25,
   -- Clase de riesgo ARL (Decreto 1772/1994) por tipo de personal.
   -- I=0,522 · II=1,044 · III=2,436 · IV=4,350 · V=6,960
-  clase_arl_admin      text not null default 'I',   -- headcount.admin = true
-  clase_arl_operativo  text not null default 'IV',  -- el resto
+  clase_arl_admin      text not null default 'II',  -- headcount.admin = true → riesgo II (1,044%)
+  clase_arl_operativo  text not null default 'III', -- el resto → riesgo III (2,436%)
   -- Sumar el auxilio de transporte a la base de Caja/SENA/ICBF.
   incluye_aux_parafiscales boolean not null default true,
   actualizado_at timestamptz default now(),
@@ -40,6 +40,16 @@ create table if not exists public.parametros_parafiscales (
 -- valores que el usuario haya ajustado desde el cuadro de control.
 insert into public.parametros_parafiscales (anio) values (2025), (2026)
 on conflict (anio) do nothing;
+
+-- Migración de la clase de riesgo ARL a la real de LIP: operativos riesgo III
+-- (2,436%) y administrativos riesgo II (1,044%). Alinea las filas ya existentes
+-- (que traían el default anterior IV/I) con la norma aplicable. Idempotente.
+-- Sigue siendo editable desde el cuadro de control del submódulo.
+update public.parametros_parafiscales
+   set clase_arl_operativo = 'III',
+       clase_arl_admin     = 'II'
+ where clase_arl_operativo = 'IV'
+    or clase_arl_admin     = 'I';
 
 -- Permiso del submódulo. Default false: no abre el módulo a nadie por defecto;
 -- se entrega desde Gestión de Usuarios.

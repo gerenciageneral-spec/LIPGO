@@ -5,16 +5,19 @@
 // a los entes de control (Pensión, Salud, ARL, Caja, SENA, ICBF) — la guía para
 // liquidar la planilla PILA.
 //
-// Fuente de los datos (todo real, nada simulado):
-//   · IBC  → suma de `pagonomina.total_liquidado_dia` del mes por persona. Esa
-//     columna ya es salario + horas extras + recargos + dominical/festivo y NO
-//     incluye auxilio de transporte → coincide con la definición legal del IBC.
-//   · Días → nº de días con registro en pagonomina (piso proporcional del IBC).
+// Fuente de los datos (todo real, nada simulado). Cada día del mes se clasifica
+// por su novedad (`pagonomina.novedad_reportada`) y cotiza según la norma PILA:
+//   · Trabajado  → IBC = `total_liquidado_dia` (salario + extras + recargos +
+//     dominical/festivo, SIN auxilio de transporte). Cotiza TODO, incl. ARL.
+//   · Vacaciones → IBC = salario/día. Cotiza pensión + caja (no salud, no ARL).
+//   · Incapacidad→ IBC = salario/día (día completo). Cotiza pensión + salud (no ARL).
+//   · Ausentismo → licencia no remunerada: solo 12% de pensión (empleador).
+//   · Retiro / día posterior a `headcount.fecha_retiro` → NO cotiza.
 //   · Auxilio de transporte → `parametros_legales_anio.auxilio_transporte`,
-//     proporcional a los días y solo para quien devenga hasta 2 SMMLV.
-//   · admin (clase de riesgo ARL) y salario → `headcount`.
-// El cálculo vive en lib/parafiscales.ts (lógica pura); aquí solo se arman las
-// entradas. Ver `parametros_parafiscales` para los % de ley por año.
+//     proporcional a los días trabajados y solo para quien devenga hasta 2 SMMLV.
+//   · admin (clase de riesgo ARL), salario y fecha_retiro → `headcount`.
+// El cálculo (bases por concepto, piso/tope, exoneración) vive en lib/parafiscales.ts
+// (lógica pura); aquí solo se arman las entradas. Ver `parametros_parafiscales`.
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import {
@@ -59,6 +62,26 @@ const asClase = (v: unknown, def: ClaseRiesgo): ClaseRiesgo =>
 function finDeMes(anio: number, mes: number): string {
   const d = new Date(Date.UTC(anio, mes, 0))
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`
+}
+
+// Clasifica un día de pagonomina por su `novedad_reportada` (texto crudo de
+// registroasistencia). Determina sobre qué aportes cotiza ese día (matriz PILA):
+//   · VAC     → vacaciones: cotiza pensión + caja (no salud, no ARL).
+//   · INCAP   → incapacidad EG/AT: cotiza pensión + salud (no caja, no ARL).
+//   · AUS     → ausentismo / licencia no remunerada: solo 12% de pensión (empleador).
+//   · RETIRO  → día de baja: NO cotiza (se descarta).
+//   · TRAB    → trabajado / descanso / festivo: cotiza TODO (incl. ARL).
+type TipoDiaCotizacion = "TRAB" | "VAC" | "INCAP" | "AUS" | "RETIRO"
+function clasificarDiaCotizacion(novedad: string | null | undefined): TipoDiaCotizacion {
+  const s = String(novedad || "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+  if (s.includes("vacacion")) return "VAC"
+  if (s.includes("incapacidad")) return "INCAP"
+  if (s.includes("no remunerada")) return "AUS"
+  if (s.includes("retiro")) return "RETIRO"
+  return "TRAB" // vacío, "Descanso", festivo o jornada normal
 }
 
 async function leerParametros(admin: any, anio: number): Promise<ParametrosParafiscales> {
@@ -175,7 +198,7 @@ export async function getParafiscales(
     for (let offset = 0; ; offset += hcPage) {
       let q = admin
         .from("headcount")
-        .select("identificacion, nombre, admin, salario, idempresa, contratosiigo")
+        .select("identificacion, nombre, admin, salario, idempresa, contratosiigo, fecha_retiro")
         .not("nombre", "ilike", "%prueba%") // fuera los auxiliares de PRUEBA (todos los ID): no cotizan
         .order("idempresa", { ascending: true })
         .order("identificacion", { ascending: true })
@@ -189,7 +212,14 @@ export async function getParafiscales(
 
     const infoPorNombre = new Map<
       string,
-      { identificacion: string; esAdmin: boolean; salario: number; idempresa: number | null }
+      {
+        identificacion: string
+        esAdmin: boolean
+        salario: number
+        idempresa: number | null
+        /** Fecha de retiro (ISO YYYY-MM-DD) o null si sigue activo. */
+        fechaRetiro: string | null
+      }
     >()
     for (const h of personal || []) {
       const nombre = String(h.nombre || "").trim()
@@ -200,6 +230,7 @@ export async function getParafiscales(
         esAdmin: h.admin === true,
         salario: Number(h.salario) || 0,
         idempresa: h.idempresa ?? null,
+        fechaRetiro: h.fecha_retiro ? String(h.fecha_retiro).slice(0, 10) : null,
       })
     }
     if (infoPorNombre.size === 0) return { success: true, data: [], params, smlv, auxilio: auxilioMes }
@@ -213,7 +244,7 @@ export async function getParafiscales(
     for (let offset = 0; ; offset += pageSize) {
       const { data, error } = await admin
         .from("pagonomina")
-        .select("persona, fecha, total_liquidado_dia")
+        .select("persona, fecha, total_liquidado_dia, novedad_reportada")
         .in("persona", nombres)
         .gte("fecha", desde)
         .lte("fecha", hasta)
@@ -224,27 +255,62 @@ export async function getParafiscales(
       if (data.length < pageSize) break
     }
 
-    // Agregar por persona: devengado del mes + días con registro.
-    const acum = new Map<string, { dev: number; dias: number }>()
+    // Agregar por persona clasificando CADA día por su novedad (matriz PILA):
+    //   · ibcTrab = Σ devengado real de los días trabajados (con recargos).
+    //   · días trabajados / vacaciones / incapacidad / ausentismo por separado.
+    // Corte por fecha de retiro (defensa en profundidad; la vista pagonomina ya
+    // corta, pero aquí se refuerza con el headcount.fecha_retiro de la persona).
+    const acum = new Map<
+      string,
+      { ibcTrab: number; diasTrab: number; diasVac: number; diasIncap: number; diasAus: number }
+    >()
     for (const r of filas) {
       const nombre = String(r.persona || "").trim()
-      if (!infoPorNombre.has(nombre)) continue
-      const a = acum.get(nombre) || { dev: 0, dias: 0 }
-      a.dev += Number(r.total_liquidado_dia || 0)
-      a.dias += 1
+      const info = infoPorNombre.get(nombre)
+      if (!info) continue
+      const fecha = String(r.fecha || "").slice(0, 10)
+      if (info.fechaRetiro && fecha > info.fechaRetiro) continue // día posterior al retiro: no cotiza
+      const a = acum.get(nombre) || { ibcTrab: 0, diasTrab: 0, diasVac: 0, diasIncap: 0, diasAus: 0 }
+      switch (clasificarDiaCotizacion(r.novedad_reportada)) {
+        case "VAC":
+          a.diasVac += 1
+          break
+        case "INCAP":
+          a.diasIncap += 1
+          break
+        case "AUS":
+          a.diasAus += 1
+          break
+        case "RETIRO":
+          break // día de baja: no suma a ninguna base
+        default: // TRAB
+          a.ibcTrab += Number(r.total_liquidado_dia || 0)
+          a.diasTrab += 1
+      }
       acum.set(nombre, a)
     }
 
     const data: ParafiscalPersona[] = []
     for (const [nombre, a] of acum) {
-      if (a.dias === 0) continue
+      const diasCotizados = a.diasTrab + a.diasVac + a.diasIncap + a.diasAus
+      if (diasCotizados === 0) continue
       const info = infoPorNombre.get(nombre)!
       // Auxilio de transporte: solo para quien devenga hasta 2 SMMLV, y
-      // proporcional a los días laborados del mes.
+      // proporcional a los días TRABAJADOS del mes (no se causa en vac/incap/ausencia).
       const salarioRef = info.salario || smlv
-      const auxilio = salarioRef <= smlv * 2 ? (auxilioMes / 30) * Math.min(a.dias, 30) : 0
+      const auxilio = salarioRef <= smlv * 2 ? (auxilioMes / 30) * Math.min(a.diasTrab, 30) : 0
       const ap = calcularAportes(
-        { devengado: a.dev, auxilio, dias: a.dias, smlv, esAdmin: info.esAdmin },
+        {
+          salario: info.salario,
+          ibcTrabajado: a.ibcTrab,
+          diasTrabajados: a.diasTrab,
+          diasVacaciones: a.diasVac,
+          diasIncapacidad: a.diasIncap,
+          diasAusentismo: a.diasAus,
+          auxilio,
+          smlv,
+          esAdmin: info.esAdmin,
+        },
         params,
       )
       data.push({
@@ -253,8 +319,8 @@ export async function getParafiscales(
         identificacion: info.identificacion,
         idempresa: info.idempresa,
         esAdmin: info.esAdmin,
-        dias: a.dias,
-        devengado: a.dev,
+        dias: diasCotizados,
+        devengado: ap.ibc,
       })
     }
 

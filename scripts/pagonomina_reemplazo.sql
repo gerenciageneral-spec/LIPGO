@@ -7,6 +7,9 @@
 --     de la base) y parametros_legales_anio; recargo dominical parametrizado.
 --   - FILTRO de estado/vínculo: no liquida días fuera del contrato de la persona
 --     (cubre el caso "no pagar a inactivos"). Falla hacia pagar.
+--   - CORTE por fecha de retiro (headcount.fecha_retiro): no liquida días
+--     posteriores al retiro (cierra la fuga que dejaba el vínculo con contrato
+--     abierto). Auxiliares de PRUEBA excluidos en todos los ID.
 -- Mismos nombres/campos/lógica de salida. REVERSIBLE (definición previa en git).
 -- REQUISITO: correr antes scripts/extend_parametros_nomina.sql.
 -- ANTES DE CORRER: valida con scripts/pagonomina_estado_diagnostico.sql que los
@@ -370,6 +373,17 @@ create or replace view public.pagonomina as
                       WHERE (TRIM(BOTH FROM hh.nombre) = TRIM(BOTH FROM pc.persona))
                         AND (pc.fecha >= cc.fecha_inicio_contrato)
                         AND ((cc.fecha_fin_contrato IS NULL) OR (pc.fecha <= cc.fecha_fin_contrato)))
+    )
+    -- Corte por FECHA DE RETIRO (headcount.fecha_retiro): no se liquidan los días
+    -- POSTERIORES al retiro de la persona. Cierra la fuga que el filtro de vínculo
+    -- de arriba deja pasar cuando el contrato en colaboradores_th sigue abierto
+    -- (fecha_fin_contrato NULL) o no se puede vincular por nombre↔cédula. Si la
+    -- persona no tiene fecha_retiro (activa), no corta nada (falla hacia pagar).
+    AND NOT EXISTS (
+          SELECT 1 FROM headcount hr
+           WHERE (TRIM(BOTH FROM hr.nombre) = TRIM(BOTH FROM pc.persona))
+             AND (hr.fecha_retiro IS NOT NULL)
+             AND (pc.fecha > hr.fecha_retiro)
     )
   ORDER BY persona, fecha DESC;
 

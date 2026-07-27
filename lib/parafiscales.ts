@@ -63,8 +63,8 @@ export const PARAFISCALES_DEFAULT: Omit<ParametrosParafiscales, "anio"> = {
   pctCaja: 4,
   umbralExoneracionSmlv: 10,
   topeIbcSmlv: 25,
-  claseArlAdmin: "I",
-  claseArlOperativo: "IV",
+  claseArlAdmin: "II", // administrativo → riesgo II (1,044%)
+  claseArlOperativo: "III", // operativo (auxiliares/conductores de proceso) → riesgo III (2,436%)
   incluyeAuxParafiscales: true,
 }
 
@@ -165,12 +165,27 @@ export function validarParametros(p: ParametrosParafiscales): AvisoLegal[] {
 }
 
 export interface EntradaAportes {
-  /** Devengado salarial del mes (sin auxilio de transporte). */
-  devengado: number
+  /**
+   * Salario básico mensual del contrato (headcount.salario; piso = SMLV). Fija el
+   * "salario/día" con que cotizan los días de vacaciones, incapacidad y ausentismo,
+   * que NO dependen del devengado real sino del salario.
+   */
+  salario: number
+  /**
+   * IBC de los días TRABAJADOS = Σ del devengado real de esos días
+   * (`pagonomina.total_liquidado_dia`, ya con recargos y sin auxilio de transporte).
+   */
+  ibcTrabajado: number
+  /** Días efectivamente trabajados / descanso / festivo (única base de la ARL). */
+  diasTrabajados: number
+  /** Días de vacaciones disfrutadas en el mes. */
+  diasVacaciones: number
+  /** Días de incapacidad (EG o AT) en el mes. */
+  diasIncapacidad: number
+  /** Días de ausentismo / licencia no remunerada en el mes. */
+  diasAusentismo: number
   /** Auxilio de transporte proporcional a los días laborados. */
   auxilio: number
-  /** Días con registro de nómina en el mes (para el piso proporcional del IBC). */
-  dias: number
   /** SMLV del año. */
   smlv: number
   /** true = personal administrativo (headcount.admin). */
@@ -178,12 +193,40 @@ export interface EntradaAportes {
 }
 
 export interface Aportes {
+  /** IBC total del mes = suma de las bases de todos los tipos de día (piso/tope aplicados). */
   ibc: number
   /** IBC llevado a mes completo — es el valor que se compara con los 10 SMMLV. */
   ibcMensualizado: number
   auxilio: number
-  /** Base de Caja/SENA/ICBF = IBC (+ auxilio si el parámetro lo indica). */
+  /** Base de Caja/SENA/ICBF = (IBC trabajado + vacaciones) (+ auxilio si el parámetro lo indica). */
   baseParafiscales: number
+
+  // --- IBC por TIPO DE DÍA (norma PILA: cada día cotiza según su novedad) ---
+  /** IBC de días trabajados (devengado real, con piso proporcional de 1 SMLV). */
+  ibcTrabajado: number
+  /** IBC de vacaciones = salario/día × días de vacaciones. */
+  ibcVacaciones: number
+  /** IBC de incapacidad = salario/día × días de incapacidad (día completo). */
+  ibcIncapacidad: number
+  /** IBC de ausentismo / licencia no remunerada = salario/día × días. */
+  ibcAusentismo: number
+
+  // --- IBC por CONCEPTO (la base sobre la que cotiza cada aporte) ---
+  /** Base de pensión (empleador): trabajado + vacaciones + incapacidad + ausentismo. */
+  ibcPension: number
+  /** Base de salud: trabajado + incapacidad (vacaciones y ausentismo NO cotizan salud). */
+  ibcSalud: number
+  /** Base de ARL: SOLO días trabajados (no hay riesgo laboral en vac/incap/ausencia). */
+  ibcArl: number
+  /** Base de Caja/SENA/ICBF (sin auxilio): trabajado + vacaciones. */
+  ibcCaja: number
+
+  // --- Días por tipo ---
+  diasTrabajados: number
+  diasVacaciones: number
+  diasIncapacidad: number
+  diasAusentismo: number
+
   claseArl: ClaseRiesgo
   pctArl: number
   /** true = devenga menos de 10 SMMLV → exonerado de salud/SENA/ICBF (art. 114-1). */
@@ -212,49 +255,87 @@ export interface Aportes {
  */
 export function calcularAportes(e: EntradaAportes, p: ParametrosParafiscales): Aportes {
   const notas: string[] = []
-  const dias = Math.max(0, Math.min(Number(e.dias) || 0, 30))
   const smlv = Number(e.smlv) || 0
 
-  // IBC = devengado salarial, acotado por el piso (1 SMLV proporcional a los
-  // días cotizados) y el tope (25 SMLV).
-  let ibc = Math.max(0, Number(e.devengado) || 0)
-  const piso = dias > 0 ? (smlv / 30) * dias : 0
-  const tope = smlv * p.topeIbcSmlv
-  if (dias > 0 && ibc < piso) {
-    notas.push(`IBC ajustado al piso legal de 1 SMLV proporcional (${dias} días).`)
-    ibc = piso
-  }
-  if (ibc > tope) {
-    notas.push(`IBC limitado al tope legal de ${p.topeIbcSmlv} SMLV.`)
-    ibc = tope
+  // Días por tipo de novedad (cada uno ya clasificado desde pagonomina.novedad_reportada).
+  const diasTrab = Math.max(0, Number(e.diasTrabajados) || 0)
+  const diasVac = Math.max(0, Number(e.diasVacaciones) || 0)
+  const diasIncap = Math.max(0, Number(e.diasIncapacidad) || 0)
+  const diasAus = Math.max(0, Number(e.diasAusentismo) || 0)
+  const diasTotal = diasTrab + diasVac + diasIncap + diasAus
+
+  // Salario/día (piso 1 SMLV): base de cotización de vacaciones, incapacidad y
+  // ausentismo — la ley cotiza esos días sobre el SALARIO, no sobre el devengo real.
+  const salarioDia = Math.max(Number(e.salario) || 0, smlv) / 30
+
+  // (1) IBC de días TRABAJADOS = devengado real (recargos incluidos), con el piso
+  //     de 1 SMLV proporcional a esos días.
+  let ibcTrab = Math.max(0, Number(e.ibcTrabajado) || 0)
+  const pisoTrab = (smlv / 30) * diasTrab
+  if (diasTrab > 0 && ibcTrab < pisoTrab) {
+    notas.push(`IBC de días trabajados ajustado al piso de 1 SMLV proporcional (${diasTrab} días).`)
+    ibcTrab = pisoTrab
   }
 
-  // El umbral del art. 114-1 se evalúa sobre el devengo MENSUAL: si la persona
-  // solo trabajó parte del mes, se lleva a mes completo para no exonerar por
-  // error a un salario alto con pocos días.
-  const ibcMensualizado = dias > 0 ? (ibc / dias) * 30 : ibc
+  // (2) IBC de VACACIONES / INCAPACIDAD / AUSENTISMO = salario/día × días (día
+  //     COMPLETO, aunque la incapacidad se pague al 66%/50%).
+  let ibcVac = salarioDia * diasVac
+  let ibcIncap = salarioDia * diasIncap
+  let ibcAus = salarioDia * diasAus
+
+  // Tope legal de 25 SMLV sobre el IBC total del mes: si se supera, se escala cada
+  // base proporcionalmente para conservar su participación.
+  let ibc = ibcTrab + ibcVac + ibcIncap + ibcAus
+  const tope = smlv * p.topeIbcSmlv
+  if (ibc > tope && ibc > 0) {
+    const f = tope / ibc
+    ibcTrab *= f
+    ibcVac *= f
+    ibcIncap *= f
+    ibcAus *= f
+    ibc = tope
+    notas.push(`IBC limitado al tope legal de ${p.topeIbcSmlv} SMLV.`)
+  }
+
+  // El umbral del art. 114-1 se evalúa sobre el IBC llevado a MES COMPLETO: si la
+  // persona solo cotizó parte del mes, se mensualiza para no exonerar por error a
+  // un salario alto con pocos días.
+  const ibcMensualizado = diasTotal > 0 ? (ibc / diasTotal) * 30 : ibc
   const exonerado = ibcMensualizado < smlv * p.umbralExoneracionSmlv
   notas.push(
     exonerado
-      ? `Devenga menos de ${p.umbralExoneracionSmlv} SMMLV → exonerado de salud, SENA e ICBF (E.T. art. 114-1).`
+      ? `Devenga menos de ${p.umbralExoneracionSmlv} SMMLV → exonerado de salud patronal, SENA e ICBF (E.T. art. 114-1).`
       : `Devenga ${p.umbralExoneracionSmlv} SMMLV o más → NO aplica la exoneración: causa salud, SENA e ICBF.`,
   )
 
+  // --- Bases por CONCEPTO (matriz PILA: cada día cotiza según su novedad) ---
+  //   · Pensión (empleador 12%): TODOS los días (trab + vac + incap + ausencia).
+  //   · Pensión (trabajador 4%): trab + vac + incap — el ausentismo lo cotiza SOLO
+  //     el empleador (no se le descuenta al trabajador por un día no laborado).
+  //   · Salud: trab + incap (vacaciones y ausencia NO cotizan salud).
+  //   · ARL: SOLO días trabajados (no hay riesgo laboral fuera del trabajo).
+  //   · Caja/SENA/ICBF: trab + vacaciones (+ auxilio de transporte).
   const auxilio = Math.max(0, Number(e.auxilio) || 0)
-  const baseParafiscales = ibc + (p.incluyeAuxParafiscales ? auxilio : 0)
+  const ibcPension = ibcTrab + ibcVac + ibcIncap + ibcAus
+  const ibcPensionEmpleado = ibcTrab + ibcVac + ibcIncap
+  const ibcSalud = ibcTrab + ibcIncap
+  const ibcArl = ibcTrab
+  const ibcCaja = ibcTrab + ibcVac
+  const baseParafiscales = ibcCaja + (p.incluyeAuxParafiscales ? auxilio : 0)
+
   const claseArl = e.esAdmin ? p.claseArlAdmin : p.claseArlOperativo
   const tarifaArl = pctArl(claseArl)
 
-  const pensionEmpleador = ibc * (p.pctPensionEmpleador / 100)
-  const saludEmpleador = exonerado ? 0 : ibc * (p.pctSaludEmpleador / 100)
-  const arl = ibc * (tarifaArl / 100)
-  const caja = baseParafiscales * (p.pctCaja / 100) // sin exención
+  const pensionEmpleador = ibcPension * (p.pctPensionEmpleador / 100)
+  const saludEmpleador = exonerado ? 0 : ibcSalud * (p.pctSaludEmpleador / 100)
+  const arl = ibcArl * (tarifaArl / 100)
+  const caja = baseParafiscales * (p.pctCaja / 100) // sin exención, nunca
   const sena = exonerado ? 0 : baseParafiscales * (p.pctSena / 100)
   const icbf = exonerado ? 0 : baseParafiscales * (p.pctIcbf / 100)
   const totalEmpresa = pensionEmpleador + saludEmpleador + arl + caja + sena + icbf
 
-  const pensionEmpleado = ibc * (p.pctPensionEmpleado / 100)
-  const saludEmpleado = ibc * (p.pctSaludEmpleado / 100)
+  const pensionEmpleado = ibcPensionEmpleado * (p.pctPensionEmpleado / 100)
+  const saludEmpleado = ibcSalud * (p.pctSaludEmpleado / 100)
   const totalEmpleado = pensionEmpleado + saludEmpleado
 
   return {
@@ -262,6 +343,18 @@ export function calcularAportes(e: EntradaAportes, p: ParametrosParafiscales): A
     ibcMensualizado,
     auxilio,
     baseParafiscales,
+    ibcTrabajado: ibcTrab,
+    ibcVacaciones: ibcVac,
+    ibcIncapacidad: ibcIncap,
+    ibcAusentismo: ibcAus,
+    ibcPension,
+    ibcSalud,
+    ibcArl,
+    ibcCaja,
+    diasTrabajados: diasTrab,
+    diasVacaciones: diasVac,
+    diasIncapacidad: diasIncap,
+    diasAusentismo: diasAus,
     claseArl,
     pctArl: tarifaArl,
     exonerado,

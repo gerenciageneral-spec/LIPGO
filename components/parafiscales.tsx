@@ -134,7 +134,17 @@ export default function Parafiscales() {
     () =>
       smlv > 0
         ? calcularAportes(
-            { devengado: smlv, auxilio: auxMes, dias: 30, smlv, esAdmin: false },
+            {
+              salario: smlv,
+              ibcTrabajado: smlv,
+              diasTrabajados: 30,
+              diasVacaciones: 0,
+              diasIncapacidad: 0,
+              diasAusentismo: 0,
+              auxilio: auxMes,
+              smlv,
+              esAdmin: false,
+            },
             { ...params, anio },
           )
         : null,
@@ -176,7 +186,7 @@ export default function Parafiscales() {
         pct: arlPct,
         empresa: resumen.arl,
         empleado: 0,
-        nota: "100% a cargo de la empresa · según clase de riesgo",
+        nota: "100% empresa · según clase de riesgo · solo días trabajados",
       },
       {
         k: "caja",
@@ -647,8 +657,10 @@ export default function Parafiscales() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Trabajador</TableHead>
-                    <TableHead className="text-right">Días</TableHead>
-                    <TableHead className="text-right">IBC</TableHead>
+                    <TableHead className="text-center">Días (trab · nov.)</TableHead>
+                    <TableHead className="text-right">IBC total</TableHead>
+                    <TableHead className="text-right">IBC salud</TableHead>
+                    <TableHead className="text-right">IBC ARL</TableHead>
                     <TableHead className="text-right">Auxilio</TableHead>
                     <TableHead className="text-center">ARL</TableHead>
                     <TableHead className="text-right">Pensión</TableHead>
@@ -665,20 +677,47 @@ export default function Parafiscales() {
                     <TableRow key={p.identificacion || p.persona}>
                       <TableCell>
                         <div className="font-medium">{p.persona}</div>
-                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                           <span>{p.identificacion}</span>
-                          {p.esAdmin && (
-                            <span className="rounded bg-muted px-1 py-0.5 text-[10px]">Admin</span>
+                          {p.esAdmin && <span className="rounded bg-muted px-1 py-0.5 text-[10px]">Admin</span>}
+                          {p.diasVacaciones > 0 && (
+                            <span className="rounded bg-emerald-500/15 px-1 py-0.5 text-[10px] text-emerald-600 dark:text-emerald-400">
+                              Vacaciones {p.diasVacaciones}d
+                            </span>
+                          )}
+                          {p.diasIncapacidad > 0 && (
+                            <span className="rounded bg-sky-500/15 px-1 py-0.5 text-[10px] text-sky-600 dark:text-sky-400">
+                              Incapacidad {p.diasIncapacidad}d
+                            </span>
+                          )}
+                          {p.diasAusentismo > 0 && (
+                            <span className="rounded bg-amber-500/15 px-1 py-0.5 text-[10px] text-amber-600 dark:text-amber-400">
+                              Ausentismo {p.diasAusentismo}d
+                            </span>
                           )}
                           {!p.exonerado && (
-                            <span className="rounded bg-amber-500/15 px-1 py-0.5 text-[10px] text-amber-600 dark:text-amber-400">
+                            <span className="rounded bg-rose-500/15 px-1 py-0.5 text-[10px] text-rose-600 dark:text-rose-400">
                               ≥ 10 SMMLV
                             </span>
                           )}
                         </div>
                       </TableCell>
-                      <TableCell className="text-right tabular-nums">{p.dias}</TableCell>
+                      <TableCell className="text-center tabular-nums">
+                        <div className="font-medium">{p.dias}</div>
+                        <div className="text-[10px] text-muted-foreground">
+                          {p.diasTrabajados}t
+                          {p.diasVacaciones > 0 && ` · ${p.diasVacaciones}v`}
+                          {p.diasIncapacidad > 0 && ` · ${p.diasIncapacidad}i`}
+                          {p.diasAusentismo > 0 && ` · ${p.diasAusentismo}a`}
+                        </div>
+                      </TableCell>
                       <TableCell className="text-right tabular-nums">{money(p.ibc)}</TableCell>
+                      <TableCell className="text-right tabular-nums text-muted-foreground">
+                        {p.ibcSalud === 0 ? "—" : money(p.ibcSalud)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums text-muted-foreground">
+                        {p.ibcArl === 0 ? "—" : money(p.ibcArl)}
+                      </TableCell>
                       <TableCell className="text-right tabular-nums text-muted-foreground">
                         {money(p.auxilio)}
                       </TableCell>
@@ -689,7 +728,9 @@ export default function Parafiscales() {
                       <TableCell className="text-right tabular-nums">
                         {p.saludEmpleador === 0 ? <span className="text-muted-foreground">—</span> : money(p.saludEmpleador)}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums">{money(p.arl)}</TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {p.arl === 0 ? <span className="text-muted-foreground">—</span> : money(p.arl)}
+                      </TableCell>
                       <TableCell className="text-right tabular-nums">{money(p.caja)}</TableCell>
                       <TableCell className="text-right tabular-nums">
                         {p.sena === 0 ? <span className="text-muted-foreground">—</span> : money(p.sena)}
@@ -702,10 +743,21 @@ export default function Parafiscales() {
                   ))}
                 </TableBody>
               </Table>
-              <p className="mt-3 text-xs text-muted-foreground">
-                “—” = exonerado por el art. 114-1 del E.T. (devenga menos de {params.umbralExoneracionSmlv} SMMLV).
-                La <strong>Caja de Compensación</strong> nunca se exonera.
-              </p>
+              <div className="mt-3 space-y-1 text-xs text-muted-foreground">
+                <p>
+                  <strong>Días</strong>: t = trabajados · v = vacaciones · i = incapacidad · a = ausentismo. Cada día
+                  cotiza según la norma: <strong>vacaciones</strong> → pensión + caja (no salud, no ARL);{" "}
+                  <strong>incapacidad</strong> → pensión + salud (no caja, no ARL);{" "}
+                  <strong>ausentismo / licencia no remunerada</strong> → solo el 12% de pensión (empleador). La{" "}
+                  <strong>ARL solo se causa sobre los días trabajados</strong> (por eso “IBC ARL” suele ser menor que el
+                  IBC total). No se liquidan días posteriores a la fecha de retiro.
+                </p>
+                <p>
+                  “—” = no se causa: por la exoneración del art. 114-1 del E.T. (devenga menos de{" "}
+                  {params.umbralExoneracionSmlv} SMMLV) o porque ese concepto no aplica a los días del mes. La{" "}
+                  <strong>Caja de Compensación</strong> nunca se exonera.
+                </p>
+              </div>
             </CardContent>
           </Card>
         </>
