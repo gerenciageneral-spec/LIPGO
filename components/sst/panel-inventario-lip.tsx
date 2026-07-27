@@ -17,7 +17,7 @@ import { SST_TOKENS } from "@/components/sst/sst-utils"
 import { SigHeader, SigFilterBar, SigField, SigKpi, sigControl } from "@/components/sst/sig-ui"
 import { useAuth } from "@/components/auth-provider"
 import { getPanelInventarioLIP, getKardexInventario, getMovimientosProducto, getTiposMovimiento, getCuadreDiario, getPreservacionInventario, getConciliacionMensualInventario, guardarCierreMesInventario, getConciliacionPedidosVsSalidas, getAuditoriaOrdenPedidoSalida, guardarCuadreManualPedidoSalida } from "@/lib/sig-actions"
-import { Loader2, Boxes, TrendingDown, ArrowDownToLine, AlertTriangle, RefreshCw, CalendarClock, Layers, FileText, BookOpen, ZoomIn, ClipboardList, ShieldAlert, FolderOpen, ExternalLink, CheckCircle2, PackageX, Truck } from "lucide-react"
+import { Loader2, Boxes, TrendingDown, ArrowDownToLine, AlertTriangle, RefreshCw, CalendarClock, Layers, FileText, BookOpen, ZoomIn, ClipboardList, ShieldAlert, FolderOpen, ExternalLink, CheckCircle2 } from "lucide-react"
 import { ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts"
 
 const DONUT_COLORS = ["#1E8449", "#0D3B6E", "#00B4CC", "#E0A800", "#7e57c2", "#C0392B"]
@@ -728,7 +728,7 @@ export function PanelInventarioLIP() {
           ) : (
             <>
               <p className="text-[11px] text-muted-foreground">
-                Cruce por <b>orden de cargue + producto</b>: unidades <b>cargadas</b> en pedidos (<code>pedidosdetalle</code>) vs <b>salidas aprobadas</b> del inventario (<code>invtrans</code>, tipomov=Salida). Todo el histórico del proyecto. Detecta pedidos sin salida, salidas sin pedido y cantidades distintas.
+                Cruce por <b>orden de cargue + producto</b>: unidades <b>cargadas</b> en pedidos (<code>pedidosdetalle</code>) vs <b>salidas aprobadas</b> del inventario (<code>invtrans</code>, tipomov=Salida). Todo el histórico del proyecto. La única discrepancia real es <b>cantidad diferente</b> (cargado ≠ salido). Los <b>pedidos sin salida</b> y las <b>salidas sin pedido</b> se excluyen del análisis: son anomalías del montaje de la información (no es lógico un pedido sin su salida ni una salida sin su pedido), no diferencias de inventario.
               </p>
 
               {/* Banda de alerta */}
@@ -746,14 +746,9 @@ export function PanelInventarioLIP() {
                 </Card>
               )}
 
-              {(pedSal.resumen.pedidoSinSalida > 0 || pedSal.resumen.salidaSinPedido > 0 || pedSal.resumen.pendienteDespacho > 0) && (
+              {pedSal.resumen.pendienteDespacho > 0 && (
                 <p className="text-[11px] text-muted-foreground">
-                  Informativos (no son diferencia de inventario):{" "}
-                  {pedSal.resumen.pedidoSinSalida > 0 && <span><b>{pedSal.resumen.pedidoSinSalida}</b> por ejecutar (pedido con cargue, sin salida aún)</span>}
-                  {pedSal.resumen.pedidoSinSalida > 0 && (pedSal.resumen.salidaSinPedido > 0 || pedSal.resumen.pendienteDespacho > 0) && <span> · </span>}
-                  {pedSal.resumen.salidaSinPedido > 0 && <span><b>{pedSal.resumen.salidaSinPedido}</b> salida sin pedido (proceso completo; pedido borrado)</span>}
-                  {pedSal.resumen.salidaSinPedido > 0 && pedSal.resumen.pendienteDespacho > 0 && <span> · </span>}
-                  {pedSal.resumen.pendienteDespacho > 0 && <span><b>{pedSal.resumen.pendienteDespacho}</b> pendiente de despacho</span>}.
+                  Informativo (no es diferencia de inventario): <b>{pedSal.resumen.pendienteDespacho}</b> pendiente de despacho.
                 </p>
               )}
 
@@ -764,11 +759,9 @@ export function PanelInventarioLIP() {
               )}
 
               {/* KPIs */}
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
                 <KPI label="OK (cuadran)" valor={pedSal.resumen.ok} Icon={CheckCircle2} color="#1E8449" />
                 <KPI label="Cantidad diferente" valor={pedSal.resumen.cantidadDiferente} Icon={AlertTriangle} color="#E0A800" />
-                <KPI label="Por ejecutar" valor={pedSal.resumen.pedidoSinSalida} Icon={PackageX} color="#4f46e5" />
-                <KPI label="Salida sin pedido" valor={pedSal.resumen.salidaSinPedido} Icon={Truck} color="#7e57c2" />
                 <KPI label="Pendiente despacho" valor={pedSal.resumen.pendienteDespacho ?? 0} Icon={CalendarClock} color="#0284c7" />
                 <KPI label="Total cargadas" valor={(pedSal.resumen.totalCargadas || 0).toLocaleString("es-CO")} Icon={ClipboardList} color="#0D3B6E" />
                 <KPI label="Total salidas" valor={(pedSal.resumen.totalSalidas || 0).toLocaleString("es-CO")} Icon={ArrowDownToLine} color="#00B4CC" />
@@ -781,8 +774,6 @@ export function PanelInventarioLIP() {
                     <option value="">Todas (incluye OK)</option>
                     <option value="OK">Solo OK (cuadran)</option>
                     <option value="CANTIDAD_DIFERENTE">Cantidad diferente</option>
-                    <option value="PEDIDO_SIN_SALIDA">Pedido sin salida</option>
-                    <option value="SALIDA_SIN_PEDIDO">Salida sin pedido</option>
                     <option value="PENDIENTE_DESPACHO">Pendiente de despacho</option>
                   </select>
                 </SigField>

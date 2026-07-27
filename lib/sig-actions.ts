@@ -4333,8 +4333,16 @@ export async function getConciliacionPedidosVsSalidas(
       if (from > 100000) break
     }
 
+    // Se EXCLUYEN del análisis los "pedidos sin salida" y las "salidas sin pedido":
+    // son artefactos del MONTAJE inicial de la información (no discrepancias reales de
+    // inventario) y no deben afectar la conciliación ni sus totales (cargadas/salidas/
+    // diferencia neta). La única discrepancia real sigue siendo CANTIDAD_DIFERENTE.
+    const filasAnalizadas = filas.filter(
+      (f: any) => f.estado_alerta !== "PEDIDO_SIN_SALIDA" && f.estado_alerta !== "SALIDA_SIN_PEDIDO",
+    )
+
     const resumen = {
-      total: filas.length,
+      total: filasAnalizadas.length,
       ok: 0,
       cantidadDiferente: 0,
       pedidoSinSalida: 0,
@@ -4346,7 +4354,7 @@ export async function getConciliacionPedidosVsSalidas(
       conAlerta: 0,
       empresaDistinta: 0,
     }
-    for (const f of filas) {
+    for (const f of filasAnalizadas) {
       resumen.totalCargadas += Number(f.ped_cargadas) || 0
       resumen.totalSalidas += Number(f.salida_qty) || 0
       resumen.diferenciaNeta += Number(f.diferencia) || 0
@@ -4371,15 +4379,15 @@ export async function getConciliacionPedidosVsSalidas(
     resumen.diferenciaNeta = Math.round(resumen.diferenciaNeta)
 
     // Discrepancias primero; dentro, por magnitud de diferencia.
-    const orden: Record<string, number> = { SALIDA_SIN_PEDIDO: 0, PEDIDO_SIN_SALIDA: 1, CANTIDAD_DIFERENTE: 2, PENDIENTE_DESPACHO: 3, OK: 4 }
-    filas.sort((a, b) => {
+    const orden: Record<string, number> = { CANTIDAD_DIFERENTE: 0, PENDIENTE_DESPACHO: 1, OK: 2 }
+    filasAnalizadas.sort((a, b) => {
       const oa = orden[a.estado_alerta] ?? 9
       const ob = orden[b.estado_alerta] ?? 9
       if (oa !== ob) return oa - ob
       return Math.abs(Number(b.diferencia) || 0) - Math.abs(Number(a.diferencia) || 0)
     })
 
-    return { success: true, data: { filas, resumen } }
+    return { success: true, data: { filas: filasAnalizadas, resumen } }
   } catch (err: any) {
     return { success: false, error: err?.message || "Error desconocido" }
   }
