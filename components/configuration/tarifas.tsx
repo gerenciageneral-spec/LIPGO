@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button"
 import { Copy, Info } from "lucide-react"
 import { DuplicarTarifasDialog } from "./duplicar-tarifas-dialog"
 import { CuadroMandoNomina } from "./cuadro-mando-nomina"
+import { MetasToneladas } from "./metas-toneladas"
 
 type TabDef = {
   v: string
@@ -65,6 +66,20 @@ const TABS: TabDef[] = [
         esta tarifa. Con el modelo nuevo, cada día trabajado liquida su <strong>base</strong> y el excedente de
         producción se paga como <strong>bonificación neta por quincena</strong> (no día a día).{" "}
         <strong>Impacta el costo de nómina</strong> de los auxiliares.
+      </>
+    ),
+  },
+  {
+    v: "metas",
+    l: "Metas",
+    key: "",
+    custom: true,
+    desc: (
+      <>
+        <strong>Meta de toneladas por proyecto</strong>: lo mínimo que cada trabajador debe cargar/descargar por día
+        para ganarse la base fija. <code>meta = (toneladas mes ÷ días operación) ÷ HC</code>. Es un{" "}
+        <strong>indicador de productividad</strong> en <strong>Revisión de nómina</strong> (no cambia la liquidación ni
+        el bono, que van sobre <code>salario/30</code>).
       </>
     ),
   },
@@ -139,7 +154,15 @@ export function Tarifas() {
               </div>
             )}
 
-            {t.custom ? <CuadroMandoNomina /> : <GenericCrudTable moduleDef={configModules[t.key]} />}
+            {t.custom ? (
+              t.v === "metas" ? (
+                <MetasToneladas />
+              ) : (
+                <CuadroMandoNomina />
+              )
+            ) : (
+              <GenericCrudTable moduleDef={configModules[t.key]} />
+            )}
           </TabsContent>
         ))}
       </Tabs>

@@ -10,6 +10,7 @@
 // escribe nada. Mismo patrón que parafiscales-actions / liquidaciones-actions.
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
+import { getMetasToneladas } from "@/lib/metas-toneladas-actions"
 
 export interface ColaboradorRef {
   persona: string
@@ -33,6 +34,20 @@ export interface DiaRevision {
   total: number
   esDestajo: boolean
   anomalia: boolean // Cargue/Descargue con 0 toneladas (a corregir)
+  meta: number // meta de toneladas del proyecto ese día (0 si no configurada)
+  cumpleMeta: boolean // solo destajo: toneladas >= meta
+}
+
+export interface MetaResumen {
+  configurada: boolean
+  metaReferencia: number // meta ton/trab/día del proyecto principal del colaborador
+  diasDestajo: number
+  diasCumple: number
+  diasBajo: number
+  toneladasMovidas: number
+  toneladasMeta: number // meta acumulada del período (Σ meta de los días de destajo)
+  promedioDia: number
+  pctCumplimiento: number // días que cumplió la meta / días de destajo
 }
 
 export interface ResumenRevision {
@@ -69,6 +84,7 @@ export interface RevisionNominaData {
   quincena: { anio: number; mes: number; num: number; desde: string; hasta: string }
   dias: DiaRevision[]
   resumen: ResumenRevision
+  metaResumen: MetaResumen
   plano: PlanoRevision[]
 }
 
@@ -145,6 +161,11 @@ export async function getRevisionNomina(
       .order("fecha", { ascending: true })
     if (errPn) return { success: false, message: errPn.message }
 
+    // Metas de toneladas por proyecto (idempresa) — indicador de productividad.
+    const metasRes = await getMetasToneladas()
+    const metaPorEmpresa = new Map<number, number>()
+    for (const m of metasRes.data || []) metaPorEmpresa.set(m.idempresa, m.metaTonTrabajadorDia)
+
     const dias: DiaRevision[] = []
     let baseGar = 0,
       ingTurno = 0,
@@ -154,6 +175,9 @@ export async function getRevisionNomina(
       diasAltos = 0,
       diasBajos = 0,
       anomalias = 0,
+      diasCumpleMeta = 0,
+      toneladasMovidas = 0,
+      toneladasMeta = 0,
       empresa: number | null = hc?.idempresa != null ? Number(hc.idempresa) : null
 
     for (const r of filas || []) {
@@ -180,6 +204,10 @@ export async function getRevisionNomina(
       else if (total > 0) tipo = "Descanso"
       else tipo = "Sin registro"
 
+      // Meta de toneladas del proyecto de ese día (indicador de productividad).
+      const metaDia = r.idempresa != null ? metaPorEmpresa.get(Number(r.idempresa)) || 0 : 0
+      const cumpleMeta = esDestajo && metaDia > 0 ? ton >= metaDia : false
+
       // Descomposición del total del día: base = total − recargos − dominical
       const basePortion = Math.max(0, total - recargos - domingo)
       if (total > 0) baseGar += basePortion
@@ -190,6 +218,11 @@ export async function getRevisionNomina(
         diasDestajo += 1
         if (excedente >= 0) diasAltos += 1
         else diasBajos += 1
+        toneladasMovidas += ton
+        if (metaDia > 0) {
+          toneladasMeta += metaDia
+          if (cumpleMeta) diasCumpleMeta += 1
+        }
       }
       if (anomalia) anomalias += 1
       if (empresa == null && r.idempresa != null) empresa = Number(r.idempresa)
@@ -209,7 +242,25 @@ export async function getRevisionNomina(
         total,
         esDestajo,
         anomalia,
+        meta: metaDia,
+        cumpleMeta,
       })
+    }
+
+    // Resumen de cumplimiento de META (productividad). La meta de referencia es la
+    // del proyecto principal del colaborador (su empresa); días con meta configurada.
+    const metaReferencia = empresa != null ? metaPorEmpresa.get(empresa) || 0 : 0
+    const diasConMeta = dias.filter((x) => x.esDestajo && x.meta > 0).length
+    const metaResumen: MetaResumen = {
+      configurada: metaReferencia > 0 || diasConMeta > 0,
+      metaReferencia,
+      diasDestajo,
+      diasCumple: diasCumpleMeta,
+      diasBajo: Math.max(0, diasConMeta - diasCumpleMeta),
+      toneladasMovidas,
+      toneladasMeta,
+      promedioDia: diasDestajo > 0 ? toneladasMovidas / diasDestajo : 0,
+      pctCumplimiento: diasConMeta > 0 ? (diasCumpleMeta / diasConMeta) * 100 : 0,
     }
 
     const bono = Math.max(0, neto)
@@ -260,6 +311,7 @@ export async function getRevisionNomina(
         quincena: { anio, mes, num: quincena, desde, hasta },
         dias,
         resumen,
+        metaResumen,
         plano,
       },
     }

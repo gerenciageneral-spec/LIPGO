@@ -223,8 +223,9 @@ function Resultado({
   data: RevisionNominaData
   tipoBadge: (tipo: string, anomalia: boolean) => ReactNode
 }) {
-  const { colaborador: c, quincena: q, dias, resumen: r, plano } = data
+  const { colaborador: c, quincena: q, dias, resumen: r, metaResumen: mr, plano } = data
   const sinDatos = dias.length === 0
+  const ton1 = (x: number) => (Number(x) || 0).toLocaleString("es-CO", { maximumFractionDigits: 1 })
 
   return (
     <div className="space-y-4">
@@ -280,6 +281,46 @@ function Resultado({
             </div>
           )}
 
+          {/* Cumplimiento de meta de toneladas (productividad) */}
+          {mr.configurada && mr.diasDestajo > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Cumplimiento de meta de toneladas (productividad)</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <Kpi label="Meta ton/trabajador/día" value={ton1(mr.metaReferencia)} hint="mínimo para ganar la base" />
+                  <Kpi
+                    label="Promedio movido/día"
+                    value={ton1(mr.promedioDia)}
+                    hint={`${ton1(mr.toneladasMovidas)} t en ${mr.diasDestajo} días`}
+                    tone={mr.metaReferencia > 0 ? (mr.promedioDia >= mr.metaReferencia ? "up" : "down") : undefined}
+                  />
+                  <Kpi
+                    label="Cumplimiento"
+                    value={`${Math.round(mr.pctCumplimiento)}%`}
+                    hint={`${mr.diasCumple} de ${mr.diasCumple + mr.diasBajo} días cumplen`}
+                    tone={mr.pctCumplimiento >= 100 ? "up" : mr.pctCumplimiento < 50 ? "down" : undefined}
+                  />
+                  <Kpi
+                    label={mr.diasBajo > 0 ? "Días bajo meta" : "Toneladas vs meta"}
+                    value={mr.diasBajo > 0 ? String(mr.diasBajo) : ton1(mr.toneladasMovidas - mr.toneladasMeta)}
+                    hint={
+                      mr.toneladasMeta > 0
+                        ? `movió ${ton1(mr.toneladasMovidas)} vs meta ${ton1(mr.toneladasMeta)}`
+                        : "meta acumulada del período"
+                    }
+                    tone={mr.diasBajo > 0 ? "down" : "up"}
+                  />
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Indicador de productividad: mide si el trabajador mueve el mínimo para justificar la base fija. No
+                  cambia la liquidación ni el bono. La meta se configura en Financiera › Tarifas › Metas.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
           {/* A) Liquidación diaria */}
           <Card>
             <CardHeader className="pb-2">
@@ -292,6 +333,7 @@ function Resultado({
                     <TableHead>Fecha</TableHead>
                     <TableHead>Tipo</TableHead>
                     <TableHead className="text-right">Ton.</TableHead>
+                    <TableHead className="text-right">Meta</TableHead>
                     <TableHead className="text-right">Destajo</TableHead>
                     <TableHead className="text-right">Base</TableHead>
                     <TableHead className="text-right">Recargos</TableHead>
@@ -320,6 +362,19 @@ function Resultado({
                         </span>
                       </TableCell>
                       <TableCell className="text-right">{d.toneladas ? d.toneladas.toFixed(1) : ""}</TableCell>
+                      <TableCell className="text-right">
+                        {d.esDestajo && d.meta > 0 ? (
+                          <span
+                            className={
+                              d.cumpleMeta ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
+                            }
+                          >
+                            {d.cumpleMeta ? "✓" : "✗"} {ton1(d.meta)}
+                          </span>
+                        ) : (
+                          ""
+                        )}
+                      </TableCell>
                       <TableCell className="text-right text-muted-foreground">
                         {d.esDestajo ? money(d.pagoProduccion) : ""}
                       </TableCell>
