@@ -377,13 +377,18 @@ create or replace view public.pagonomina as
     -- Corte por FECHA DE RETIRO (headcount.fecha_retiro): no se liquidan los días
     -- POSTERIORES al retiro de la persona. Cierra la fuga que el filtro de vínculo
     -- de arriba deja pasar cuando el contrato en colaboradores_th sigue abierto
-    -- (fecha_fin_contrato NULL) o no se puede vincular por nombre↔cédula. Si la
-    -- persona no tiene fecha_retiro (activa), no corta nada (falla hacia pagar).
-    AND NOT EXISTS (
-          SELECT 1 FROM headcount hr
-           WHERE (TRIM(BOTH FROM hr.nombre) = TRIM(BOTH FROM pc.persona))
-             AND (hr.fecha_retiro IS NOT NULL)
-             AND (pc.fecha > hr.fecha_retiro)
+    -- (fecha_fin_contrato NULL) o no se puede vincular por nombre↔cédula.
+    -- SALVAGUARDA (falla hacia pagar): NO corta a quien esté ACTIVO en algún Head
+    -- Count (reingreso, o fecha_retiro vieja de un vínculo anterior); su vínculo
+    -- vigente manda. Solo corta a los realmente retirados (sin registro Activo).
+    AND NOT (
+          EXISTS (SELECT 1 FROM headcount hr
+                   WHERE (TRIM(BOTH FROM hr.nombre) = TRIM(BOTH FROM pc.persona))
+                     AND (hr.fecha_retiro IS NOT NULL)
+                     AND (pc.fecha > hr.fecha_retiro))
+      AND NOT EXISTS (SELECT 1 FROM headcount ha
+                       WHERE (TRIM(BOTH FROM ha.nombre) = TRIM(BOTH FROM pc.persona))
+                         AND (UPPER(TRIM(BOTH FROM COALESCE(ha.estado, ''::text))) = 'ACTIVO'))
     )
   ORDER BY persona, fecha DESC;
 

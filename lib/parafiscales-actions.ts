@@ -206,7 +206,7 @@ export async function getParafiscales(
     for (let offset = 0; ; offset += hcPage) {
       let q = admin
         .from("headcount")
-        .select("identificacion, nombre, admin, salario, idempresa, contratosiigo, fecha_retiro")
+        .select("identificacion, nombre, admin, salario, idempresa, contratosiigo, fecha_retiro, estado")
         .not("nombre", "ilike", "%prueba%") // fuera los auxiliares de PRUEBA (todos los ID): no cotizan
         .order("idempresa", { ascending: true })
         .order("identificacion", { ascending: true })
@@ -227,18 +227,25 @@ export async function getParafiscales(
         idempresa: number | null
         /** Fecha de retiro (ISO YYYY-MM-DD) o null si sigue activo. */
         fechaRetiro: string | null
+        /** true si la persona está ACTIVA en algún Head Count (reingreso): no se le corta por retiro. */
+        esActivo: boolean
       }
     >()
     for (const h of personal || []) {
       const nombre = String(h.nombre || "").trim()
       // Sin contrato SIIGO no cotiza; y los auxiliares de PRUEBA nunca entran a PILA.
       if (!nombre || !String(h.contratosiigo || "").trim() || /prueba/i.test(nombre)) continue
+      // Multi-empresa: una persona puede tener varias filas. Acumular esActivo (si
+      // está Activa en cualquiera) y conservar la fecha_retiro si alguna la trae.
+      const prev = infoPorNombre.get(nombre)
+      const esActivoFila = String(h.estado || "").trim().toUpperCase() === "ACTIVO"
       infoPorNombre.set(nombre, {
-        identificacion: String(h.identificacion || "").trim(),
-        esAdmin: h.admin === true,
-        salario: Number(h.salario) || 0,
-        idempresa: h.idempresa ?? null,
-        fechaRetiro: h.fecha_retiro ? String(h.fecha_retiro).slice(0, 10) : null,
+        identificacion: String(h.identificacion || "").trim() || prev?.identificacion || "",
+        esAdmin: h.admin === true || prev?.esAdmin || false,
+        salario: Number(h.salario) || prev?.salario || 0,
+        idempresa: h.idempresa ?? prev?.idempresa ?? null,
+        fechaRetiro: h.fecha_retiro ? String(h.fecha_retiro).slice(0, 10) : (prev?.fechaRetiro ?? null),
+        esActivo: (prev?.esActivo ?? false) || esActivoFila,
       })
     }
     if (infoPorNombre.size === 0) return { success: true, data: [], params, smlv, auxilio: auxilioMes }
@@ -277,7 +284,9 @@ export async function getParafiscales(
       const info = infoPorNombre.get(nombre)
       if (!info) continue
       const fecha = String(r.fecha || "").slice(0, 10)
-      if (info.fechaRetiro && fecha > info.fechaRetiro) continue // día posterior al retiro: no cotiza
+      // Día posterior al retiro: no cotiza. SALVAGUARDA: si la persona está Activa
+      // en algún Head Count (reingreso / fecha_retiro vieja), no se corta.
+      if (info.fechaRetiro && !info.esActivo && fecha > info.fechaRetiro) continue
       const a = acum.get(nombre) || { ibcTrab: 0, diasTrab: 0, diasVac: 0, diasIncap: 0, diasAus: 0, diasLicr: 0 }
       switch (clasificarDiaCotizacion(r.novedad_reportada)) {
         case "VAC":
