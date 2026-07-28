@@ -107,7 +107,7 @@ create or replace view public.archivoplano as
     '71-Bonificación Ajuste Toneladas-Ingreso'::text AS nombrenovedad,
     'Valor'::text AS tiponovedad,
     round(nivelacion.bono_final) AS cantidadvalor,
-    round(COALESCE(nivelacion.salario_ref, (1750905)::numeric) / (2)::numeric) AS nominaproyectada, -- quincenal por trabajador (antes fijo 875452)
+    round(COALESCE(nivelacion.salario_ref, (1750905)::numeric) / (2)::numeric)::integer AS nominaproyectada, -- quincenal por trabajador (antes fijo 875452); ::integer para no cambiar el tipo de la columna existente
     NULL::text AS fechainicio,
     NULL::text AS fechafin,
     0 AS diasnohabiles
