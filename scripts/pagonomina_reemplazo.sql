@@ -14,9 +14,11 @@
 --   - JORNADA por FECHA (Ley 2101): el HOD (valor hora ordinaria) usa la jornada
 --     vigente en la fecha del turno desde la tabla `jornada_legal`, no el año.
 --     jun-2026 → 7,3333 h (÷220); desde 16-jul-2026 → 7 h (÷210). Automático.
+--   - RECARGO DOMINICAL por FECHA (Ley 2466): usa el % vigente desde `recargo_dominical_legal`.
+--     jun-2026 → 80%; desde jul-2026 → 90%. Automático, no por año.
 -- Mismos nombres/campos/lógica de salida. REVERSIBLE (definición previa en git).
--- REQUISITO: correr antes scripts/extend_parametros_nomina.sql y
--- scripts/create_jornada_legal.sql (tabla de vigencias de la jornada).
+-- REQUISITO: correr antes scripts/extend_parametros_nomina.sql,
+-- scripts/create_jornada_legal.sql y scripts/create_recargo_dominical_legal.sql.
 -- ANTES DE CORRER: valida con scripts/pagonomina_estado_diagnostico.sql que los
 -- días que el filtro quitaría sean correctos.
 -- ============================================================================
@@ -165,7 +167,13 @@ create or replace view public.pagonomina as
             a.especialidad,
             h.salario,
             COALESCE((h.salario / (30)::numeric), (58364)::numeric) AS valor_diario_ley,
-            COALESCE(pa2.pct_recargo_dominical, (90)::numeric) AS pct_recargo_dominical,
+            -- Recargo dominical VIGENTE por fecha (Ley 2466): jun-2026 → 80%; desde
+            -- jul-2026 → 90%. Automático, no por año. Cae al param del año si no hay tabla.
+            COALESCE(
+              (SELECT rd.pct FROM recargo_dominical_legal rd WHERE rd.fecha_desde <= c.fecha
+                ORDER BY rd.fecha_desde DESC LIMIT 1),
+              pa2.pct_recargo_dominical, (90)::numeric
+            ) AS pct_recargo_dominical,
             COALESCE(p.toneladas_dia, (0)::numeric) AS toneladas,
             COALESCE(p.pago_produccion_dia, (0)::numeric) AS pago_produccion,
             ct.base_turno,
