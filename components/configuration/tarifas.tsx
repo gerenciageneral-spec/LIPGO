@@ -31,9 +31,10 @@ const TABS: TabDef[] = [
     custom: true,
     desc: (
       <>
-        <strong>Parámetros legales de nómina</strong> (SMLV, auxilio, días, jornada y % de recargos) por año.
-        De aquí se derivan los recargos/horas extra por persona: <code>HOD = (salario + auxilio) ÷ (días × jornada)</code>.
-        Es la <strong>fuente de las tarifas de turno</strong> (reemplaza la edición manual).
+        <strong>Parámetros legales de nómina</strong> (SMLV, auxilio, días, jornada y % de recargos) por{" "}
+        <strong>vigencia de fecha</strong> — permite programar los cambios de mitad de año (jornada y recargo
+        dominical rigen el 16-jul). De aquí se derivan los recargos/horas extra por persona:{" "}
+        <code>HOD = salario ÷ (días × jornada)</code>. Es la <strong>fuente de la vista pagonomina</strong>.
       </>
     ),
   },
