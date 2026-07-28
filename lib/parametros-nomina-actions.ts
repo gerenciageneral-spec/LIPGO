@@ -5,7 +5,107 @@
 // scripts/extend_parametros_nomina.sql). Usa service role, patrón de tarifas-actions.
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
-import { PARAMS_NOMINA_DEFAULTS, type ParametrosNomina } from "@/lib/parametros-nomina"
+import { PARAMS_NOMINA_DEFAULTS, type ParametrosNomina, type VigenciaParametros } from "@/lib/parametros-nomina"
+
+// ---------------------------------------------------------------------------
+// PARÁMETROS POR VIGENCIA (intervalos de fecha) — `parametros_legales_vigencia`.
+// Es la fuente que usa la vista pagonomina: para cada turno toma la fila con el
+// mayor `fecha_desde <= fecha`. Permite programar los cambios legales de mitad de
+// año (jornada 16-jul, recargo dominical 16-jul y sus derivados hedf/hef/noct.dom).
+// ---------------------------------------------------------------------------
+
+function rowToVigencia(r: any): VigenciaParametros {
+  return {
+    fechaDesde: String(r.fecha_desde).slice(0, 10),
+    smlv: Number(r.smlv) || 0,
+    auxilio: Number(r.auxilio_transporte) || 0,
+    diasCalendario: r.dias_calendario != null ? Number(r.dias_calendario) : PARAMS_NOMINA_DEFAULTS.diasCalendario,
+    jornadaHoras: r.jornada_horas != null ? Number(r.jornada_horas) : PARAMS_NOMINA_DEFAULTS.jornadaHoras,
+    pctHed: r.pct_hed != null ? Number(r.pct_hed) : PARAMS_NOMINA_DEFAULTS.pctHed,
+    pctHen: r.pct_hen != null ? Number(r.pct_hen) : PARAMS_NOMINA_DEFAULTS.pctHen,
+    pctHn: r.pct_hn != null ? Number(r.pct_hn) : PARAMS_NOMINA_DEFAULTS.pctHn,
+    pctRecargoDominical:
+      r.pct_recargo_dominical != null ? Number(r.pct_recargo_dominical) : PARAMS_NOMINA_DEFAULTS.pctRecargoDominical,
+    pctHedf: r.pct_hedf != null ? Number(r.pct_hedf) : PARAMS_NOMINA_DEFAULTS.pctHedf,
+    pctHef: r.pct_hef != null ? Number(r.pct_hef) : PARAMS_NOMINA_DEFAULTS.pctHef,
+    pctRecargoNocturnoDominical:
+      r.pct_recargo_nocturno_dominical != null
+        ? Number(r.pct_recargo_nocturno_dominical)
+        : PARAMS_NOMINA_DEFAULTS.pctRecargoNocturnoDominical,
+  }
+}
+
+/** Lista todas las vigencias, ordenadas por fecha_desde (más reciente primero). */
+export async function getVigenciasParametros(): Promise<{
+  success: boolean
+  data?: VigenciaParametros[]
+  message?: string
+}> {
+  try {
+    const admin: any = await getSupabaseAdmin()
+    const { data, error } = await admin
+      .from("parametros_legales_vigencia")
+      .select("*")
+      .order("fecha_desde", { ascending: false })
+    if (error) return { success: false, message: error.message }
+    return { success: true, data: (data || []).map(rowToVigencia) }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al leer las vigencias." }
+  }
+}
+
+/**
+ * Guarda (upsert por fecha_desde) una vigencia. Además sincroniza SMLV/auxilio (y el
+ * resto) a `parametros_legales_anio` del AÑO de esa fecha, para que los consumidores
+ * que siguen leyendo por año (parafiscales, ausentismos, liquidaciones) queden al día.
+ */
+export async function guardarVigenciaParametros(v: VigenciaParametros): Promise<{ success: boolean; message?: string }> {
+  if (!v?.fechaDesde || !/^\d{4}-\d{2}-\d{2}$/.test(v.fechaDesde))
+    return { success: false, message: "Fecha de vigencia inválida (use AAAA-MM-DD)." }
+  try {
+    const admin: any = await getSupabaseAdmin()
+    const payload = {
+      smlv: v.smlv,
+      auxilio_transporte: v.auxilio,
+      dias_calendario: v.diasCalendario,
+      jornada_horas: v.jornadaHoras,
+      pct_hed: v.pctHed,
+      pct_hen: v.pctHen,
+      pct_hn: v.pctHn,
+      pct_recargo_dominical: v.pctRecargoDominical,
+      pct_hedf: v.pctHedf,
+      pct_hef: v.pctHef,
+      pct_recargo_nocturno_dominical: v.pctRecargoNocturnoDominical,
+      actualizado_at: new Date().toISOString(),
+    }
+    const { error } = await admin
+      .from("parametros_legales_vigencia")
+      .upsert({ fecha_desde: v.fechaDesde, ...payload }, { onConflict: "fecha_desde" })
+    if (error) return { success: false, message: error.message }
+    // Sincronizar el año (no bloquea si falla; parametros_legales_anio es solo para los legados).
+    const anio = Number(v.fechaDesde.slice(0, 4))
+    try {
+      await admin.from("parametros_legales_anio").upsert({ anio, ...payload }, { onConflict: "anio" })
+    } catch {
+      /* legacy sync best-effort */
+    }
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al guardar la vigencia." }
+  }
+}
+
+/** Elimina una vigencia por su fecha_desde. */
+export async function eliminarVigenciaParametros(fechaDesde: string): Promise<{ success: boolean; message?: string }> {
+  try {
+    const admin: any = await getSupabaseAdmin()
+    const { error } = await admin.from("parametros_legales_vigencia").delete().eq("fecha_desde", fechaDesde)
+    if (error) return { success: false, message: error.message }
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al eliminar la vigencia." }
+  }
+}
 
 // Mapea la fila cruda de la tabla a ParametrosNomina, aplicando defaults si una
 // columna viniera nula (p.ej. filas viejas antes de correr la migración).

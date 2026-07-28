@@ -11,14 +11,13 @@
 --     posteriores al retiro (cierra la fuga que dejaba el vínculo con contrato
 --     abierto), salvo que la persona esté ACTIVA (reingreso). Auxiliares de
 --     PRUEBA excluidos en todos los ID.
---   - JORNADA por FECHA (Ley 2101): el HOD (valor hora ordinaria) usa la jornada
---     vigente en la fecha del turno desde la tabla `jornada_legal`, no el año.
---     jun-2026 → 7,3333 h (÷220); desde 16-jul-2026 → 7 h (÷210). Automático.
---   - RECARGO DOMINICAL por FECHA (Ley 2466): usa el % vigente desde `recargo_dominical_legal`.
---     jun-2026 → 80%; desde jul-2026 → 90%. Automático, no por año.
+--   - PARÁMETROS LEGALES por INTERVALO DE FECHA: jornada, recargo dominical y los pct
+--     de hora extra (incl. las dominicales hedf/hef y el recargo nocturno dominical)
+--     salen de `parametros_legales_vigencia` según la fecha del turno — no por año.
+--     jun-2026 → 7,3333 h/80%/hedf 2,05; desde 16-jul-2026 → 7 h/90%/hedf 2,15. Automático.
+--     Unifica y reemplaza jornada_legal + recargo_dominical_legal.
 -- Mismos nombres/campos/lógica de salida. REVERSIBLE (definición previa en git).
--- REQUISITO: correr antes scripts/extend_parametros_nomina.sql,
--- scripts/create_jornada_legal.sql y scripts/create_recargo_dominical_legal.sql.
+-- REQUISITO: correr antes scripts/create_parametros_legales_vigencia.sql.
 -- ANTES DE CORRER: valida con scripts/pagonomina_estado_diagnostico.sql que los
 -- días que el filtro quitaría sean correctos.
 -- ============================================================================
@@ -121,21 +120,18 @@ create or replace view public.pagonomina as
            FROM (((datos_asistencia a
              JOIN tarifasturnos tt ON ((((a.fecha >= tt.fechaini) AND (a.fecha <= tt.fechafin)) AND (TRIM(BOTH FROM a.puesto) = TRIM(BOTH FROM tt.puesto)))))
              LEFT JOIN headcount h2 ON ((TRIM(BOTH FROM h2.nombre) = a.persona)))
-             LEFT JOIN parametros_legales_anio pa ON ((pa.anio = (EXTRACT(year FROM a.fecha))::integer)))
+             -- Parámetros legales VIGENTES en la fecha del turno (una sola fuente por
+             -- intervalos): jornada, recargo dominical y los pct de hora extra ya vienen
+             -- correctos por fecha (jun-2026: 7,3333/80%/hedf 105; desde 16-jul: 7/90%/hedf 115).
+             LEFT JOIN LATERAL (SELECT * FROM parametros_legales_vigencia pv
+                                 WHERE (pv.fecha_desde <= a.fecha)
+                                 ORDER BY pv.fecha_desde DESC LIMIT 1) pa ON (true))
              CROSS JOIN LATERAL (
                  SELECT (s.base_pers / NULLIF(s.dias_p, (0)::numeric)) AS valor_dia,
                         (s.base_pers / NULLIF((s.dias_p * s.jornada_p), (0)::numeric)) AS hod
                    FROM ( SELECT (COALESCE(h2.salario, pa.smlv))::numeric AS base_pers,  -- base = SALARIO (auxilio NO entra en la base de recargos)
                                  COALESCE(pa.dias_calendario, (30)::numeric) AS dias_p,
-                                 -- Jornada VIGENTE en la fecha del turno (Ley 2101): la hora ordinaria
-                                 -- cambia de norma automáticamente. jun-2026 → 7,3333 (÷220); desde
-                                 -- 16-jul-2026 → 7 (÷210). Cae a jornada_horas del año si no hay tabla.
-                                 COALESCE(
-                                   (SELECT jl.horas_dia FROM jornada_legal jl
-                                     WHERE jl.fecha_desde <= a.fecha
-                                     ORDER BY jl.fecha_desde DESC LIMIT 1),
-                                   pa.jornada_horas, (7)::numeric
-                                 ) AS jornada_p
+                                 COALESCE(pa.jornada_horas, (7)::numeric) AS jornada_p  -- jornada vigente por fecha
                         ) s
              ) calc
         ), rango_fechas AS (
@@ -167,13 +163,9 @@ create or replace view public.pagonomina as
             a.especialidad,
             h.salario,
             COALESCE((h.salario / (30)::numeric), (58364)::numeric) AS valor_diario_ley,
-            -- Recargo dominical VIGENTE por fecha (Ley 2466): jun-2026 → 80%; desde
-            -- jul-2026 → 90%. Automático, no por año. Cae al param del año si no hay tabla.
-            COALESCE(
-              (SELECT rd.pct FROM recargo_dominical_legal rd WHERE rd.fecha_desde <= c.fecha
-                ORDER BY rd.fecha_desde DESC LIMIT 1),
-              pa2.pct_recargo_dominical, (90)::numeric
-            ) AS pct_recargo_dominical,
+            -- Recargo dominical VIGENTE por fecha (viene de la vigencia pa2: 80% hasta
+            -- 15-jul-2026, 90% desde 16-jul). Automático por intervalo.
+            COALESCE(pa2.pct_recargo_dominical, (90)::numeric) AS pct_recargo_dominical,
             COALESCE(p.toneladas_dia, (0)::numeric) AS toneladas,
             COALESCE(p.pago_produccion_dia, (0)::numeric) AS pago_produccion,
             ct.base_turno,
@@ -217,7 +209,9 @@ create or replace view public.pagonomina as
              LEFT JOIN calculo_turnos ct ON (((c.fecha = ct.fecha) AND (c.persona = ct.persona))))
              LEFT JOIN festivos f ON ((c.fecha = f.fecha)))
              LEFT JOIN headcount h ON ((h.nombre = c.persona)))
-             LEFT JOIN parametros_legales_anio pa2 ON ((pa2.anio = (EXTRACT(year FROM c.fecha))::integer)))
+             LEFT JOIN LATERAL (SELECT * FROM parametros_legales_vigencia pv
+                                 WHERE (pv.fecha_desde <= c.fecha)
+                                 ORDER BY pv.fecha_desde DESC LIMIT 1) pa2 ON (true))
         ), calculo_nomina_base AS (
          SELECT consolidado_completo.fecha,
             consolidado_completo.persona,

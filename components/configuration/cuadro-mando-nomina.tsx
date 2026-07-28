@@ -1,10 +1,11 @@
 "use client"
 
-// Cuadro de mando de nómina: panel de parámetros legales por año (SMLV, auxilio,
-// días, jornada y % de recargos) con PREVIEW en vivo del valor día, la hora
-// ordinaria (HOD) y el $/hora de cada recargo. Persiste en parametros_legales_anio
-// (fuente única, compartida con SST). El cálculo real por persona vive en la vista
-// pagonomina (Paso 2); aquí el salario del preview es el SMLV del año.
+// Cuadro de mando de nómina: parámetros legales por INTERVALO DE FECHA (vigencias).
+// Cada vigencia (SMLV, auxilio, días, jornada y % de recargos) rige desde su
+// `fecha_desde` hasta la siguiente. La vista pagonomina toma, para cada turno, la
+// vigencia con el mayor fecha_desde ≤ fecha — así los cambios legales de mitad de año
+// (jornada 16-jul, recargo dominical 16-jul y sus derivados hedf/hef) se aplican solos.
+// Fuente: parametros_legales_vigencia (Paso SQL). El preview usa el SMLV de la vigencia.
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useToast } from "@/hooks/use-toast"
@@ -12,18 +13,28 @@ import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
-import { Info, Loader2, Save } from "lucide-react"
-import { getParametrosNomina, guardarParametrosNomina } from "@/lib/parametros-nomina-actions"
-import { calcularRecargos, PARAMS_NOMINA_DEFAULTS, type ParametrosNomina } from "@/lib/parametros-nomina"
+import { Info, Loader2, Save, Plus, Trash2, CalendarClock } from "lucide-react"
+import {
+  getVigenciasParametros,
+  guardarVigenciaParametros,
+  eliminarVigenciaParametros,
+} from "@/lib/parametros-nomina-actions"
+import {
+  calcularRecargos,
+  PARAMS_NOMINA_DEFAULTS,
+  type ParametrosLegalesBase,
+  type VigenciaParametros,
+} from "@/lib/parametros-nomina"
 
 const money = (n: number) =>
   "$" + (Number(n) || 0).toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const num = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { maximumFractionDigits: 0 })
+const fmtFecha = (f: string) =>
+  new Date(f + "T00:00:00").toLocaleDateString("es-CO", { day: "2-digit", month: "short", year: "numeric" })
 
-// Filas de recargo: cómo se muestra el factor y de dónde sale el $/hora.
 type Recargos = ReturnType<typeof calcularRecargos>
 const RECARGO_ROWS: {
-  campo: keyof ParametrosNomina
+  campo: keyof ParametrosLegalesBase
   label: string
   tipo: "extra" | "recargo" | "dia"
   col: string
@@ -32,8 +43,8 @@ const RECARGO_ROWS: {
   { campo: "pctHed", label: "Hora extra diurna (HED)", tipo: "extra", col: "hed", val: (r) => r.hed },
   { campo: "pctHen", label: "Hora extra nocturna (HEN)", tipo: "extra", col: "hen", val: (r) => r.hen },
   { campo: "pctHn", label: "Recargo nocturno (HN)", tipo: "recargo", col: "hn", val: (r) => r.hn },
-  { campo: "pctHedf", label: "H.E. diurna dom/festiva (HEDDF)", tipo: "extra", col: "hedf", val: (r) => r.hedf },
-  { campo: "pctHef", label: "H.E. nocturna dom/festiva (HENDF)", tipo: "extra", col: "hef", val: (r) => r.hef },
+  { campo: "pctHedf", label: "H.E. diurna dom/festiva (HEDF)", tipo: "extra", col: "hedf", val: (r) => r.hedf },
+  { campo: "pctHef", label: "H.E. nocturna dom/festiva (HEF)", tipo: "extra", col: "hef", val: (r) => r.hef },
   {
     campo: "pctRecargoDominical",
     label: "Recargo dominical/festivo",
@@ -57,11 +68,13 @@ function factorTxt(tipo: "extra" | "recargo" | "dia", pct: number): string {
   return `×${f.toFixed(2)}`
 }
 
-const AÑO_ACTUAL = 2026
-const AÑOS = [2025, 2026, 2027]
+const hoyISO = () => {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+}
 
-const defaultParams = (anio: number): ParametrosNomina => ({
-  anio,
+const nuevaVigencia = (fechaDesde: string): VigenciaParametros => ({
+  fechaDesde,
   smlv: 0,
   auxilio: 0,
   ...PARAMS_NOMINA_DEFAULTS,
@@ -69,78 +82,162 @@ const defaultParams = (anio: number): ParametrosNomina => ({
 
 export function CuadroMandoNomina() {
   const { toast } = useToast()
-  const [anio, setAnio] = useState(AÑO_ACTUAL)
-  const [params, setParams] = useState<ParametrosNomina>(() => defaultParams(AÑO_ACTUAL))
+  const [vigencias, setVigencias] = useState<VigenciaParametros[]>([])
+  const [sel, setSel] = useState<string | null>(null) // fechaDesde seleccionada
+  const [params, setParams] = useState<VigenciaParametros>(() => nuevaVigencia(hoyISO()))
+  const [esNueva, setEsNueva] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
-  const cargar = useCallback(async () => {
-    setLoading(true)
-    const r = await getParametrosNomina(anio)
-    if (r.success && r.data) setParams(r.data)
-    else {
-      setParams(defaultParams(anio))
-      if (!r.success) toast({ title: "No se pudieron cargar los parámetros", description: r.message })
-    }
-    setLoading(false)
-  }, [anio, toast])
+  const cargar = useCallback(
+    async (seleccionar?: string) => {
+      setLoading(true)
+      const r = await getVigenciasParametros()
+      if (r.success && r.data) {
+        setVigencias(r.data)
+        const pick = seleccionar ?? sel ?? r.data[0]?.fechaDesde ?? null
+        const found = r.data.find((v) => v.fechaDesde === pick)
+        if (found) {
+          setSel(found.fechaDesde)
+          setParams(found)
+          setEsNueva(false)
+        } else if (r.data.length === 0) {
+          setSel(null)
+        }
+      } else {
+        toast({ title: "No se pudieron cargar las vigencias", description: r.message, variant: "destructive" })
+      }
+      setLoading(false)
+    },
+    [sel, toast],
+  )
 
   useEffect(() => {
-    cargar()
-  }, [cargar])
+    void cargar()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
-  const set = <K extends keyof ParametrosNomina>(campo: K, value: number) =>
+  const seleccionar = (v: VigenciaParametros) => {
+    setSel(v.fechaDesde)
+    setParams(v)
+    setEsNueva(false)
+  }
+
+  const nueva = () => {
+    const v = nuevaVigencia(hoyISO())
+    setSel(null)
+    setParams(v)
+    setEsNueva(true)
+  }
+
+  const set = <K extends keyof VigenciaParametros>(campo: K, value: VigenciaParametros[K]) =>
     setParams((p) => ({ ...p, [campo]: value }))
 
   const calc = useMemo(() => calcularRecargos(params.smlv, params.auxilio, params), [params])
   const divisorMensual = (Number(params.diasCalendario) || 0) * (Number(params.jornadaHoras) || 0)
 
   const guardar = async () => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(params.fechaDesde)) {
+      toast({ title: "Fecha inválida", description: "Use el formato AAAA-MM-DD.", variant: "destructive" })
+      return
+    }
     setSaving(true)
-    const r = await guardarParametrosNomina({ ...params, anio })
+    const r = await guardarVigenciaParametros(params)
     setSaving(false)
-    if (r.success) toast({ title: "Parámetros guardados", description: `Año ${anio} actualizado.` })
-    else toast({ title: "No se pudo guardar", description: r.message, variant: "destructive" })
+    if (r.success) {
+      toast({ title: "Vigencia guardada", description: `Rige desde ${fmtFecha(params.fechaDesde)}.` })
+      await cargar(params.fechaDesde)
+    } else toast({ title: "No se pudo guardar", description: r.message, variant: "destructive" })
+  }
+
+  const eliminar = async () => {
+    if (esNueva || !sel) return
+    if (!confirm(`¿Eliminar la vigencia que rige desde ${fmtFecha(sel)}?`)) return
+    setSaving(true)
+    const r = await eliminarVigenciaParametros(sel)
+    setSaving(false)
+    if (r.success) {
+      toast({ title: "Vigencia eliminada" })
+      setSel(null)
+      await cargar()
+    } else toast({ title: "No se pudo eliminar", description: r.message, variant: "destructive" })
   }
 
   return (
     <div className="space-y-4">
-      {/* Encabezado: año + guardar */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <Label className="text-sm text-muted-foreground">Año</Label>
-          <div className="flex gap-1">
-            {AÑOS.map((a) => (
-              <Button
-                key={a}
-                size="sm"
-                variant={a === anio ? "default" : "outline"}
-                onClick={() => setAnio(a)}
-              >
-                {a}
-              </Button>
-            ))}
+      {/* Selector de vigencias */}
+      <Card className="space-y-3 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-sm font-semibold text-card-foreground">
+            <CalendarClock className="h-4 w-4 text-primary" /> Vigencias de parámetros legales
+            {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
           </div>
-          {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+          <Button size="sm" variant="outline" onClick={nueva}>
+            <Plus className="mr-2 h-4 w-4" /> Nueva vigencia
+          </Button>
         </div>
-        <Button onClick={guardar} disabled={saving || loading} size="sm">
-          {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-          Guardar parámetros
-        </Button>
-      </div>
+        <div className="flex flex-wrap gap-1.5">
+          {vigencias.map((v) => (
+            <Button
+              key={v.fechaDesde}
+              size="sm"
+              variant={!esNueva && v.fechaDesde === sel ? "default" : "outline"}
+              onClick={() => seleccionar(v)}
+              className="tabular-nums"
+            >
+              {fmtFecha(v.fechaDesde)}
+              <span className="ml-1.5 text-[10px] opacity-70">
+                {num(v.jornadaHoras)}h · dom {num(v.pctRecargoDominical)}%
+              </span>
+            </Button>
+          ))}
+          {esNueva && (
+            <span className="inline-flex items-center rounded-md bg-primary/10 px-2 text-xs text-primary">
+              Nueva vigencia (sin guardar)
+            </span>
+          )}
+          {!vigencias.length && !loading && (
+            <span className="text-xs text-muted-foreground">No hay vigencias. Crea la primera con “Nueva vigencia”.</span>
+          )}
+        </div>
+        <div className="flex flex-wrap items-end gap-3 border-t border-border pt-3">
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Rige desde (fecha)</Label>
+            <Input
+              type="date"
+              className="w-44"
+              value={params.fechaDesde}
+              disabled={!esNueva}
+              onChange={(e) => set("fechaDesde", e.target.value)}
+            />
+          </div>
+          <div className="flex gap-2">
+            <Button onClick={guardar} disabled={saving || loading} size="sm">
+              {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+              Guardar vigencia
+            </Button>
+            {!esNueva && sel && (
+              <Button onClick={eliminar} disabled={saving || loading} size="sm" variant="destructive">
+                <Trash2 className="mr-2 h-4 w-4" /> Eliminar
+              </Button>
+            )}
+          </div>
+          <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+            Cada vigencia rige desde su fecha hasta la siguiente. Ej.: una desde el 1-ene (nuevo SMLV) y otra
+            desde el 16-jul (nueva jornada/recargo).
+          </p>
+        </div>
+      </Card>
 
       <div className="grid gap-4 lg:grid-cols-2">
         {/* 1) Base salarial */}
         <Card className="space-y-3 p-4">
-          <h3 className="text-sm font-semibold text-card-foreground">1. Base salarial del año</h3>
+          <h3 className="text-sm font-semibold text-card-foreground">1. Base salarial</h3>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">Salario mínimo (SMLV)</Label>
-              <Input
-                type="number"
-                value={params.smlv || ""}
-                onChange={(e) => set("smlv", Number(e.target.value))}
-              />
+              <Input type="number" value={params.smlv || ""} onChange={(e) => set("smlv", Number(e.target.value))} />
             </div>
             <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">Auxilio de transporte</Label>
@@ -163,9 +260,9 @@ export function CuadroMandoNomina() {
             <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
             <p>
               La base de recargos/horas extra es el <strong>salario</strong>; el auxilio de transporte{" "}
-              <strong>no entra en la base</strong> (se paga aparte). En producción, para cada persona se
-              usa <strong>su salario de contrato</strong> (<code>headcount.salario</code>); el SMLV de
-              arriba es el mínimo legal (salario de prueba del preview y fallback cuando no hay salario).
+              <strong>no entra en la base</strong>. En producción, para cada persona se usa{" "}
+              <strong>su salario de contrato</strong> (<code>headcount.salario</code>); el SMLV es el mínimo legal
+              (salario de prueba del preview y fallback).
             </p>
           </div>
         </Card>
@@ -186,6 +283,7 @@ export function CuadroMandoNomina() {
               <Label className="text-xs text-muted-foreground">Jornada (horas/día)</Label>
               <Input
                 type="number"
+                step="0.0001"
                 value={params.jornadaHoras || ""}
                 onChange={(e) => set("jornadaHoras", Number(e.target.value))}
               />
@@ -193,7 +291,7 @@ export function CuadroMandoNomina() {
           </div>
           <div className="flex items-baseline justify-between rounded-md bg-muted/50 px-3 py-2">
             <span className="text-xs text-muted-foreground">
-              Divisor mensual = {num(params.diasCalendario)} × {num(params.jornadaHoras)}
+              Divisor mensual = {num(params.diasCalendario)} × {params.jornadaHoras}
             </span>
             <span className="text-lg font-bold tabular-nums text-foreground">{num(divisorMensual)} h/mes</span>
           </div>
@@ -255,10 +353,9 @@ export function CuadroMandoNomina() {
         <div className="flex items-start gap-2 border-t border-border bg-muted/40 px-4 py-3 text-xs text-muted-foreground">
           <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
           <p>
-            <strong>hed/hen/hedf/hef</strong> son la hora completa (100% + recargo);{" "}
-            <strong>hn</strong> es solo el recargo. El <strong>recargo dominical</strong> se aplica sobre el
-            valor día (hoy la vista usa 80%; con estos parámetros pasa a {num(params.pctRecargoDominical)}%). El{" "}
-            <strong>recargo nocturno dominical</strong> es informativo (sin columna en tarifasturnos).
+            <strong>hedf/hef</strong> (hora extra dominical) y el <strong>recargo nocturno dominical</strong>{" "}
+            incluyen el recargo dominical, así que al cambiar el <strong>recargo dominical/festivo</strong>{" "}
+            deben ajustarse: hedf = 25 + dominical, hef = 75 + dominical, noct. dom = 35 + dominical.
           </p>
         </div>
       </Card>

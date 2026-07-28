@@ -11,12 +11,13 @@
 //   - hn (recargo nocturno) guarda SOLO EL RECARGO = HOD × (%/100)
 //   - recargo dominical se aplica sobre el VALOR DÍA (no sobre la HOD)
 
-export interface ParametrosNomina {
-  anio: number
-  smlv: number // salario mínimo legal mensual vigente del año (fallback / salario de prueba)
-  auxilio: number // auxilio de transporte mensual del año
+// Campos comunes a un juego de parámetros legales (sin la clave). Sirven tanto para
+// el modelo por AÑO (ParametrosNomina) como por VIGENCIA de fecha (VigenciaParametros).
+export interface ParametrosLegalesBase {
+  smlv: number // salario mínimo legal mensual vigente (fallback / salario de prueba)
+  auxilio: number // auxilio de transporte mensual
   diasCalendario: number // divisor del valor día (30)
-  jornadaHoras: number // horas/día de la jornada legal (7); divisor mensual = dias × jornada (210)
+  jornadaHoras: number // horas/día de la jornada legal; divisor mensual = dias × jornada
   pctHed: number
   pctHen: number
   pctHn: number
@@ -26,7 +27,16 @@ export interface ParametrosNomina {
   pctRecargoNocturnoDominical: number
 }
 
-// Defaults de ley (2026). El % dominical sube a 100 en 2027.
+export interface ParametrosNomina extends ParametrosLegalesBase {
+  anio: number
+}
+
+/** Parámetros legales VIGENTES desde una fecha (intervalos). Clave = fechaDesde (ISO). */
+export interface VigenciaParametros extends ParametrosLegalesBase {
+  fechaDesde: string // 'YYYY-MM-DD'
+}
+
+// Defaults de ley (post 16-jul-2026: jornada 7h, recargo 90%). El % dominical sube a 100 en 2027.
 export const PARAMS_NOMINA_DEFAULTS: Omit<ParametrosNomina, "anio" | "smlv" | "auxilio"> = {
   diasCalendario: 30,
   jornadaHoras: 7,
@@ -59,7 +69,7 @@ export interface RecargosCalculados {
  * el ingreso total informativo. En el preview del cuadro, `salario` = SMLV del año;
  * en producción, `salario` = headcount.salario (contrato) de cada persona.
  */
-export function calcularRecargos(salario: number, aux: number, p: ParametrosNomina): RecargosCalculados {
+export function calcularRecargos(salario: number, aux: number, p: ParametrosLegalesBase): RecargosCalculados {
   const base = Number(salario) || 0 // base de recargos = salario (sin auxilio)
   const ingresoTotal = base + (Number(aux) || 0)
   const dias = Number(p.diasCalendario) || 0
