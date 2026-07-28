@@ -1,8 +1,14 @@
 -- ============================================================================
 -- DESPLIEGUE — reemplazo de la vista archivoplano
---   Excluye a los trabajadores RETIRADOS (headcount.estado = 'Inactivo') del
---   archivo plano de nómina (SIIGO). Su nómina pendiente se maneja en el
---   submódulo Liquidaciones. Mismos nombres/campos/lógica de salida.
+--   VISTA EN VIVO sobre `pagonomina`: cualquier ajuste (horas, jornada, novedades)
+--   se refleja al instante en el archivo plano de nómina (SIIGO). Misma fuente de
+--   verdad que el IBC de Parafiscales.
+--   · Excluye a los trabajadores RETIRADOS (headcount.estado = 'Inactivo'); su
+--     nómina pendiente se maneja en el submódulo Liquidaciones.
+--   · JORNADA por FECHA (Ley 2101): las horas del recargo/dominical usan la jornada
+--     vigente en la fecha (tabla `jornada_legal`), no un 7,33 fijo. jun-2026 → 7,3333;
+--     desde 16-jul-2026 → 7. Requiere scripts/create_jornada_legal.sql.
+--   · nominaproyectada = salario quincenal por trabajador (antes fijo 875452).
 --   REVERSIBLE: definición previa en git (scripts/vistas_financieras.sql).
 -- ============================================================================
 
@@ -15,6 +21,14 @@ create or replace view public.archivoplano as
             h.contratosiigo,
             h.salario,
             COALESCE((h.salario / (30)::numeric), (58643)::numeric) AS base_diaria,
+            -- Jornada VIGENTE por fecha (Ley 2101): las horas del recargo/dominical
+            -- que se envían a SIIGO se toman de aquí, no de un 7,33 fijo. jun-2026 →
+            -- 7,3333; desde 16-jul-2026 → 7. Se actualiza en línea con jornada_legal.
+            COALESCE(
+              (SELECT jl.horas_dia FROM jornada_legal jl WHERE jl.fecha_desde <= p.fecha
+                ORDER BY jl.fecha_desde DESC LIMIT 1),
+              (7.33)::numeric
+            ) AS jornada_dia,
             p.total_liquidado_dia,
             p.novedad_reportada,
             COALESCE(p.bonif_prestacional, (0)::numeric) AS bonif_prestacional,
@@ -59,6 +73,7 @@ create or replace view public.archivoplano as
             base_datos.idempresa,
             base_datos.identificacion,
             base_datos.contratosiigo,
+            max(base_datos.salario) AS salario_ref,
             sum((base_datos.bonif_prestacional + base_datos.bonif_no_prestacional)) AS total_bono_nomina,
             sum(COALESCE(base_datos.hed, (0)::numeric)) AS total_hed_moneda,
             sum(COALESCE(base_datos.horas_hed, (0)::numeric)) AS total_hed_horas,
@@ -73,6 +88,7 @@ create or replace view public.archivoplano as
             agrupado_quincena.idempresa,
             agrupado_quincena.identificacion,
             agrupado_quincena.contratosiigo,
+            agrupado_quincena.salario_ref,
             agrupado_quincena.total_bono_nomina,
             agrupado_quincena.total_hed_moneda,
             agrupado_quincena.total_hed_horas,
@@ -94,7 +110,7 @@ create or replace view public.archivoplano as
     '71-Bonificación Ajuste Toneladas-Ingreso'::text AS nombrenovedad,
     'Valor'::text AS tiponovedad,
     round(nivelacion.bono_final) AS cantidadvalor,
-    875452 AS nominaproyectada,
+    round(COALESCE(nivelacion.salario_ref, (1750905)::numeric) / (2)::numeric) AS nominaproyectada, -- quincenal por trabajador (antes fijo 875452)
     NULL::text AS fechainicio,
     NULL::text AS fechafin,
     0 AS diasnohabiles
@@ -202,7 +218,7 @@ UNION ALL
     base_datos.contratosiigo AS contratoempleado,
     '08- Hora extra recargo dominical o festivo- Ingreso'::text AS nombrenovedad,
     'Horas'::text AS tiponovedad,
-    ((count(*))::numeric * 7.33) AS cantidadvalor,
+    sum(base_datos.jornada_dia) AS cantidadvalor,  -- horas = jornada vigente por fecha (Ley 2101), no 7,33 fijo
     0 AS nominaproyectada,
     NULL::text AS fechainicio,
     NULL::text AS fechafin,
@@ -218,7 +234,7 @@ UNION ALL
     base_datos.contratosiigo AS contratoempleado,
     '25- Recargo dominical o festivo- Ingreso'::text AS nombrenovedad,
     'Horas'::text AS tiponovedad,
-    ((count(*))::numeric * 7.33) AS cantidadvalor,
+    sum(base_datos.jornada_dia) AS cantidadvalor,  -- horas = jornada vigente por fecha (Ley 2101), no 7,33 fijo
     0 AS nominaproyectada,
     NULL::text AS fechainicio,
     NULL::text AS fechafin,
