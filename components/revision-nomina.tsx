@@ -16,6 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   AlertTriangle,
   Check,
@@ -29,8 +30,10 @@ import {
 import {
   getColaboradores,
   getRevisionNomina,
+  getHcPorDia,
   type ColaboradorRef,
   type RevisionNominaData,
+  type HcDiaProyecto,
 } from "@/lib/revision-nomina-actions"
 
 const MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
@@ -111,6 +114,13 @@ export default function RevisionNomina() {
         </div>
       </div>
 
+      <Tabs defaultValue="colaborador" className="w-full">
+        <TabsList>
+          <TabsTrigger value="colaborador">Por colaborador</TabsTrigger>
+          <TabsTrigger value="hc">HC por día (por proyecto)</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="colaborador" className="mt-4 space-y-4">
       {/* Selectores + botón */}
       <Card>
         <CardContent className="flex flex-wrap items-end gap-3 pt-6">
@@ -211,7 +221,13 @@ export default function RevisionNomina() {
         </CardContent>
       </Card>
 
-      {data && <Resultado data={data} tipoBadge={tipoBadge} />}
+          {data && <Resultado data={data} tipoBadge={tipoBadge} />}
+        </TabsContent>
+
+        <TabsContent value="hc" className="mt-4">
+          <HcPorDia />
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }
@@ -312,6 +328,20 @@ function Resultado({
                     }
                     tone={mr.diasBajo > 0 ? "down" : "up"}
                   />
+                  <Kpi
+                    label="HC real promedio/día"
+                    value={ton1(mr.hcPromedioReal)}
+                    hint={`planeado (config): ${mr.hcConfigurado || "—"} · el HC varía según el volumen`}
+                    tone={
+                      mr.hcConfigurado > 0
+                        ? mr.hcPromedioReal > mr.hcConfigurado
+                          ? "up"
+                          : mr.hcPromedioReal < mr.hcConfigurado
+                            ? "down"
+                            : undefined
+                        : undefined
+                    }
+                  />
                 </div>
                 <p className="mt-2 text-xs text-muted-foreground">
                   Indicador de productividad: mide si el trabajador mueve el mínimo para justificar la base fija. No
@@ -334,6 +364,7 @@ function Resultado({
                     <TableHead>Tipo</TableHead>
                     <TableHead className="text-right">Ton.</TableHead>
                     <TableHead className="text-right">Meta</TableHead>
+                    <TableHead className="text-right">HC día</TableHead>
                     <TableHead className="text-right">Destajo</TableHead>
                     <TableHead className="text-right">Base</TableHead>
                     <TableHead className="text-right">Recargos</TableHead>
@@ -374,6 +405,9 @@ function Resultado({
                         ) : (
                           ""
                         )}
+                      </TableCell>
+                      <TableCell className="text-right text-muted-foreground">
+                        {d.esDestajo && d.hcDia > 0 ? d.hcDia : ""}
                       </TableCell>
                       <TableCell className="text-right text-muted-foreground">
                         {d.esDestajo ? money(d.pagoProduccion) : ""}
@@ -523,6 +557,134 @@ function Fila({
       >
         {value}
       </span>
+    </div>
+  )
+}
+
+// Vista HC por día por proyecto (ID): base real de trabajadores por día, ratificada
+// por asistencia (pagonomina), vs el HC planeado y la meta configurados.
+function HcPorDia() {
+  const { toast } = useToast()
+  const hoy = new Date()
+  const [anio, setAnio] = useState(hoy.getFullYear())
+  const [mes, setMes] = useState(hoy.getMonth() + 1)
+  const [rows, setRows] = useState<HcDiaProyecto[]>([])
+  const [loading, setLoading] = useState(false)
+  const [cargado, setCargado] = useState(false)
+  const t1 = (x: number) => (Number(x) || 0).toLocaleString("es-CO", { maximumFractionDigits: 1 })
+
+  const consultar = useCallback(async () => {
+    setLoading(true)
+    const r = await getHcPorDia(anio, mes)
+    setLoading(false)
+    setCargado(true)
+    if (r.success) setRows(r.data)
+    else toast({ title: "No se pudo cargar el HC por día", description: r.message, variant: "destructive" })
+  }, [anio, mes, toast])
+
+  const anios = [hoy.getFullYear() + 1, hoy.getFullYear(), hoy.getFullYear() - 1, hoy.getFullYear() - 2]
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardContent className="flex flex-wrap items-end gap-3 pt-6">
+          <div className="space-y-1">
+            <Label>Año</Label>
+            <Select value={String(anio)} onValueChange={(v) => setAnio(Number(v))}>
+              <SelectTrigger className="w-[90px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {anios.map((y) => (
+                  <SelectItem key={y} value={String(y)}>
+                    {y}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label>Mes</Label>
+            <Select value={String(mes)} onValueChange={(v) => setMes(Number(v))}>
+              <SelectTrigger className="w-[110px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {MESES.map((m, i) => (
+                  <SelectItem key={m} value={String(i + 1)}>
+                    {m}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <Button onClick={consultar} disabled={loading} className="min-w-[130px]">
+            {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Users className="mr-2 h-4 w-4" />}
+            Consultar
+          </Button>
+        </CardContent>
+      </Card>
+
+      {cargado && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">HC por día por proyecto — {MESES[mes - 1]} {anio}</CardTitle>
+          </CardHeader>
+          <CardContent className="overflow-x-auto">
+            {rows.length === 0 ? (
+              <p className="py-6 text-sm text-muted-foreground">Sin movimiento de toneladas en el mes.</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Fecha</TableHead>
+                    <TableHead>ID</TableHead>
+                    <TableHead>Proyecto</TableHead>
+                    <TableHead className="text-right">HC real</TableHead>
+                    <TableHead className="text-right">HC plan</TableHead>
+                    <TableHead className="text-right">Toneladas</TableHead>
+                    <TableHead className="text-right">Ton/trab</TableHead>
+                    <TableHead className="text-right">Meta</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody className="tabular-nums">
+                  {rows.map((r, i) => {
+                    const cumpleMeta = r.meta > 0 && r.tonPorTrabajador >= r.meta
+                    return (
+                      <TableRow key={i}>
+                        <TableCell className="whitespace-nowrap">
+                          {r.dow} {r.fecha.slice(8)}/{r.fecha.slice(5, 7)}
+                        </TableCell>
+                        <TableCell>{r.idempresa}</TableCell>
+                        <TableCell>{r.proyecto}</TableCell>
+                        <TableCell className="text-right font-semibold">{r.hcReal}</TableCell>
+                        <TableCell
+                          className={`text-right ${r.hcConfig > 0 && r.hcReal !== r.hcConfig ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`}
+                        >
+                          {r.hcConfig || "—"}
+                        </TableCell>
+                        <TableCell className="text-right">{t1(r.toneladas)}</TableCell>
+                        <TableCell
+                          className={`text-right ${r.meta > 0 ? (cumpleMeta ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400") : ""}`}
+                        >
+                          {r.meta > 0 ? (cumpleMeta ? "✓ " : "✗ ") : ""}
+                          {t1(r.tonPorTrabajador)}
+                        </TableCell>
+                        <TableCell className="text-right text-muted-foreground">{r.meta > 0 ? t1(r.meta) : "—"}</TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+            )}
+            <p className="mt-2 text-xs text-muted-foreground">
+              <strong>HC real</strong> = trabajadores distintos que movieron toneladas ese día en el proyecto
+              (asistencia ratificada). <strong>HC plan</strong> = configurado en Financiera › Tarifas › Metas (ámbar si
+              difiere). <strong>Ton/trab</strong> = promedio real por trabajador ese día vs. la meta.
+            </p>
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }
