@@ -9,9 +9,14 @@
 --     (cubre el caso "no pagar a inactivos"). Falla hacia pagar.
 --   - CORTE por fecha de retiro (headcount.fecha_retiro): no liquida días
 --     posteriores al retiro (cierra la fuga que dejaba el vínculo con contrato
---     abierto). Auxiliares de PRUEBA excluidos en todos los ID.
+--     abierto), salvo que la persona esté ACTIVA (reingreso). Auxiliares de
+--     PRUEBA excluidos en todos los ID.
+--   - JORNADA por FECHA (Ley 2101): el HOD (valor hora ordinaria) usa la jornada
+--     vigente en la fecha del turno desde la tabla `jornada_legal`, no el año.
+--     jun-2026 → 7,3333 h (÷220); desde 16-jul-2026 → 7 h (÷210). Automático.
 -- Mismos nombres/campos/lógica de salida. REVERSIBLE (definición previa en git).
--- REQUISITO: correr antes scripts/extend_parametros_nomina.sql.
+-- REQUISITO: correr antes scripts/extend_parametros_nomina.sql y
+-- scripts/create_jornada_legal.sql (tabla de vigencias de la jornada).
 -- ANTES DE CORRER: valida con scripts/pagonomina_estado_diagnostico.sql que los
 -- días que el filtro quitaría sean correctos.
 -- ============================================================================
@@ -120,7 +125,15 @@ create or replace view public.pagonomina as
                         (s.base_pers / NULLIF((s.dias_p * s.jornada_p), (0)::numeric)) AS hod
                    FROM ( SELECT (COALESCE(h2.salario, pa.smlv))::numeric AS base_pers,  -- base = SALARIO (auxilio NO entra en la base de recargos)
                                  COALESCE(pa.dias_calendario, (30)::numeric) AS dias_p,
-                                 COALESCE(pa.jornada_horas, (7)::numeric) AS jornada_p
+                                 -- Jornada VIGENTE en la fecha del turno (Ley 2101): la hora ordinaria
+                                 -- cambia de norma automáticamente. jun-2026 → 7,3333 (÷220); desde
+                                 -- 16-jul-2026 → 7 (÷210). Cae a jornada_horas del año si no hay tabla.
+                                 COALESCE(
+                                   (SELECT jl.horas_dia FROM jornada_legal jl
+                                     WHERE jl.fecha_desde <= a.fecha
+                                     ORDER BY jl.fecha_desde DESC LIMIT 1),
+                                   pa.jornada_horas, (7)::numeric
+                                 ) AS jornada_p
                         ) s
              ) calc
         ), rango_fechas AS (

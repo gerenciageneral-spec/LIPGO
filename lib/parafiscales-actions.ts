@@ -8,7 +8,8 @@
 // Fuente de los datos (todo real, nada simulado). Cada día del mes se clasifica
 // por su novedad (`pagonomina.novedad_reportada`) y cotiza según la norma PILA:
 //   · Trabajado  → IBC = `total_liquidado_dia` (salario + extras + recargos +
-//     dominical/festivo, SIN auxilio de transporte). Cotiza TODO, incl. ARL.
+//     dominical/festivo, SIN auxilio de transporte) + la BONIFICACIÓN por
+//     productividad en su parte prestacional (bonif_prestacional). Cotiza TODO, incl. ARL.
 //   · Vacaciones → IBC = salario/día. Cotiza pensión + caja (no salud, no ARL).
 //   · Incapacidad→ IBC = salario/día (día completo). Cotiza pensión + salud (no ARL).
 //   · Ausentismo → licencia no remunerada: solo 12% de pensión (empleador).
@@ -259,7 +260,9 @@ export async function getParafiscales(
     for (let offset = 0; ; offset += pageSize) {
       const { data, error } = await admin
         .from("pagonomina")
-        .select("persona, fecha, total_liquidado_dia, novedad_reportada")
+        .select(
+          "persona, fecha, total_liquidado_dia, novedad_reportada, especialidad, bonif_prestacional, bonif_no_prestacional",
+        )
         .in("persona", nombres)
         .gte("fecha", desde)
         .lte("fecha", hasta)
@@ -303,9 +306,20 @@ export async function getParafiscales(
           break
         case "RETIRO":
           break // día de baja: no suma a ninguna base
-        default: // TRAB
-          a.ibcTrab += Number(r.total_liquidado_dia || 0)
+        default: {
+          // TRAB. La bonificación por productividad (excedente de destajo) es
+          // salario para el IBC en su parte PRESTACIONAL (tope 9.948/día); la parte
+          // NO prestacional no cotiza. `total_liquidado_dia` la maneja distinto según
+          // el tipo de liquidación del día:
+          //   · Especialidad (base = día ordinario): NO incluye el excedente → se SUMA bonif_prestacional.
+          //   · Destajo puro (base = pago_produccion): incluye TODO el excedente → se RESTA bonif_no_prestacional.
+          const esEspecialidad = r.especialidad === true || String(r.especialidad) === "true"
+          const ajusteBonif = esEspecialidad
+            ? Number(r.bonif_prestacional || 0)
+            : -Number(r.bonif_no_prestacional || 0)
+          a.ibcTrab += Number(r.total_liquidado_dia || 0) + ajusteBonif
           a.diasTrab += 1
+        }
       }
       acum.set(nombre, a)
     }
