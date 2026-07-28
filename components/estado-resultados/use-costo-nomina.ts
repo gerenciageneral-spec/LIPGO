@@ -97,7 +97,12 @@ export function useCostoNomina({
       // 100% del dataset filtrado, igual que en nomina personal.
       // -----------------------------------------------------------------
       const PAGE_SIZE = 1000
-      const allRows: Array<{ total_liquidado_dia: number | null }> = []
+      const allRows: Array<{
+        persona: string | null
+        fecha: string | null
+        bonif_prestacional: number | null
+        total_liquidado_dia: number | null
+      }> = []
       let offset = 0
       // Tope defensivo: ~50k filas-dia por periodo es mas que suficiente
       // y evita un loop infinito si algo raro pasa con el conteo.
@@ -111,7 +116,7 @@ export function useCostoNomina({
         // el mismo total para una misma empresa y periodo.
         const { data: page, error: pageError } = await supabase
           .from("pagonomina")
-          .select("total_liquidado_dia")
+          .select("persona, fecha, bonif_prestacional, total_liquidado_dia")
           .eq("idempresaliquidacion", idEmpresa as number)
           .gte("fecha", desde)
           .lte("fecha", hasta)
@@ -125,10 +130,26 @@ export function useCostoNomina({
         offset += PAGE_SIZE
       }
 
-      const totalLiquidado = allRows.reduce(
+      // Base diaria liquidada (cada dia trabajado = su base, nuevo modelo).
+      const totalBase = allRows.reduce(
         (acc, r: any) => acc + (Number(r.total_liquidado_dia) || 0),
         0,
       )
+      // Bono de productividad = excedente de destajo NETO por (persona, quincena),
+      // piso 0 y todo prestacional. Se netea por bucket para no perder los dias bajos
+      // ni inflar los altos — mismo criterio que parafiscales y el archivo plano.
+      const excBucket = new Map<string, number>()
+      for (const r of allRows) {
+        const f = String((r as any).fecha || "")
+        if (f.length < 10) continue
+        const q = Number(f.slice(8, 10)) <= 15 ? "Q1" : "Q2"
+        const key = String((r as any).persona || "") + "|" + f.slice(0, 7) + q
+        excBucket.set(key, (excBucket.get(key) || 0) + (Number((r as any).bonif_prestacional) || 0))
+      }
+      let totalBono = 0
+      for (const v of excBucket.values()) totalBono += Math.max(0, v)
+      // Costo real de nomina del periodo = base garantizada + bono neto de destajo.
+      const totalLiquidado = totalBase + totalBono
 
       // --- Provisiones de prestaciones sociales --------------------
       const cesantias = totalLiquidado * PROVISIONES_PRESTACIONES.cesantias

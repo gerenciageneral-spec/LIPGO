@@ -140,6 +140,7 @@ import BienestarParticipacion from "@/components/rrhh/bienestar-participacion"
 import Nominapersonal from "@/components/nominapersonal" // Added import for Nominapersonal component
 import Liquidaciones from "@/components/liquidaciones"
 import Parafiscales from "@/components/parafiscales"
+import RevisionNomina from "@/components/revision-nomina"
 import { SolicitudTurnos } from "@/components/solicitud-turnos" // Added import for Solicitud de Turnos
 import { AprobarTurnos } from "@/components/aprobar-turnos" // Added import for Aprobar Turnos
 import { AttendanceViewer } from "@/components/attendance-viewer" // Added import for AttendanceViewer component
@@ -744,6 +745,10 @@ export function MainContent({
           ) : selectedModule === "Parafiscales" ? (
             <PermissionGuard moduleName="Parafiscales">
               <Parafiscales />
+            </PermissionGuard>
+          ) : selectedModule === "Revisión de nómina" ? (
+            <PermissionGuard moduleName="Revisión de nómina">
+              <RevisionNomina />
             </PermissionGuard>
           ) : selectedModule === "Registro de asistencia" ? (
             <PermissionGuard moduleName="Registro de asistencia">

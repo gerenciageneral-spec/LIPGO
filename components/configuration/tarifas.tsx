@@ -62,7 +62,9 @@ const TABS: TabDef[] = [
         Tarifa de <strong>pago (destajo) a los auxiliares</strong> por operación y tonelada. Alimenta{" "}
         <code>pagonomina</code> (<code>pago_produccion</code>) y <code>toneladasauxiliarespago</code> (
         <code>total_pago_dia</code>): el peso de cada cargue se reparte entre los auxiliares y se multiplica por
-        esta tarifa. <strong>Impacta el costo de nómina</strong> de los auxiliares.
+        esta tarifa. Con el modelo nuevo, cada día trabajado liquida su <strong>base</strong> y el excedente de
+        producción se paga como <strong>bonificación neta por quincena</strong> (no día a día).{" "}
+        <strong>Impacta el costo de nómina</strong> de los auxiliares.
       </>
     ),
   },

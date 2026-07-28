@@ -103,10 +103,21 @@ function defaultPagadoHasta(fechaRetiro: string): string {
 //     vacaciones: trabajo suplementario/horas extras (hed+hedf+hen, lo que entra
 //     al total del día) + trabajo en descanso obligatorio (dominical/festivo:
 //     pago_domingo + recargodominical). Así la base de vacaciones = dev − extra.
-function sumaPeriodo(rows: any[], desde: string, hasta: string): { dev: number; dias: number; extra: number } {
+//   - `bono` = bonificación por productividad = excedente de destajo NETO por
+//     QUINCENA (piso 0), TODO prestacional. Como el período abarca varios meses, se
+//     netea por bucket (mes, quincena) y se suman los buckets positivos — igual que
+//     el archivo plano de Siigo y que el IBC de parafiscales. Es SALARIO ORDINARIO
+//     (no es hora extra ni dominical), por eso entra a la base de cesantías/prima y a
+//     la base ordinaria de vacaciones.
+function sumaPeriodo(
+  rows: any[],
+  desde: string,
+  hasta: string,
+): { dev: number; dias: number; extra: number; bono: number } {
   let dev = 0
   let dias = 0
   let extra = 0
+  const excPorQuincena = new Map<string, number>()
   for (const r of rows) {
     const f = String(r.fecha)
     if (f >= desde && f <= hasta) {
@@ -118,9 +129,13 @@ function sumaPeriodo(rows: any[], desde: string, hasta: string): { dev: number; 
         Number(r.pago_domingo || 0) +
         Number(r.recargodominical || 0)
       dias += 1
+      const clave = f.slice(0, 7) + (Number(f.slice(8, 10)) <= 15 ? "-Q1" : "-Q2")
+      excPorQuincena.set(clave, (excPorQuincena.get(clave) || 0) + Number(r.bonif_prestacional || 0))
     }
   }
-  return { dev, dias, extra }
+  let bono = 0
+  for (const v of excPorQuincena.values()) bono += Math.max(0, v)
+  return { dev, dias, extra, bono }
 }
 
 export async function getLiquidaciones(
@@ -201,7 +216,7 @@ export async function getLiquidaciones(
     // 5) TODAS las novedades de pagonomina de esos retirados (para prestaciones y
     //    pendientes). Paginado.
     const cols =
-      "fecha, persona, actividad_registrada, novedad_reportada, base_dia, hed, hedf, hen, hef, hn, pago_domingo, recargodominical, total_liquidado_dia"
+      "fecha, persona, actividad_registrada, novedad_reportada, base_dia, hed, hedf, hen, hef, hn, pago_domingo, recargodominical, bonif_prestacional, total_liquidado_dia"
     let all: any[] = []
     const pageSize = 1000
     let offset = 0
@@ -247,6 +262,9 @@ export async function getLiquidaciones(
       // Nómina PENDIENTE: fecha > pagado_hasta (y <= retiro, ya filtrado).
       const novedades: LiquidacionNovedad[] = []
       let total = 0
+      // Bono de productividad de la quincena PENDIENTE (excedente de destajo neto,
+      // piso 0 por quincena). Se suma al total además de las bases diarias.
+      const excPendiente = new Map<string, number>()
       for (const r of rows) {
         if (pagado_hasta && String(r.fecha) <= pagado_hasta) continue
         const nov: LiquidacionNovedad = {
@@ -265,7 +283,11 @@ export async function getLiquidaciones(
         }
         novedades.push(nov)
         total += nov.total_liquidado_dia
+        const f = String(r.fecha)
+        const clave = f.slice(0, 7) + (Number(f.slice(8, 10)) <= 15 ? "-Q1" : "-Q2")
+        excPendiente.set(clave, (excPendiente.get(clave) || 0) + Number(r.bonif_prestacional || 0))
       }
+      for (const v of excPendiente.values()) total += Math.max(0, v)
 
       // PRESTACIONES sobre el devengado del período de causación.
       let prima = 0
@@ -300,7 +322,9 @@ export async function getLiquidaciones(
         const diasCes = ce.dias + fillDias
 
         const auxPropCes = (auxMensual / 30) * diasCes
-        const baseCes = ce.dev + fillMonto + (pp.incluyeAux ? auxPropCes : 0)
+        // Base de cesantías = devengado (base diaria) + bono de productividad (salario)
+        // + relleno enero + auxilio. El bono es salario para prestaciones.
+        const baseCes = ce.dev + ce.bono + fillMonto + (pp.incluyeAux ? auxPropCes : 0)
         cesantias = baseCes * (pp.pctCesantias / 100)
         intereses = cesantias * (pp.pctInteresesCesantias / 100) * (diasCes / 360)
 
@@ -315,11 +339,11 @@ export async function getLiquidaciones(
           prima = -(diasDeMas * primaBaseDiaria * (pp.pctPrima / 100))
         } else if (info.fecha_retiro < `${anio}-06-01`) {
           const prc = sumaPeriodo(rows, cesDesde, info.fecha_retiro)
-          prima = (prc.dev + (pp.incluyeAux ? (auxMensual / 30) * prc.dias : 0)) * (pp.pctPrima / 100)
+          prima = (prc.dev + prc.bono + (pp.incluyeAux ? (auxMensual / 30) * prc.dias : 0)) * (pp.pctPrima / 100)
         } else {
           const primaDesde2 = info.fecha_retiro >= `${anio}-12-15` ? `${anio}-12-15` : `${anio}-07-01`
           const pr2 = sumaPeriodo(rows, primaDesde2, info.fecha_retiro)
-          prima = (pr2.dev + (pp.incluyeAux ? (auxMensual / 30) * pr2.dias : 0)) * (pp.pctPrima / 100)
+          prima = (pr2.dev + pr2.bono + (pp.incluyeAux ? (auxMensual / 30) * pr2.dias : 0)) * (pp.pctPrima / 100)
         }
 
         // Vacaciones: se ACUMULAN de forma continua durante TODO el vínculo (no se
@@ -342,7 +366,9 @@ export async function getLiquidaciones(
         // suplementario (horas extras) y el de descanso obligatorio (dominical/
         // festivo) — y también el auxilio de transporte (que no está en el devengado).
         // No es sobre el salario mínimo: es el promedio diario ordinario real.
-        const devOrdinario = ce.dev - ce.extra + fillMonto
+        // Base ordinaria = devengado − extras/dominical (excluidos por art. 192) +
+        // bono de productividad (SÍ es salario ordinario: destajo, no hora extra) + relleno.
+        const devOrdinario = ce.dev - ce.extra + ce.bono + fillMonto
         const promedioDiaOrdinario = diasCes > 0 ? devOrdinario / diasCes : salarioDia
         vacaciones = Math.max(0, vacCausadasDias - diasDisfrutados) * promedioDiaOrdinario
       }

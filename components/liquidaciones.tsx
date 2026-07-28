@@ -274,10 +274,12 @@ export default function Liquidaciones() {
                 </div>
               </div>
               <p className="mt-2 text-xs text-muted-foreground">
-                Base = devengado (salario + extras + recargos) + auxilio de transporte. <strong>Vacaciones</strong> (CST
-                art. 192) va sobre el <strong>salario ordinario</strong>: excluye horas extras, trabajo dominical/festivo
-                y el auxilio. Causación: cesantías/vacaciones desde 1-ene del año del retiro; prima desde 1-ene o 1-jul
-                según el semestre. Ver <strong>Nomenclatura legal</strong> para el detalle.
+                Base = devengado (base por día + <strong>bono de productividad</strong> de destajo, neto por quincena) +
+                extras + recargos + auxilio de transporte. El bono de productividad es salario para prestaciones.{" "}
+                <strong>Vacaciones</strong> (CST art. 192) va sobre el <strong>salario ordinario</strong> (incluye el
+                bono; excluye horas extras, trabajo dominical/festivo y el auxilio). Causación: cesantías/vacaciones
+                desde 1-ene del año del retiro; prima desde 1-ene o 1-jul según el semestre. Ver{" "}
+                <strong>Nomenclatura legal</strong> para el detalle.
               </p>
             </div>
           )}

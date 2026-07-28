@@ -311,8 +311,14 @@ create or replace view public.pagonomina as
                     END
                     ELSE (0)::numeric
                 END AS valor_domingo_final,
+                -- Excedente de destajo del día CON SIGNO (nuevo modelo): en un día de
+                -- toneladas se compara lo generado (pago_produccion) contra la base del
+                -- día (valor_diario_ley). Positivo si movió por encima de su base,
+                -- NEGATIVO si por debajo. Se suma por quincena para netear días buenos
+                -- con días bajos (el bono nunca baja la base; ver archivoplano). Excluye
+                -- especialidad (esos días son por turno/horas, no por tonelaje).
                 CASE
-                    WHEN ((calculo_nomina_base.toneladas > (0)::numeric) AND (calculo_nomina_base.pago_produccion > calculo_nomina_base.valor_diario_ley)) THEN (calculo_nomina_base.pago_produccion - calculo_nomina_base.valor_diario_ley)
+                    WHEN ((calculo_nomina_base.toneladas > (0)::numeric) AND (calculo_nomina_base.especialidad IS NOT TRUE)) THEN (calculo_nomina_base.pago_produccion - calculo_nomina_base.valor_diario_ley)
                     ELSE (0)::numeric
                 END AS excedente_bruto_destajo,
                 CASE
@@ -334,14 +340,11 @@ create or replace view public.pagonomina as
     toneladas,
     pago_produccion,
     valor_base_final AS base_dia,
-        CASE
-            WHEN (excedente_bruto_destajo > (0)::numeric) THEN LEAST(excedente_bruto_destajo, (9948)::numeric)
-            ELSE (0)::numeric
-        END AS bonif_prestacional,
-        CASE
-            WHEN (excedente_bruto_destajo > (9948)::numeric) THEN (excedente_bruto_destajo - (9948)::numeric)
-            ELSE (0)::numeric
-        END AS bonif_no_prestacional,
+        -- Bonificación por productividad = excedente de destajo del día CON SIGNO.
+        -- TODO es prestacional (se elimina el tope de $9.948; cotiza completo al IBC).
+        -- Va con signo para que la quincena netee (archivoplano suma y aplica MAX(0,·)).
+        excedente_bruto_destajo AS bonif_prestacional,
+        (0)::numeric AS bonif_no_prestacional,
     horas_hed,
     horas_hedf,
     horas_hen,
@@ -364,7 +367,11 @@ create or replace view public.pagonomina as
             WHEN (es_festivo = 1) THEN valor_diario_ley
             WHEN (TRIM(BOTH FROM asistencia_texto) = ANY (ARRAY['13- Incapacidad por enfermedad general al 100%'::text, '31- Vacaciones disfrutadas'::text, '14- Incapacidad por enfermedad general al 50'::text, 'Descanso'::text, 'Descanso compensatorio domingo anterior'::text])) THEN valor_diario_ley
             WHEN (especialidad = true) THEN valor_base_final
-            WHEN (toneladas > (0)::numeric) THEN pago_produccion
+            -- NUEVO MODELO: el día de destajo YA NO se liquida al valor de sus
+            -- toneladas, sino a la BASE del día (valor_base_final = salario/30). Lo que
+            -- generó de más/menos por tonelaje se netea por quincena como bonificación
+            -- (bonif_prestacional, ver archivoplano). Así cada día trabajado paga su
+            -- base como en SIIGO, sin nivelar hacia abajo el bono ni las horas extra.
             ELSE valor_base_final
         END + COALESCE(total_recargos_turno, (0)::numeric)) +
         CASE

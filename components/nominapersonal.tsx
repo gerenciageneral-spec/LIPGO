@@ -743,6 +743,24 @@ export default function Nominapersonal() {
     [liquidacionesFiltradas],
   )
 
+  // Bono de productividad = excedente de destajo NETO por (persona, quincena), piso 0
+  // y todo prestacional. NO se suma al total diario (que cuadra bit a bit con la tabla
+  // y el Excel); se muestra aparte para reflejar el PAGO REAL = base + bono, igual que
+  // el archivo plano de Siigo y el modulo "Revision de nomina".
+  const bonoProductividad = useMemo(() => {
+    const bucket = new Map<string, number>()
+    for (const item of liquidacionesFiltradas as any[]) {
+      const f = String(item.fecha || "")
+      if (f.length < 10) continue
+      const q = Number(f.slice(8, 10)) <= 15 ? "Q1" : "Q2"
+      const key = String(item.persona || "") + "|" + f.slice(0, 7) + q
+      bucket.set(key, (bucket.get(key) || 0) + (Number(item.bonif_prestacional) || 0))
+    }
+    let bono = 0
+    for (const v of bucket.values()) bono += Math.max(0, v)
+    return bono
+  }, [liquidacionesFiltradas])
+
   /**
    * Consolidado por dia para la sub-pestana "Consolidado por dia".
    *
@@ -1247,13 +1265,36 @@ export default function Nominapersonal() {
       ) : viewMode === "liquidacion" ? (
         <div className="space-y-4">
           {/* Summary Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-semibold">Total Liquidado del Mes</CardTitle>
+                <CardTitle className="text-sm font-semibold">Base liquidada del mes</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">${totalLiquidadoDia.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                <p className="text-xs text-muted-foreground">Base por día trabajado (coincide con la tabla detalle)</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-semibold">Bono productividad (neto quincena)</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
+                  ${bonoProductividad.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <p className="text-xs text-muted-foreground">Excedente de destajo neteado por quincena (todo prestacional)</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-semibold">Pago real (base + bono)</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  ${(totalLiquidadoDia + bonoProductividad).toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <p className="text-xs text-muted-foreground">Lo que va a Siigo = base garantizada + bono de toneladas</p>
               </CardContent>
             </Card>
           </div>

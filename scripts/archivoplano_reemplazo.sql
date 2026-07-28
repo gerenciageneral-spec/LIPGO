@@ -31,12 +31,10 @@ create or replace view public.archivoplano as
             ) AS jornada_dia,
             p.total_liquidado_dia,
             p.novedad_reportada,
+            -- Excedente de destajo del día CON SIGNO (viene de pagonomina.bonif_prestacional).
+            -- Se suma por quincena para netear días buenos con días bajos.
             COALESCE(p.bonif_prestacional, (0)::numeric) AS bonif_prestacional,
             COALESCE(p.bonif_no_prestacional, (0)::numeric) AS bonif_no_prestacional,
-                CASE
-                    WHEN ((p.novedad_reportada IS NOT NULL) AND (TRIM(BOTH FROM p.novedad_reportada) <> ''::text)) THEN (0)::numeric
-                    ELSE GREATEST((0)::numeric, (COALESCE((h.salario / (30)::numeric), (58643)::numeric) - COALESCE(p.total_liquidado_dia, (0)::numeric)))
-                END AS deficit_dia,
             p.pago_domingo,
             p.recargodominical,
             p.hed,
@@ -74,10 +72,11 @@ create or replace view public.archivoplano as
             base_datos.identificacion,
             base_datos.contratosiigo,
             max(base_datos.salario) AS salario_ref,
+            -- Excedente NETO de la quincena (Σ con signo): los días bajos restan a los
+            -- altos. Es el "cruce" por trabajador toneladas vs base.
             sum((base_datos.bonif_prestacional + base_datos.bonif_no_prestacional)) AS total_bono_nomina,
             sum(COALESCE(base_datos.hed, (0)::numeric)) AS total_hed_moneda,
-            sum(COALESCE(base_datos.horas_hed, (0)::numeric)) AS total_hed_horas,
-            sum(base_datos.deficit_dia) AS total_deficit
+            sum(COALESCE(base_datos.horas_hed, (0)::numeric)) AS total_hed_horas
            FROM base_datos
           GROUP BY base_datos.mes_txt, base_datos.mes_num, base_datos.anio_num, base_datos.num_quincena, base_datos.idempresa, base_datos.identificacion, base_datos.contratosiigo
         ), nivelacion AS (
@@ -92,14 +91,12 @@ create or replace view public.archivoplano as
             agrupado_quincena.total_bono_nomina,
             agrupado_quincena.total_hed_moneda,
             agrupado_quincena.total_hed_horas,
-            agrupado_quincena.total_deficit,
-            GREATEST((0)::numeric, (agrupado_quincena.total_bono_nomina - agrupado_quincena.total_deficit)) AS bono_final,
-            GREATEST((0)::numeric, (agrupado_quincena.total_deficit - agrupado_quincena.total_bono_nomina)) AS deficit_restante,
-            GREATEST((0)::numeric, (agrupado_quincena.total_hed_moneda - GREATEST((0)::numeric, (agrupado_quincena.total_deficit - agrupado_quincena.total_bono_nomina)))) AS hed_moneda_final,
-                CASE
-                    WHEN (agrupado_quincena.total_hed_horas > (0)::numeric) THEN round((GREATEST((0)::numeric, (agrupado_quincena.total_hed_moneda - GREATEST((0)::numeric, (agrupado_quincena.total_deficit - agrupado_quincena.total_bono_nomina)))) / (agrupado_quincena.total_hed_moneda / agrupado_quincena.total_hed_horas)), 2)
-                    ELSE (0)::numeric
-                END AS hed_horas_final
+            -- Bono = excedente NETO de la quincena, con piso 0: cada día ya cobró su
+            -- base, así que un neto negativo NO se le descuenta al trabajador — lo asume
+            -- la empresa como costo de baja productividad (queda visible). Las HORAS
+            -- EXTRA van COMPLETAS: ya NO se nivelan con el déficit.
+            GREATEST((0)::numeric, agrupado_quincena.total_bono_nomina) AS bono_final,
+            round(agrupado_quincena.total_hed_horas, 2) AS hed_horas_final
            FROM agrupado_quincena
         )
  SELECT nivelacion.mes_txt AS mes,

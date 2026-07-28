@@ -7,9 +7,10 @@
 //
 // Fuente de los datos (todo real, nada simulado). Cada día del mes se clasifica
 // por su novedad (`pagonomina.novedad_reportada`) y cotiza según la norma PILA:
-//   · Trabajado  → IBC = `total_liquidado_dia` (salario + extras + recargos +
-//     dominical/festivo, SIN auxilio de transporte) + la BONIFICACIÓN por
-//     productividad en su parte prestacional (bonif_prestacional). Cotiza TODO, incl. ARL.
+//   · Trabajado  → IBC = `total_liquidado_dia` (BASE del día + extras + recargos +
+//     dominical/festivo, SIN auxilio de transporte) + la BONIFICACIÓN por productividad
+//     = excedente de destajo NETO de la quincena (piso 0), TODA prestacional. Cotiza
+//     TODO, incl. ARL. Es el mismo bono del archivo plano ⇒ IBC LIPgo = plano = Siigo.
 //   · Vacaciones → IBC = salario/día. Cotiza pensión + caja (no salud, no ARL).
 //   · Incapacidad→ IBC = salario/día (día completo). Cotiza pensión + salud (no ARL).
 //   · Ausentismo → licencia no remunerada: solo 12% de pensión (empleador).
@@ -280,7 +281,18 @@ export async function getParafiscales(
     // corta, pero aquí se refuerza con el headcount.fecha_retiro de la persona).
     const acum = new Map<
       string,
-      { ibcTrab: number; diasTrab: number; diasVac: number; diasIncap: number; diasAus: number; diasLicr: number }
+      {
+        ibcTrab: number
+        diasTrab: number
+        diasVac: number
+        diasIncap: number
+        diasAus: number
+        diasLicr: number
+        // Excedente de destajo acumulado CON SIGNO por quincena (se netea y se aplica
+        // MAX(0,·) por quincena al final — igual que el archivo plano de Siigo).
+        excQ1: number
+        excQ2: number
+      }
     >()
     for (const r of filas) {
       const nombre = String(r.persona || "").trim()
@@ -290,7 +302,9 @@ export async function getParafiscales(
       // Día posterior al retiro: no cotiza. SALVAGUARDA: si la persona está Activa
       // en algún Head Count (reingreso / fecha_retiro vieja), no se corta.
       if (info.fechaRetiro && !info.esActivo && fecha > info.fechaRetiro) continue
-      const a = acum.get(nombre) || { ibcTrab: 0, diasTrab: 0, diasVac: 0, diasIncap: 0, diasAus: 0, diasLicr: 0 }
+      const a =
+        acum.get(nombre) ||
+        { ibcTrab: 0, diasTrab: 0, diasVac: 0, diasIncap: 0, diasAus: 0, diasLicr: 0, excQ1: 0, excQ2: 0 }
       switch (clasificarDiaCotizacion(r.novedad_reportada)) {
         case "VAC":
           a.diasVac += 1
@@ -307,17 +321,17 @@ export async function getParafiscales(
         case "RETIRO":
           break // día de baja: no suma a ninguna base
         default: {
-          // TRAB. La bonificación por productividad (excedente de destajo) es
-          // salario para el IBC en su parte PRESTACIONAL (tope 9.948/día); la parte
-          // NO prestacional no cotiza. `total_liquidado_dia` la maneja distinto según
-          // el tipo de liquidación del día:
-          //   · Especialidad (base = día ordinario): NO incluye el excedente → se SUMA bonif_prestacional.
-          //   · Destajo puro (base = pago_produccion): incluye TODO el excedente → se RESTA bonif_no_prestacional.
-          const esEspecialidad = r.especialidad === true || String(r.especialidad) === "true"
-          const ajusteBonif = esEspecialidad
-            ? Number(r.bonif_prestacional || 0)
-            : -Number(r.bonif_no_prestacional || 0)
-          a.ibcTrab += Number(r.total_liquidado_dia || 0) + ajusteBonif
+          // TRAB. NUEVO MODELO: cada día trabajado YA liquida su BASE del día
+          // (`total_liquidado_dia` = salario/30 + recargos de turno + dominical; el
+          // destajo ya NO se paga por día). El excedente de producción se NETEA por
+          // QUINCENA y se paga como bonificación por productividad, TODA prestacional
+          // (cotiza al IBC, sin tope). Se acumula con signo aquí (`bonif_prestacional`
+          // ya viene con signo desde pagonomina) y se aplica MAX(0,·) por quincena más
+          // abajo — IDÉNTICO a como lo arma el archivo plano que ingiere Siigo.
+          a.ibcTrab += Number(r.total_liquidado_dia || 0)
+          const diaMes = Number(fecha.slice(8, 10))
+          if (diaMes <= 15) a.excQ1 += Number(r.bonif_prestacional || 0)
+          else a.excQ2 += Number(r.bonif_prestacional || 0)
           a.diasTrab += 1
         }
       }
@@ -333,10 +347,15 @@ export async function getParafiscales(
       // proporcional a los días TRABAJADOS del mes (no se causa en vac/incap/ausencia/licencia).
       const salarioRef = info.salario || smlv
       const auxilio = salarioRef <= smlv * 2 ? (auxilioMes / 30) * Math.min(a.diasTrab, 30) : 0
+      // Bonificación por productividad = excedente NETO de cada quincena con piso 0
+      // (los días bajos netean con los altos DENTRO de la quincena; nunca baja la base).
+      // TODA prestacional → entra al IBC. Es exactamente el "71-Bonificación Ajuste
+      // Toneladas" del archivo plano, garantizando IBC LIPgo = archivo plano = Siigo.
+      const bonoProductividad = Math.max(0, a.excQ1) + Math.max(0, a.excQ2)
       const ap = calcularAportes(
         {
           salario: info.salario,
-          ibcTrabajado: a.ibcTrab,
+          ibcTrabajado: a.ibcTrab + bonoProductividad,
           diasTrabajados: a.diasTrab,
           diasVacaciones: a.diasVac,
           diasIncapacidad: a.diasIncap,

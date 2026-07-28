@@ -326,6 +326,8 @@ export const groups: Group[] = [
           { name: "Liquidaciones", icon: Receipt, label: "Liquidaciones" },
           // Aportes de seguridad social y parafiscales del mes (guía de la planilla PILA).
           { name: "Parafiscales", icon: Landmark, label: "Parafiscales y Seguridad Social" },
+          // Cuadro definitivo por colaborador: liquidación diaria + resumen + archivo plano (Siigo).
+          { name: "Revisión de nómina", icon: ClipboardCheck, label: "Revisión de nómina" },
           { name: "Proyecciones", icon: Calculator, label: "Proyecciones de Nómina" },
         ],
       },

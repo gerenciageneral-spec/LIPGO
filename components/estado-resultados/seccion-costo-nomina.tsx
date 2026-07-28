@@ -120,7 +120,7 @@ export default function SeccionCostoNomina({
               <div>
                 <p className="font-medium">Total liquidado nomina</p>
                 <p className="text-xs text-muted-foreground">
-                  Suma de total_liquidado_dia ·{" "}
+                  Base por dia + bono de productividad (neto por quincena) ·{" "}
                   {data?.registros ?? 0} registros
                 </p>
               </div>
