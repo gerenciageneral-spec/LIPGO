@@ -239,9 +239,12 @@ function Resultado({
   data: RevisionNominaData
   tipoBadge: (tipo: string, anomalia: boolean) => ReactNode
 }) {
-  const { colaborador: c, quincena: q, dias, resumen: r, metaResumen: mr, plano } = data
+  const { colaborador: c, quincena: q, dias, resumen: r, metaResumen: mr, plano, siigo } = data
   const sinDatos = dias.length === 0
   const ton1 = (x: number) => (Number(x) || 0).toLocaleString("es-CO", { maximumFractionDigits: 1 })
+  // Moneda con signo (para deducciones y deltas del cruce Siigo)
+  const moneyS = (n: number) =>
+    (n < 0 ? "−" : "") + "$" + Math.abs(Math.round(Number(n) || 0)).toLocaleString("es-CO")
 
   return (
     <div className="space-y-4">
@@ -500,6 +503,123 @@ function Resultado({
               </p>
             </CardContent>
           </Card>
+
+          {/* D) Cruce Siigo — simulación del pago */}
+          {siigo.disponible && (
+            <Card>
+              <CardHeader className="pb-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <CardTitle className="text-base">D) Cruce Siigo — simulación del pago</CardTitle>
+                  {siigo.cuadra ? (
+                    <Badge className="gap-1 bg-emerald-500/15 text-emerald-600 hover:bg-emerald-500/15 dark:text-emerald-400">
+                      <Check className="h-3.5 w-3.5" /> CUADRA · dif {moneyS(siigo.diferencia)}
+                    </Badge>
+                  ) : (
+                    <Badge variant="destructive" className="gap-1">
+                      <AlertTriangle className="h-3.5 w-3.5" /> Δ {moneyS(siigo.diferencia)} — revisar
+                    </Badge>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-5 overflow-x-auto">
+                {/* Simulación de la liquidación Siigo */}
+                <div>
+                  <p className="mb-2 text-sm font-medium">Así liquidará Siigo al subir el archivo plano</p>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Concepto</TableHead>
+                        <TableHead className="text-right">Cant.</TableHead>
+                        <TableHead>Cómo lo valora Siigo</TableHead>
+                        <TableHead className="text-right">Valor</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody className="tabular-nums">
+                      {siigo.conceptos.map((cc, i) => (
+                        <TableRow key={i} className={cc.tipo === "Base" ? "bg-muted/40" : ""}>
+                          <TableCell className={cc.tipo === "Base" ? "font-medium" : ""}>{cc.concepto}</TableCell>
+                          <TableCell className="text-right whitespace-nowrap">
+                            {cc.tipo === "Valor"
+                              ? ""
+                              : `${cc.cantidad.toLocaleString("es-CO", { maximumFractionDigits: 2 })} ${cc.unidad}`}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">{cc.factor}</TableCell>
+                          <TableCell
+                            className={`text-right font-medium ${cc.valor < 0 ? "text-rose-600 dark:text-rose-400" : ""}`}
+                          >
+                            {moneyS(cc.valor)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      <TableRow className="border-t-2">
+                        <TableCell className="font-semibold">TOTAL SIMULADO SIIGO</TableCell>
+                        <TableCell />
+                        <TableCell />
+                        <TableCell className="text-right text-base font-bold">{money(siigo.totalSiigo)}</TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Valoración con la vigencia legal de la quincena: jornada {siigo.jornada} h · hora ordinaria (HOD){" "}
+                    {money(siigo.hod)} = salario ÷ (30 × jornada).
+                  </p>
+                </div>
+
+                {/* Cruce por componente */}
+                <div>
+                  <p className="mb-2 text-sm font-medium">Cruce contra el Total quincena de LIPgo</p>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Componente</TableHead>
+                        <TableHead className="text-right">LIPgo</TableHead>
+                        <TableHead className="text-right">Siigo (sim.)</TableHead>
+                        <TableHead className="text-right">Δ (Siigo − LIPgo)</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody className="tabular-nums">
+                      {siigo.componentes.map((co, i) => {
+                        const delta = co.siigo - co.lipgo
+                        const ok = Math.abs(delta) <= 500
+                        return (
+                          <TableRow key={i}>
+                            <TableCell>{co.nombre}</TableCell>
+                            <TableCell className="text-right">{money(co.lipgo)}</TableCell>
+                            <TableCell className="text-right">{money(co.siigo)}</TableCell>
+                            <TableCell
+                              className={`text-right font-medium ${ok ? "text-muted-foreground" : delta > 0 ? "text-amber-600 dark:text-amber-400" : "text-rose-600 dark:text-rose-400"}`}
+                            >
+                              {ok ? "✓ " : ""}
+                              {moneyS(delta)}
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                      <TableRow className="border-t-2">
+                        <TableCell className="font-semibold">TOTAL</TableCell>
+                        <TableCell className="text-right font-bold">{money(siigo.totalLipgo)}</TableCell>
+                        <TableCell className="text-right font-bold">{money(siigo.totalSiigo)}</TableCell>
+                        <TableCell
+                          className={`text-right text-base font-bold ${siigo.cuadra ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}
+                        >
+                          {moneyS(siigo.diferencia)}
+                        </TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+                </div>
+
+                {/* Explicaciones de la diferencia */}
+                {siigo.explicaciones.length > 0 && (
+                  <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
+                    {siigo.explicaciones.map((e, i) => (
+                      <li key={i}>{e}</li>
+                    ))}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
+          )}
         </>
       )}
     </div>

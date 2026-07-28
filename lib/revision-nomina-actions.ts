@@ -75,6 +75,36 @@ export interface PlanoRevision {
   fechainicio: string | null
 }
 
+// --- Simulación del pago en SIIGO (cruce contra el Total quincena de LIPgo) ---
+export interface ConceptoSiigo {
+  concepto: string
+  tipo: string // "Base" | "Valor" | "Horas" | "Dias"
+  cantidad: number
+  unidad: string // "días" | "h" | ""
+  factor: string // cómo lo valora Siigo (×1,25 / paga 66,67% / valor directo…)
+  valor: number // efecto NETO en el pago (los días descontados van en negativo)
+}
+
+export interface CruceComponente {
+  nombre: string
+  lipgo: number
+  siigo: number
+}
+
+export interface SimulacionSiigo {
+  disponible: boolean
+  jornada: number
+  hod: number // valor hora ordinaria = salario / (30 × jornada vigente)
+  baseQuincenal: number // 15 días × salario/30 (convención 30 días de Siigo)
+  conceptos: ConceptoSiigo[]
+  totalSiigo: number
+  totalLipgo: number
+  diferencia: number // totalSiigo − totalLipgo
+  cuadra: boolean
+  componentes: CruceComponente[]
+  explicaciones: string[]
+}
+
 export interface RevisionNominaData {
   colaborador: {
     persona: string
@@ -89,6 +119,7 @@ export interface RevisionNominaData {
   resumen: ResumenRevision
   metaResumen: MetaResumen
   plano: PlanoRevision[]
+  siigo: SimulacionSiigo
 }
 
 const DOW = ["Do", "Lu", "Ma", "Mi", "Ju", "Vi", "Sa"]
@@ -207,6 +238,10 @@ export async function getRevisionNomina(
       diasCumpleMeta = 0,
       toneladasMovidas = 0,
       toneladasMeta = 0,
+      // Dominical partido para el cruce Siigo: el domingo TRABAJADO va como novedad
+      // (08/25) en el plano; el descanso dominical va DENTRO de la base quincenal.
+      domTrabajado = 0,
+      domDescanso = 0,
       empresa: number | null = hc?.idempresa != null ? Number(hc.idempresa) : null
 
     for (const r of filas || []) {
@@ -246,6 +281,10 @@ export async function getRevisionNomina(
       if (total > 0) baseGar += basePortion
       ingTurno += recargos
       recDom += domingo
+      if (domingo > 0) {
+        if (esDestajo || esp) domTrabajado += domingo
+        else domDescanso += domingo
+      }
       if (esDestajo) {
         neto += excedente
         diasDestajo += 1
@@ -337,6 +376,196 @@ export async function getRevisionNomina(
       }))
     }
 
+    // D) SIMULACIÓN SIIGO — replica el proceso de liquidación de Siigo al ingerir el
+    // archivo plano, para CRUZARLO contra el Total quincena de LIPgo:
+    //   1. Base quincenal automática = salario/2 (15 días × salario/30, convención 30
+    //      días; Siigo la paga sola desde el contrato — el plano NO la envía).
+    //   2. Novedades tipo "Valor" (71-Bono) → suman directo.
+    //   3. Novedades tipo "Horas" → horas × HOD × factor del concepto, con HOD =
+    //      salario/(30×jornada) y los % de la vigencia legal de la quincena (los
+    //      mismos con los que LIPgo calculó las horas: hed 25, hedf, hen 75, hef,
+    //      hn 35, dominical). 08 = día adicional por dominical trabajado (×1,00);
+    //      25 = solo el recargo dominical (×pct).
+    //   4. Novedades tipo "Dias" → Siigo descuenta el día de la base y paga el
+    //      concepto a su %: 13-Incap 100% (neto 0), 15-Incap 66,67% (neto −33,33%),
+    //      14-Incap 50% (neto −50%), 38-Lic. no remunerada (neto −100%),
+    //      31-Vacaciones y licencias remuneradas (neto 0).
+    let siigo: SimulacionSiigo = {
+      disponible: false,
+      jornada: 0,
+      hod: 0,
+      baseQuincenal: 0,
+      conceptos: [],
+      totalSiigo: 0,
+      totalLipgo: Math.round(resumen.total),
+      diferencia: 0,
+      cuadra: false,
+      componentes: [],
+      explicaciones: [],
+    }
+    if (salario > 0) {
+      // Vigencia legal aplicable a la quincena (los cortes legales rigen el 16-jul,
+      // que coincide con el inicio de la 2ª quincena → una sola vigencia por quincena).
+      const { data: vig } = await admin
+        .from("parametros_legales_vigencia")
+        .select("*")
+        .lte("fecha_desde", desde)
+        .order("fecha_desde", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      const jornada = vig?.jornada_horas != null ? Number(vig.jornada_horas) : 7
+      const pct = {
+        hed: vig?.pct_hed != null ? Number(vig.pct_hed) : 25,
+        hen: vig?.pct_hen != null ? Number(vig.pct_hen) : 75,
+        hn: vig?.pct_hn != null ? Number(vig.pct_hn) : 35,
+        dom: vig?.pct_recargo_dominical != null ? Number(vig.pct_recargo_dominical) : 90,
+        hedf: vig?.pct_hedf != null ? Number(vig.pct_hedf) : 115,
+        hef: vig?.pct_hef != null ? Number(vig.pct_hef) : 165,
+      }
+      const hod = salario / (30 * jornada)
+      const baseDiaSim = salario / 30
+      const baseQuincenal = Math.round(salario / 2)
+      const fmtX = (m: number) =>
+        "×" + m.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+      // Agrupar las novedades del plano por concepto (los días vienen 1 fila/día).
+      const agg = new Map<string, { tipo: string; cant: number }>()
+      for (const p of plano) {
+        const g = agg.get(p.nombrenovedad) || { tipo: p.tiponovedad, cant: 0 }
+        g.cant += p.cantidadvalor
+        agg.set(p.nombrenovedad, g)
+      }
+
+      const conceptos: ConceptoSiigo[] = [
+        {
+          concepto: "Salario básico de la quincena (contrato)",
+          tipo: "Base",
+          cantidad: 15,
+          unidad: "días",
+          factor: "salario/30",
+          valor: baseQuincenal,
+        },
+      ]
+      for (const [nom, g] of agg) {
+        if (nom.startsWith("71")) {
+          conceptos.push({
+            concepto: nom,
+            tipo: "Valor",
+            cantidad: 1,
+            unidad: "",
+            factor: "valor directo",
+            valor: Math.round(g.cant),
+          })
+        } else if (g.tipo === "Horas") {
+          let mult = 1
+          if (nom.startsWith("10")) mult = 1 + pct.hed / 100
+          else if (nom.startsWith("07")) mult = 1 + pct.hedf / 100
+          else if (nom.startsWith("11")) mult = 1 + pct.hen / 100
+          else if (nom.startsWith("12")) mult = 1 + pct.hef / 100
+          else if (nom.startsWith("26")) mult = pct.hn / 100
+          else if (nom.startsWith("08")) mult = 1 // día adicional por dominical trabajado
+          else if (nom.startsWith("25")) mult = pct.dom / 100 // solo el recargo
+          conceptos.push({
+            concepto: nom,
+            tipo: "Horas",
+            cantidad: g.cant,
+            unidad: "h",
+            factor: fmtX(mult),
+            valor: Math.round(g.cant * hod * mult),
+          })
+        } else if (g.tipo === "Dias") {
+          // Efecto NETO en el pago: Siigo descuenta el día y paga el concepto a su %.
+          let netoDia = 0
+          let nota = "pagada 100% (sin efecto neto)"
+          if (nom.startsWith("38")) {
+            netoDia = -baseDiaSim
+            nota = "no remunerada (descuenta el día)"
+          } else if (nom.startsWith("15")) {
+            netoDia = -baseDiaSim * (1 - 0.6667)
+            nota = "paga 66,67% (descuenta 33,33%)"
+          } else if (nom.startsWith("14")) {
+            netoDia = -baseDiaSim * 0.5
+            nota = "paga 50% (descuenta 50%)"
+          }
+          conceptos.push({
+            concepto: nom,
+            tipo: "Dias",
+            cantidad: g.cant,
+            unidad: "día(s)",
+            factor: nota,
+            valor: Math.round(netoDia * g.cant),
+          })
+        }
+      }
+      const totalSiigo = conceptos.reduce((a, c) => a + c.valor, 0)
+      const sumC = (f: (c: ConceptoSiigo) => boolean) => conceptos.filter(f).reduce((a, c) => a + c.valor, 0)
+
+      // Cruce por componente: en LIPgo el descanso dominical se suma a la base (en
+      // Siigo vive dentro de los 15 días); el dominical TRABAJADO cruza contra 08/25.
+      const componentes: CruceComponente[] = [
+        {
+          nombre: "Base (días de salario)",
+          lipgo: Math.round(baseGar + domDescanso),
+          siigo: baseQuincenal + sumC((c) => c.tipo === "Dias"),
+        },
+        {
+          nombre: "Horas extra / recargos",
+          lipgo: Math.round(ingTurno),
+          siigo: sumC((c) => c.tipo === "Horas" && !c.concepto.startsWith("08") && !c.concepto.startsWith("25")),
+        },
+        {
+          nombre: "Dominical trabajado (08/25)",
+          lipgo: Math.round(domTrabajado),
+          siigo: sumC((c) => c.concepto.startsWith("08") || c.concepto.startsWith("25")),
+        },
+        {
+          nombre: "Bono productividad (71)",
+          lipgo: Math.round(bono),
+          siigo: sumC((c) => c.concepto.startsWith("71")),
+        },
+      ]
+
+      const totalLipgo = Math.round(resumen.total)
+      const diferencia = totalSiigo - totalLipgo
+      const cuadra = Math.abs(diferencia) <= 2000 // tolerancia de redondeo (horas a 2 decimales)
+
+      // Explicaciones de la diferencia (las causas estructurales conocidas).
+      const explicaciones: string[] = []
+      const diasRango = Math.round((Date.parse(hasta) - Date.parse(desde)) / 86400000) + 1
+      const hoyISO = new Date().toISOString().slice(0, 10)
+      if (hoyISO < hasta)
+        explicaciones.push(
+          `Quincena EN CURSO: LIPgo lleva ${dias.length} de ${diasRango} días con datos; Siigo liquida la quincena completa (15 días de base). La diferencia se cierra al terminar la quincena.`,
+        )
+      if (diasRango !== 15)
+        explicaciones.push(
+          `La quincena tiene ${diasRango} días de calendario y Siigo paga 15 (convención 30 días): diferencia estructural de ${Math.abs(diasRango - 15)} día(s) de base ≈ $${Math.round(Math.abs(diasRango - 15) * baseDiaSim).toLocaleString("es-CO")} ${diasRango > 15 ? "que LIPgo liquida de más (día 31)" : "que Siigo paga de más (febrero)"}.`,
+        )
+      const diasSinPago = dias.filter((x) => x.total === 0).length
+      if (diasSinPago > 0)
+        explicaciones.push(
+          `${diasSinPago} día(s) SIN pago en LIPgo (sin registro / falta) que la base quincenal de Siigo SÍ paga (+$${Math.round(diasSinPago * baseDiaSim).toLocaleString("es-CO")} en Siigo). Si son faltas reales, deben reportarse en Siigo como novedad de ausencia.`,
+        )
+      if (cuadra)
+        explicaciones.push(
+          "Diferencia dentro de la tolerancia de redondeo (±$2.000): el pago de Siigo coincide con el cálculo de LIPgo.",
+        )
+
+      siigo = {
+        disponible: true,
+        jornada,
+        hod,
+        baseQuincenal,
+        conceptos,
+        totalSiigo,
+        totalLipgo,
+        diferencia,
+        cuadra,
+        componentes,
+        explicaciones,
+      }
+    }
+
     return {
       success: true,
       data: {
@@ -353,6 +582,7 @@ export async function getRevisionNomina(
         resumen,
         metaResumen,
         plano,
+        siigo,
       },
     }
   } catch (e: any) {
