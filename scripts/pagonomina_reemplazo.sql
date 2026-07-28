@@ -88,8 +88,14 @@ create or replace view public.pagonomina as
                     WHEN (TRIM(BOTH FROM registroasistencia.asistencia) = ANY (ARRAY['13- Incapacidad por enfermedad general al 100%'::text, '31- Vacaciones disfrutadas'::text, '15- Incapacidad por enfermedad general al 66%- ingreso'::text, '14- Incapacidad por enfermedad general al 50'::text, 'Descanso'::text, 'Descanso compensatorio domingo anterior'::text, '38- Licencia no remunerada- Deducción'::text, 'Retiro'::text])) THEN 0
                     ELSE 1
                 END AS es_falta_penalizable,
+                -- Novedades que BLOQUEAN el pago del descanso dominical SIGUIENTE.
+                -- OJO: 'Descanso compensatorio domingo anterior' NO va aquí — ese
+                -- compensatorio afecta al domingo ANTERIOR (vía
+                -- tiene_compensatorio_posterior, que le quita el doble pago al domingo
+                -- que se trabajó), pero NO debe quitarle su descanso dominical al
+                -- domingo SIGUIENTE (la semana con compensatorio es semana completa).
                 CASE
-                    WHEN (TRIM(BOTH FROM registroasistencia.asistencia) = ANY (ARRAY['Descanso'::text, 'Descanso compensatorio domingo anterior'::text, '38- Licencia no remunerada- Deducción'::text, 'Retiro'::text])) THEN 1
+                    WHEN (TRIM(BOTH FROM registroasistencia.asistencia) = ANY (ARRAY['Descanso'::text, '38- Licencia no remunerada- Deducción'::text, 'Retiro'::text])) THEN 1
                     ELSE 0
                 END AS bloquea_domingo
            FROM registroasistencia
