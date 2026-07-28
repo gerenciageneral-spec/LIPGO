@@ -12,7 +12,9 @@
 //   · Vacaciones → IBC = salario/día. Cotiza pensión + caja (no salud, no ARL).
 //   · Incapacidad→ IBC = salario/día (día completo). Cotiza pensión + salud (no ARL).
 //   · Ausentismo → licencia no remunerada: solo 12% de pensión (empleador).
+//   · Licencia remunerada (luto/maternidad/paternidad) → pensión + salud + caja, SIN ARL.
 //   · Retiro / día posterior a `headcount.fecha_retiro` → NO cotiza.
+//   REGLA: ninguna novedad que impida asistir a trabajar causa ARL (solo los días trabajados).
 //   · Auxilio de transporte → `parametros_legales_anio.auxilio_transporte`,
 //     proporcional a los días trabajados y solo para quien devenga hasta 2 SMMLV.
 //   · admin (clase de riesgo ARL), salario y fecha_retiro → `headcount`.
@@ -65,13 +67,18 @@ function finDeMes(anio: number, mes: number): string {
 }
 
 // Clasifica un día de pagonomina por su `novedad_reportada` (texto crudo de
-// registroasistencia). Determina sobre qué aportes cotiza ese día (matriz PILA):
+// registroasistencia). Determina sobre qué aportes cotiza ese día (matriz PILA).
+// REGLA RECTORA: la ARL solo se causa los días efectivamente TRABAJADOS; cualquier
+// novedad que impida al trabajador presentarse (vacaciones, incapacidad, licencia
+// remunerada o no, ausentismo) NO paga ARL.
 //   · VAC     → vacaciones: cotiza pensión + caja (no salud, no ARL).
 //   · INCAP   → incapacidad EG/AT: cotiza pensión + salud (no caja, no ARL).
-//   · AUS     → ausentismo / licencia no remunerada: solo 12% de pensión (empleador).
+//   · AUS     → ausentismo / licencia NO remunerada: solo 12% de pensión (empleador).
+//   · LICR    → licencia REMUNERADA (luto, maternidad, paternidad…): pensión + salud +
+//               caja, SIN ARL (día pagado pero sin exposición a riesgo laboral).
 //   · RETIRO  → día de baja: NO cotiza (se descarta).
 //   · TRAB    → trabajado / descanso / festivo: cotiza TODO (incl. ARL).
-type TipoDiaCotizacion = "TRAB" | "VAC" | "INCAP" | "AUS" | "RETIRO"
+type TipoDiaCotizacion = "TRAB" | "VAC" | "INCAP" | "AUS" | "LICR" | "RETIRO"
 function clasificarDiaCotizacion(novedad: string | null | undefined): TipoDiaCotizacion {
   const s = String(novedad || "")
     .normalize("NFD")
@@ -79,7 +86,8 @@ function clasificarDiaCotizacion(novedad: string | null | undefined): TipoDiaCot
     .toLowerCase()
   if (s.includes("vacacion")) return "VAC"
   if (s.includes("incapacidad")) return "INCAP"
-  if (s.includes("no remunerada")) return "AUS"
+  if (s.includes("no remunerada")) return "AUS" // debe ir ANTES de "licencia"
+  if (s.includes("licencia")) return "LICR" // luto, maternidad, paternidad, etc. (remuneradas)
   if (s.includes("retiro")) return "RETIRO"
   return "TRAB" // vacío, "Descanso", festivo o jornada normal
 }
@@ -262,7 +270,7 @@ export async function getParafiscales(
     // corta, pero aquí se refuerza con el headcount.fecha_retiro de la persona).
     const acum = new Map<
       string,
-      { ibcTrab: number; diasTrab: number; diasVac: number; diasIncap: number; diasAus: number }
+      { ibcTrab: number; diasTrab: number; diasVac: number; diasIncap: number; diasAus: number; diasLicr: number }
     >()
     for (const r of filas) {
       const nombre = String(r.persona || "").trim()
@@ -270,7 +278,7 @@ export async function getParafiscales(
       if (!info) continue
       const fecha = String(r.fecha || "").slice(0, 10)
       if (info.fechaRetiro && fecha > info.fechaRetiro) continue // día posterior al retiro: no cotiza
-      const a = acum.get(nombre) || { ibcTrab: 0, diasTrab: 0, diasVac: 0, diasIncap: 0, diasAus: 0 }
+      const a = acum.get(nombre) || { ibcTrab: 0, diasTrab: 0, diasVac: 0, diasIncap: 0, diasAus: 0, diasLicr: 0 }
       switch (clasificarDiaCotizacion(r.novedad_reportada)) {
         case "VAC":
           a.diasVac += 1
@@ -280,6 +288,9 @@ export async function getParafiscales(
           break
         case "AUS":
           a.diasAus += 1
+          break
+        case "LICR":
+          a.diasLicr += 1
           break
         case "RETIRO":
           break // día de baja: no suma a ninguna base
@@ -292,11 +303,11 @@ export async function getParafiscales(
 
     const data: ParafiscalPersona[] = []
     for (const [nombre, a] of acum) {
-      const diasCotizados = a.diasTrab + a.diasVac + a.diasIncap + a.diasAus
+      const diasCotizados = a.diasTrab + a.diasVac + a.diasIncap + a.diasAus + a.diasLicr
       if (diasCotizados === 0) continue
       const info = infoPorNombre.get(nombre)!
       // Auxilio de transporte: solo para quien devenga hasta 2 SMMLV, y
-      // proporcional a los días TRABAJADOS del mes (no se causa en vac/incap/ausencia).
+      // proporcional a los días TRABAJADOS del mes (no se causa en vac/incap/ausencia/licencia).
       const salarioRef = info.salario || smlv
       const auxilio = salarioRef <= smlv * 2 ? (auxilioMes / 30) * Math.min(a.diasTrab, 30) : 0
       const ap = calcularAportes(
@@ -307,6 +318,7 @@ export async function getParafiscales(
           diasVacaciones: a.diasVac,
           diasIncapacidad: a.diasIncap,
           diasAusentismo: a.diasAus,
+          diasLicencia: a.diasLicr,
           auxilio,
           smlv,
           esAdmin: info.esAdmin,

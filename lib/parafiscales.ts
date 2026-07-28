@@ -184,6 +184,12 @@ export interface EntradaAportes {
   diasIncapacidad: number
   /** Días de ausentismo / licencia no remunerada en el mes. */
   diasAusentismo: number
+  /**
+   * Días de licencia REMUNERADA (luto, maternidad, paternidad, otras licencias con
+   * goce). Cotizan pensión + salud + caja como un día pagado, pero SIN ARL (el
+   * trabajador no está expuesto al riesgo laboral ese día).
+   */
+  diasLicencia: number
   /** Auxilio de transporte proporcional a los días laborados. */
   auxilio: number
   /** SMLV del año. */
@@ -210,6 +216,8 @@ export interface Aportes {
   ibcIncapacidad: number
   /** IBC de ausentismo / licencia no remunerada = salario/día × días. */
   ibcAusentismo: number
+  /** IBC de licencia REMUNERADA (luto/maternidad/paternidad…) = salario/día × días. */
+  ibcLicenciaRemunerada: number
 
   // --- IBC por CONCEPTO (la base sobre la que cotiza cada aporte) ---
   /** Base de pensión (empleador): trabajado + vacaciones + incapacidad + ausentismo. */
@@ -226,6 +234,7 @@ export interface Aportes {
   diasVacaciones: number
   diasIncapacidad: number
   diasAusentismo: number
+  diasLicenciaRemunerada: number
 
   claseArl: ClaseRiesgo
   pctArl: number
@@ -262,7 +271,8 @@ export function calcularAportes(e: EntradaAportes, p: ParametrosParafiscales): A
   const diasVac = Math.max(0, Number(e.diasVacaciones) || 0)
   const diasIncap = Math.max(0, Number(e.diasIncapacidad) || 0)
   const diasAus = Math.max(0, Number(e.diasAusentismo) || 0)
-  const diasTotal = diasTrab + diasVac + diasIncap + diasAus
+  const diasLicr = Math.max(0, Number(e.diasLicencia) || 0)
+  const diasTotal = diasTrab + diasVac + diasIncap + diasAus + diasLicr
 
   // Salario/día (piso 1 SMLV): base de cotización de vacaciones, incapacidad y
   // ausentismo — la ley cotiza esos días sobre el SALARIO, no sobre el devengo real.
@@ -277,15 +287,16 @@ export function calcularAportes(e: EntradaAportes, p: ParametrosParafiscales): A
     ibcTrab = pisoTrab
   }
 
-  // (2) IBC de VACACIONES / INCAPACIDAD / AUSENTISMO = salario/día × días (día
-  //     COMPLETO, aunque la incapacidad se pague al 66%/50%).
+  // (2) IBC de VACACIONES / INCAPACIDAD / AUSENTISMO / LICENCIA REMUNERADA =
+  //     salario/día × días (día COMPLETO, aunque la incapacidad se pague al 66%/50%).
   let ibcVac = salarioDia * diasVac
   let ibcIncap = salarioDia * diasIncap
   let ibcAus = salarioDia * diasAus
+  let ibcLicr = salarioDia * diasLicr
 
   // Tope legal de 25 SMLV sobre el IBC total del mes: si se supera, se escala cada
   // base proporcionalmente para conservar su participación.
-  let ibc = ibcTrab + ibcVac + ibcIncap + ibcAus
+  let ibc = ibcTrab + ibcVac + ibcIncap + ibcAus + ibcLicr
   const tope = smlv * p.topeIbcSmlv
   if (ibc > tope && ibc > 0) {
     const f = tope / ibc
@@ -293,6 +304,7 @@ export function calcularAportes(e: EntradaAportes, p: ParametrosParafiscales): A
     ibcVac *= f
     ibcIncap *= f
     ibcAus *= f
+    ibcLicr *= f
     ibc = tope
     notas.push(`IBC limitado al tope legal de ${p.topeIbcSmlv} SMLV.`)
   }
@@ -309,18 +321,19 @@ export function calcularAportes(e: EntradaAportes, p: ParametrosParafiscales): A
   )
 
   // --- Bases por CONCEPTO (matriz PILA: cada día cotiza según su novedad) ---
-  //   · Pensión (empleador 12%): TODOS los días (trab + vac + incap + ausencia).
-  //   · Pensión (trabajador 4%): trab + vac + incap — el ausentismo lo cotiza SOLO
-  //     el empleador (no se le descuenta al trabajador por un día no laborado).
-  //   · Salud: trab + incap (vacaciones y ausencia NO cotizan salud).
-  //   · ARL: SOLO días trabajados (no hay riesgo laboral fuera del trabajo).
-  //   · Caja/SENA/ICBF: trab + vacaciones (+ auxilio de transporte).
+  //   · Pensión (empleador 12%): TODOS los días (trab + vac + incap + ausencia + licencia rem.).
+  //   · Pensión (trabajador 4%): trab + vac + incap + licencia rem. — el ausentismo lo cotiza
+  //     SOLO el empleador (no se le descuenta al trabajador por un día no laborado).
+  //   · Salud: trab + incap + licencia rem. (vacaciones y ausentismo NO cotizan salud).
+  //   · ARL: SOLO días trabajados. Cualquier novedad que impida asistir a trabajar
+  //     (vacaciones, incapacidad, licencia rem. o no rem., ausentismo) NO causa ARL.
+  //   · Caja/SENA/ICBF: trab + vacaciones + licencia rem. (+ auxilio de transporte).
   const auxilio = Math.max(0, Number(e.auxilio) || 0)
-  const ibcPension = ibcTrab + ibcVac + ibcIncap + ibcAus
-  const ibcPensionEmpleado = ibcTrab + ibcVac + ibcIncap
-  const ibcSalud = ibcTrab + ibcIncap
+  const ibcPension = ibcTrab + ibcVac + ibcIncap + ibcAus + ibcLicr
+  const ibcPensionEmpleado = ibcTrab + ibcVac + ibcIncap + ibcLicr
+  const ibcSalud = ibcTrab + ibcIncap + ibcLicr
   const ibcArl = ibcTrab
-  const ibcCaja = ibcTrab + ibcVac
+  const ibcCaja = ibcTrab + ibcVac + ibcLicr
   const baseParafiscales = ibcCaja + (p.incluyeAuxParafiscales ? auxilio : 0)
 
   const claseArl = e.esAdmin ? p.claseArlAdmin : p.claseArlOperativo
@@ -347,6 +360,7 @@ export function calcularAportes(e: EntradaAportes, p: ParametrosParafiscales): A
     ibcVacaciones: ibcVac,
     ibcIncapacidad: ibcIncap,
     ibcAusentismo: ibcAus,
+    ibcLicenciaRemunerada: ibcLicr,
     ibcPension,
     ibcSalud,
     ibcArl,
@@ -355,6 +369,7 @@ export function calcularAportes(e: EntradaAportes, p: ParametrosParafiscales): A
     diasVacaciones: diasVac,
     diasIncapacidad: diasIncap,
     diasAusentismo: diasAus,
+    diasLicenciaRemunerada: diasLicr,
     claseArl,
     pctArl: tarifaArl,
     exonerado,

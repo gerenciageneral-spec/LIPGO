@@ -141,6 +141,7 @@ export default function Parafiscales() {
               diasVacaciones: 0,
               diasIncapacidad: 0,
               diasAusentismo: 0,
+              diasLicencia: 0,
               auxilio: auxMes,
               smlv,
               esAdmin: false,
@@ -695,6 +696,11 @@ export default function Parafiscales() {
                               Ausentismo {p.diasAusentismo}d
                             </span>
                           )}
+                          {p.diasLicenciaRemunerada > 0 && (
+                            <span className="rounded bg-violet-500/15 px-1 py-0.5 text-[10px] text-violet-600 dark:text-violet-400">
+                              Licencia {p.diasLicenciaRemunerada}d
+                            </span>
+                          )}
                           {!p.exonerado && (
                             <span className="rounded bg-rose-500/15 px-1 py-0.5 text-[10px] text-rose-600 dark:text-rose-400">
                               ≥ 10 SMMLV
@@ -709,6 +715,7 @@ export default function Parafiscales() {
                           {p.diasVacaciones > 0 && ` · ${p.diasVacaciones}v`}
                           {p.diasIncapacidad > 0 && ` · ${p.diasIncapacidad}i`}
                           {p.diasAusentismo > 0 && ` · ${p.diasAusentismo}a`}
+                          {p.diasLicenciaRemunerada > 0 && ` · ${p.diasLicenciaRemunerada}l`}
                         </div>
                       </TableCell>
                       <TableCell className="text-right tabular-nums">{money(p.ibc)}</TableCell>
@@ -745,12 +752,15 @@ export default function Parafiscales() {
               </Table>
               <div className="mt-3 space-y-1 text-xs text-muted-foreground">
                 <p>
-                  <strong>Días</strong>: t = trabajados · v = vacaciones · i = incapacidad · a = ausentismo. Cada día
-                  cotiza según la norma: <strong>vacaciones</strong> → pensión + caja (no salud, no ARL);{" "}
+                  <strong>Días</strong>: t = trabajados · v = vacaciones · i = incapacidad · a = ausentismo ·
+                  l = licencia remunerada. Cada día cotiza según la norma:{" "}
+                  <strong>vacaciones</strong> → pensión + caja (no salud, no ARL);{" "}
                   <strong>incapacidad</strong> → pensión + salud (no caja, no ARL);{" "}
+                  <strong>licencia remunerada</strong> (luto/maternidad/paternidad) → pensión + salud + caja;{" "}
                   <strong>ausentismo / licencia no remunerada</strong> → solo el 12% de pensión (empleador). La{" "}
-                  <strong>ARL solo se causa sobre los días trabajados</strong> (por eso “IBC ARL” suele ser menor que el
-                  IBC total). No se liquidan días posteriores a la fecha de retiro.
+                  <strong>ARL solo se causa sobre los días trabajados</strong>: cualquier novedad que impida asistir a
+                  trabajar no paga ARL (por eso “IBC ARL” suele ser menor que el IBC total). No se liquidan días
+                  posteriores a la fecha de retiro.
                 </p>
                 <p>
                   “—” = no se causa: por la exoneración del art. 114-1 del E.T. (devenga menos de{" "}
