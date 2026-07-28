@@ -28,15 +28,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { useIsMobile } from "@/components/qr-camera-scanner"
 import { useAuth } from "@/components/auth-provider"
 
-// Caso especial: orden de DISTRIBUCIÓN (código termina en "D") marcada "no facturar".
-// No lleva auxiliares (si no se factura, no se paga la entrega) → se bloquea asignar
-// personal y se permite cerrar por "Cargar Fotos" sin personal. Solo aplica aquí.
+// Caso especial: orden de DISTRIBUCIÓN marcada "no facturar" (facturar = false).
+// Si no se factura es porque NO se envió gente → la orden no lleva auxiliares: se
+// bloquea "Asignar Personal" y se permite cerrar por "Cargar Fotos" sin personal.
+// Aplica a CUALQUIER distribución no facturable, sin importar el formato del número
+// (clones "…D" o "Dis-…"): lo que manda es la funcionalidad, no el sufijo. Solo toca
+// distribución; los descargues del Packing siguen exigiendo su personal normal.
 function esDistribucionNoFacturable(o: PendingLoadOrder): boolean {
-  return (
-    o.tipooperacion === "Distribucion" &&
-    String(o.ordendecargue ?? "").trim().toUpperCase().endsWith("D") &&
-    o.facturar === false
-  )
+  return o.tipooperacion === "Distribucion" && o.facturar === false
 }
 
 export function Packing() {
