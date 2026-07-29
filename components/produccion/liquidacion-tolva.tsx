@@ -62,7 +62,7 @@ export default function LiquidacionTolva() {
 }
 
 function LiquidacionDelDia() {
-  const { selectedEmpresaId } = useAuth()
+  const { selectedEmpresaId, selectedEmpresaNombre } = useAuth()
   const { toast } = useToast()
   const [fecha, setFecha] = useState(hoyISO())
   const [data, setData] = useState<LiquidacionTolvaDia | null>(null)
@@ -113,11 +113,16 @@ function LiquidacionDelDia() {
             {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Package className="mr-2 h-4 w-4" />}
             Consultar
           </Button>
-          {data && (
-            <Badge variant="secondary" className="ml-auto">
-              {data.tipoOperacion === "Tolva f" ? "Domingo → Tolva f" : "Tolva"}
+          <div className="ml-auto flex items-center gap-2">
+            <Badge variant="outline">
+              Empresa: {selectedEmpresaNombre || "—"} (id {selectedEmpresaId ?? "—"})
             </Badge>
-          )}
+            {data && (
+              <Badge variant="secondary">
+                {data.tipoOperacion === "Tolva f" ? "Domingo → Tolva f" : "Tolva"}
+              </Badge>
+            )}
+          </div>
         </CardContent>
       </Card>
 
@@ -224,7 +229,7 @@ function LiquidacionDelDia() {
 }
 
 function AuditoriaTolvaTab() {
-  const { selectedEmpresaId } = useAuth()
+  const { selectedEmpresaId, selectedEmpresaNombre } = useAuth()
   const { toast } = useToast()
   const hoy = hoyISO()
   const [desde, setDesde] = useState(hoy.slice(0, 8) + "01")
@@ -242,6 +247,13 @@ function AuditoriaTolvaTab() {
     if (r.success) setRows(r.data)
     else toast({ title: "No se pudo cargar la auditoría", description: r.message, variant: "destructive" })
   }, [desde, hasta, selectedEmpresaId, toast])
+
+  // Recarga automática al cambiar la empresa seleccionada (encabezado) o el
+  // rango de fechas — antes solo se refrescaba al pulsar "Consultar", por lo
+  // que cambiar de empresa no se reflejaba hasta un click manual.
+  useEffect(() => {
+    if (selectedEmpresaId) consultar()
+  }, [consultar, selectedEmpresaId])
 
   const totales = rows.reduce(
     (a, r) => ({
@@ -269,6 +281,9 @@ function AuditoriaTolvaTab() {
             {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Package className="mr-2 h-4 w-4" />}
             Consultar
           </Button>
+          <Badge variant="outline" className="ml-auto">
+            Empresa: {selectedEmpresaNombre || "—"} (id {selectedEmpresaId ?? "—"})
+          </Badge>
         </CardContent>
       </Card>
 
