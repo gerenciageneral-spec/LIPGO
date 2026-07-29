@@ -59,6 +59,7 @@ export interface UserPermissions {
   proyecciones: boolean
   ver_ingresos_produccion: boolean
   aprobacion_produccion: boolean
+  liquidacion_tolva: boolean
   // Permiso del modulo "Control piso" (tablero Andon de produccion en
   // tiempo real). Coincide con el nombre de la columna en
   // `permisos_usuarios` (todo en minuscula, sin separador).
@@ -252,6 +253,7 @@ export const MODULE_PERMISSION_MAP: Record<string, keyof UserPermissions> = {
   Proyecciones: "proyecciones",
   "Ver ingresos de producción": "ver_ingresos_produccion",
   "Aprobación de ingreso de producción": "aprobacion_produccion",
+  "Liquidación Tolva del día": "liquidacion_tolva",
   "Dashboard de Producción": "controlpiso",
   // Reporte de Paros: módulo hermano del dashboard, mismo permiso.
   "Reporte de Paros": "controlpiso",

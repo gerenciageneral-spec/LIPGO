@@ -32,6 +32,7 @@ import { InventoryBalanceGlobal } from "@/components/inventory-balance-global"
 import { ReprocesosManagement } from "@/components/reprocesos-management"
 import { LoadOrdersManagement } from "@/components/load-orders-management"
 import { ProductionApproval } from "@/components/production-approval"
+import LiquidacionTolva from "@/components/produccion/liquidacion-tolva"
 import ControlPiso from "@/components/produccion/control-piso"
 import ReporteParos from "@/components/produccion/reporte-paros"
 import { InventoryTransactionsManagement } from "@/components/inventory-transactions-management"
@@ -490,6 +491,10 @@ export function MainContent({
           ) : selectedModule === "Aprobación de ingreso de producción" ? (
             <PermissionGuard moduleName="Aprobación de ingreso de producción">
               <ProductionApproval />
+            </PermissionGuard>
+          ) : selectedModule === "Liquidación Tolva del día" ? (
+            <PermissionGuard moduleName="Liquidación Tolva del día">
+              <LiquidacionTolva />
             </PermissionGuard>
           ) : selectedModule === "Historial Aprobaciones" ? (
             <PermissionGuard moduleName="Historial Aprobaciones">

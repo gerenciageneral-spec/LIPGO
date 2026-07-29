@@ -102,6 +102,15 @@ export interface ProgramacionTurnoInput {
    * coincida con las opciones del modulo "Novedades de Personal".
    */
   novedad?: string
+  /**
+   * Turno del dia para puestos con doble jornada (hoy: "Auxiliar
+   * Mixto"). 1 o 2; `undefined`/`null` para el resto de puestos (una
+   * sola jornada, comportamiento identico al de siempre). Permite que
+   * la MISMA persona tenga 2 filas el mismo dia -- una por turno --
+   * sin romper el chequeo de duplicados (ver `programarTurnos`).
+   * Ignorado en modo NOVEDAD (siempre persiste como NULL).
+   */
+  turno?: 1 | 2
 }
 
 export interface ProgramacionResultado {
@@ -141,6 +150,8 @@ export interface ProgramacionExistenteRow {
    * novedad en lugar de turno.
    */
   asistencia: string | null
+  /** Turno del dia (1/2) para puestos con doble jornada; `null` = jornada unica. */
+  turno: number | null
 }
 
 /**
@@ -289,23 +300,42 @@ export async function programarTurnos(
     }
   }
 
-  // 2) Detectar duplicados (mismo dia + misma cedula + misma empresa).
+  // 2) Detectar duplicados: misma fecha + misma cedula + misma empresa + MISMO
+  //    TURNO. `turno` es NULL para todos los puestos salvo Auxiliar Mixto con
+  //    doble jornada: 2 filas para la MISMA persona/dia solo coexisten si el
+  //    turno difiere (1 vs 2). Cuando ambos lados tienen turno=null (el 100%
+  //    de los puestos hoy) esto es EXACTAMENTE el chequeo de siempre: 1 fila
+  //    por persona/dia.
   const identificaciones = programaciones.map((p) => p.identificacion)
   const { data: existing } = await supabaseAdmin
     .from("registroasistencia")
-    .select("identificacion")
+    .select("identificacion, turno")
     .eq("fecha", fecha)
     .eq("idempresa", empresaId)
     .in("identificacion", identificaciones)
 
-  const yaProgramados = new Set(
-    (existing || []).map((r) => (r.identificacion || "").toString()),
+  const claveExistente = new Set(
+    (existing || []).map(
+      (r) => `${(r.identificacion || "").toString()}|${r.turno ?? "null"}`,
+    ),
   )
 
+  const yaProgramados = new Set<string>()
+
   const records = programaciones
-    .filter((p) => !yaProgramados.has(p.identificacion))
+    .filter((p) => {
+      // Modo NOVEDAD siempre usa turno=null (una novedad reemplaza el dia
+      // completo, no es especifica de un turno).
+      const turnoKey = (p.novedad || "").trim() ? "null" : (p.turno ?? "null")
+      const clave = `${p.identificacion}|${turnoKey}`
+      if (claveExistente.has(clave)) {
+        yaProgramados.add(p.identificacion)
+        return false
+      }
+      return true
+    })
     .map((p) => {
-      // Modo NOVEDAD: puesto / hora / especialidad quedan en NULL y
+      // Modo NOVEDAD: puesto / hora / especialidad / turno quedan en NULL y
       // la novedad va en `asistencia`. Trimm/normalizamos por si el
       // cliente mando espacios.
       const novedadTexto = (p.novedad || "").trim()
@@ -319,11 +349,13 @@ export async function programarTurnos(
           horasalidaprogramada: null,
           asistencia: novedadTexto,
           especialidad: null,
+          turno: null,
           idempresa: empresaId,
         }
       }
 
-      // Modo TURNO: persistimos puesto + hora + especialidad (TEXT).
+      // Modo TURNO: persistimos puesto + hora + especialidad (TEXT) + turno
+      // (1/2 solo para puestos con doble jornada; null para el resto).
       // Persistimos cadenas explicitas ("true"/"false") para que sea
       // facil consultar/filtrar por SQL sin depender de truthiness
       // de strings en JS.
@@ -339,6 +371,7 @@ export async function programarTurnos(
           p.puesto && especialidadByPuesto.get(p.puesto) === true
             ? "true"
             : "false",
+        turno: p.turno ?? null,
         idempresa: empresaId,
       }
     })
@@ -377,7 +410,7 @@ export async function getProgramacionesByDate(
   const { data, error } = await supabase
     .from("registroasistencia")
     .select(
-      "id, fecha, nombre, identificacion, puesto, horaentradaprogramada, horasalidaprogramada, especialidad, asistencia",
+      "id, fecha, nombre, identificacion, puesto, horaentradaprogramada, horasalidaprogramada, especialidad, asistencia, turno",
     )
     .eq("idempresa", empresaId)
     .eq("fecha", fecha)

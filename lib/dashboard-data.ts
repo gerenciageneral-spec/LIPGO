@@ -138,6 +138,10 @@ export const groups: Group[] = [
       { name: "Ver Tolva", icon: Eye },
       { name: "Ver ingresos de producción", icon: Eye },
       { name: "Aprobación de ingreso de producción", icon: CheckCircle },
+      // Toma las toneladas APROBADAS del día por Turno 1/Turno 2 (ventana
+      // horaria programada en RRHH > Programación de turnos, Auxiliar Mixto)
+      // y genera la orden de Tolva/Tolva f en cabeceraoc con un click.
+      { name: "Liquidación Tolva del día", icon: Wallet },
       { name: "Dashboard de Producción", icon: Activity },
       { name: "Reporte de Paros", icon: AlertTriangle },
       { name: "Historial Aprobaciones", icon: History },

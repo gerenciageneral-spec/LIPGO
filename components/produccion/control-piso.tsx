@@ -496,8 +496,12 @@ function LiveTab() {
     }
   }, [selectedDate, selectedEmpresaId])
 
-  // Turno dinamico: primer registro de registroasistencia del dia con puesto
-  // "Auxiliar Mixto". Si no hay o es invalido, se usan los defaults (6-20).
+  // Turno dinamico: ventana de cobertura del dia con puesto "Auxiliar Mixto".
+  // Con Turno 1 + Turno 2 (registroasistencia.turno) puede haber varias filas
+  // el mismo dia, cada una con su propio horario -> se toma el MINIMO de
+  // horaentradaprogramada y el MAXIMO de horasalidaprogramada entre TODAS las
+  // filas del dia (antes solo se leia la primera fila, quedando ciego al 2do
+  // turno). Si no hay filas o son invalidas, se usan los defaults (6-20).
   useEffect(() => {
     let active = true
     ;(async () => {
@@ -507,9 +511,6 @@ function LiveTab() {
           .select("horaentradaprogramada, horasalidaprogramada")
           .eq("fecha", selectedDate)
           .eq("puesto", "Auxiliar Mixto")
-          .order("id", { ascending: true })
-          .limit(1)
-          .maybeSingle()
         if (!active) return
         const parseHora = (v: any): number | null => {
           const m = String(v ?? "").match(/^(\d{1,2}):/)
@@ -517,8 +518,16 @@ function LiveTab() {
           const h = Number(m[1])
           return h >= 0 && h <= 23 ? h : null
         }
-        const ini = error ? null : parseHora(data?.horaentradaprogramada)
-        const fin = error ? null : parseHora(data?.horasalidaprogramada)
+        let ini: number | null = null
+        let fin: number | null = null
+        if (!error) {
+          for (const row of data ?? []) {
+            const i = parseHora(row?.horaentradaprogramada)
+            const f = parseHora(row?.horasalidaprogramada)
+            if (i != null) ini = ini == null ? i : Math.min(ini, i)
+            if (f != null) fin = fin == null ? f : Math.max(fin, f)
+          }
+        }
         if (ini != null && fin != null && fin > ini) {
           setShiftStart(ini)
           setShiftEnd(fin)

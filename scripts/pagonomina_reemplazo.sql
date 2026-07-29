@@ -16,6 +16,12 @@
 --     salen de `parametros_legales_vigencia` según la fecha del turno — no por año.
 --     jun-2026 → 7,3333 h/80%/hedf 2,05; desde 16-jul-2026 → 7 h/90%/hedf 2,15. Automático.
 --     Unifica y reemplaza jornada_legal + recargo_dominical_legal.
+--   - BLINDAJE MULTI-TURNO (registroasistencia.turno): `datos_asistencia` colapsa por
+--     (fecha,persona) ANTES de calculo_turnos — necesario porque Auxiliar Mixto puede
+--     tener 2 filas el mismo día (Turno 1 + Turno 2, ver scripts/add_turno_registroasistencia.sql).
+--     Sin este colapso, esa 2ª fila DUPLICARÍA la base salarial del día. Para todo lo
+--     demás (1 fila/persona/día) es un no-op exacto. Requiere correr antes
+--     scripts/add_turno_registroasistencia.sql.
 -- Mismos nombres/campos/lógica de salida. REVERSIBLE (definición previa en git).
 -- REQUISITO: correr antes scripts/create_parametros_legales_vigencia.sql.
 -- ANTES DE CORRER: valida con scripts/pagonomina_estado_diagnostico.sql que los
@@ -68,7 +74,7 @@ create or replace view public.pagonomina as
            FROM (transformacion t
              LEFT JOIN tarifaspersonal tp ON (((t.idempresa = tp.empresaid) AND (t.tipooperacion = tp.operacion) AND ((t.fechacargue >= tp.fechaini) AND (t.fechacargue <= tp.fechafin)))))
           GROUP BY t.fechacargue, t.nombre_auxiliar
-        ), datos_asistencia AS (
+        ), datos_asistencia_raw AS (
          SELECT registroasistencia.fecha,
             TRIM(BOTH FROM registroasistencia.nombre) AS persona,
             registroasistencia.idempresa AS idempresa_asistencia,
@@ -99,6 +105,31 @@ create or replace view public.pagonomina as
                     ELSE 0
                 END AS bloquea_domingo
            FROM registroasistencia
+        ), datos_asistencia AS (
+         -- BLINDAJE multi-turno: registroasistencia.turno permite 2 filas el mismo
+         -- día para la misma persona (Auxiliar Mixto con Turno 1 + Turno 2, cada uno
+         -- con su propio horario). Se COLAPSAN aquí en UNA sola fila por
+         -- (fecha,persona) ANTES de calculo_turnos/consolidado_completo, para que el
+         -- resto de la vista siga viendo exactamente 1 fila por día, como siempre:
+         -- las horas extra de ambos turnos se SUMAN (se trabajaron las dos), y la
+         -- base del día (valor_diario_ley/base_turno) se sigue pagando UNA sola vez.
+         -- Para el caso de hoy (1 fila/persona/día en el 100% de los puestos) este
+         -- GROUP BY es un no-op exacto: MAX/SUM/bool_or de una sola fila = esa fila.
+         SELECT r.fecha,
+            r.persona,
+            max(r.idempresa_asistencia) AS idempresa_asistencia,
+            max(r.puesto) AS puesto,
+            max(r.asistencia) AS asistencia,
+            bool_or(r.especialidad) AS especialidad,
+            sum(r.cant_hed) AS cant_hed,
+            sum(r.cant_hedf) AS cant_hedf,
+            sum(r.cant_hen) AS cant_hen,
+            sum(r.cant_hef) AS cant_hef,
+            sum(r.cant_hn) AS cant_hn,
+            max(r.es_falta_penalizable) AS es_falta_penalizable,
+            max(r.bloquea_domingo) AS bloquea_domingo
+           FROM datos_asistencia_raw r
+          GROUP BY r.fecha, r.persona
         ), calculo_turnos AS (
          -- Recargos y base del turno calculados POR PERSONA desde el salario de
          -- contrato (headcount.salario), sin auxilio en la base (norma CO). Se

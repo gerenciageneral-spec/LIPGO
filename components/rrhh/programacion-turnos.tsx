@@ -104,6 +104,15 @@ const NOTICE_OPTIONS = [
   "Descanso compensatorio domingo anterior",
 ]
 
+/**
+ * Puesto con doble jornada: al programar "Auxiliar Mixto" se puede
+ * asignar Turno 1 o Turno 2, cada uno con su propio horario, y la
+ * MISMA persona puede tener las dos filas el mismo dia (columna
+ * `registroasistencia.turno`). Para cualquier otro puesto la
+ * jornada sigue siendo unica (turno = null), sin cambios.
+ */
+const AUXILIAR_MIXTO = "Auxiliar Mixto"
+
 /** Estado por persona en el panel de seleccion. */
 interface SelectionState {
   /** Si la persona esta marcada para programar. */
@@ -120,6 +129,12 @@ interface SelectionState {
    * y `asistencia` recibe este texto).
    */
   novedad: string
+  /**
+   * Turno ("1"/"2"/"" ) — solo aplica cuando `puesto === AUXILIAR_MIXTO`.
+   * Cadena vacia = sin turno (puesto de jornada unica, o Auxiliar Mixto
+   * sin turno elegido todavia).
+   */
+  turno: string
 }
 
 /**
@@ -247,12 +262,31 @@ export default function ProgramacionTurnos() {
     }
   }, [fecha, selectedEmpresaId, toast])
 
-  // Personas ya programadas hoy → no se pueden volver a seleccionar
-  // hasta que el supervisor las elimine. Las pintamos deshabilitadas.
+  // Personas con una fila de JORNADA UNICA hoy (turno=null) → bloqueadas por
+  // completo, igual que siempre (no tiene sentido agregarles nada mas ese
+  // dia). Las de Auxiliar Mixto con turno NO bloquean aqui: se manejan abajo
+  // por turno especifico (turnosOcupadosPorIdentificacion), permitiendo la
+  // 2a fila del dia (Turno 1 + Turno 2).
   const idsYaProgramadas = useMemo(
-    () => new Set(existing.map((e) => e.identificacion)),
+    () =>
+      new Set(
+        existing.filter((e) => e.turno == null).map((e) => e.identificacion),
+      ),
     [existing],
   )
+
+  // Turnos (1/2) ya guardados por identificacion — para deshabilitar esa
+  // opcion puntual en el selector de Turno y mostrar el badge correcto.
+  const turnosOcupadosPorIdentificacion = useMemo(() => {
+    const m = new Map<string, Set<string>>()
+    for (const e of existing) {
+      if (e.turno == null) continue
+      const key = String(e.turno)
+      if (!m.has(e.identificacion)) m.set(e.identificacion, new Set())
+      m.get(e.identificacion)!.add(key)
+    }
+    return m
+  }, [existing])
 
   // Personas filtradas por el buscador (nombre/cedula).
   const filteredPeople = useMemo(() => {
@@ -288,6 +322,7 @@ export default function ProgramacionTurnos() {
         hora: defaultHora,
         horaSalida: defaultHoraSalida,
         novedad: defaultNovedad,
+        turno: "",
       }
     )
   }
@@ -301,12 +336,16 @@ export default function ProgramacionTurnos() {
 
   function setPersonField(
     id: number,
-    field: "puesto" | "hora" | "horaSalida" | "novedad",
+    field: "puesto" | "hora" | "horaSalida" | "novedad" | "turno",
     value: string,
   ) {
     updateSelection((m) => {
       const cur = getOrInit(id, m)
-      m.set(id, { ...cur, [field]: value })
+      // Al cambiar de puesto, limpiar el turno elegido (evita arrastrar un
+      // Turno 1/2 a un puesto que no lo usa).
+      const next = { ...cur, [field]: value }
+      if (field === "puesto" && value !== AUXILIAR_MIXTO) next.turno = ""
+      m.set(id, next)
     })
   }
 
@@ -355,6 +394,7 @@ export default function ProgramacionTurnos() {
             puesto: "",
             hora: "",
             horaSalida: "",
+            turno: "",
           })
           continue
         }
@@ -436,12 +476,26 @@ export default function ProgramacionTurnos() {
         })
         return
       }
+      // Auxiliar Mixto es de doble jornada: exige elegir Turno 1 o Turno 2
+      // (permite que la misma persona tenga las dos filas ese dia).
+      if (s.puesto === AUXILIAR_MIXTO && !s.turno) {
+        toast({
+          title: "Falta el turno",
+          description: `Elige Turno 1 o Turno 2 para ${person.nombre} (puesto Auxiliar Mixto).`,
+          variant: "destructive",
+        })
+        return
+      }
       programaciones.push({
         identificacion: person.identificacion,
         nombre: person.nombre,
         puesto: s.puesto,
         horaentradaprogramada: s.hora,
         horasalidaprogramada: s.horaSalida || undefined,
+        turno:
+          s.puesto === AUXILIAR_MIXTO && s.turno
+            ? (Number(s.turno) as 1 | 2)
+            : undefined,
       })
     }
 
@@ -710,6 +764,7 @@ export default function ProgramacionTurnos() {
                         <TableHead>Nombre</TableHead>
                         <TableHead className="hidden md:table-cell">Identificación</TableHead>
                         <TableHead className="w-[180px]">Puesto</TableHead>
+                        <TableHead className="w-[90px]">Turno</TableHead>
                         <TableHead className="w-[110px]">Entrada</TableHead>
                         <TableHead className="w-[110px]">Salida</TableHead>
                         <TableHead className="w-[200px]">Novedad</TableHead>
@@ -717,14 +772,23 @@ export default function ProgramacionTurnos() {
                     </TableHeader>
                     <TableBody>
                       {filteredPeople.map((p) => {
-                        const ya = idsYaProgramadas.has(p.identificacion)
                         const state = selection.get(p.id) || {
                           selected: false,
                           puesto: defaultPuesto,
                           hora: defaultHora,
                           horaSalida: defaultHoraSalida,
                           novedad: defaultNovedad,
+                          turno: "",
                         }
+                        const esAuxiliarMixto = state.puesto === AUXILIAR_MIXTO
+                        const turnosOcupados =
+                          turnosOcupadosPorIdentificacion.get(p.identificacion) ?? new Set<string>()
+                        // Bloqueado por completo si ya tiene una fila de jornada
+                        // unica (turno=null) hoy, o si es Auxiliar Mixto y ya
+                        // tiene AMBOS turnos (1 y 2) ocupados.
+                        const ya =
+                          idsYaProgramadas.has(p.identificacion) ||
+                          (esAuxiliarMixto && turnosOcupados.has("1") && turnosOcupados.has("2"))
                         const esEspecialidad = especialidadByPuesto.get(state.puesto)
                         // Cuando la persona tiene novedad seleccionada
                         // la programacion se persistira como NOVEDAD —
@@ -759,6 +823,13 @@ export default function ProgramacionTurnos() {
                                   >
                                     Ya programado
                                   </Badge>
+                                ) : turnosOcupados.size > 0 ? (
+                                  <Badge
+                                    variant="outline"
+                                    className="mt-1 w-fit text-[9px] border-sky-300 bg-sky-50 text-sky-700"
+                                  >
+                                    {turnosOcupados.has("1") ? "Turno 1" : "Turno 2"} programado
+                                  </Badge>
                                 ) : null}
                               </div>
                             </TableCell>
@@ -792,6 +863,33 @@ export default function ProgramacionTurnos() {
                                   Especialidad
                                 </Badge>
                               ) : null}
+                            </TableCell>
+                            <TableCell>
+                              {/* Turno (1/2) — solo para Auxiliar Mixto (doble
+                                  jornada). Se deshabilita la opcion del turno que
+                                  esa persona ya tenga programado hoy, para permitir
+                                  la 2a fila (el turno faltante) sin duplicar. */}
+                              {esAuxiliarMixto ? (
+                                <Select
+                                  value={state.turno}
+                                  onValueChange={(v) => setPersonField(p.id, "turno", v)}
+                                  disabled={ya || !state.selected || enModoNovedad}
+                                >
+                                  <SelectTrigger className="h-8 text-xs">
+                                    <SelectValue placeholder="Turno" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="1" disabled={turnosOcupados.has("1")} className="text-xs">
+                                      Turno 1{turnosOcupados.has("1") ? " (ya)" : ""}
+                                    </SelectItem>
+                                    <SelectItem value="2" disabled={turnosOcupados.has("2")} className="text-xs">
+                                      Turno 2{turnosOcupados.has("2") ? " (ya)" : ""}
+                                    </SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">—</span>
+                              )}
                             </TableCell>
                             <TableCell>
                               <div className="relative">
@@ -940,16 +1038,23 @@ export default function ProgramacionTurnos() {
                             ) : (
                               <div className="flex flex-col gap-1">
                                 <span className="text-xs">{row.puesto || "—"}</span>
-                                {/* `especialidad` viene como texto desde
-                                    `registroasistencia` ("true"/"false"/null).
-                                    Comparamos explicitamente contra "true" —
-                                    truthy no sirve porque la cadena "false"
-                                    tambien es truthy en JavaScript. */}
-                                {row.especialidad === "true" ? (
-                                  <Badge className="w-fit text-[9px] bg-emerald-100 text-emerald-700 hover:bg-emerald-100 border border-emerald-200">
-                                    Especialidad
-                                  </Badge>
-                                ) : null}
+                                <div className="flex flex-wrap gap-1">
+                                  {/* `especialidad` viene como texto desde
+                                      `registroasistencia` ("true"/"false"/null).
+                                      Comparamos explicitamente contra "true" —
+                                      truthy no sirve porque la cadena "false"
+                                      tambien es truthy en JavaScript. */}
+                                  {row.especialidad === "true" ? (
+                                    <Badge className="w-fit text-[9px] bg-emerald-100 text-emerald-700 hover:bg-emerald-100 border border-emerald-200">
+                                      Especialidad
+                                    </Badge>
+                                  ) : null}
+                                  {row.turno ? (
+                                    <Badge className="w-fit text-[9px] bg-sky-100 text-sky-700 hover:bg-sky-100 border border-sky-200">
+                                      Turno {row.turno}
+                                    </Badge>
+                                  ) : null}
+                                </div>
                               </div>
                             )}
                           </TableCell>

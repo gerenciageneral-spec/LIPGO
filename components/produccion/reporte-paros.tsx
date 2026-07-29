@@ -86,10 +86,7 @@ export default function ReporteParos() {
         .from("registroasistencia")
         .select("horaentradaprogramada,horasalidaprogramada")
         .eq("fecha", selectedDate)
-        .eq("puesto", "Auxiliar Mixto")
-        .order("id", { ascending: true })
-        .limit(1)
-        .maybeSingle(),
+        .eq("puesto", "Auxiliar Mixto"),
       getParos(selectedEmpresaId ?? null, selectedDate),
     ])
     setHistRows(((histRes.data as HistRow[]) || []).filter(Boolean))
@@ -100,8 +97,17 @@ export default function ReporteParos() {
       const h = Number(m[1])
       return h >= 0 && h <= 23 ? h : null
     }
-    const ini = parseHora(turnoRes?.data?.horaentradaprogramada)
-    const fin = parseHora(turnoRes?.data?.horasalidaprogramada)
+    // Ventana de cobertura del dia = MIN(entrada) .. MAX(salida) entre TODAS
+    // las filas de Auxiliar Mixto (Turno 1 + Turno 2 pueden coexistir el mismo
+    // dia); antes solo se leia la primera fila, quedando ciego al 2do turno.
+    let ini: number | null = null
+    let fin: number | null = null
+    for (const row of (turnoRes?.data as any[]) ?? []) {
+      const i = parseHora(row?.horaentradaprogramada)
+      const f = parseHora(row?.horasalidaprogramada)
+      if (i != null) ini = ini == null ? i : Math.min(ini, i)
+      if (f != null) fin = fin == null ? f : Math.max(fin, f)
+    }
     if (ini != null && fin != null && fin > ini) {
       setShiftStart(ini)
       setShiftEnd(fin)

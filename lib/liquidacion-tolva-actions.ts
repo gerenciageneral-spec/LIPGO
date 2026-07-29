@@ -1,0 +1,515 @@
+"use server"
+
+/**
+ * Server actions del modulo "Liquidación Tolva del día" (Producción).
+ *
+ * Automatiza el último paso manual del flujo "Aprobación de ingreso de
+ * producción → Continuar a Tolva" (production-entries-view.tsx + tolva.tsx):
+ * toma las toneladas APROBADAS del día (invtrans, tipomov='Entrada',
+ * status='Aprobado') y las reparte por TURNO (1/2, ver
+ * registroasistencia.turno + programacion-turnos-actions.ts) según la hora
+ * real de `creado`, y genera la orden de Tolva/Tolva f en cabeceraoc +
+ * detalleoc con un click ("Registrar Tolva"), replicando EXACTAMENTE la
+ * fórmula y el shape de `saveTolva` (lib/orders-actions.tsx:2783-2951) para
+ * que el pago (pagonomina) y el cobro (facturacion) — que ya explotan
+ * cabeceraoc.auxiliares / detalleoc.toneladas por tarifaspersonal /
+ * tarifasoperacion — salgan idénticos a como saldrían si se hubiera hecho
+ * a mano.
+ *
+ * Reglas de agrupación (confirmadas con el negocio):
+ *  - Solo entran ingresos YA APROBADOS (status='Aprobado').
+ *  - El DÍA de un ingreso = invtrans.fechaprod (fecha real de producción).
+ *  - Dentro de ese día, el TURNO se determina por la hora de `creado`
+ *    (hora de Bogotá) cayendo en la ventana [horaInicio, horaFin) del
+ *    Turno 1 o Turno 2 programado ese día para "Auxiliar Mixto".
+ *  - Si `creado` cae en una fecha distinta a `fechaprod` (aprobación
+ *    atrasada), el ingreso queda "atrasado" y NO se asigna automáticamente
+ *    a ningún turno — requiere revisión manual.
+ *  - Si `creado` cae fuera de ambas ventanas (o no hay turnos programados
+ *    ese día), el ingreso queda "sin turno" — también requiere revisión.
+ *  - `ordentolva IS NULL` excluye ingresos que YA se metieron a una Tolva
+ *    (a mano o por este módulo), evitando duplicar si se vuelve a abrir
+ *    la pantalla.
+ */
+
+import { getSupabaseAdmin } from "@/lib/supabase-admin"
+
+const ORIGEN_INGRESO_PRODUCCION = "%ingreso producci%"
+const PUESTO_AUXILIAR_MIXTO = "Auxiliar Mixto"
+
+// ---------------------------------------------------------------------------
+// Tipos
+// ---------------------------------------------------------------------------
+
+interface TurnoVentanaInterna {
+  horaInicio: string | null
+  horaFin: string | null
+  personas: string[]
+}
+
+export interface LineaProducto {
+  idproducto: number | null
+  codproducto: string
+  nombreproducto: string
+  cantidad: number
+  toneladas: number
+}
+
+export interface IngresoPendienteRevision {
+  id: number
+  codproducto: string
+  nombreproducto: string
+  cantidad: number
+  creado: string
+  fechaprod: string
+  motivo: "atrasado" | "sin_turno"
+}
+
+export interface TurnoPreview {
+  turno: 1 | 2
+  horaInicio: string | null
+  horaFin: string | null
+  personas: string[]
+  lineas: LineaProducto[]
+  totalToneladas: number
+  invtransIds: number[]
+}
+
+export interface LiquidacionTolvaDia {
+  fecha: string
+  idempresa: number
+  tipoOperacion: "Tolva" | "Tolva f"
+  turnos: TurnoPreview[]
+  pendientes: IngresoPendienteRevision[]
+  puedeRegistrar: boolean
+}
+
+// ---------------------------------------------------------------------------
+// Helpers de fecha/hora (America/Bogota)
+// ---------------------------------------------------------------------------
+
+/** Fecha (YYYY-MM-DD) y minutos-desde-medianoche de un ISO timestamp, en hora de Bogotá. */
+function bogotaParts(iso: string): { fecha: string; minutos: number } {
+  const d = new Date(iso)
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Bogota",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  })
+  const parts = fmt.formatToParts(d)
+  const get = (t: string) => parts.find((p) => p.type === t)?.value || "00"
+  return {
+    fecha: `${get("year")}-${get("month")}-${get("day")}`,
+    minutos: Number(get("hour")) * 60 + Number(get("minute")),
+  }
+}
+
+/** "HH:MM" o "HH:MM:SS" -> minutos desde medianoche. */
+function horaAMinutos(t: string | null | undefined): number | null {
+  if (!t) return null
+  const m = String(t).match(/^(\d{1,2}):(\d{2})/)
+  if (!m) return null
+  return Number(m[1]) * 60 + Number(m[2])
+}
+
+/** ¿`minutos` cae dentro de [inicio,fin)? Soporta ventanas que cruzan medianoche. */
+function dentroDeVentana(minutos: number, inicio: number, fin: number): boolean {
+  if (fin > inicio) return minutos >= inicio && minutos < fin
+  if (fin < inicio) return minutos >= inicio || minutos < fin
+  return false
+}
+
+/** Domingo (Ley) -> "Tolva f"; el resto -> "Tolva". Mismo criterio que `saveTolva`. */
+function tipoOperacionTolva(fechaISO: string): "Tolva" | "Tolva f" {
+  const [y, m, d] = fechaISO.split("-").map(Number)
+  if (!y || !m || !d) return "Tolva"
+  return new Date(y, m - 1, d).getDay() === 0 ? "Tolva f" : "Tolva"
+}
+
+// ---------------------------------------------------------------------------
+// Preview del día
+// ---------------------------------------------------------------------------
+
+export async function getLiquidacionTolvaDia(
+  fecha: string,
+  idempresa: number,
+): Promise<{ success: boolean; data?: LiquidacionTolvaDia; message?: string }> {
+  if (!fecha || !idempresa) return { success: false, message: "Fecha y empresa son requeridas." }
+  try {
+    const admin: any = await getSupabaseAdmin()
+
+    // 1) Ventanas de Turno 1 / Turno 2 (Auxiliar Mixto) programadas ese día.
+    const { data: prog, error: errProg } = await admin
+      .from("registroasistencia")
+      .select("nombre, turno, horaentradaprogramada, horasalidaprogramada")
+      .eq("fecha", fecha)
+      .eq("idempresa", idempresa)
+      .eq("puesto", PUESTO_AUXILIAR_MIXTO)
+      .in("turno", [1, 2])
+    if (errProg) return { success: false, message: errProg.message }
+
+    const ventanas = new Map<number, TurnoVentanaInterna>([
+      [1, { horaInicio: null, horaFin: null, personas: [] }],
+      [2, { horaInicio: null, horaFin: null, personas: [] }],
+    ])
+    for (const t of [1, 2]) {
+      const filas = (prog || []).filter((r: any) => Number(r.turno) === t)
+      const v = ventanas.get(t)!
+      let minIni: number | null = null
+      let maxFin: number | null = null
+      for (const r of filas) {
+        const nombre = String(r.nombre || "").trim()
+        if (nombre && !v.personas.includes(nombre)) v.personas.push(nombre)
+        const ini = horaAMinutos(r.horaentradaprogramada)
+        const fin = horaAMinutos(r.horasalidaprogramada)
+        if (ini != null && (minIni == null || ini < minIni)) {
+          minIni = ini
+          v.horaInicio = String(r.horaentradaprogramada).slice(0, 5)
+        }
+        if (fin != null && (maxFin == null || fin > maxFin)) {
+          maxFin = fin
+          v.horaFin = String(r.horasalidaprogramada).slice(0, 5)
+        }
+      }
+    }
+
+    // 2) Ingresos APROBADOS de ese día (fechaprod=fecha) sin Tolva asignada.
+    const { data: ingresos, error: errIng } = await admin
+      .from("invtrans")
+      .select("id, idproducto, codproducto, nombreproducto, cantidad, creado, fechaprod")
+      .eq("tipomov", "Entrada")
+      .eq("status", "Aprobado")
+      .eq("idempresa", idempresa)
+      .eq("fechaprod", fecha)
+      .ilike("origen", ORIGEN_INGRESO_PRODUCCION)
+      .is("ordentolva", null)
+    if (errIng) return { success: false, message: errIng.message }
+
+    // 3) Pesos por producto (peso_unitkg) para la conversión bultos->toneladas
+    //    (misma fórmula exacta que saveTolva: cantidad × peso_unitkg / 1000).
+    const idsProducto = Array.from(
+      new Set((ingresos || []).map((r: any) => r.idproducto).filter((x: any) => x != null)),
+    )
+    const pesoPorProducto = new Map<number, number>()
+    if (idsProducto.length > 0) {
+      const { data: productos } = await admin.from("productos").select("id, peso_unitkg").in("id", idsProducto)
+      for (const p of productos || []) pesoPorProducto.set(Number(p.id), Number(p.peso_unitkg) || 0)
+    }
+
+    // 4) Clasificar cada ingreso: atrasado / sin_turno / turno 1 / turno 2.
+    const pendientes: IngresoPendienteRevision[] = []
+    const porTurno = new Map<number, { lineas: Map<string, LineaProducto>; ids: number[] }>([
+      [1, { lineas: new Map(), ids: [] }],
+      [2, { lineas: new Map(), ids: [] }],
+    ])
+
+    for (const r of ingresos || []) {
+      const { fecha: fechaCreado, minutos } = bogotaParts(r.creado)
+      const cantidad = Number(r.cantidad) || 0
+      if (fechaCreado !== fecha) {
+        pendientes.push({
+          id: r.id,
+          codproducto: r.codproducto,
+          nombreproducto: r.nombreproducto,
+          cantidad,
+          creado: r.creado,
+          fechaprod: r.fechaprod,
+          motivo: "atrasado",
+        })
+        continue
+      }
+      let turnoAsignado: number | null = null
+      for (const t of [1, 2]) {
+        const v = ventanas.get(t)!
+        const ini = horaAMinutos(v.horaInicio)
+        const fin = horaAMinutos(v.horaFin)
+        if (ini == null || fin == null) continue
+        if (dentroDeVentana(minutos, ini, fin)) {
+          turnoAsignado = t
+          break
+        }
+      }
+      if (turnoAsignado == null) {
+        pendientes.push({
+          id: r.id,
+          codproducto: r.codproducto,
+          nombreproducto: r.nombreproducto,
+          cantidad,
+          creado: r.creado,
+          fechaprod: r.fechaprod,
+          motivo: "sin_turno",
+        })
+        continue
+      }
+      const bucket = porTurno.get(turnoAsignado)!
+      bucket.ids.push(r.id)
+      const key = `${r.idproducto}|${r.codproducto}`
+      const pesoUnit = r.idproducto != null ? pesoPorProducto.get(Number(r.idproducto)) || 0 : 0
+      const existente = bucket.lineas.get(key)
+      if (existente) {
+        existente.cantidad += cantidad
+        existente.toneladas += (cantidad * pesoUnit) / 1000
+      } else {
+        bucket.lineas.set(key, {
+          idproducto: r.idproducto != null ? Number(r.idproducto) : null,
+          codproducto: r.codproducto,
+          nombreproducto: r.nombreproducto,
+          cantidad,
+          toneladas: (cantidad * pesoUnit) / 1000,
+        })
+      }
+    }
+
+    const turnos: TurnoPreview[] = [1, 2].map((t) => {
+      const v = ventanas.get(t)!
+      const bucket = porTurno.get(t)!
+      const lineas = Array.from(bucket.lineas.values())
+      return {
+        turno: t as 1 | 2,
+        horaInicio: v.horaInicio,
+        horaFin: v.horaFin,
+        personas: v.personas,
+        lineas,
+        totalToneladas: lineas.reduce((a, l) => a + l.toneladas, 0),
+        invtransIds: bucket.ids,
+      }
+    })
+
+    return {
+      success: true,
+      data: {
+        fecha,
+        idempresa,
+        tipoOperacion: tipoOperacionTolva(fecha),
+        turnos,
+        pendientes,
+        puedeRegistrar: pendientes.length === 0,
+      },
+    }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al armar la liquidación de tolva." }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Registrar Tolva del turno
+// ---------------------------------------------------------------------------
+
+export async function registrarTolvaTurno(
+  fecha: string,
+  idempresa: number,
+  turno: 1 | 2,
+): Promise<{ success: boolean; message?: string; id?: number; ordendecargue?: string; toneladas?: number }> {
+  if (!fecha || !idempresa || !turno) return { success: false, message: "Datos incompletos." }
+  try {
+    const admin: any = await getSupabaseAdmin()
+
+    // Recalcula el preview (no confía en lo que el cliente tenía en pantalla,
+    // para evitar condiciones de carrera con nuevas aprobaciones/turnos).
+    const preview = await getLiquidacionTolvaDia(fecha, idempresa)
+    if (!preview.success || !preview.data) return { success: false, message: preview.message }
+    if (preview.data.pendientes.length > 0) {
+      return {
+        success: false,
+        message: `Hay ${preview.data.pendientes.length} ingreso(s) atrasado(s)/sin turno pendientes de revisión manual — resuélvelos antes de registrar.`,
+      }
+    }
+    const turnoData = preview.data.turnos.find((t) => t.turno === turno)
+    if (!turnoData || turnoData.lineas.length === 0) {
+      return { success: false, message: "No hay ingresos aprobados para este turno." }
+    }
+
+    const tipoOperacion = preview.data.tipoOperacion
+
+    const { data: lastHeader, error: errHeader } = await admin
+      .from("cabeceraoc")
+      .select("id")
+      .order("id", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (errHeader) return { success: false, message: errHeader.message }
+    const nextId = lastHeader ? (lastHeader.id || 0) + 1 : 1
+
+    const auxiliaresStr = turnoData.personas.join(", ")
+    const totalToneladas = turnoData.totalToneladas
+    const horaFin = `${turnoData.horaFin || "23:59"}:00`
+
+    const { error: errInsertHeader } = await admin.from("cabeceraoc").insert({
+      id: nextId,
+      idempresa,
+      ordendecargue: `Tolva${nextId}`,
+      fechaorden: fecha,
+      tipooperacion: tipoOperacion,
+      auxiliares: auxiliaresStr,
+      status: "finalizado",
+      pesoorden: totalToneladas,
+      pesovascula: totalToneladas,
+      fechacargue: fecha,
+      fincargue: horaFin,
+      horalote: horaFin,
+    })
+    if (errInsertHeader) return { success: false, message: `Error al crear cabecera: ${errInsertHeader.message}` }
+
+    const { data: lastDetail, error: errDetail } = await admin
+      .from("detalleoc")
+      .select("id")
+      .order("id", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (errDetail) return { success: false, message: errDetail.message }
+    let nextDetailId = lastDetail ? (lastDetail.id || 0) + 1 : 1
+
+    const detalles = turnoData.lineas.map((l) => ({
+      id: nextDetailId++,
+      idorden: nextId,
+      numeroorden: `Tolva${nextId}`,
+      producto: l.nombreproducto,
+      cantidad: l.cantidad,
+      toneladas: l.toneladas,
+    }))
+    if (detalles.length > 0) {
+      const { error: errInsertDetalle } = await admin.from("detalleoc").insert(detalles)
+      if (errInsertDetalle) return { success: false, message: `Error al crear detalles: ${errInsertDetalle.message}` }
+    }
+
+    if (turnoData.invtransIds.length > 0) {
+      const { error: errUpdate } = await admin
+        .from("invtrans")
+        .update({ ordentolva: `Tolva${nextId}` })
+        .in("id", turnoData.invtransIds)
+      if (errUpdate) {
+        return {
+          success: true,
+          id: nextId,
+          ordendecargue: `Tolva${nextId}`,
+          toneladas: totalToneladas,
+          message: `Tolva creada, pero falló vincular ingresos: ${errUpdate.message}`,
+        }
+      }
+    }
+
+    return { success: true, id: nextId, ordendecargue: `Tolva${nextId}`, toneladas: totalToneladas }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al registrar la tolva." }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Auditoría: pago (nómina) vs cobro (facturación) vs entrega real (invtrans)
+// ---------------------------------------------------------------------------
+
+export interface AuditoriaTolvaDia {
+  fecha: string
+  entregaToneladas: number
+  pago: number
+  cobro: number
+  ordenesSinPersonal: number
+}
+
+export async function getAuditoriaTolva(
+  desde: string,
+  hasta: string,
+  idempresa: number,
+): Promise<{ success: boolean; data: AuditoriaTolvaDia[]; message?: string }> {
+  if (!desde || !hasta || !idempresa)
+    return { success: false, data: [], message: "Rango de fechas y empresa son requeridos." }
+  try {
+    const admin: any = await getSupabaseAdmin()
+
+    // 1) Entrega real: invtrans aprobados del rango, agrupados por fechaprod.
+    const { data: ingresos, error: errIng } = await admin
+      .from("invtrans")
+      .select("idproducto, cantidad, fechaprod")
+      .eq("tipomov", "Entrada")
+      .eq("status", "Aprobado")
+      .eq("idempresa", idempresa)
+      .gte("fechaprod", desde)
+      .lte("fechaprod", hasta)
+      .ilike("origen", ORIGEN_INGRESO_PRODUCCION)
+    if (errIng) return { success: false, data: [], message: errIng.message }
+
+    const idsProducto = Array.from(
+      new Set((ingresos || []).map((r: any) => r.idproducto).filter((x: any) => x != null)),
+    )
+    const pesoPorProducto = new Map<number, number>()
+    if (idsProducto.length > 0) {
+      const { data: productos } = await admin.from("productos").select("id, peso_unitkg").in("id", idsProducto)
+      for (const p of productos || []) pesoPorProducto.set(Number(p.id), Number(p.peso_unitkg) || 0)
+    }
+    const entregaPorFecha = new Map<string, number>()
+    for (const r of ingresos || []) {
+      const peso = r.idproducto != null ? pesoPorProducto.get(Number(r.idproducto)) || 0 : 0
+      const ton = ((Number(r.cantidad) || 0) * peso) / 1000
+      const f = String(r.fechaprod).slice(0, 10)
+      entregaPorFecha.set(f, (entregaPorFecha.get(f) || 0) + ton)
+    }
+
+    // 2) Órdenes de Tolva/Tolva f del rango (pago + cobro nacen de aquí).
+    const { data: ordenes, error: errOrd } = await admin
+      .from("cabeceraoc")
+      .select("id, fechaorden, tipooperacion, auxiliares, pesoorden, pesovascula")
+      .eq("idempresa", idempresa)
+      .in("tipooperacion", ["Tolva", "Tolva f"])
+      .gte("fechaorden", desde)
+      .lte("fechaorden", hasta)
+    if (errOrd) return { success: false, data: [], message: errOrd.message }
+
+    const idsOrden = (ordenes || []).map((o: any) => o.id)
+    const toneladasPorOrden = new Map<number, number>()
+    if (idsOrden.length > 0) {
+      const { data: detalles } = await admin.from("detalleoc").select("idorden, toneladas").in("idorden", idsOrden)
+      for (const d of detalles || []) {
+        toneladasPorOrden.set(
+          Number(d.idorden),
+          (toneladasPorOrden.get(Number(d.idorden)) || 0) + (Number(d.toneladas) || 0),
+        )
+      }
+    }
+
+    const { data: tarifasPersonal } = await admin
+      .from("tarifaspersonal")
+      .select("operacion, tarifa, fechaini, fechafin")
+      .eq("empresaid", idempresa)
+      .in("operacion", ["Tolva", "Tolva f"])
+    const { data: tarifasOperacion } = await admin
+      .from("tarifasoperacion")
+      .select("operacion, tarifa, fechainicio, fechafin")
+      .eq("empresaid", idempresa)
+      .in("operacion", ["Tolva", "Tolva f"])
+
+    function tarifaVigente(tarifas: any[], operacion: string, fecha: string, colDesde: string, colHasta: string): number {
+      const fila = (tarifas || []).find(
+        (t) => t.operacion === operacion && String(t[colDesde]).slice(0, 10) <= fecha && String(t[colHasta]).slice(0, 10) >= fecha,
+      )
+      return fila ? Number(fila.tarifa) || 0 : 0
+    }
+
+    const porFecha = new Map<string, AuditoriaTolvaDia>()
+    const getRow = (f: string): AuditoriaTolvaDia => {
+      if (!porFecha.has(f)) porFecha.set(f, { fecha: f, entregaToneladas: 0, pago: 0, cobro: 0, ordenesSinPersonal: 0 })
+      return porFecha.get(f)!
+    }
+    for (const [f, ton] of entregaPorFecha) getRow(f).entregaToneladas += ton
+
+    for (const o of ordenes || []) {
+      const f = String(o.fechaorden).slice(0, 10)
+      const row = getRow(f)
+      const toneladas = toneladasPorOrden.get(Number(o.id)) ?? (Number(o.pesovascula) || Number(o.pesoorden) || 0)
+      const tieneAuxiliares = String(o.auxiliares || "").trim().length > 0
+      const tarifaPago = tarifaVigente(tarifasPersonal || [], o.tipooperacion, f, "fechaini", "fechafin")
+      const tarifaCobro = tarifaVigente(tarifasOperacion || [], o.tipooperacion, f, "fechainicio", "fechafin")
+      row.pago += tieneAuxiliares ? toneladas * tarifaPago : 0
+      row.cobro += toneladas * tarifaCobro
+      if (!tieneAuxiliares) row.ordenesSinPersonal += 1
+    }
+
+    const data = Array.from(porFecha.values()).sort((a, b) => (a.fecha < b.fecha ? 1 : -1))
+    return { success: true, data }
+  } catch (e: any) {
+    return { success: false, data: [], message: e?.message || "Error al calcular la auditoría." }
+  }
+}
