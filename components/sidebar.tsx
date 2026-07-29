@@ -16,6 +16,7 @@ import {
   BadgeCheck,
   Layers,
   ShieldCheck,
+  Banknote,
 } from "lucide-react"
 import Image from "next/image"
 import type { GroupKey, Module, Subgroup } from "@/lib/dashboard-data"
@@ -59,6 +60,14 @@ function HeroActor({ groupKey }: { groupKey: GroupKey | null }) {
           <circle cx="12" cy="9" r="7" className="hero-light" />
           <circle cx="12" cy="9" r="7" fill="none" className="hero-accent-stroke" strokeWidth="1.3" />
           <text x="12" y="12.4" textAnchor="middle" fontSize="9" fontWeight="800" fontFamily="ui-sans-serif,system-ui,sans-serif" className="hero-accent">$</text>
+        </>
+      )
+    case "compensacion": // Compensación → billetera (nómina/liquidaciones/pago)
+      return (
+        <>
+          <rect x="4" y="5.5" width="14" height="10" rx="2" className="hero-light" />
+          <path d="M4 8.6 h14" className="hero-lightstroke" strokeWidth="1.1" />
+          <circle cx="14.6" cy="11.4" r="1.5" className="hero-accent" />
         </>
       )
     case "inventarios": // Inventarios → caja isométrica
@@ -303,9 +312,12 @@ export function Sidebar({
   }, [permissionsLoaded, allowedModules, protectedModules])
 
   // REORG (2026-07-03): menú ordenado por FLUJO OPERATIVO (entrada → almacén →
-  // producción → salida → soporte → config). Los grupos "Vehículos", "Báscula",
-  // "Auditoría" y "Compensación" se absorbieron en otros grupos; sus módulos y
-  // permisos se conservan (viajan por el `name` del módulo).
+  // producción → salida → soporte → config). Los grupos "Vehículos", "Báscula" y
+  // "Auditoría" se absorbieron en otros grupos; sus módulos y permisos se
+  // conservan (viajan por el `name` del módulo).
+  // REORG (2026-07-29): "Compensación" vuelve como grupo propio — reúne todo lo
+  // que liquida/paga al colaborador (nómina, liquidaciones, parafiscales,
+  // revisión de nómina, vacaciones), antes disperso dentro de Gestión Humana.
   const allMenuItems = [
     { key: null, label: "Inicio", icon: Home },
     { key: "integral" as GroupKey, label: "Torre de Control", icon: LayoutDashboard },
@@ -317,6 +329,7 @@ export function Sidebar({
     { key: "lip" as GroupKey, label: "Operación LIP", icon: Users },
     { key: "financiera" as GroupKey, label: "Gestión Financiera", icon: Wallet },
     { key: "rrhh" as GroupKey, label: "Gestión Humana", icon: Users },
+    { key: "compensacion" as GroupKey, label: "Compensación", icon: Banknote },
     { key: "certificaciones_lip" as GroupKey, label: "Certificaciones · SIG", icon: BadgeCheck },
     { key: "sst" as GroupKey, label: "Seguridad y Salud (SST)", icon: ShieldCheck },
     { key: "configuracion" as GroupKey, label: "Configuración", icon: Settings },
@@ -341,6 +354,7 @@ export function Sidebar({
     lip: "#b199ee",
     financiera: "#5fd398",
     rrhh: "#ed94c2",
+    compensacion: "#f0cf5c",
     certificaciones_lip: "#f0876a",
     sst: "#e0564e",
     configuracion: "#9aa6b3",

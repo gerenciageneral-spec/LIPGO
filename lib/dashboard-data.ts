@@ -28,6 +28,7 @@ export type GroupKey =
   | "integral"
   | "lip"
   | "rrhh"
+  | "compensacion"
   | "certificaciones_lip"
   | "sst"
   | "configuracion"
@@ -295,9 +296,7 @@ export const groups: Group[] = [
           { name: "Visor", icon: Eye, label: "Visor de Asistencia" },
           { name: "Turnos", icon: Clock, label: "Turnos por Puesto" },
           { name: "Asignación horas extra", icon: Clock, label: "Asignación de Horas Extra" },
-          // Control de vacaciones: causación desde fecha de ingreso, disfrute
-          // (novedad del control diario), saldo y liquidación.
-          { name: "Vacaciones", icon: CalendarClock },
+          // Vacaciones se movió al grupo "Compensación" (REORG 2026-07-29).
         ],
       },
       {
@@ -322,15 +321,34 @@ export const groups: Group[] = [
       {
         title: "Nómina",
         modules: [
-          { name: "Nominapersonal", icon: Banknote, label: "Nómina de Personal" },
-          { name: "Liquidaciones", icon: Receipt, label: "Liquidaciones" },
-          // Aportes de seguridad social y parafiscales del mes (guía de la planilla PILA).
-          { name: "Parafiscales", icon: Landmark, label: "Parafiscales y Seguridad Social" },
-          // Cuadro definitivo por colaborador: liquidación diaria + resumen + archivo plano (Siigo).
-          { name: "Revisión de nómina", icon: ClipboardCheck, label: "Revisión de nómina" },
+          // Nominapersonal/Liquidaciones/Parafiscales/Revisión de nómina/Vacaciones
+          // se movieron al grupo "Compensación" (REORG 2026-07-29). Proyecciones NO
+          // es de nómina (proyecciones de producción/pedidos, cabeceraoc/detalleoc);
+          // se deja aquí sin tocar, por decisión explícita del negocio.
           { name: "Proyecciones", icon: Calculator, label: "Proyecciones de Nómina" },
         ],
       },
+    ],
+  },
+  {
+    // REORG (2026-07-29): "Compensación" agrupa TODO lo que liquida/paga al
+    // colaborador (antes disperso dentro de Gestión Humana): nómina de destajo/
+    // turno, liquidaciones de retirados, parafiscales/seguridad social, el cuadro
+    // de revisión/cruce con Siigo, y vacaciones (causa/liquida valor día). Todos
+    // los módulos CONSERVAN su `name` y por tanto su permiso — mover el objeto de
+    // grupo no afecta lo ya otorgado en Gestión de Usuarios.
+    key: "compensacion",
+    title: "Compensación",
+    icon: Wallet,
+    modules: [
+      { name: "Nominapersonal", icon: Banknote, label: "Nómina de Personal" },
+      { name: "Liquidaciones", icon: Receipt, label: "Liquidaciones" },
+      // Aportes de seguridad social y parafiscales del mes (guía de la planilla PILA).
+      { name: "Parafiscales", icon: Landmark, label: "Parafiscales y Seguridad Social" },
+      // Cuadro definitivo por colaborador: liquidación diaria + resumen + archivo plano (Siigo).
+      { name: "Revisión de nómina", icon: ClipboardCheck, label: "Revisión de nómina" },
+      // Causación desde fecha de ingreso, disfrute (novedad del control diario), saldo y liquidación.
+      { name: "Vacaciones", icon: CalendarClock },
     ],
   },
   {
