@@ -709,6 +709,7 @@ function ConciliacionBascula() {
   const [planta, setPlanta] = useState(0) // 0 = todo LIP (1-4)
   const [data, setData] = useState<ConciliacionData | null>(null)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [expand, setExpand] = useState<Set<string>>(new Set())
   const [buscar, setBuscar] = useState("")
 
@@ -721,11 +722,13 @@ function ConciliacionBascula() {
   const consultar = useCallback(async () => {
     setLoading(true)
     setExpand(new Set())
+    setError(null)
     const r = await getConciliacionQuincena(anio, mes, quincena, planta)
     setLoading(false)
     if (r.success && r.data) setData(r.data)
     else {
       setData(null)
+      setError(r.message || "Error desconocido al armar la conciliación.")
       toast({ title: "No se pudo armar la conciliación", description: r.message, variant: "destructive" })
     }
   }, [anio, mes, quincena, planta, toast])
@@ -1160,7 +1163,29 @@ function ConciliacionBascula() {
         </>
       )}
 
-      {!data && !loading && (
+      {data && r && r.ordenes === 0 && (
+        <Card>
+          <CardContent className="py-10 text-center text-sm text-muted-foreground">
+            No se encontraron órdenes con cargue finalizado (<code>fincargue</code>) para{" "}
+            <strong>{planta === 0 ? "Todo LIP" : plantaNombre(planta)}</strong> entre {data.quincena.desde} y{" "}
+            {data.quincena.hasta}. Prueba otra quincena o proyecto.
+          </CardContent>
+        </Card>
+      )}
+
+      {error && (
+        <Card className="border-destructive/40">
+          <CardContent className="flex items-start gap-2 py-6 text-sm">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+            <div>
+              <div className="font-medium text-destructive">No se pudo armar la conciliación</div>
+              <div className="mt-1 text-muted-foreground">{error}</div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {!data && !loading && !error && (
         <Card>
           <CardContent className="py-10 text-center text-sm text-muted-foreground">
             Selecciona la quincena y la planta, y pulsa <strong>Conciliar</strong> para cruzar báscula, pago al

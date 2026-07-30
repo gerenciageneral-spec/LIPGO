@@ -736,7 +736,6 @@ export async function getConciliacionQuincena(
         .gte("fechacargue", desde)
         .lte("fechacargue", hasta)
         .not("fincargue", "is", null)
-        .neq("fincargue", "")
         .range(off, off + 999)
       if (error) return { success: false, message: error.message }
       if (!data || data.length === 0) break
