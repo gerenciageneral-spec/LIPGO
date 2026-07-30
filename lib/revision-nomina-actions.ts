@@ -591,6 +591,318 @@ export async function getRevisionNomina(
 }
 
 // ---------------------------------------------------------------------------
+// CONCILIACIÓN BÁSCULA ↔ PAGO ↔ FACTURACIÓN (quincena, plantas id 1/2)
+// Garantiza que lo PAGADO al personal cuadre con lo FACTURABLE: en las plantas
+// con báscula física (Indupan=1, Avimol=2) tanto el cobro al cliente como el
+// destajo del personal se calculan sobre cabeceraoc.pesovascula (fuente de
+// verdad). Esta conciliación replica EXACTAMENTE el reparto de `pagonomina`
+// (peso báscula ÷ n auxiliares × tarifaspersonal, universo = órdenes con
+// fincargue) y lo cruza contra la vista real, exponiendo:
+//   - diferencia peso PRODUCTO (Σ detalleoc.toneladas) vs peso BÁSCULA por
+//     orden, con el factor de prorrateo (prevalece báscula);
+//   - órdenes sin auxiliares (facturables pero sin nadie a quien pagar);
+//   - órdenes sin tarifa vigente (reparten toneladas pero pagan $0);
+//   - órdenes marcadas NO facturar (pagan nómina sin ingreso);
+//   - auxiliares que no cruzan con Head Count (nombre huérfano);
+//   - Δ por colaborador entre este cálculo y pagonomina (vínculo/retiro/fechas).
+// ---------------------------------------------------------------------------
+
+export interface OrdenConciliada {
+  idorden: number
+  orden: string
+  fecha: string
+  planta: number // 1=Indupan, 2=Avimol
+  tipooperacion: string
+  conBascula: boolean // Cargue/Descargue = pesaje físico; resto = interno (proyección/Tolva/…)
+  tonBascula: number // cabeceraoc.pesovascula — fuente de verdad de pago y cobro
+  tonProducto: number // Σ detalleoc.toneladas (peso declarado por productos)
+  factor: number // tonBascula / tonProducto (prorrateo del detalle; 0 = no calculable)
+  nAux: number
+  auxiliares: string[]
+  facturar: boolean
+  tarifa: number
+  valorPago: number // tonBascula × tarifa (0 si no hay auxiliares)
+}
+
+export interface DetalleOrdenColaborador {
+  fecha: string
+  orden: string
+  tipooperacion: string
+  planta: number
+  tonOrden: number
+  nAux: number
+  tonPersona: number
+  tarifa: number
+  pago: number
+}
+
+export interface ColaboradorConciliado {
+  persona: string
+  enHeadcount: boolean
+  ordenes: number
+  tonAsignada: number
+  valorPago: number
+  tonPagonomina: number
+  pagoPagonomina: number
+  deltaTon: number // tonPagonomina − tonAsignada
+  detalle: DetalleOrdenColaborador[]
+}
+
+export interface ConciliacionData {
+  quincena: { anio: number; mes: number; num: number; desde: string; hasta: string }
+  resumen: {
+    ordenes: number
+    ordenesBascula: number
+    tonBascula: number
+    tonProducto: number
+    tonAsignada: number
+    valorCalculado: number
+    tonPagonomina: number
+    pagoPagonomina: number
+    tonSinAsignar: number
+    ordenesSinAux: number
+    ordenesSinTarifa: number
+    ordenesNoFacturar: number
+    tonNoFacturar: number
+    ordenesConDiferencia: number
+    difProductoBascula: number // Σ (tonBascula − tonProducto) en órdenes con pesaje físico
+    auxiliaresHuerfanos: string[]
+  }
+  ordenesConDiferencia: OrdenConciliada[]
+  ordenesSinAux: OrdenConciliada[]
+  ordenesSinTarifa: OrdenConciliada[]
+  ordenesNoFacturar: OrdenConciliada[]
+  colaboradores: ColaboradorConciliado[]
+}
+
+export async function getConciliacionQuincena(
+  anio: number,
+  mes: number,
+  quincena: 1 | 2,
+  empresa: number, // 0 = ambas plantas; 1 = Indupan; 2 = Avimol
+): Promise<{ success: boolean; data?: ConciliacionData; message?: string }> {
+  try {
+    const admin: any = await getSupabaseAdmin()
+    // Mismo criterio que esBascula en facturacion-control-actions.ts: solo las
+    // plantas 1/2 tienen báscula física; la conciliación aplica solo a ellas.
+    const emps = empresa === 1 || empresa === 2 ? [empresa] : [1, 2]
+
+    const diaIni = quincena === 1 ? 1 : 16
+    const diaFin = quincena === 1 ? 15 : fin(anio, mes)
+    const desde = `${anio}-${String(mes).padStart(2, "0")}-${String(diaIni).padStart(2, "0")}`
+    const hasta = `${anio}-${String(mes).padStart(2, "0")}-${String(diaFin).padStart(2, "0")}`
+
+    // 1) Órdenes del periodo — MISMO universo que pagonomina: fincargue no vacío
+    //    (la vista liquida por fechacargue). Paginado (tope Supabase 1000).
+    const ordenesRaw: any[] = []
+    for (let off = 0; ; off += 1000) {
+      const { data, error } = await admin
+        .from("cabeceraoc")
+        .select("id, ordendecargue, fechacargue, idempresa, tipooperacion, pesovascula, pesoorden, auxiliares, facturar")
+        .in("idempresa", emps)
+        .gte("fechacargue", desde)
+        .lte("fechacargue", hasta)
+        .not("fincargue", "is", null)
+        .neq("fincargue", "")
+        .range(off, off + 999)
+      if (error) return { success: false, message: error.message }
+      if (!data || data.length === 0) break
+      ordenesRaw.push(...data)
+      if (data.length < 1000) break
+    }
+
+    // 2) Detalle de productos (Σ toneladas por orden) — en lotes de ids.
+    const tonProductoPorOrden = new Map<number, number>()
+    const ids = ordenesRaw.map((o) => Number(o.id))
+    for (let i = 0; i < ids.length; i += 100) {
+      const chunk = ids.slice(i, i + 100)
+      for (let off = 0; ; off += 1000) {
+        const { data, error } = await admin
+          .from("detalleoc")
+          .select("idorden, toneladas")
+          .in("idorden", chunk)
+          .range(off, off + 999)
+        if (error) return { success: false, message: error.message }
+        for (const d of data || []) {
+          const k = Number(d.idorden)
+          tonProductoPorOrden.set(k, (tonProductoPorOrden.get(k) || 0) + num(d.toneladas))
+        }
+        if (!data || data.length < 1000) break
+      }
+    }
+
+    // 3) Tarifas de destajo vigentes (mismo join que pagonomina:
+    //    empresaid + operacion + fechacargue entre fechaini/fechafin).
+    const { data: tarifas, error: errTar } = await admin
+      .from("tarifaspersonal")
+      .select("empresaid, operacion, tarifa, fechaini, fechafin")
+      .in("empresaid", emps)
+    if (errTar) return { success: false, message: errTar.message }
+    const tarifaDe = (planta: number, operacion: string, fecha: string): number => {
+      for (const t of tarifas || []) {
+        if (Number(t.empresaid) !== planta) continue
+        if (String(t.operacion) !== operacion) continue
+        if (String(t.fechaini) <= fecha && fecha <= String(t.fechafin)) return num(t.tarifa)
+      }
+      return 0
+    }
+
+    // 4) Head Count (para marcar auxiliares huérfanos por nombre).
+    const nombresHc = new Set<string>()
+    for (let off = 0; ; off += 1000) {
+      const { data, error } = await admin.from("headcount").select("nombre").range(off, off + 999)
+      if (error) break
+      for (const h of data || []) nombresHc.add(String(h.nombre || "").trim().toUpperCase())
+      if (!data || data.length < 1000) break
+    }
+
+    // 5) Procesar órdenes: reparto EXACTO de pagonomina (báscula ÷ n auxiliares).
+    const ordenes: OrdenConciliada[] = []
+    const porPersona = new Map<string, ColaboradorConciliado>()
+    const huerfanos = new Set<string>()
+    for (const o of ordenesRaw) {
+      const planta = Number(o.idempresa)
+      const tipo = String(o.tipooperacion || "").trim()
+      const fecha = String(o.fechacargue).slice(0, 10)
+      const auxiliares = String(o.auxiliares || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+      const nAux = auxiliares.length
+      // En plantas 1/2 pagonomina usa pesovascula CRUDO como peso base (sin
+      // normalizar) — misma base aquí para que el cruce sea exacto.
+      const tonBascula = num(o.pesovascula)
+      const tonProducto = tonProductoPorOrden.get(Number(o.id)) || 0
+      const conBascula = /^(cargue|descargue)$/i.test(tipo)
+      const tarifa = tarifaDe(planta, tipo, fecha)
+      const valorPago = nAux > 0 ? tonBascula * tarifa : 0
+
+      const orden: OrdenConciliada = {
+        idorden: Number(o.id),
+        orden: String(o.ordendecargue || ""),
+        fecha,
+        planta,
+        tipooperacion: tipo,
+        conBascula,
+        tonBascula,
+        tonProducto,
+        factor: tonProducto > 0 && tonBascula > 0 ? tonBascula / tonProducto : 0,
+        nAux,
+        auxiliares,
+        facturar: o.facturar !== false,
+        tarifa,
+        valorPago,
+      }
+      ordenes.push(orden)
+
+      // Reparto por persona (tonelaje ÷ n, igual que pagonomina).
+      if (nAux > 0 && tonBascula > 0) {
+        const tonPersona = tonBascula / nAux
+        for (const p of auxiliares) {
+          const key = p.toUpperCase()
+          if (!nombresHc.has(key)) huerfanos.add(p)
+          if (!porPersona.has(key)) {
+            porPersona.set(key, {
+              persona: p,
+              enHeadcount: nombresHc.has(key),
+              ordenes: 0,
+              tonAsignada: 0,
+              valorPago: 0,
+              tonPagonomina: 0,
+              pagoPagonomina: 0,
+              deltaTon: 0,
+              detalle: [],
+            })
+          }
+          const c = porPersona.get(key)!
+          c.ordenes += 1
+          c.tonAsignada += tonPersona
+          c.valorPago += tonPersona * tarifa
+          c.detalle.push({
+            fecha,
+            orden: orden.orden,
+            tipooperacion: tipo,
+            planta,
+            tonOrden: tonBascula,
+            nAux,
+            tonPersona,
+            tarifa,
+            pago: tonPersona * tarifa,
+          })
+        }
+      }
+    }
+
+    // 6) Cruce contra la vista pagonomina REAL (lo que efectivamente liquida
+    //    nómina, con sus filtros de vínculo/retiro/fecha). Referencia por persona.
+    for (let off = 0; ; off += 1000) {
+      const { data, error } = await admin
+        .from("pagonomina")
+        .select("persona, toneladas, pago_produccion, idempresaliquidacion")
+        .gte("fecha", desde)
+        .lte("fecha", hasta)
+        .gt("toneladas", 0)
+        .in("idempresaliquidacion", emps)
+        .range(off, off + 999)
+      if (error) break
+      for (const r of data || []) {
+        const key = String(r.persona || "").trim().toUpperCase()
+        const c = porPersona.get(key)
+        if (c) {
+          c.tonPagonomina += num(r.toneladas)
+          c.pagoPagonomina += num(r.pago_produccion)
+        }
+      }
+      if (!data || data.length < 1000) break
+    }
+    for (const c of porPersona.values()) c.deltaTon = c.tonPagonomina - c.tonAsignada
+
+    // 7) Resumen y listados de alerta.
+    const conAux = ordenes.filter((o) => o.nAux > 0)
+    const sinAux = ordenes.filter((o) => o.nAux === 0 && o.tonBascula > 0)
+    const sinTarifa = ordenes.filter((o) => o.nAux > 0 && o.tonBascula > 0 && o.tarifa === 0)
+    const noFacturar = ordenes.filter((o) => !o.facturar)
+    const conDif = ordenes
+      .filter((o) => o.conBascula && o.tonProducto > 0 && Math.abs(o.tonBascula - o.tonProducto) > 0.05)
+      .sort((a, b) => Math.abs(b.tonBascula - b.tonProducto) - Math.abs(a.tonBascula - a.tonProducto))
+
+    const colaboradores = Array.from(porPersona.values()).sort((a, b) => b.tonAsignada - a.tonAsignada)
+    for (const c of colaboradores) c.detalle.sort((a, b) => (a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0))
+
+    const tonBascula = ordenes.reduce((a, o) => a + o.tonBascula, 0)
+    const data: ConciliacionData = {
+      quincena: { anio, mes, num: quincena, desde, hasta },
+      resumen: {
+        ordenes: ordenes.length,
+        ordenesBascula: ordenes.filter((o) => o.conBascula).length,
+        tonBascula,
+        tonProducto: ordenes.reduce((a, o) => a + o.tonProducto, 0),
+        tonAsignada: conAux.reduce((a, o) => a + o.tonBascula, 0),
+        valorCalculado: ordenes.reduce((a, o) => a + o.valorPago, 0),
+        tonPagonomina: colaboradores.reduce((a, c) => a + c.tonPagonomina, 0),
+        pagoPagonomina: colaboradores.reduce((a, c) => a + c.pagoPagonomina, 0),
+        tonSinAsignar: sinAux.reduce((a, o) => a + o.tonBascula, 0),
+        ordenesSinAux: sinAux.length,
+        ordenesSinTarifa: sinTarifa.length,
+        ordenesNoFacturar: noFacturar.length,
+        tonNoFacturar: noFacturar.reduce((a, o) => a + o.tonBascula, 0),
+        ordenesConDiferencia: conDif.length,
+        difProductoBascula: conDif.reduce((a, o) => a + (o.tonBascula - o.tonProducto), 0),
+        auxiliaresHuerfanos: Array.from(huerfanos).sort(),
+      },
+      ordenesConDiferencia: conDif,
+      ordenesSinAux: sinAux,
+      ordenesSinTarifa: sinTarifa,
+      ordenesNoFacturar: noFacturar,
+      colaboradores,
+    }
+    return { success: true, data }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al armar la conciliación de la quincena." }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // HC POR DÍA POR PROYECTO (ID) — base real de trabajadores con la que se opera
 // cada día. Cuenta los trabajadores DISTINTOS que movieron toneladas (destajo)
 // por fecha + proyecto (asistencia ya ratificada en pagonomina), y lo cruza con
