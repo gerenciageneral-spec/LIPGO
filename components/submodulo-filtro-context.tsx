@@ -9,12 +9,19 @@
 //
 // `anio`/`mes` = null significa "sin filtro" (la tira usa su comportamiento por
 // defecto: resumen del año en curso). `mes` es el NOMBRE del mes ("Enero"…).
+//
+// `desde`/`hasta` (ISO "YYYY-MM-DD") son un filtro alternativo de RANGO exacto
+// de fechas — para submódulos como "Historial Báscula" que filtran por período
+// libre en vez de año/mes. Si vienen seteados, tienen prioridad sobre anio/mes
+// en el submódulo que los consuma.
 
 import { createContext, useCallback, useContext, useMemo, useState } from "react"
 
 export interface SubmoduloFiltro {
   anio: string | null
   mes: string | null
+  desde: string | null
+  hasta: string | null
 }
 
 interface Ctx {
@@ -22,16 +29,20 @@ interface Ctx {
   setFiltro: (f: SubmoduloFiltro) => void
 }
 
+const FILTRO_VACIO: SubmoduloFiltro = { anio: null, mes: null, desde: null, hasta: null }
+
 const SubmoduloFiltroContext = createContext<Ctx>({
-  filtro: { anio: null, mes: null },
+  filtro: FILTRO_VACIO,
   setFiltro: () => {},
 })
 
 export function SubmoduloFiltroProvider({ children }: { children: React.ReactNode }) {
-  const [filtro, setFiltroState] = useState<SubmoduloFiltro>({ anio: null, mes: null })
+  const [filtro, setFiltroState] = useState<SubmoduloFiltro>(FILTRO_VACIO)
   // Evita renders en bucle: solo actualiza si cambió algo.
   const setFiltro = useCallback((f: SubmoduloFiltro) => {
-    setFiltroState((prev) => (prev.anio === f.anio && prev.mes === f.mes ? prev : f))
+    setFiltroState((prev) =>
+      prev.anio === f.anio && prev.mes === f.mes && prev.desde === f.desde && prev.hasta === f.hasta ? prev : f,
+    )
   }, [])
   const value = useMemo(() => ({ filtro, setFiltro }), [filtro, setFiltro])
   return <SubmoduloFiltroContext.Provider value={value}>{children}</SubmoduloFiltroContext.Provider>

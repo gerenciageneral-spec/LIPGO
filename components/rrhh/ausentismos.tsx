@@ -154,11 +154,13 @@ export default function Ausentismos() {
     setKpiFiltro({
       anio: anioFiltro === "todos" ? null : anioFiltro,
       mes: mesFiltro === "todos" ? null : mesFiltro,
+      desde: null,
+      hasta: null,
     })
   }, [anioFiltro, mesFiltro, setKpiFiltro])
   // Al salir del submódulo, limpiar el filtro para que otros módulos usen su
   // resumen por defecto (año en curso).
-  useEffect(() => () => setKpiFiltro({ anio: null, mes: null }), [setKpiFiltro])
+  useEffect(() => () => setKpiFiltro({ anio: null, mes: null, desde: null, hasta: null }), [setKpiFiltro])
 
   const [form, setForm] = useState({ ...initialForm })
 

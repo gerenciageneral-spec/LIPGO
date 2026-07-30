@@ -11,6 +11,7 @@ import { toast } from "@/hooks/use-toast"
 import * as XLSX from "xlsx"
 import { getBasculaHistory, updateBasculaRecord } from "@/lib/bascula-actions"
 import { useAuth } from "@/components/auth-provider"
+import { useSubmoduloFiltro } from "@/components/submodulo-filtro-context"
 import { BasculaOrderDetailsDialog } from "@/components/bascula-order-details-dialog"
 
 const EDIT_PASSWORD = "Jeff123456"
@@ -31,16 +32,29 @@ interface BasculaHistoryRecord {
 
 export function BasculaHistory() {
   const { selectedEmpresaId } = useAuth()
+  // Publica el filtro de periodo (desde/hasta) a la tarjeta de KPIs de arriba
+  // ("Indicadores — Recepción y Despacho"), para que las toneladas mostradas
+  // sean las del MISMO periodo que se está filtrando en esta tabla.
+  const { setFiltro: setKpiFiltro } = useSubmoduloFiltro()
   const [data, setData] = useState<BasculaHistoryRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [exporting, setExporting] = useState(false)
 
-  // Filtros
-  const [fechaOrdenFilter, setFechaOrdenFilter] = useState("")
-  const [fechaCargueFilter, setFechaCargueFilter] = useState("")
+  // Filtros — desde/hasta filtra por RANGO sobre fechaorden (el mismo campo que
+  // usa la tarjeta de toneladas de arriba, para que ambas coincidan).
+  const [desdeFilter, setDesdeFilter] = useState("")
+  const [hastaFilter, setHastaFilter] = useState("")
   const [placaFilter, setPlacaFilter] = useState("")
   const [ordenFilter, setOrdenFilter] = useState("")
   const [tiqueteFilter, setTiqueteFilter] = useState("")
+
+  // Publicar el filtro de periodo a la tira de KPIs superior.
+  useEffect(() => {
+    setKpiFiltro({ anio: null, mes: null, desde: desdeFilter || null, hasta: hastaFilter || null })
+  }, [desdeFilter, hastaFilter, setKpiFiltro])
+  // Al salir del submódulo, limpiar el filtro para que otros módulos usen su
+  // resumen por defecto.
+  useEffect(() => () => setKpiFiltro({ anio: null, mes: null, desde: null, hasta: null }), [setKpiFiltro])
 
   // Details dialog state (productos + lotes por orden de cargue)
   const [detailsOpen, setDetailsOpen] = useState(false)
@@ -173,17 +187,23 @@ export function BasculaHistory() {
   }
 
   const filteredData = data.filter((item) => {
-    if (fechaOrdenFilter && item.fechaorden !== fechaOrdenFilter) return false
-    if (fechaCargueFilter && item.fechacargue !== fechaCargueFilter) return false
+    if (desdeFilter && item.fechaorden < desdeFilter) return false
+    if (hastaFilter && item.fechaorden > hastaFilter) return false
     if (placaFilter && !item.placa?.toLowerCase().includes(placaFilter.toLowerCase())) return false
     if (ordenFilter && !item.ordendecargue?.toLowerCase().includes(ordenFilter.toLowerCase())) return false
     if (tiqueteFilter && !item.tiquetebascula?.toLowerCase().includes(tiqueteFilter.toLowerCase())) return false
     return true
   })
 
+  // Toneladas del periodo/filtro actual — mismo criterio que la tarjeta de
+  // arriba (Σ pesovascula), para que la tabla y la tarjeta muestren el mismo
+  // número aunque la tarjeta consulte directo a la BD (sin paginar 1000 filas
+  // como este listado en memoria).
+  const toneladasFiltradas = filteredData.reduce((acc, r) => acc + (Number(r.pesovascula) || 0), 0)
+
   const clearFilters = () => {
-    setFechaOrdenFilter("")
-    setFechaCargueFilter("")
+    setDesdeFilter("")
+    setHastaFilter("")
     setPlacaFilter("")
     setOrdenFilter("")
     setTiqueteFilter("")
@@ -202,12 +222,12 @@ export function BasculaHistory() {
       {/* Filtros */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         <div className="space-y-1">
-          <Label htmlFor="fechaOrden" className="text-xs">Fecha Orden</Label>
-          <Input id="fechaOrden" type="date" value={fechaOrdenFilter} onChange={(e) => setFechaOrdenFilter(e.target.value)} className="h-9 text-sm" />
+          <Label htmlFor="desde" className="text-xs">Fecha desde</Label>
+          <Input id="desde" type="date" value={desdeFilter} onChange={(e) => setDesdeFilter(e.target.value)} className="h-9 text-sm" />
         </div>
         <div className="space-y-1">
-          <Label htmlFor="fechaCargue" className="text-xs">Fecha Cargue</Label>
-          <Input id="fechaCargue" type="date" value={fechaCargueFilter} onChange={(e) => setFechaCargueFilter(e.target.value)} className="h-9 text-sm" />
+          <Label htmlFor="hasta" className="text-xs">Fecha hasta</Label>
+          <Input id="hasta" type="date" value={hastaFilter} onChange={(e) => setHastaFilter(e.target.value)} className="h-9 text-sm" />
         </div>
         <div className="space-y-1">
           <Label htmlFor="placa" className="text-xs">Placa</Label>
@@ -222,8 +242,11 @@ export function BasculaHistory() {
           <Input id="tiquete" type="text" placeholder="Buscar tiquete..." value={tiqueteFilter} onChange={(e) => setTiqueteFilter(e.target.value)} className="h-9 text-sm" />
         </div>
       </div>
+      <p className="text-xs text-muted-foreground">
+        El filtro "Fecha desde/hasta" (sobre fecha de orden) también actualiza la tarjeta de toneladas de arriba.
+      </p>
 
-      {(fechaOrdenFilter || fechaCargueFilter || placaFilter || ordenFilter || tiqueteFilter) && (
+      {(desdeFilter || hastaFilter || placaFilter || ordenFilter || tiqueteFilter) && (
         <div className="flex justify-end">
           <Button variant="outline" size="sm" onClick={clearFilters}>Limpiar Filtros</Button>
         </div>
@@ -296,7 +319,7 @@ export function BasculaHistory() {
       </div>
 
       <div className="text-sm text-muted-foreground">
-        Mostrando {filteredData.length} de {data.length} registros
+        Mostrando {filteredData.length} de {data.length} registros · {(Math.round(toneladasFiltradas * 10) / 10).toLocaleString("es-CO")} t en el periodo filtrado
       </div>
 
       <BasculaOrderDetailsDialog

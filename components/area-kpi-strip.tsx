@@ -66,12 +66,12 @@ export function AreaKpiStrip({ groupKey, moduleName }: { groupKey: string; modul
     }
     let cancel = false
     setLoading(true)
-    getAreaKpisRapidas(groupKey, selectedEmpresaId, profile?.id, moduleName, filtro.anio, filtro.mes)
+    getAreaKpisRapidas(groupKey, selectedEmpresaId, profile?.id, moduleName, filtro.anio, filtro.mes, filtro.desde, filtro.hasta)
       .then((r) => { if (!cancel) { setItems(r.items); setTituloResp(r.titulo ?? null) } })
       .catch(() => { if (!cancel) { setItems([]); setTituloResp(null) } })
       .finally(() => { if (!cancel) setLoading(false) })
     return () => { cancel = true }
-  }, [groupKey, moduleName, selectedEmpresaId, profile?.id, tituloGrupo, filtro.anio, filtro.mes])
+  }, [groupKey, moduleName, selectedEmpresaId, profile?.id, tituloGrupo, filtro.anio, filtro.mes, filtro.desde, filtro.hasta])
 
   const titulo = tituloResp ?? tituloGrupo
 

@@ -34,6 +34,8 @@ export async function getAreaKpisRapidas(
   moduleName?: string | null,
   anioFiltro?: string | null,
   mesFiltro?: string | null,
+  desdeFiltro?: string | null,
+  hastaFiltro?: string | null,
 ): Promise<{ items: AreaKpiItem[]; titulo?: string }> {
   const sb: any = await getSupabaseAdmin()
   const empresaId = selectedEmpresaId || (await getCurrentEmpresaIdForInsert())
@@ -43,7 +45,7 @@ export async function getAreaKpisRapidas(
   // Cada submódulo muestra SUS datos (según los SLA del BSC del módulo). La tira
   // general del grupo se conserva para la portada del módulo madre. Si el
   // submódulo actual tiene tira propia, se resuelve y se devuelve aquí.
-  const subKpis = await getSubmoduloKpis(sb, moduleName, empresaId, anioFiltro, mesFiltro)
+  const subKpis = await getSubmoduloKpis(sb, moduleName, empresaId, anioFiltro, mesFiltro, desdeFiltro, hastaFiltro)
   if (subKpis) return subKpis
 
   // Indicadores del BSC para este módulo/submódulo. El módulo madre muestra sus
@@ -112,8 +114,54 @@ async function getSubmoduloKpis(
   empresaId: number,
   anioFiltro?: string | null,
   mesFiltro?: string | null,
+  desdeFiltro?: string | null,
+  hastaFiltro?: string | null,
 ): Promise<{ items: AreaKpiItem[]; titulo: string } | null> {
   if (!moduleName) return null
+
+  // Historial Báscula / Báscula: toneladas (Σ cabeceraoc.pesovascula) del rango
+  // desde/hasta seleccionado en la tabla (o mes en curso si no hay filtro) — el
+  // MISMO periodo que el usuario está viendo, no el resumen general del grupo.
+  if (moduleName === "Historial Báscula" || moduleName === "Báscula") {
+    const hoy = hoyBogota()
+    const desde = desdeFiltro || `${hoy.slice(0, 7)}-01`
+    const hasta = hastaFiltro || hoy
+    let toneladas = 0
+    let cargues = 0
+    try {
+      let offset = 0
+      const pageSize = 1000
+      for (;;) {
+        const { data, error } = await sb
+          .from("cabeceraoc")
+          .select("pesovascula")
+          .eq("idempresa", empresaId)
+          .gte("fechaorden", desde)
+          .lte("fechaorden", hasta)
+          .range(offset, offset + pageSize - 1)
+        if (error) break
+        for (const r of data || []) toneladas += Number(r.pesovascula) || 0
+        cargues += (data || []).length
+        if (!data || data.length < pageSize) break
+        offset += pageSize
+      }
+    } catch {
+      /* fail-safe: tarjeta en 0 sin romper el header */
+    }
+    const periodo = desdeFiltro || hastaFiltro ? `${desde} a ${hasta}` : `mes en curso (${desde} a ${hasta})`
+    return {
+      titulo: "Indicadores — Recepción y Despacho",
+      items: [
+        {
+          label: "Toneladas",
+          value: `${(Math.round(toneladas * 10) / 10).toLocaleString("es-CO")} t`,
+          subtext: `${cargues} cargue(s) · ${periodo}`,
+          variant: "primary",
+          icon: "truck",
+        },
+      ],
+    }
+  }
 
   // Ausentismos (Gestión Humana): mismo resumen que muestra el submódulo —
   // casos, días perdidos, accidentes de trabajo y casos por revisar (SST) del
