@@ -49,12 +49,12 @@ function hoyColombia(): string {
   return new Date(colombiaDate).toISOString().split("T")[0]
 }
 
-// Opciones de valor para el ajuste manual: 1, 2 o 3 (jornada base 7h vigente
-// desde el 16-jul-2026; antes era 0.66/2.66 con jornada 7.3333h).
-const OPCIONES_AJUSTE: number[] = [1, 2, 3]
+// Opciones de valor para el ajuste manual: 0.5, 1, 2 o 3 (jornada base 7h
+// vigente desde el 16-jul-2026; antes era 0.66/2.66 con jornada 7.3333h).
+const OPCIONES_AJUSTE: number[] = [0.5, 1, 2, 3]
 
 // Botón + popover para ajustar manualmente un campo de hora extra
-// (HED, HEDF, HEN o HN) con un valor entre 1 y 3.
+// (HED, HEDF, HEN o HN) con un valor entre 0,5 y 3.
 function AjusteManualButton({
   disabled,
   onApply,
@@ -90,7 +90,7 @@ function AjusteManualButton({
           </Select>
         </div>
         <div className="space-y-1.5">
-          <Label className="text-xs font-semibold">Valor (1 - 3)</Label>
+          <Label className="text-xs font-semibold">Valor (0,5 - 3)</Label>
           <Select
             value={String(valor)}
             onValueChange={(v) => setValor(Number(v))}
@@ -99,9 +99,11 @@ function AjusteManualButton({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
+              {/* `value` va con punto (se re-parsea con Number); solo el texto
+                  visible se muestra con coma decimal (es-CO). */}
               {OPCIONES_AJUSTE.map((o) => (
                 <SelectItem key={o} value={String(o)}>
-                  {o}
+                  {o.toLocaleString("es-CO")}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -292,7 +294,7 @@ export function ExtraHoursAssignment({
     }
   }
 
-  // Ajuste manual: aplica un valor (entre 1 y 3) a uno de los
+  // Ajuste manual: aplica un valor (entre 0,5 y 3) a uno de los
   // campos de hora extra (HED, HEDF, HEN, HN) del registro indicado y
   // lo persiste en registroasistencia.
   const ajustarManual = async (
