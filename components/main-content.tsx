@@ -143,6 +143,7 @@ import Nominapersonal from "@/components/nominapersonal" // Added import for Nom
 import Liquidaciones from "@/components/liquidaciones"
 import Parafiscales from "@/components/parafiscales"
 import RevisionNomina from "@/components/revision-nomina"
+import Bonos from "@/components/bonos"
 import { SolicitudTurnos } from "@/components/solicitud-turnos" // Added import for Solicitud de Turnos
 import { AprobarTurnos } from "@/components/aprobar-turnos" // Added import for Aprobar Turnos
 import { AttendanceViewer } from "@/components/attendance-viewer" // Added import for AttendanceViewer component
@@ -755,6 +756,10 @@ export function MainContent({
           ) : selectedModule === "Revisión de nómina" ? (
             <PermissionGuard moduleName="Revisión de nómina">
               <RevisionNomina />
+            </PermissionGuard>
+          ) : selectedModule === "Bonos" ? (
+            <PermissionGuard moduleName="Bonos">
+              <Bonos />
             </PermissionGuard>
           ) : selectedModule === "Registro de asistencia" ? (
             <PermissionGuard moduleName="Registro de asistencia">

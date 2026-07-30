@@ -9,6 +9,10 @@
 --     vigente en la fecha (tabla `jornada_legal`), no un 7,33 fijo. jun-2026 → 7,3333;
 --     desde 16-jul-2026 → 7. Requiere scripts/create_jornada_legal.sql.
 --   · nominaproyectada = salario quincenal por trabajador (antes fijo 875452).
+--   · BONOS no prestacionales (Compensación › Bonos): rama propia al final que
+--     lee `bonos_nomina` (solo APROBADOS), una fila por código de novedad
+--     (43/50/66). NO se mezclan con la novedad 71- del bono de toneladas.
+--     Requiere scripts/create_bonos_nomina.sql.
 --   REVERSIBLE: definición previa en git (scripts/vistas_financieras.sql).
 -- ============================================================================
 
@@ -74,7 +78,10 @@ create or replace view public.archivoplano as
             max(base_datos.salario) AS salario_ref,
             -- Excedente NETO de la quincena (Σ con signo): los días bajos restan a los
             -- altos. Es el "cruce" por trabajador toneladas vs base.
-            sum((base_datos.bonif_prestacional + base_datos.bonif_no_prestacional)) AS total_bono_nomina,
+            -- OJO: aquí va SOLO `bonif_prestacional`. `bonif_no_prestacional` (los
+            -- bonos del módulo Compensación › Bonos) NO se mezcla con la novedad
+            -- 71-: sale por su propia rama al final, con su código 43/50/66.
+            sum(base_datos.bonif_prestacional) AS total_bono_nomina,
             sum(COALESCE(base_datos.hed, (0)::numeric)) AS total_hed_moneda,
             sum(COALESCE(base_datos.horas_hed, (0)::numeric)) AS total_hed_horas
            FROM base_datos
@@ -239,4 +246,37 @@ UNION ALL
    FROM base_datos
   WHERE ((EXTRACT(dow FROM base_datos.fecha) = (0)::numeric) AND ((base_datos.recargodominical > (0)::numeric) OR (base_datos.toneladas > (0)::numeric) OR (base_datos.especialidad = true)) AND (COALESCE(base_datos.pago_domingo, (0)::numeric) = (0)::numeric))
   GROUP BY base_datos.mes_txt, base_datos.mes_num, base_datos.anio_num, base_datos.num_quincena, base_datos.idempresa, base_datos.identificacion, base_datos.contratosiigo
+UNION ALL
+-- BONOS no prestacionales (Compensación › Bonos). Una fila por CÓDIGO de
+-- novedad (43 ocasionales / 50 no prestacional / 66 aux. movilidad), para que
+-- en Siigo queden separados entre sí y del bono de toneladas (71-).
+--
+-- Se lee `bonos_nomina` DIRECTO (no vía pagonomina) a propósito: el archivo
+-- plano necesita `identificacionempleado`, y la cédula es la llave natural de
+-- esta tabla — así no depende del frágil match por NOMBRE que pagonomina sí
+-- necesita. Solo entran los APROBADOS, y se hereda la exclusión de retirados.
+ SELECT to_char((b.fecha)::timestamp with time zone, 'MM'::text) AS mes,
+        CASE
+            WHEN (EXTRACT(day FROM b.fecha) <= (15)::numeric) THEN 1
+            ELSE 2
+        END AS quincena,
+    b.idempresa,
+    b.identificacion AS identificacionempleado,
+    h.contratosiigo AS contratoempleado,
+    b.novedad_siigo AS nombrenovedad,
+    'Valor'::text AS tiponovedad,
+    round(sum(b.valor)) AS cantidadvalor,
+    round(COALESCE(max(h.salario), (1750905)::numeric) / (2)::numeric)::integer AS nominaproyectada,
+    NULL::text AS fechainicio,
+    NULL::text AS fechafin,
+    0 AS diasnohabiles
+   FROM (bonos_nomina b
+     LEFT JOIN headcount h ON ((TRIM(BOTH FROM h.identificacion) = TRIM(BOTH FROM b.identificacion))))
+  WHERE ((b.estado = 'aprobado'::text) AND (lower(COALESCE(h.estado, 'activo'::text)) <> 'inactivo'::text))
+  GROUP BY to_char((b.fecha)::timestamp with time zone, 'MM'::text),
+        CASE
+            WHEN (EXTRACT(day FROM b.fecha) <= (15)::numeric) THEN 1
+            ELSE 2
+        END,
+    b.idempresa, b.identificacion, h.contratosiigo, b.novedad_siigo
   ORDER BY 1 DESC, 2, 4;

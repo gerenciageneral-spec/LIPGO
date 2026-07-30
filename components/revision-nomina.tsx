@@ -301,10 +301,24 @@ function Resultado({
               hint={`${r.diasAltos} altos · ${r.diasBajos} bajos`}
               tone={r.bono > 0 ? "up" : undefined}
             />
+            {r.bonosNoPrestacionales > 0 && (
+              <Kpi
+                label="Bonos (43/50/66)"
+                value={money(r.bonosNoPrestacionales)}
+                hint="no prestacionales · módulo Bonos"
+                tone="up"
+              />
+            )}
             <Kpi
               label={r.perdida > 0 ? "Pérdida productividad" : "Total quincena"}
               value={r.perdida > 0 ? money(r.perdida) : money(r.total)}
-              hint={r.perdida > 0 ? "la asume la empresa (visible)" : "base + turno + bono"}
+              hint={
+                r.perdida > 0
+                  ? "la asume la empresa (visible)"
+                  : r.bonosNoPrestacionales > 0
+                    ? "base + turno + bono + bonos"
+                    : "base + turno + bono"
+              }
               tone={r.perdida > 0 ? "down" : undefined}
             />
           </div>

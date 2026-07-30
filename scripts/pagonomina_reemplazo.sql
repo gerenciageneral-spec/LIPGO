@@ -16,6 +16,13 @@
 --     salen de `parametros_legales_vigencia` según la fecha del turno — no por año.
 --     jun-2026 → 7,3333 h/80%/hedf 2,05; desde 16-jul-2026 → 7 h/90%/hedf 2,15. Automático.
 --     Unifica y reemplaza jornada_legal + recargo_dominical_legal.
+--   - BONOS no prestacionales (módulo Compensación › Bonos): la CTE `bonos_dia`
+--     agrega por (fecha, persona) los bonos APROBADOS de `bonos_nomina` y los
+--     expone en la columna `bonif_no_prestacional` (antes muerta en 0). NO se
+--     suman a `total_liquidado_dia` a propósito: esa columna alimenta el IBC de
+--     la PILA, el costo de nómina del P&L y las prestaciones de retiro, y el
+--     bono es NO prestacional. Llega al trabajador por el ARCHIVO PLANO, con su
+--     propia novedad (43/50/66). Requiere scripts/create_bonos_nomina.sql.
 --   - BLINDAJE MULTI-TURNO (registroasistencia.turno): `datos_asistencia` colapsa por
 --     (fecha,persona) ANTES de calculo_turnos — necesario porque Auxiliar Mixto puede
 --     tener 2 filas el mismo día (Turno 1 + Turno 2, ver scripts/add_turno_registroasistencia.sql).
@@ -191,6 +198,22 @@ create or replace view public.pagonomina as
            FROM rango_fechas r,
             (LATERAL generate_series((r.fecha_inicio)::timestamp with time zone, (r.fecha_fin)::timestamp with time zone, '1 day'::interval) d(fecha)
              CROSS JOIN lista_empleados e)
+        -- BONOS no prestacionales del módulo "Bonos" (Compensación). Se AGREGA
+        -- por (fecha, persona) ANTES de unirlo: una persona puede tener VARIOS
+        -- bonos el mismo día (conceptos distintos) y sin este colapso el LEFT
+        -- JOIN haría fan-out, DUPLICANDO la fila del día completa (misma trampa
+        -- que blinda `datos_asistencia`). Solo entran los APROBADOS.
+        -- OJO: es NO prestacional -> NO se suma a total_liquidado_dia (esa
+        -- columna alimenta el IBC de la PILA, el costo del P&L y las
+        -- prestaciones de retiro). Sale por `bonif_no_prestacional` y llega al
+        -- trabajador vía el ARCHIVO PLANO.
+        ), bonos_dia AS (
+         SELECT b.fecha,
+            TRIM(BOTH FROM b.nombre) AS persona,
+            sum(b.valor) AS bono_no_prestacional
+           FROM bonos_nomina b
+          WHERE (b.estado = 'aprobado'::text)
+          GROUP BY b.fecha, TRIM(BOTH FROM b.nombre)
         ), consolidado_completo AS (
          SELECT c.fecha,
             c.persona,
@@ -239,13 +262,18 @@ create or replace view public.pagonomina as
                 CASE
                     WHEN (f.fecha IS NOT NULL) THEN 1
                     ELSE 0
-                END AS es_festivo
-           FROM ((((((calendario_base c
+                END AS es_festivo,
+            -- Bono NO prestacional del día (módulo Bonos). Ya viene agregado
+            -- por (fecha, persona) desde `bonos_dia`, así que el join no
+            -- multiplica filas.
+            COALESCE(bo.bono_no_prestacional, (0)::numeric) AS bono_no_prestacional
+           FROM (((((((calendario_base c
              LEFT JOIN produccion_diaria p ON (((c.fecha = p.fecha) AND (c.persona = p.persona))))
              LEFT JOIN datos_asistencia a ON (((c.fecha = a.fecha) AND (c.persona = a.persona))))
              LEFT JOIN calculo_turnos ct ON (((c.fecha = ct.fecha) AND (c.persona = ct.persona))))
              LEFT JOIN festivos f ON ((c.fecha = f.fecha)))
              LEFT JOIN headcount h ON ((h.nombre = c.persona)))
+             LEFT JOIN bonos_dia bo ON (((c.fecha = bo.fecha) AND (c.persona = bo.persona))))
              LEFT JOIN LATERAL (SELECT * FROM parametros_legales_vigencia pv
                                  WHERE (pv.fecha_desde <= c.fecha)
                                  ORDER BY pv.fecha_desde DESC LIMIT 1) pa2 ON (true))
@@ -280,6 +308,7 @@ create or replace view public.pagonomina as
             consolidado_completo.es_sin_registro,
             consolidado_completo.asistio_ok,
             consolidado_completo.es_festivo,
+            consolidado_completo.bono_no_prestacional,
             sum(consolidado_completo.cuenta_como_falta) OVER (PARTITION BY consolidado_completo.persona ORDER BY consolidado_completo.fecha ROWS BETWEEN 6 PRECEDING AND 1 PRECEDING) AS faltas_semana_anterior,
             sum(consolidado_completo.es_sin_registro) OVER (PARTITION BY consolidado_completo.persona ORDER BY consolidado_completo.fecha ROWS BETWEEN 6 PRECEDING AND 1 PRECEDING) AS vacios_semana_anterior,
             sum(consolidado_completo.bloquea_domingo) OVER (PARTITION BY consolidado_completo.persona ORDER BY consolidado_completo.fecha ROWS BETWEEN 6 PRECEDING AND 1 PRECEDING) AS novedades_semana_anterior,
@@ -324,6 +353,7 @@ create or replace view public.pagonomina as
             calculo_nomina_base.es_sin_registro,
             calculo_nomina_base.asistio_ok,
             calculo_nomina_base.es_festivo,
+            calculo_nomina_base.bono_no_prestacional,
             calculo_nomina_base.faltas_semana_anterior,
             calculo_nomina_base.vacios_semana_anterior,
             calculo_nomina_base.novedades_semana_anterior,
@@ -381,7 +411,11 @@ create or replace view public.pagonomina as
         -- TODO es prestacional (se elimina el tope de $9.948; cotiza completo al IBC).
         -- Va con signo para que la quincena netee (archivoplano suma y aplica MAX(0,·)).
         excedente_bruto_destajo AS bonif_prestacional,
-        (0)::numeric AS bonif_no_prestacional,
+        -- Bono NO prestacional del módulo "Bonos" (Compensación): suma de los
+        -- bonos APROBADOS de ese día para esa persona. NO entra a
+        -- total_liquidado_dia (no cotiza al IBC ni genera prestaciones); se
+        -- paga vía la novedad propia del ARCHIVO PLANO (43/50/66).
+        COALESCE(bono_no_prestacional, (0)::numeric) AS bonif_no_prestacional,
     horas_hed,
     horas_hedf,
     horas_hen,

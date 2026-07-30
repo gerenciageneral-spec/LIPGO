@@ -60,6 +60,8 @@ export interface ResumenRevision {
   netoDestajo: number
   bono: number
   perdida: number
+  /** Bonos del módulo Bonos (43/50/66). No cotizan al IBC, pero sí se pagan. */
+  bonosNoPrestacionales: number
   total: number
   diasDestajo: number
   diasAltos: number
@@ -187,7 +189,7 @@ export async function getRevisionNomina(
     const { data: filas, error: errPn } = await admin
       .from("pagonomina")
       .select(
-        "fecha, idempresa, idempresaliquidacion, actividad_registrada, novedad_reportada, especialidad, toneladas, pago_produccion, base_dia, bonif_prestacional, hed, hedf, hen, hef, hn, pago_domingo, recargodominical, total_liquidado_dia",
+        "fecha, idempresa, idempresaliquidacion, actividad_registrada, novedad_reportada, especialidad, toneladas, pago_produccion, base_dia, bonif_prestacional, bonif_no_prestacional, hed, hedf, hen, hef, hn, pago_domingo, recargodominical, total_liquidado_dia",
       )
       .eq("persona", persona)
       .gte("fecha", desde)
@@ -242,6 +244,10 @@ export async function getRevisionNomina(
       // (08/25) en el plano; el descanso dominical va DENTRO de la base quincenal.
       domTrabajado = 0,
       domDescanso = 0,
+      // Bonos NO prestacionales (módulo Compensación › Bonos). NO vienen dentro
+      // de total_liquidado_dia (no cotizan al IBC), pero SÍ se le pagan al
+      // trabajador vía el archivo plano, así que suman al Total quincena.
+      bonosNoPrest = 0,
       empresa: number | null = hc?.idempresa != null ? Number(hc.idempresa) : null
 
     for (const r of filas || []) {
@@ -297,6 +303,7 @@ export async function getRevisionNomina(
         }
       }
       if (anomalia) anomalias += 1
+      bonosNoPrest += num(r.bonif_no_prestacional)
       if (empresa == null && r.idempresa != null) empresa = Number(r.idempresa)
 
       dias.push({
@@ -351,7 +358,8 @@ export async function getRevisionNomina(
       netoDestajo: neto,
       bono,
       perdida,
-      total: baseGar + ingTurno + recDom + bono,
+      bonosNoPrestacionales: bonosNoPrest,
+      total: baseGar + ingTurno + recDom + bono + bonosNoPrest,
       diasDestajo,
       diasAltos,
       diasBajos,
@@ -447,7 +455,11 @@ export async function getRevisionNomina(
         },
       ]
       for (const [nom, g] of agg) {
-        if (nom.startsWith("71")) {
+        // Novedades de VALOR directo: 71 (bono de toneladas) y los bonos del
+        // módulo Compensación › Bonos (43 ocasionales / 50 no prestacional /
+        // 66 aux. movilidad). Sin listarlos aquí caerían fuera de todas las
+        // ramas y se ignorarían en silencio, descuadrando el cruce con Siigo.
+        if (nom.startsWith("71") || nom.startsWith("43") || nom.startsWith("50") || nom.startsWith("66")) {
           conceptos.push({
             concepto: nom,
             tipo: "Valor",
@@ -522,6 +534,15 @@ export async function getRevisionNomina(
           nombre: "Bono productividad (71)",
           lipgo: Math.round(bono),
           siigo: sumC((c) => c.concepto.startsWith("71")),
+        },
+        {
+          // Bonos del módulo Compensación › Bonos. No cotizan al IBC, pero se
+          // pagan por el plano: cruzan contra bonif_no_prestacional de pagonomina.
+          nombre: "Bonos no prestacionales (43/50/66)",
+          lipgo: Math.round(bonosNoPrest),
+          siigo: sumC(
+            (c) => c.concepto.startsWith("43") || c.concepto.startsWith("50") || c.concepto.startsWith("66"),
+          ),
         },
       ]
 

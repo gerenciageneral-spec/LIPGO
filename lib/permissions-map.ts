@@ -170,6 +170,7 @@ export interface UserPermissions {
   facturacion_proyectos: boolean
   cuadro_facturacion: boolean
   conciliacion_avimol: boolean
+  bonos: boolean
   // ---------------------------------------------------------------------------
   // Certificaciones LIP · SST. Estas columnas ya existian en
   // `permisos_usuarios` pero nunca se habian cableado al mapa de permisos,
@@ -324,6 +325,9 @@ export const MODULE_PERMISSION_MAP: Record<string, keyof UserPermissions> = {
   Liquidaciones: "liquidaciones",
   Parafiscales: "parafiscales",
   "Revisión de nómina": "revision_nomina",
+  // Bonos operativos/administrativos (Compensación). Un solo permiso cubre
+  // registrar y aprobar; la trazabilidad queda en bonos_nomina.
+  "Bonos": "bonos",
   "Registro de asistencia": "registro_asistencia",
   "Tabla Asistencia": "tabla_asistencia",
   "Asignación horas extra": "asignacion_horas_extra",
