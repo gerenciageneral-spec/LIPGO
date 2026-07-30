@@ -52,6 +52,8 @@ interface KpiCardProps {
   variant?: KpiVariant
   /** Slot para contenido extra debajo del numero (progreso, comparativa). */
   footer?: React.ReactNode
+  /** Si se pasa, la tarjeta se vuelve clickeable (p. ej. abrir el detalle completo). */
+  onClick?: () => void
 }
 
 export function KpiCard({
@@ -61,11 +63,30 @@ export function KpiCard({
   icon: Icon,
   variant = "primary",
   footer,
+  onClick,
 }: KpiCardProps) {
   const styles = VARIANT_STYLES[variant]
 
   return (
-    <Card className="border-border/60 shadow-none transition-colors hover:border-border">
+    <Card
+      className={cn(
+        "border-border/60 shadow-none transition-colors hover:border-border",
+        onClick && "cursor-pointer hover:ring-1 hover:ring-ring/40",
+      )}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={
+        onClick
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault()
+                onClick()
+              }
+            }
+          : undefined
+      }
+    >
       <CardContent className="flex flex-col p-3">
         {/* Fila superior: etiqueta compacta + icono pequeño tintado por variante. */}
         <div className="flex items-center justify-between gap-2">

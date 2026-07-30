@@ -62,6 +62,10 @@ export function BasculaHistory() {
   const [selectedOrden, setSelectedOrden] = useState<string | null>(null)
   const [selectedPlaca, setSelectedPlaca] = useState<string | null>(null)
 
+  // Dialog de detalle completo al tocar una de las tarjetas de pendientes
+  // (evita el truncado a 3 órdenes del subtexto de la tarjeta).
+  const [pendingDialogTipo, setPendingDialogTipo] = useState<"tiquete" | "peso" | null>(null)
+
   const openDetails = (record: BasculaHistoryRecord) => {
     setSelectedOrden(record.ordendecargue || null)
     setSelectedPlaca(record.placa || null)
@@ -225,6 +229,10 @@ export function BasculaHistory() {
     return acc
   }, {})
 
+  const pendingDialogRows = pendingDialogTipo === "tiquete" ? tiquetesPendientes : pendingDialogTipo === "peso" ? pesosPendientes : []
+  const pendingDialogTitulo =
+    pendingDialogTipo === "peso" ? "Pesos de báscula pendientes por ingresar" : "Tiquetes pendientes por ingresar"
+
   const clearFilters = () => {
     setDesdeFilter("")
     setHastaFilter("")
@@ -251,6 +259,7 @@ export function BasculaHistory() {
           subtext={resumenPendientes(tiquetesPendientes)}
           icon={Receipt}
           variant={tiquetesPendientes.length > 0 ? "danger" : "success"}
+          onClick={tiquetesPendientes.length > 0 ? () => setPendingDialogTipo("tiquete") : undefined}
         />
         <KpiCard
           label="Pesos de báscula pendientes por ingresar"
@@ -258,6 +267,7 @@ export function BasculaHistory() {
           subtext={pesosPendientes.length > 0 ? `${resumenPendientes(pesosPendientes)} · bloquean facturación` : resumenPendientes(pesosPendientes)}
           icon={Scale}
           variant={pesosPendientes.length > 0 ? "danger" : "success"}
+          onClick={pesosPendientes.length > 0 ? () => setPendingDialogTipo("peso") : undefined}
         />
       </div>
 
@@ -379,6 +389,52 @@ export function BasculaHistory() {
         ordendecargue={selectedOrden}
         placa={selectedPlaca}
       />
+
+      {/* Detalle completo al tocar una tarjeta de pendientes */}
+      <Dialog open={pendingDialogTipo !== null} onOpenChange={(open) => !open && setPendingDialogTipo(null)}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{pendingDialogTitulo}</DialogTitle>
+            <DialogDescription>
+              {pendingDialogRows.length} orden(es) en el periodo filtrado{" "}
+              {pendingDialogTipo === "peso"
+                ? "sin peso de báscula registrado (bloquean facturación)."
+                : "sin tiquete de báscula registrado."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[60vh] overflow-y-auto rounded-md border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-xs whitespace-nowrap">Orden de Cargue</TableHead>
+                  <TableHead className="text-xs whitespace-nowrap">Fecha Orden</TableHead>
+                  <TableHead className="text-xs whitespace-nowrap">Placa</TableHead>
+                  <TableHead className="text-xs whitespace-nowrap">Transporte</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {pendingDialogRows.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={4} className="h-16 text-center text-xs">Sin pendientes.</TableCell>
+                  </TableRow>
+                ) : (
+                  pendingDialogRows.map((r) => (
+                    <TableRow key={r.id}>
+                      <TableCell className="text-xs whitespace-nowrap">{r.ordendecargue || "-"}</TableCell>
+                      <TableCell className="text-xs whitespace-nowrap">{r.fechaorden || "-"}</TableCell>
+                      <TableCell className="text-xs whitespace-nowrap">{r.placa || "-"}</TableCell>
+                      <TableCell className="text-xs whitespace-nowrap">{r.transporte || "-"}</TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPendingDialogTipo(null)}>Cerrar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Edit Dialog */}
       <Dialog open={editDialogOpen} onOpenChange={(open) => { if (!saving) setEditDialogOpen(open) }}>
