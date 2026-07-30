@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "@/hooks/use-toast"
 import { Loader2, Plus, Trash2, Pen, Eraser, FileSignature, Send, History, ArrowLeft, FileSpreadsheet, FileText, X } from "lucide-react"
 import { useAuth } from "@/components/auth-provider"
-import { createSolicitudTurnos, getSolicitudesTurnos } from "@/lib/solicitud-turnos-actions"
+import { createSolicitudTurnos, getSolicitudesTurnos, getPuestosFacturacion } from "@/lib/solicitud-turnos-actions"
 import { Badge } from "@/components/ui/badge"
 // XLSX se usa para exportar el historial filtrado a Excel. Ya esta
 // instalado en otros modulos del proyecto (ApprovalHistory, etc.).
@@ -79,12 +79,32 @@ export function SolicitudTurnos() {
   const [signatureDialogOpen, setSignatureDialogOpen] = useState(false)
   const [signatureDataUrl, setSignatureDataUrl] = useState<string | null>(null)
 
+  // Catálogo de puestos (maestro `tarifasfacturacionturnos`). El puesto ya no
+  // se escribe libre: se elige de aquí para que la solicitud pueda cruzarse
+  // después contra lo que se le FACTURA al cliente por horas extra.
+  const [puestos, setPuestos] = useState<string[]>([])
+  const [loadingPuestos, setLoadingPuestos] = useState(true)
+
   // Pre-fill nombre solicitante from profile
   useEffect(() => {
     if (profile?.nombre) {
       setNombresolicitante(profile.nombre)
     }
   }, [profile])
+
+  useEffect(() => {
+    getPuestosFacturacion()
+      .then((r) => {
+        if (r.success) setPuestos(r.data)
+        else
+          toast({
+            title: "No se pudieron cargar los puestos",
+            description: r.message,
+            variant: "destructive",
+          })
+      })
+      .finally(() => setLoadingPuestos(false))
+  }, [])
 
   const loadHistorial = async () => {
     setLoadingHistory(true)
@@ -413,6 +433,14 @@ export function SolicitudTurnos() {
               </Button>
             </div>
 
+            {!loadingPuestos && puestos.length === 0 && (
+              <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm">
+                No hay puestos configurados en <strong>Financiera › Tarifas › Tarifas de Facturación Turnos</strong>.
+                El puesto de la solicitud se toma de ahí para poder cruzarla después contra lo que se le factura al
+                cliente, así que hay que crear al menos uno antes de solicitar.
+              </div>
+            )}
+
             <div className="border rounded-lg overflow-hidden">
               <Table>
                 <TableHeader>
@@ -442,11 +470,30 @@ export function SolicitudTurnos() {
                         </Select>
                       </TableCell>
                       <TableCell>
-                        <Input
+                        <Select
                           value={linea.puesto}
-                          onChange={(e) => updateLinea(linea.id, "puesto", e.target.value)}
-                          placeholder="Ej: Operario, Auxiliar..."
-                        />
+                          onValueChange={(value) => updateLinea(linea.id, "puesto", value)}
+                          disabled={loadingPuestos || puestos.length === 0}
+                        >
+                          <SelectTrigger>
+                            <SelectValue
+                              placeholder={
+                                loadingPuestos
+                                  ? "Cargando puestos…"
+                                  : puestos.length === 0
+                                    ? "Sin puestos configurados"
+                                    : "Selecciona el puesto"
+                              }
+                            />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {puestos.map((p) => (
+                              <SelectItem key={p} value={p}>
+                                {p}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </TableCell>
                       <TableCell>
                         <Input

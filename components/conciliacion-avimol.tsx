@@ -31,10 +31,15 @@ function hoyISO(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota" }).format(new Date())
 }
 
+const horas = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { maximumFractionDigits: 2 })
+
 const TITULO_ALERTA: Record<AlertaAvimol["tipo"], string> = {
   lote_invalido: "Lote sin fecha válida",
-  sin_tarifa: "Sin tarifa vigente",
+  sin_tarifa: "Sin tarifa vigente (producción)",
   sin_liquidar: "Turno no liquidado",
+  sin_solicitud: "Horas extra sin solicitud aprobada",
+  sin_tarifa_he: "Sin tarifa de hora extra",
+  exceso_solicitud: "Horas extra por encima de lo solicitado",
 }
 
 export default function ConciliacionAvimol() {
@@ -117,29 +122,40 @@ export default function ConciliacionAvimol() {
       {data && r && (
         <>
           {/* KPIs */}
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             <Kpi
               label="Toneladas de ingreso"
               value={`${ton(r.tonTotal)} t`}
               hint={`${kg(r.kgTotal)} kg · ${ton(r.tonEstibado)} t Estibado · ${ton(r.tonSalvado)} t Salvado`}
             />
-            <Kpi label="Cobro a Avimol" value={money(r.cobro)} hint="producción × tarifa por tonelada" />
             <Kpi
-              label="Pago de turnos"
+              label="Cobro producción"
+              value={money(r.cobroProduccion)}
+              hint="toneladas × tarifa por tonelada"
+            />
+            <Kpi
+              label="Cobro horas extra"
+              value={money(r.cobroHorasExtra)}
+              hint={`${horas(r.horasExtraEjecutadas)} h ejecutadas · ${horas(r.horasExtraSolicitadas)} h solicitadas`}
+              tone={
+                r.horasExtraEjecutadas > r.horasExtraSolicitadas && r.horasExtraEjecutadas > 0 ? "down" : undefined
+              }
+            />
+            <Kpi
+              label="Cobro total"
+              value={money(r.cobroTotal)}
+              hint={`producción ${money(r.cobroProduccion)} + extras ${money(r.cobroHorasExtra)}`}
+            />
+            <Kpi
+              label="Pago"
               value={money(r.pagoTotal)}
-              hint={`base ${money(r.pagoBase)} · extras ${money(r.pagoRecargos)}`}
+              hint={`turnos ${money(r.pagoBase + r.pagoRecargos)} · h. extra otros puestos ${money(r.pagoHorasExtraOtros)}`}
             />
             <Kpi
               label="Margen"
               value={moneyS(r.margen)}
-              hint={`${r.margenPct >= 0 ? "+" : ""}${r.margenPct.toFixed(1)}% sobre el cobro`}
+              hint={`${r.margenPct >= 0 ? "+" : ""}${r.margenPct.toFixed(1)}% · ${r.diasMargenNegativo} de ${r.diasConDatos} día(s) en pérdida`}
               tone={r.margen >= 0 ? "up" : "down"}
-            />
-            <Kpi
-              label="Días en pérdida"
-              value={String(r.diasMargenNegativo)}
-              hint={`de ${r.diasConDatos} día(s) · ${r.personasDistintas} persona(s)`}
-              tone={r.diasMargenNegativo > 0 ? "down" : "up"}
             />
           </div>
 
@@ -175,12 +191,13 @@ export default function ConciliacionAvimol() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Fecha</TableHead>
-                    <TableHead className="text-right">Ton Estibado PT</TableHead>
-                    <TableHead className="text-right">Ton Salvado</TableHead>
                     <TableHead className="text-right">Ton total</TableHead>
-                    <TableHead className="text-right">Kg total</TableHead>
-                    <TableHead className="text-right">Cobro</TableHead>
-                    <TableHead className="text-right">Pago turnos</TableHead>
+                    <TableHead className="text-right">Cobro producción</TableHead>
+                    <TableHead className="text-right">H. extra ejec.</TableHead>
+                    <TableHead className="text-right">H. extra solic.</TableHead>
+                    <TableHead className="text-right">Cobro h. extra</TableHead>
+                    <TableHead className="text-right">Cobro total</TableHead>
+                    <TableHead className="text-right">Pago</TableHead>
                     <TableHead className="text-right">Margen</TableHead>
                     <TableHead className="text-right">Personas</TableHead>
                   </TableRow>
@@ -188,7 +205,7 @@ export default function ConciliacionAvimol() {
                 <TableBody className="tabular-nums">
                   {data.dias.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={9} className="h-20 text-center text-sm text-muted-foreground">
+                      <TableCell colSpan={10} className="h-20 text-center text-sm text-muted-foreground">
                         Sin ingresos de producción ni turnos de Estibado PT/Salvado en el rango.
                       </TableCell>
                     </TableRow>
@@ -211,11 +228,20 @@ export default function ConciliacionAvimol() {
                                 )}
                               </span>
                             </TableCell>
-                            <TableCell className="text-right">{ton(d.tonEstibado)}</TableCell>
-                            <TableCell className="text-right">{ton(d.tonSalvado)}</TableCell>
-                            <TableCell className="text-right font-medium">{ton(d.tonTotal)}</TableCell>
-                            <TableCell className="text-right text-muted-foreground">{kg(d.kgTotal)}</TableCell>
-                            <TableCell className="text-right font-medium">{money(d.cobro)}</TableCell>
+                            <TableCell className="text-right font-medium" title={`Estibado PT ${ton(d.tonEstibado)} t · Salvado ${ton(d.tonSalvado)} t · ${kg(d.kgTotal)} kg`}>
+                              {ton(d.tonTotal)}
+                            </TableCell>
+                            <TableCell className="text-right">{money(d.cobroProduccion)}</TableCell>
+                            <TableCell
+                              className={`text-right ${d.horasExtraEjecutadas > d.horasExtraSolicitadas ? "font-medium text-amber-600 dark:text-amber-400" : ""}`}
+                            >
+                              {d.horasExtraEjecutadas > 0 ? horas(d.horasExtraEjecutadas) : "—"}
+                            </TableCell>
+                            <TableCell className="text-right text-muted-foreground">
+                              {d.horasExtraSolicitadas > 0 ? horas(d.horasExtraSolicitadas) : "—"}
+                            </TableCell>
+                            <TableCell className="text-right">{money(d.cobroHorasExtra)}</TableCell>
+                            <TableCell className="text-right font-medium">{money(d.cobroTotal)}</TableCell>
                             <TableCell className="text-right">{money(d.pagoTotal)}</TableCell>
                             <TableCell
                               className={`text-right font-semibold ${d.margen < 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`}
@@ -227,12 +253,12 @@ export default function ConciliacionAvimol() {
 
                           {abierto && (
                             <TableRow className="bg-muted/20 hover:bg-muted/20">
-                              <TableCell colSpan={9} className="px-2 py-3">
+                              <TableCell colSpan={10} className="px-2 py-3">
                                 <div className="grid gap-3 lg:grid-cols-2">
                                   {/* Producción facturada */}
                                   <div className="rounded border bg-background">
                                     <div className="border-b px-2 py-1.5 text-xs font-semibold">
-                                      Producción facturada — {money(d.cobro)}
+                                      Producción facturada — {money(d.cobroProduccion)}
                                     </div>
                                     <div className="max-h-64 overflow-auto">
                                       <Table>
@@ -329,6 +355,67 @@ export default function ConciliacionAvimol() {
                                       </Table>
                                     </div>
                                   </div>
+
+                                  {/* Horas extra facturadas (todos los puestos) */}
+                                  <div className="rounded border bg-background lg:col-span-2">
+                                    <div className="border-b px-2 py-1.5 text-xs font-semibold">
+                                      Horas extra facturadas — {money(d.cobroHorasExtra)}
+                                    </div>
+                                    <div className="max-h-64 overflow-auto">
+                                      <Table>
+                                        <TableHeader>
+                                          <TableRow>
+                                            <TableHead className="text-xs">Puesto</TableHead>
+                                            <TableHead className="text-right text-xs">HED</TableHead>
+                                            <TableHead className="text-right text-xs">HEDF</TableHead>
+                                            <TableHead className="text-right text-xs">HEN</TableHead>
+                                            <TableHead className="text-right text-xs">HEF</TableHead>
+                                            <TableHead className="text-right text-xs">HN</TableHead>
+                                            <TableHead className="text-right text-xs">Total h</TableHead>
+                                            <TableHead className="text-right text-xs">Solicitadas</TableHead>
+                                            <TableHead className="text-right text-xs">Δ</TableHead>
+                                            <TableHead className="text-right text-xs">$/h</TableHead>
+                                            <TableHead className="text-right text-xs">Cobro</TableHead>
+                                            <TableHead className="text-right text-xs">Costo</TableHead>
+                                          </TableRow>
+                                        </TableHeader>
+                                        <TableBody className="tabular-nums">
+                                          {d.detalleHorasExtra.length === 0 ? (
+                                            <TableRow>
+                                              <TableCell colSpan={12} className="h-12 text-center text-xs text-muted-foreground">
+                                                Sin horas extra registradas este día.
+                                              </TableCell>
+                                            </TableRow>
+                                          ) : (
+                                            d.detalleHorasExtra.map((h, i) => (
+                                              <TableRow key={i}>
+                                                <TableCell className="text-xs font-medium">{h.puesto}</TableCell>
+                                                <TableCell className="text-right text-xs">{h.hed > 0 ? horas(h.hed) : "—"}</TableCell>
+                                                <TableCell className="text-right text-xs">{h.hedf > 0 ? horas(h.hedf) : "—"}</TableCell>
+                                                <TableCell className="text-right text-xs">{h.hen > 0 ? horas(h.hen) : "—"}</TableCell>
+                                                <TableCell className="text-right text-xs">{h.hef > 0 ? horas(h.hef) : "—"}</TableCell>
+                                                <TableCell className="text-right text-xs">{h.hn > 0 ? horas(h.hn) : "—"}</TableCell>
+                                                <TableCell className="text-right text-xs font-medium">{horas(h.horas)}</TableCell>
+                                                <TableCell className="text-right text-xs text-muted-foreground">
+                                                  {h.horasSolicitadas > 0 ? horas(h.horasSolicitadas) : "sin solicitud"}
+                                                </TableCell>
+                                                <TableCell
+                                                  className={`text-right text-xs font-medium ${h.delta > 0 ? "text-amber-600 dark:text-amber-400" : h.delta < 0 ? "text-muted-foreground" : ""}`}
+                                                >
+                                                  {h.delta === 0 ? "✓" : `${h.delta > 0 ? "+" : ""}${horas(h.delta)}`}
+                                                </TableCell>
+                                                <TableCell className="text-right text-xs">
+                                                  {h.tarifa > 0 ? money(h.tarifa) : <span className="text-rose-500">sin tarifa</span>}
+                                                </TableCell>
+                                                <TableCell className="text-right text-xs font-medium">{money(h.cobro)}</TableCell>
+                                                <TableCell className="text-right text-xs text-muted-foreground">{money(h.costo)}</TableCell>
+                                              </TableRow>
+                                            ))
+                                          )}
+                                        </TableBody>
+                                      </Table>
+                                    </div>
+                                  </div>
                                 </div>
                               </TableCell>
                             </TableRow>
@@ -340,12 +427,16 @@ export default function ConciliacionAvimol() {
                 </TableBody>
               </Table>
               <p className="mt-2 text-xs text-muted-foreground">
-                El <strong>cobro</strong> sale de los ingresos de producción aprobados (<code>invtrans</code>,
-                origen "ingreso producción"), fechados por el <strong>lote</strong> (YYYYMMDD) y valorizados con la
-                tarifa por tonelada de <code>tarifasoperacion</code>: los productos MOGOLLA van a{" "}
-                <strong>Salvado</strong> y el resto a <strong>Estibado PT</strong>, en su variante{" "}
-                <em>Festivo</em> los domingos y festivos de ley. El <strong>pago</strong> es lo que liquida{" "}
-                <code>pagonomina</code> para los turnos de esos dos puestos. Toca un día para ver el detalle.
+                El <strong>cobro de producción</strong> sale de los ingresos aprobados (<code>invtrans</code>, origen
+                "ingreso producción"), fechados por el <strong>lote</strong> (YYYYMMDD) y valorizados con la tarifa
+                por tonelada de <code>tarifasoperacion</code>: los productos MOGOLLA van a <strong>Salvado</strong> y
+                el resto a <strong>Estibado PT</strong>, en su variante <em>Festivo</em> los domingos y festivos de
+                ley. El <strong>cobro de horas extra</strong> toma TODAS las horas (HED+HEDF+HEN+HEF+HN) de cualquier
+                puesto de Avimol, <strong>completas</strong> (sin la resta de 0,66 de la vista antigua), a la tarifa
+                de <code>tarifasfacturacionturnos</code>, y las cruza contra lo que el proyecto pidió en Servicios
+                Adicionales. El <strong>pago</strong> son los turnos de Estibado PT/Salvado más el costo de la hora
+                extra de los demás puestos — se incluye porque su hora extra sí se factura. Toca un día para el
+                detalle.
               </p>
             </CardContent>
           </Card>

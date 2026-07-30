@@ -31,7 +31,10 @@ export async function createSolicitudTurnos(params: CreateSolicitudParams) {
     const records = params.lineas.map((linea) => ({
       fechasolicitud,
       idempresa: params.idempresa,
-      puesto: linea.puesto,
+      // TRIM obligatorio: el puesto se cruza por igualdad estricta contra
+      // `tarifasfacturacionturnos` (facturación de horas extra) y contra
+      // `registroasistencia`. Un espacio sobrante rompe el cruce en silencio.
+      puesto: (linea.puesto || "").trim(),
       fecharequerida: linea.fecharequerida,
       nombresolicitante: params.nombresolicitante,
       estado: "pendiente",
@@ -265,5 +268,54 @@ export async function getEmpresaData(empresaId: number) {
   } catch (error) {
     console.error("[v0] Unexpected error:", error)
     return null
+  }
+}
+
+/**
+ * Catálogo de PUESTOS para el formulario de solicitud, tomado del maestro de
+ * facturación de turnos (`tarifasfacturacionturnos`).
+ *
+ * Por qué de esta tabla y no de `tarifasturnos`: el puesto solicitado se cruza
+ * después contra lo que se le FACTURA al cliente por horas extra
+ * (`tarifasfacturacionturnos.tarifahoraextra`, ver Conciliación Avimol). Si el
+ * puesto se escribiera libre —como era antes— el cruce fallaba en silencio: el
+ * JOIN de facturación es igualdad estricta, sin TRIM ni normalización de tildes.
+ *
+ * El catálogo es TRANSVERSAL (no se filtra por empresa): `tarifasfacturacionturnos`
+ * es una tabla global, su `idempresa` está casi sin asignar (ver
+ * lib/company-constants.ts). Si un puesto aparece en varias vigencias, se
+ * conserva una sola entrada. Mismo patrón que `getPuestosFromTarifas`
+ * (lib/programacion-turnos-actions.ts).
+ */
+export async function getPuestosFacturacion(): Promise<{
+  success: boolean
+  data: string[]
+  message?: string
+}> {
+  const supabase = await createClient()
+  try {
+    const { data, error } = await supabase
+      .from("tarifasfacturacionturnos")
+      .select("puesto, fechainicio")
+      .order("fechainicio", { ascending: false, nullsFirst: false })
+
+    if (error) {
+      console.error("[v0] Error fetching puestos de facturación:", error)
+      return { success: false, data: [], message: error.message }
+    }
+
+    const vistos = new Set<string>()
+    for (const row of data || []) {
+      const puesto = String(row.puesto || "").trim()
+      if (puesto) vistos.add(puesto)
+    }
+
+    return {
+      success: true,
+      data: Array.from(vistos).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" })),
+    }
+  } catch (error) {
+    console.error("[v0] Unexpected error:", error)
+    return { success: false, data: [], message: "Error inesperado al cargar los puestos" }
   }
 }
