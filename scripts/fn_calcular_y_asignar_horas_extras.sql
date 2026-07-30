@@ -9,11 +9,16 @@
 --        - si salió 30+ min tarde (o salió temprano) → su hora real.
 --      Con ajuste de cruce de medianoche.
 --   3) Horas trabajadas = fin − inicio (ajustando medianoche);
---      Horas extra = horas − 1h (descanso) − 7.3333h (jornada base); mín 0;
---      truncado a 2 decimales (sin redondear hacia arriba).
+--      Horas extra = horas − 1h (descanso) − 7h (jornada base vigente desde
+--      16-jul-2026, parametros_legales_vigencia); mín 0; truncado a 2
+--      decimales (sin redondear hacia arriba).
 --   4) Asignación por día ISO: domingo (7) → hedf; resto → hed.
 --
 -- Es una función de trigger BEFORE INSERT/UPDATE: modifica NEW y lo retorna.
+-- NOTA: jornada base = 7h desde el 16-jul-2026 (antes 7.3333h). Si la
+-- vigencia legal vuelve a cambiar, actualizar el literal 7.0 de abajo y
+-- correr un nuevo script retroactivo con el mismo patrón que
+-- scripts/recalcular_horas_extra_retroactivo_16jul.sql, acotado por fecha.
 -- ============================================================================
 
 create or replace function public.calcular_y_asignar_horas_extras()
@@ -33,6 +38,7 @@ BEGIN
     IF LOWER(NEW.especialidad) = 'true'
        AND NEW.horasalida IS NOT NULL
        AND NEW.horaingreso IS NOT NULL
+       AND NEW.horaentradaprogramada IS NOT NULL
        AND NEW.horasalidaprogramada IS NOT NULL THEN
 
         -- ====================================================================
@@ -77,8 +83,8 @@ BEGIN
         -- Convertir a horas totales
         horas_totales := EXTRACT(EPOCH FROM intervalo_trabajado) / 3600.0;
 
-        -- Calcular horas extras (Total - 1h descanso - 7.3333h de jornada base)
-        horas_extras := horas_totales - 1.0 - 7.3333;
+        -- Calcular horas extras (Total - 1h descanso - 7h de jornada base vigente)
+        horas_extras := horas_totales - 1.0 - 7.0;
 
         -- Evitar negativos si trabajó menos de la jornada base
         IF horas_extras < 0 THEN
