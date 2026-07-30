@@ -674,6 +674,8 @@ export interface DetalleOrdenColaborador {
 export interface ColaboradorConciliado {
   persona: string
   enHeadcount: boolean
+  salario: number // headcount.salario (mensual); 0 si no hay match
+  baseDia: number // salario/30 (mismo fallback que getRevisionNomina: 58364 si no hay salario)
   ordenes: number
   tonAsignada: number
   valorPago: number
@@ -779,12 +781,18 @@ export async function getConciliacionQuincena(
       return 0
     }
 
-    // 4) Head Count (para marcar auxiliares huérfanos por nombre).
+    // 4) Head Count (para marcar auxiliares huérfanos por nombre y traer su
+    //    salario base — misma fuente/fallback que usa getRevisionNomina).
     const nombresHc = new Set<string>()
+    const salarioPorNombre = new Map<string, number>()
     for (let off = 0; ; off += 1000) {
-      const { data, error } = await admin.from("headcount").select("nombre").range(off, off + 999)
+      const { data, error } = await admin.from("headcount").select("nombre, salario").range(off, off + 999)
       if (error) break
-      for (const h of data || []) nombresHc.add(String(h.nombre || "").trim().toUpperCase())
+      for (const h of data || []) {
+        const key = String(h.nombre || "").trim().toUpperCase()
+        nombresHc.add(key)
+        if (!salarioPorNombre.has(key)) salarioPorNombre.set(key, num(h.salario))
+      }
       if (!data || data.length < 1000) break
     }
 
@@ -833,9 +841,12 @@ export async function getConciliacionQuincena(
           const key = p.toUpperCase()
           if (!nombresHc.has(key)) huerfanos.add(p)
           if (!porPersona.has(key)) {
+            const salario = salarioPorNombre.get(key) || 0
             porPersona.set(key, {
               persona: p,
               enHeadcount: nombresHc.has(key),
+              salario,
+              baseDia: salario > 0 ? salario / 30 : 58364,
               ordenes: 0,
               tonAsignada: 0,
               valorPago: 0,

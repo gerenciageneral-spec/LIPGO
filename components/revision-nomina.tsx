@@ -762,7 +762,9 @@ function ConciliacionBascula() {
           <TableHead>Planta</TableHead>
           <TableHead>Operación</TableHead>
           <TableHead>Fuente</TableHead>
-          <TableHead className="text-right">Ton base</TableHead>
+          <TableHead className="text-right" title="Peso báscula real (plantas 1/2 y Descargue CEDIs con báscula válida) o peso por producto (resto de CEDIs) — ver columna Fuente">
+            Ton base = peso báscula
+          </TableHead>
           <TableHead className="text-right">Ton producto</TableHead>
           <TableHead className="text-right">Diferencia</TableHead>
           <TableHead className="text-right">Factor prorrateo</TableHead>
@@ -876,9 +878,9 @@ function ConciliacionBascula() {
           {/* Tarjetas comparativas */}
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Kpi
-              label="Toneladas base de cálculo (fuente de verdad)"
+              label="Toneladas base de cálculo = peso báscula"
               value={`${t1(r.tonBase)} t`}
-              hint={`${r.ordenes} órdenes · ${r.ordenesBascula} con pesaje físico`}
+              hint={`${r.ordenesBascula} de ${r.ordenes} órdenes con báscula real; el resto usa peso de producto (CEDIs)`}
             />
             <Kpi
               label="Toneladas asignadas a personal"
@@ -899,6 +901,12 @@ function ConciliacionBascula() {
               tone={totalAlertas > 0 ? "down" : "up"}
             />
           </div>
+          <p className="text-xs text-muted-foreground">
+            <strong>"Ton base" / "peso base"</strong> = <strong>peso de báscula</strong> en Indupan (1), Avimol (2) y
+            en Descargue de los CEDIs cuando el tiquete es válido; en el resto de operaciones de los CEDIs (Cedi
+            Funza=3, Cedi Medellín=4, que hoy no tienen báscula física) es el peso declarado por los productos de la
+            orden. La columna <em>Fuente</em> de cada tabla dice cuál aplicó en esa orden puntual.
+          </p>
 
           {/* Cruce global vs pagonomina */}
           <Card>
@@ -1059,6 +1067,7 @@ function ConciliacionBascula() {
                   <TableRow>
                     <TableHead>Colaborador</TableHead>
                     <TableHead className="text-right">Órdenes</TableHead>
+                    <TableHead className="text-right">Base salario/día</TableHead>
                     <TableHead className="text-right">Ton asignadas</TableHead>
                     <TableHead className="text-right">Destajo calculado</TableHead>
                     <TableHead className="text-right">Ton pagonomina</TableHead>
@@ -1089,6 +1098,10 @@ function ConciliacionBascula() {
                             </span>
                           </TableCell>
                           <TableCell className="text-right">{c.ordenes}</TableCell>
+                          <TableCell className="text-right text-muted-foreground">
+                            {money(c.baseDia)}
+                            {c.salario === 0 && <span className="ml-1 text-[10px] text-amber-600 dark:text-amber-400">sin salario en HC</span>}
+                          </TableCell>
                           <TableCell className="text-right font-medium">{t2(c.tonAsignada)}</TableCell>
                           <TableCell className="text-right">{money(c.valorPago)}</TableCell>
                           <TableCell className="text-right text-muted-foreground">{t2(c.tonPagonomina)}</TableCell>
@@ -1102,7 +1115,7 @@ function ConciliacionBascula() {
                         </TableRow>
                         {abierto && (
                           <TableRow className="bg-muted/20 hover:bg-muted/20">
-                            <TableCell colSpan={6} className="px-2 py-2">
+                            <TableCell colSpan={7} className="px-2 py-2">
                               <div className="max-h-72 overflow-auto rounded border bg-background">
                                 <Table>
                                   <TableHeader>
@@ -1155,7 +1168,9 @@ function ConciliacionBascula() {
               </Table>
               <p className="mt-2 text-xs text-muted-foreground">
                 Toca un colaborador para abrir el detalle de TODO lo pagado en la quincena: cada orden con su tonelaje
-                de báscula, el reparto entre auxiliares (báscula ÷ n), la tarifa vigente y el pago. <em>Δ ton</em>{" "}
+                de báscula, el reparto entre auxiliares (báscula ÷ n), la tarifa vigente y el pago. <em>Base
+                salario/día</em> = salario mensual (Head Count) ÷ 30 — el garantizado del día, aparte e independiente
+                del destajo (para ver las dos aristas: lo que gana fijo y lo que gana por tonelaje). <em>Δ ton</em>{" "}
                 compara contra lo que la vista pagonomina liquida efectivamente (✓ = cuadra).
               </p>
             </CardContent>
