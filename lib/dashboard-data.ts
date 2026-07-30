@@ -230,6 +230,9 @@ export const groups: Group[] = [
           { name: "Facturación Proyectos", icon: CreditCard },
           // Cruce órdenes procesadas vs facturado por owner + prefactura. Permiso propio.
           { name: "Cuadro de Control Facturación", icon: ClipboardCheck },
+          // Avimol: se cobra por producción (tolva × tarifa/ton) pero se paga por
+          // turnos (Estibado PT / Salvado). Cruce día a día. Permiso propio.
+          { name: "Conciliación Avimol", icon: Scale },
           { name: "Tarifas", icon: CreditCard },
           // "Gestión de Facturas" se MOVIÓ a Gestión LIP → Operación Lip (función
           // operativa del coordinador). Conserva su permiso (gestionfacturas).

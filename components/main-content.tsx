@@ -77,6 +77,7 @@ import { ViewPicking } from "@/components/view-picking" // Added import for View
 import { Tarifas } from "@/components/configuration/tarifas" // Added import for Tarifas component
 import { FacturacionProyectos } from "@/components/facturacion-proyectos" // Added import for Facturacion Proyectos component
 import { CuadroControlFacturacion } from "@/components/cuadro-control-facturacion"
+import ConciliacionAvimol from "@/components/conciliacion-avimol"
 import { DashboardOperacionesLip } from "@/components/dashboard-operaciones-lip" // Dashboard Operaciones LIP
 import { RegistroPreoperacional } from "@/components/registro-preoperacional" // Registro Preoperacional
 import GestionContratos from "@/components/rrhh/gestion-contratos"
@@ -959,6 +960,10 @@ export function MainContent({
           ) : selectedModule === "Cuadro de Control Facturación" ? (
             <PermissionGuard moduleName="Cuadro de Control Facturación">
               <CuadroControlFacturacion />
+            </PermissionGuard>
+          ) : selectedModule === "Conciliación Avimol" ? (
+            <PermissionGuard moduleName="Conciliación Avimol">
+              <ConciliacionAvimol />
             </PermissionGuard>
           ) : selectedModule === "Gestión de Facturas" ? (
             <PermissionGuard moduleName="Gestión de Facturas">
