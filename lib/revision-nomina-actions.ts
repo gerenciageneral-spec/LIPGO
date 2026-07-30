@@ -1030,3 +1030,293 @@ export async function getHcPorDia(
     return { success: false, data: [], message: e?.message || "Error al calcular el HC por día." }
   }
 }
+
+// ---------------------------------------------------------------------------
+// AUXILIARES ↔ ASISTENCIA (quincena, LIP id 1-4) — verifica que quien cobró
+// tonelaje en cabeceraoc.auxiliares realmente exista/asistió ese día. Las
+// "4 fuentes" que pidió el negocio (Programación, Registro de asistencia,
+// Tabla Asistencia, Visor de Asistencia) son en la práctica la MISMA tabla
+// `registroasistencia` — solo cambia qué columna llena cada una y cuándo:
+//   - Programación de turnos → horaentradaprogramada/horasalidaprogramada
+//   - Registro de asistencia (kiosco, tabla `asistencia`) + Tabla Asistencia
+//     (supervisor) → horaingreso/horasalida
+//   - Visor de Asistencia → asistencia (código de novedad: incapacidad,
+//     falta, etc.)
+// "Asignación de personal" tampoco es un módulo aparte: es el diálogo
+// "Asignar Personal" de Picking/Packing (`getCarguDescarguePersonnel` /
+// `assignPersonnelToOrder` en lib/picking-actions.ts), que YA escribe
+// directo en cabeceraoc.auxiliares tomando los nombres de registroasistencia
+// del mismo día. Por eso el cruce real es solo: cabeceraoc.auxiliares (CSV
+// de nombres, sin identificación) ↔ registroasistencia + asistencia del
+// mismo (idempresa, fecha), por nombre normalizado (igual que hace
+// app/api/attendance/table/route.ts) para recuperar la identificación.
+// ---------------------------------------------------------------------------
+
+const normalizeName = (n: string | null | undefined) => (n ?? "").trim().toLowerCase()
+
+export type ClasificacionAuxiliar = "ok" | "sin_marcar" | "con_novedad" | "sin_registro"
+
+export interface DetalleAuxiliarDia {
+  persona: string
+  clasificacion: ClasificacionAuxiliar
+  identificacion: string | null
+  puesto: string | null
+  horaProgramada: string | null
+  horaIngreso: string | null
+  novedad: string | null
+  tonPersona: number
+  ordenes: string[]
+}
+
+export interface DiaAuxiliar {
+  fecha: string
+  planta: number
+  toneladas: number
+  ordenes: number
+  auxiliares: number
+  ok: number
+  sinMarcar: number
+  conNovedad: number
+  sinRegistro: number
+  detalle: DetalleAuxiliarDia[]
+}
+
+export interface AsistenciaAuditoriaData {
+  quincena: { anio: number; mes: number; num: number; desde: string; hasta: string }
+  resumen: {
+    toneladas: number
+    ordenes: number
+    auxiliaresDistintos: number
+    ok: number
+    sinMarcar: number
+    conNovedad: number
+    sinRegistro: number
+  }
+  dias: DiaAuxiliar[]
+}
+
+export async function getAuxiliaresVsAsistencia(
+  anio: number,
+  mes: number,
+  quincena: 1 | 2,
+  empresa: number, // 0 = todo LIP (1-4); o un id específico
+): Promise<{ success: boolean; data?: AsistenciaAuditoriaData; message?: string }> {
+  try {
+    const admin: any = await getSupabaseAdmin()
+    const emps = [1, 2, 3, 4].includes(empresa) ? [empresa] : [1, 2, 3, 4]
+
+    const diaIni = quincena === 1 ? 1 : 16
+    const diaFin = quincena === 1 ? 15 : fin(anio, mes)
+    const desde = `${anio}-${String(mes).padStart(2, "0")}-${String(diaIni).padStart(2, "0")}`
+    const hasta = `${anio}-${String(mes).padStart(2, "0")}-${String(diaFin).padStart(2, "0")}`
+
+    // 1) Órdenes del periodo — mismo universo/criterio de peso que la
+    //    conciliación báscula↔pago (pesoBaseCalculo), paginado.
+    const ordenesRaw: any[] = []
+    for (let off = 0; ; off += 1000) {
+      const { data, error } = await admin
+        .from("cabeceraoc")
+        .select("id, ordendecargue, fechacargue, idempresa, tipooperacion, pesovascula, pesoorden, auxiliares")
+        .in("idempresa", emps)
+        .gte("fechacargue", desde)
+        .lte("fechacargue", hasta)
+        .not("fincargue", "is", null)
+        .range(off, off + 999)
+      if (error) return { success: false, message: error.message }
+      if (!data || data.length === 0) break
+      ordenesRaw.push(...data)
+      if (data.length < 1000) break
+    }
+
+    // 2) registroasistencia del periodo — Programación + Registro/Tabla
+    //    Asistencia + Visor viven todos en esta tabla.
+    const registro: any[] = []
+    for (let off = 0; ; off += 1000) {
+      const { data, error } = await admin
+        .from("registroasistencia")
+        .select("identificacion, nombre, idempresa, fecha, puesto, horaentradaprogramada, horasalidaprogramada, horaingreso, horasalida, asistencia")
+        .in("idempresa", emps)
+        .gte("fecha", desde)
+        .lte("fecha", hasta)
+        .range(off, off + 999)
+      if (error) return { success: false, message: error.message }
+      if (!data || data.length === 0) break
+      registro.push(...data)
+      if (data.length < 1000) break
+    }
+
+    // 3) asistencia (kiosco) del periodo — señal más confiable de "sí
+    //    marcó ingreso" (registroasistencia.horaingreso es solo un sync
+    //    best-effort, ver app/api/attendance/register/route.ts).
+    const kiosco: any[] = []
+    for (let off = 0; ; off += 1000) {
+      const { data, error } = await admin
+        .from("asistencia")
+        .select("identificacion, idempresa, fecha, hora")
+        .in("idempresa", emps)
+        .gte("fecha", desde)
+        .lte("fecha", hasta)
+        .range(off, off + 999)
+      if (error) break
+      if (!data || data.length === 0) break
+      kiosco.push(...data)
+      if (data.length < 1000) break
+    }
+    const kioscoSet = new Set<string>(kiosco.map((k) => `${Number(k.idempresa)}|${String(k.fecha).slice(0, 10)}|${String(k.identificacion || "").trim()}`))
+
+    // 4) Mapa (idempresa|fecha|nombreNormalizado) -> estado agregado del
+    //    día (OR entre filas si hay multi-turno).
+    interface Estado {
+      identificacion: string | null
+      puesto: string | null
+      horaProgramada: string | null
+      horaIngreso: string | null
+      novedad: string | null
+      programado: boolean
+      marcoAsistencia: boolean
+    }
+    const estadoMap = new Map<string, Estado>()
+    for (const r of registro) {
+      const fecha = String(r.fecha).slice(0, 10)
+      const idempresa = Number(r.idempresa)
+      const key = `${idempresa}|${fecha}|${normalizeName(r.nombre)}`
+      const identificacion = String(r.identificacion || "").trim() || null
+      const programado = !!(r.horaentradaprogramada || r.horasalidaprogramada)
+      const marcoKiosco = identificacion ? kioscoSet.has(`${idempresa}|${fecha}|${identificacion}`) : false
+      const marcoAsistencia = marcoKiosco || !!r.horaingreso
+      const novedad = String(r.asistencia || "").trim() || null
+      const prev = estadoMap.get(key)
+      if (!prev) {
+        estadoMap.set(key, {
+          identificacion,
+          puesto: r.puesto || null,
+          horaProgramada: r.horaentradaprogramada || r.horasalidaprogramada || null,
+          horaIngreso: r.horaingreso || null,
+          novedad,
+          programado,
+          marcoAsistencia,
+        })
+      } else {
+        prev.identificacion = prev.identificacion || identificacion
+        prev.puesto = prev.puesto || r.puesto || null
+        prev.horaProgramada = prev.horaProgramada || r.horaentradaprogramada || r.horasalidaprogramada || null
+        prev.horaIngreso = prev.horaIngreso || r.horaingreso || null
+        prev.novedad = prev.novedad || novedad
+        prev.programado = prev.programado || programado
+        prev.marcoAsistencia = prev.marcoAsistencia || marcoAsistencia
+      }
+    }
+
+    // 5) Cruzar cada auxiliar de cada orden contra el mapa y agregar por
+    //    (fecha, planta).
+    const porDia = new Map<string, DiaAuxiliar>()
+    for (const o of ordenesRaw) {
+      const planta = Number(o.idempresa)
+      const tipo = String(o.tipooperacion || "").trim()
+      const fecha = String(o.fechacargue).slice(0, 10)
+      const auxiliares = String(o.auxiliares || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+      if (auxiliares.length === 0) continue
+      const { peso: tonBase } = pesoBaseCalculo(planta, tipo, num(o.pesovascula), num(o.pesoorden))
+      if (tonBase <= 0) continue
+      const tonPersona = tonBase / auxiliares.length
+
+      const diaKey = `${fecha}|${planta}`
+      if (!porDia.has(diaKey)) {
+        porDia.set(diaKey, {
+          fecha,
+          planta,
+          toneladas: 0,
+          ordenes: 0,
+          auxiliares: 0,
+          ok: 0,
+          sinMarcar: 0,
+          conNovedad: 0,
+          sinRegistro: 0,
+          detalle: [],
+        })
+      }
+      const dia = porDia.get(diaKey)!
+      dia.ordenes += 1
+      dia.toneladas += tonBase
+
+      for (const p of auxiliares) {
+        const estado = estadoMap.get(`${planta}|${fecha}|${normalizeName(p)}`)
+        let clasificacion: ClasificacionAuxiliar
+        if (!estado) clasificacion = "sin_registro"
+        else if (estado.novedad) clasificacion = "con_novedad"
+        else if (!estado.marcoAsistencia) clasificacion = "sin_marcar"
+        else clasificacion = "ok"
+
+        const existente = dia.detalle.find((d) => d.persona.toUpperCase() === p.toUpperCase())
+        if (existente) {
+          existente.tonPersona += tonPersona
+          existente.ordenes.push(o.ordendecargue || "")
+        } else {
+          dia.detalle.push({
+            persona: p,
+            clasificacion,
+            identificacion: estado?.identificacion || null,
+            puesto: estado?.puesto || null,
+            horaProgramada: estado?.horaProgramada || null,
+            horaIngreso: estado?.horaIngreso || null,
+            novedad: estado?.novedad || null,
+            tonPersona,
+            ordenes: [o.ordendecargue || ""],
+          })
+        }
+      }
+    }
+
+    // 6) Totales por día (a partir del detalle ya deduplicado por persona).
+    for (const dia of porDia.values()) {
+      dia.auxiliares = dia.detalle.length
+      for (const d of dia.detalle) {
+        if (d.clasificacion === "ok") dia.ok += 1
+        else if (d.clasificacion === "sin_marcar") dia.sinMarcar += 1
+        else if (d.clasificacion === "con_novedad") dia.conNovedad += 1
+        else dia.sinRegistro += 1
+      }
+      dia.detalle.sort((a, b) => {
+        const ORDEN: Record<ClasificacionAuxiliar, number> = { sin_registro: 0, con_novedad: 1, sin_marcar: 2, ok: 3 }
+        return ORDEN[a.clasificacion] - ORDEN[b.clasificacion] || a.persona.localeCompare(b.persona)
+      })
+    }
+
+    const dias = Array.from(porDia.values()).sort((a, b) => (a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : a.planta - b.planta))
+
+    const personasDistintas = new Set<string>()
+    let ok = 0,
+      sinMarcar = 0,
+      conNovedad = 0,
+      sinRegistro = 0
+    for (const dia of dias) {
+      for (const d of dia.detalle) {
+        personasDistintas.add(normalizeName(d.persona) + "|" + dia.planta)
+        if (d.clasificacion === "ok") ok += 1
+        else if (d.clasificacion === "sin_marcar") sinMarcar += 1
+        else if (d.clasificacion === "con_novedad") conNovedad += 1
+        else sinRegistro += 1
+      }
+    }
+
+    const data: AsistenciaAuditoriaData = {
+      quincena: { anio, mes, num: quincena, desde, hasta },
+      resumen: {
+        toneladas: dias.reduce((a, d) => a + d.toneladas, 0),
+        ordenes: dias.reduce((a, d) => a + d.ordenes, 0),
+        auxiliaresDistintos: personasDistintas.size,
+        ok,
+        sinMarcar,
+        conNovedad,
+        sinRegistro,
+      },
+      dias,
+    }
+    return { success: true, data }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al armar el cruce de auxiliares vs. asistencia." }
+  }
+}

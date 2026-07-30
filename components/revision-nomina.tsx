@@ -34,11 +34,15 @@ import {
   getRevisionNomina,
   getHcPorDia,
   getConciliacionQuincena,
+  getAuxiliaresVsAsistencia,
   type ColaboradorRef,
   type RevisionNominaData,
   type HcDiaProyecto,
   type ConciliacionData,
   type OrdenConciliada,
+  type AsistenciaAuditoriaData,
+  type DetalleAuxiliarDia,
+  type ClasificacionAuxiliar,
 } from "@/lib/revision-nomina-actions"
 
 const MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
@@ -124,6 +128,7 @@ export default function RevisionNomina() {
           <TabsTrigger value="colaborador">Por colaborador</TabsTrigger>
           <TabsTrigger value="hc">HC por día (por proyecto)</TabsTrigger>
           <TabsTrigger value="conciliacion">Conciliación báscula ↔ pago</TabsTrigger>
+          <TabsTrigger value="asistencia">Auxiliares vs. Asistencia</TabsTrigger>
         </TabsList>
 
         <TabsContent value="colaborador" className="mt-4 space-y-4">
@@ -236,6 +241,10 @@ export default function RevisionNomina() {
 
         <TabsContent value="conciliacion" className="mt-4">
           <ConciliacionBascula />
+        </TabsContent>
+
+        <TabsContent value="asistencia" className="mt-4">
+          <AuxiliaresVsAsistencia />
         </TabsContent>
       </Tabs>
     </div>
@@ -1205,6 +1214,310 @@ function ConciliacionBascula() {
           <CardContent className="py-10 text-center text-sm text-muted-foreground">
             Selecciona la quincena y la planta, y pulsa <strong>Conciliar</strong> para cruzar báscula, pago al
             personal y facturación.
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// AUXILIARES vs. ASISTENCIA — por cada día, quién movió toneladas
+// (cabeceraoc.auxiliares, "Asignación de personal" de Picking/Packing) y si
+// esa persona realmente estaba programada/asistió, cruzando contra
+// Programación de turnos, Registro de asistencia/Tabla Asistencia y Visor de
+// Asistencia (las 3 son la misma tabla registroasistencia).
+// ---------------------------------------------------------------------------
+const CLASIFICACION_LABEL: Record<ClasificacionAuxiliar, string> = {
+  ok: "OK",
+  sin_marcar: "Sin marcar asistencia",
+  con_novedad: "Con novedad",
+  sin_registro: "Sin registro",
+}
+const CLASIFICACION_CLASS: Record<ClasificacionAuxiliar, string> = {
+  ok: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+  sin_marcar: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+  con_novedad: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+  sin_registro: "bg-destructive/15 text-destructive",
+}
+
+function AuxiliaresVsAsistencia() {
+  const { toast } = useToast()
+  const hoy = new Date()
+  const [anio, setAnio] = useState(hoy.getFullYear())
+  const [mes, setMes] = useState(hoy.getMonth() + 1)
+  const [quincena, setQuincena] = useState<1 | 2>(hoy.getDate() <= 15 ? 1 : 2)
+  const [planta, setPlanta] = useState(0)
+  const [data, setData] = useState<AsistenciaAuditoriaData | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [expand, setExpand] = useState<Set<string>>(new Set())
+
+  const anios = [hoy.getFullYear() + 1, hoy.getFullYear(), hoy.getFullYear() - 1, hoy.getFullYear() - 2]
+  const t1 = (x: number) => (Number(x) || 0).toLocaleString("es-CO", { maximumFractionDigits: 1 })
+  const t2 = (x: number) => (Number(x) || 0).toLocaleString("es-CO", { maximumFractionDigits: 2 })
+  const PLANTAS: Record<number, string> = { 1: "Indupan", 2: "Avimol", 3: "Cedi Funza", 4: "Cedi Medellín" }
+  const plantaNombre = (id: number) => PLANTAS[id] || `ID ${id}`
+
+  const consultar = useCallback(async () => {
+    setLoading(true)
+    setExpand(new Set())
+    setError(null)
+    const r = await getAuxiliaresVsAsistencia(anio, mes, quincena, planta)
+    setLoading(false)
+    if (r.success && r.data) setData(r.data)
+    else {
+      setData(null)
+      setError(r.message || "Error desconocido al armar el cruce.")
+      toast({ title: "No se pudo armar el cruce de asistencia", description: r.message, variant: "destructive" })
+    }
+  }, [anio, mes, quincena, planta, toast])
+
+  const toggleExpand = (k: string) =>
+    setExpand((prev) => {
+      const n = new Set(prev)
+      if (n.has(k)) n.delete(k)
+      else n.add(k)
+      return n
+    })
+
+  const r = data?.resumen
+  const pctOk = r && r.auxiliaresDistintos > 0 ? (r.ok / (r.ok + r.sinMarcar + r.conNovedad + r.sinRegistro)) * 100 : 0
+  const totalAlertas = r ? r.sinMarcar + r.conNovedad + r.sinRegistro : 0
+
+  return (
+    <div className="space-y-4">
+      {/* Filtros */}
+      <Card>
+        <CardContent className="flex flex-wrap items-end gap-3 pt-6">
+          <div className="space-y-1">
+            <Label>Año</Label>
+            <Select value={String(anio)} onValueChange={(v) => setAnio(Number(v))}>
+              <SelectTrigger className="w-[90px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {anios.map((y) => (
+                  <SelectItem key={y} value={String(y)}>
+                    {y}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label>Mes</Label>
+            <Select value={String(mes)} onValueChange={(v) => setMes(Number(v))}>
+              <SelectTrigger className="w-[110px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {MESES.map((m, i) => (
+                  <SelectItem key={m} value={String(i + 1)}>
+                    {m}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label>Quincena</Label>
+            <Select value={String(quincena)} onValueChange={(v) => setQuincena(Number(v) as 1 | 2)}>
+              <SelectTrigger className="w-[130px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="1">1ª (1–15)</SelectItem>
+                <SelectItem value="2">2ª (16–fin)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label>Proyecto</Label>
+            <Select value={String(planta)} onValueChange={(v) => setPlanta(Number(v))}>
+              <SelectTrigger className="w-[170px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="0">Todo LIP (1–4)</SelectItem>
+                <SelectItem value="1">Indupan (1)</SelectItem>
+                <SelectItem value="2">Avimol (2)</SelectItem>
+                <SelectItem value="3">Cedi Funza (3)</SelectItem>
+                <SelectItem value="4">Cedi Medellín (4)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <Button onClick={consultar} disabled={loading} className="min-w-[130px]">
+            {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Users className="mr-2 h-4 w-4" />}
+            Consultar
+          </Button>
+        </CardContent>
+      </Card>
+
+      {data && r && (
+        <>
+          {/* Tarjetas comparativas */}
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Kpi label="Toneladas del periodo" value={`${t1(r.toneladas)} t`} hint={`${r.ordenes} órdenes`} />
+            <Kpi
+              label="Auxiliares en regla (OK)"
+              value={`${Math.round(pctOk)}%`}
+              hint={`${r.ok} de ${r.ok + r.sinMarcar + r.conNovedad + r.sinRegistro} asignaciones día-persona`}
+              tone={pctOk >= 95 ? "up" : "down"}
+            />
+            <Kpi
+              label="Con novedad / sin marcar"
+              value={String(r.conNovedad + r.sinMarcar)}
+              hint={`${r.conNovedad} con novedad · ${r.sinMarcar} sin marcar asistencia`}
+              tone={r.conNovedad + r.sinMarcar > 0 ? "down" : "up"}
+            />
+            <Kpi
+              label="Sin registro de asistencia"
+              value={String(r.sinRegistro)}
+              hint="no aparecen en Programación/Asistencia/Visor ese día"
+              tone={r.sinRegistro > 0 ? "down" : "up"}
+            />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Cruza <strong>cabeceraoc.auxiliares</strong> (quién cobró tonelaje, vía "Asignar Personal" de Picking/
+            Packing) contra <strong>registroasistencia</strong> — la tabla que alimentan Programación de turnos,
+            Registro de asistencia/Tabla Asistencia y Visor de Asistencia — por nombre + fecha + proyecto.{" "}
+            <strong>OK</strong> = programado y con ingreso marcado; <strong>Sin marcar</strong> = programado pero sin
+            evidencia de haber llegado; <strong>Con novedad</strong> = tiene incapacidad/ausencia ese mismo día;{" "}
+            <strong>Sin registro</strong> = no aparece en absoluto (nombre mal escrito o persona no registrada).
+          </p>
+
+          {/* Tabla por día (expandible) */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Resumen por día — {data.dias.length} día(s)</CardTitle>
+            </CardHeader>
+            <CardContent className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Fecha</TableHead>
+                    <TableHead>Planta</TableHead>
+                    <TableHead className="text-right">Toneladas</TableHead>
+                    <TableHead className="text-right">Auxiliares</TableHead>
+                    <TableHead className="text-right">OK</TableHead>
+                    <TableHead className="text-right">Sin marcar</TableHead>
+                    <TableHead className="text-right">Con novedad</TableHead>
+                    <TableHead className="text-right">Sin registro</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody className="tabular-nums">
+                  {data.dias.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={8} className="h-20 text-center text-sm text-muted-foreground">
+                        Sin órdenes con auxiliares en el periodo/proyecto seleccionado.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    data.dias.map((dia) => {
+                      const k = `${dia.fecha}|${dia.planta}`
+                      const abierto = expand.has(k)
+                      const tieneAlertas = dia.sinMarcar + dia.conNovedad + dia.sinRegistro > 0
+                      return (
+                        <Fragment key={k}>
+                          <TableRow className="cursor-pointer hover:bg-muted/30" onClick={() => toggleExpand(k)}>
+                            <TableCell className="whitespace-nowrap">
+                              <span className="inline-flex items-center gap-1">
+                                <ChevronRight
+                                  className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${abierto ? "rotate-90" : ""}`}
+                                />
+                                {dia.fecha}
+                              </span>
+                            </TableCell>
+                            <TableCell>{plantaNombre(dia.planta)}</TableCell>
+                            <TableCell className="text-right font-medium">{t2(dia.toneladas)}</TableCell>
+                            <TableCell className="text-right">{dia.auxiliares}</TableCell>
+                            <TableCell className="text-right text-emerald-600 dark:text-emerald-400">{dia.ok}</TableCell>
+                            <TableCell className={`text-right ${dia.sinMarcar > 0 ? "text-amber-600 dark:text-amber-400 font-medium" : "text-muted-foreground"}`}>
+                              {dia.sinMarcar}
+                            </TableCell>
+                            <TableCell className={`text-right ${dia.conNovedad > 0 ? "text-amber-600 dark:text-amber-400 font-medium" : "text-muted-foreground"}`}>
+                              {dia.conNovedad}
+                            </TableCell>
+                            <TableCell className={`text-right ${dia.sinRegistro > 0 ? "text-destructive font-medium" : "text-muted-foreground"}`}>
+                              {dia.sinRegistro}
+                            </TableCell>
+                          </TableRow>
+                          {abierto && (
+                            <TableRow className="bg-muted/20 hover:bg-muted/20">
+                              <TableCell colSpan={8} className="px-2 py-2">
+                                <div className="max-h-80 overflow-auto rounded border bg-background">
+                                  <Table>
+                                    <TableHeader>
+                                      <TableRow>
+                                        <TableHead className="text-xs">Auxiliar</TableHead>
+                                        <TableHead className="text-xs">Estado</TableHead>
+                                        <TableHead className="text-xs">Identificación</TableHead>
+                                        <TableHead className="text-xs">Puesto</TableHead>
+                                        <TableHead className="text-xs">Hora programada</TableHead>
+                                        <TableHead className="text-xs">Hora ingreso</TableHead>
+                                        <TableHead className="text-xs">Novedad</TableHead>
+                                        <TableHead className="text-right text-xs">Ton persona</TableHead>
+                                        <TableHead className="text-xs">Órdenes</TableHead>
+                                      </TableRow>
+                                    </TableHeader>
+                                    <TableBody className="tabular-nums">
+                                      {dia.detalle.map((d: DetalleAuxiliarDia, i: number) => (
+                                        <TableRow key={i}>
+                                          <TableCell className="text-xs font-medium">{d.persona}</TableCell>
+                                          <TableCell className="text-xs">
+                                            <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${CLASIFICACION_CLASS[d.clasificacion]}`}>
+                                              {CLASIFICACION_LABEL[d.clasificacion]}
+                                            </span>
+                                          </TableCell>
+                                          <TableCell className="text-xs">{d.identificacion || "—"}</TableCell>
+                                          <TableCell className="text-xs">{d.puesto || "—"}</TableCell>
+                                          <TableCell className="text-xs">{d.horaProgramada || "—"}</TableCell>
+                                          <TableCell className="text-xs">{d.horaIngreso || "—"}</TableCell>
+                                          <TableCell className="text-xs">{d.novedad || "—"}</TableCell>
+                                          <TableCell className="text-right text-xs font-medium">{t2(d.tonPersona)}</TableCell>
+                                          <TableCell className="text-xs">{d.ordenes.join(", ")}</TableCell>
+                                        </TableRow>
+                                      ))}
+                                    </TableBody>
+                                  </Table>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </Fragment>
+                      )
+                    })
+                  )}
+                </TableBody>
+              </Table>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Toca un día para ver el detalle por auxiliar: su estado de asistencia, identificación recuperada por
+                cruce de nombre, hora programada/de ingreso, novedad (si aplica) y las órdenes en las que se le
+                atribuyó tonelaje ese día.
+              </p>
+            </CardContent>
+          </Card>
+        </>
+      )}
+
+      {error && (
+        <Card className="border-destructive/40">
+          <CardContent className="flex items-start gap-2 py-6 text-sm">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+            <div>
+              <div className="font-medium text-destructive">No se pudo armar el cruce de asistencia</div>
+              <div className="mt-1 text-muted-foreground">{error}</div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {!data && !loading && !error && (
+        <Card>
+          <CardContent className="py-10 text-center text-sm text-muted-foreground">
+            Selecciona la quincena y el proyecto, y pulsa <strong>Consultar</strong> para cruzar toneladas movidas
+            contra Programación, Registro de asistencia y Visor de Asistencia.
           </CardContent>
         </Card>
       )}
