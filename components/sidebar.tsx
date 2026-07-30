@@ -186,7 +186,11 @@ export function Sidebar({
     let cancelled = false
     const loadPermissions = async () => {
       try {
-        const res = await fetch("/api/user-modules", { method: "GET" })
+        // `no-store` obligatorio: sin esto el navegador puede servir una
+        // respuesta cacheada y un permiso recién otorgado NO aparece en el
+        // menú hasta un refresco fuerte. Mismo criterio que ya usan
+        // useAsistenciaAlerts / useOperacionesDiaAlerts contra este endpoint.
+        const res = await fetch("/api/user-modules", { method: "GET", cache: "no-store" })
         if (!res.ok) {
           console.error("[v0] Sidebar: failed to fetch user-modules:", res.status)
           if (!cancelled) setPermissionsLoaded(true)

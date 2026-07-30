@@ -5,6 +5,12 @@ import { getUserPermissions } from "@/lib/permissions-actions"
 // con la directiva "use server".
 import { MODULE_PERMISSION_MAP } from "@/lib/permissions-map"
 
+// Render dinámico explícito: los permisos cambian en caliente (Gestión de
+// Usuarios) y una respuesta cacheada dejaría al usuario sin ver un módulo que
+// ya le otorgaron. Mismo criterio que app/api/attendance/table/route.ts.
+export const dynamic = "force-dynamic"
+export const revalidate = 0
+
 /**
  * Endpoint que devuelve, para el usuario autenticado:
  *   - `protectedModules`: TODOS los nombres de modulos que estan
