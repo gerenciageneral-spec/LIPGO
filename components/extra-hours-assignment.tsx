@@ -49,11 +49,12 @@ function hoyColombia(): string {
   return new Date(colombiaDate).toISOString().split("T")[0]
 }
 
-// Opciones de valor para el ajuste manual: únicamente 0.66 y 2.66.
-const OPCIONES_AJUSTE: number[] = [0.66, 2.66]
+// Opciones de valor para el ajuste manual: únicamente 1 y 3 (jornada base
+// 7h vigente desde el 16-jul-2026; antes era 0.66/2.66 con jornada 7.3333h).
+const OPCIONES_AJUSTE: number[] = [1, 3]
 
 // Botón + popover para ajustar manualmente un campo de hora extra
-// (HED, HEDF, HEN o HN) con un valor entre 0.66 y 2.66.
+// (HED, HEDF, HEN o HN) con un valor entre 1 y 3.
 function AjusteManualButton({
   disabled,
   onApply,
@@ -63,7 +64,7 @@ function AjusteManualButton({
 }) {
   const [open, setOpen] = useState(false)
   const [campo, setCampo] = useState<"hed" | "hedf" | "hen" | "hn">("hed")
-  const [valor, setValor] = useState<number>(0.66)
+  const [valor, setValor] = useState<number>(1)
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -89,7 +90,7 @@ function AjusteManualButton({
           </Select>
         </div>
         <div className="space-y-1.5">
-          <Label className="text-xs font-semibold">Valor (0.66 - 2.66)</Label>
+          <Label className="text-xs font-semibold">Valor (1 - 3)</Label>
           <Select
             value={String(valor)}
             onValueChange={(v) => setValor(Number(v))}
@@ -100,7 +101,7 @@ function AjusteManualButton({
             <SelectContent>
               {OPCIONES_AJUSTE.map((o) => (
                 <SelectItem key={o} value={String(o)}>
-                  {o.toFixed(2)}
+                  {o}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -291,7 +292,7 @@ export function ExtraHoursAssignment({
     }
   }
 
-  // Ajuste manual: aplica un valor (entre 0.66 y 2.66) a uno de los
+  // Ajuste manual: aplica un valor (entre 1 y 3) a uno de los
   // campos de hora extra (HED, HEDF, HEN, HN) del registro indicado y
   // lo persiste en registroasistencia.
   const ajustarManual = async (
