@@ -6,7 +6,8 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
-import { Loader2, Download, Pencil, Eye, EyeOff, Receipt, Scale } from "lucide-react"
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
+import { Loader2, Download, Pencil, Eye, EyeOff, Receipt, Scale, Info } from "lucide-react"
 import { toast } from "@/hooks/use-toast"
 import * as XLSX from "xlsx"
 import { getBasculaHistory, updateBasculaRecord } from "@/lib/bascula-actions"
@@ -33,6 +34,11 @@ interface BasculaHistoryRecord {
 
 export function BasculaHistory() {
   const { selectedEmpresaId } = useAuth()
+  // Solo las PLANTAS (idempresa 1/2) tienen báscula física. Los CEDIS (3/4 y
+  // cualquier otra empresa) por ahora no la tienen: su peso se calcula desde
+  // los productos de la orden, no desde un pesaje real — este historial no
+  // les aplica (el backend ya filtra sus datos, esto solo informa por qué).
+  const esCedi = !!selectedEmpresaId && selectedEmpresaId !== 1 && selectedEmpresaId !== 2
   // Publica el filtro de periodo (desde/hasta) a la tarjeta de KPIs de arriba
   // ("Indicadores — Recepción y Despacho"), para que las toneladas mostradas
   // sean las del MISMO periodo que se está filtrando en esta tabla.
@@ -250,6 +256,17 @@ export function BasculaHistory() {
           Exportar a Excel
         </Button>
       </div>
+
+      {esCedi && (
+        <Alert>
+          <Info />
+          <AlertTitle>Este CEDI no cuenta con báscula física</AlertTitle>
+          <AlertDescription>
+            El peso de sus órdenes se calcula a partir de los productos cargados, no de un pesaje real, por lo que
+            no aparece en este historial. Cambia a una planta con báscula (Harinera Indupan o Avimol) para ver estos datos.
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* Pendientes por ingresar — toda orden debe tener tiquete y peso de báscula */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

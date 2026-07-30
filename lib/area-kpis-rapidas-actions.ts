@@ -123,6 +123,24 @@ async function getSubmoduloKpis(
   // desde/hasta seleccionado en la tabla (o mes en curso si no hay filtro) — el
   // MISMO periodo que el usuario está viendo, no el resumen general del grupo.
   if (moduleName === "Historial Báscula" || moduleName === "Báscula") {
+    // Solo las PLANTAS (idempresa 1/2) tienen báscula física. Los CEDIS (3/4
+    // y cualquier otra empresa) por ahora no la tienen: su peso se calcula
+    // desde los productos de la orden, no desde un pesaje real — mismo
+    // criterio que `esBascula` en facturacion-control-actions.ts.
+    if (empresaId !== 1 && empresaId !== 2) {
+      return {
+        titulo: "Indicadores — Recepción y Despacho",
+        items: [
+          {
+            label: "Toneladas",
+            value: "—",
+            subtext: "Este CEDI no cuenta con báscula física",
+            variant: "warning",
+            icon: "truck",
+          },
+        ],
+      }
+    }
     const hoy = hoyBogota()
     const desde = desdeFiltro || `${hoy.slice(0, 7)}-01`
     const hasta = hastaFiltro || hoy

@@ -21,9 +21,15 @@ export async function getBasculaHistory(selectedEmpresaId?: number | null) {
       .neq("tipooperacion", "proyeccion")
       .neq("tipooperacion", "Tolva")
       .neq("tipooperacion", "Tolva f")
+      // Solo las PLANTAS (idempresa 1/2) tienen báscula física. Los CEDIS
+      // (3/4 y cualquier otra empresa) por ahora no la tienen: su
+      // pesovascula/pesoorden se calcula desde los productos de la orden,
+      // no desde un pesaje real, así que no pertenecen a este historial.
+      // Mismo criterio que `esBascula` en facturacion-control-actions.ts.
+      .in("idempresa", [1, 2])
       .order("fechaorden", { ascending: false })
 
-    // Aplicar filtro de empresa
+    // Aplicar filtro de empresa (si el usuario filtró una planta específica)
     if (empresaId) {
       query = query.eq("idempresa", empresaId)
     }
