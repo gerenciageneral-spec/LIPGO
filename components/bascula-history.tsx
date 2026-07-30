@@ -6,13 +6,14 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
-import { Loader2, Download, Pencil, Eye, EyeOff } from "lucide-react"
+import { Loader2, Download, Pencil, Eye, EyeOff, Receipt, Scale } from "lucide-react"
 import { toast } from "@/hooks/use-toast"
 import * as XLSX from "xlsx"
 import { getBasculaHistory, updateBasculaRecord } from "@/lib/bascula-actions"
 import { useAuth } from "@/components/auth-provider"
 import { useSubmoduloFiltro } from "@/components/submodulo-filtro-context"
 import { BasculaOrderDetailsDialog } from "@/components/bascula-order-details-dialog"
+import { KpiCard } from "@/components/orders/dashboard-pedidos/kpi-card"
 
 const EDIT_PASSWORD = "Jeff123456"
 
@@ -201,6 +202,29 @@ export function BasculaHistory() {
   // como este listado en memoria).
   const toneladasFiltradas = filteredData.reduce((acc, r) => acc + (Number(r.pesovascula) || 0), 0)
 
+  // Toda orden debe tener su tiquete de báscula y su peso de báscula sin
+  // excepción (el peso es el insumo para facturar). Se calculan sobre el
+  // periodo/filtro actual, igual que el resto de esta pantalla.
+  const tiquetesPendientes = filteredData.filter((r) => !r.tiquetebascula || !r.tiquetebascula.trim())
+  const pesosPendientes = filteredData.filter((r) => r.pesovascula == null || Number(r.pesovascula) <= 0)
+
+  const resumenPendientes = (rows: BasculaHistoryRecord[]) => {
+    if (rows.length === 0) return "Todo al día en el periodo filtrado"
+    const nombres = rows.slice(0, 3).map((r) => r.ordendecargue || `#${r.id}`)
+    return rows.length > 3
+      ? `Órdenes: ${nombres.join(", ")} y ${rows.length - 3} más`
+      : `Órdenes: ${nombres.join(", ")}`
+  }
+
+  // Alerta visual: mismo número de tiquete repetido en más de una orden.
+  // Se calcula sobre TODOS los registros (no solo el filtro actual) para no
+  // perder de vista un duplicado cuya otra ocurrencia quedó fuera del filtro.
+  const tiqueteCounts = data.reduce<Record<string, number>>((acc, r) => {
+    const t = r.tiquetebascula?.trim()
+    if (t) acc[t] = (acc[t] || 0) + 1
+    return acc
+  }, {})
+
   const clearFilters = () => {
     setDesdeFilter("")
     setHastaFilter("")
@@ -217,6 +241,24 @@ export function BasculaHistory() {
           {exporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
           Exportar a Excel
         </Button>
+      </div>
+
+      {/* Pendientes por ingresar — toda orden debe tener tiquete y peso de báscula */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <KpiCard
+          label="Tiquetes pendientes por ingresar"
+          value={`${tiquetesPendientes.length}`}
+          subtext={resumenPendientes(tiquetesPendientes)}
+          icon={Receipt}
+          variant={tiquetesPendientes.length > 0 ? "danger" : "success"}
+        />
+        <KpiCard
+          label="Pesos de báscula pendientes por ingresar"
+          value={`${pesosPendientes.length}`}
+          subtext={pesosPendientes.length > 0 ? `${resumenPendientes(pesosPendientes)} · bloquean facturación` : resumenPendientes(pesosPendientes)}
+          icon={Scale}
+          variant={pesosPendientes.length > 0 ? "danger" : "success"}
+        />
       </div>
 
       {/* Filtros */}
@@ -279,13 +321,21 @@ export function BasculaHistory() {
                 <TableCell colSpan={8} className="h-24 text-center text-xs">No se encontraron registros.</TableCell>
               </TableRow>
             ) : (
-              filteredData.map((row) => (
+              filteredData.map((row) => {
+                const tiquete = row.tiquetebascula?.trim()
+                const tiqueteDuplicado = !!tiquete && (tiqueteCounts[tiquete] || 0) > 1
+                return (
                 <TableRow key={row.id}>
                   <TableCell className="text-xs whitespace-nowrap">{row.ordendecargue || "-"}</TableCell>
                   <TableCell className="text-xs whitespace-nowrap">{row.fechaorden || "-"}</TableCell>
                   <TableCell className="text-xs whitespace-nowrap">{row.fechacargue || "-"}</TableCell>
                   <TableCell className="text-xs whitespace-nowrap">{row.placa || "-"}</TableCell>
-                  <TableCell className="text-xs whitespace-nowrap">{row.tiquetebascula || "-"}</TableCell>
+                  <TableCell
+                    className={`text-xs whitespace-nowrap ${tiqueteDuplicado ? "font-semibold text-destructive" : ""}`}
+                    title={tiqueteDuplicado ? "Tiquete duplicado: este número de tiquete se repite en más de una orden" : undefined}
+                  >
+                    {row.tiquetebascula || "-"}
+                  </TableCell>
                   <TableCell className="text-xs whitespace-nowrap">{row.pesoorden || "-"}</TableCell>
                   <TableCell className="text-xs whitespace-nowrap">{row.pesovascula || "-"}</TableCell>
                   <TableCell className="text-xs whitespace-nowrap text-center">
@@ -312,7 +362,8 @@ export function BasculaHistory() {
                     </div>
                   </TableCell>
                 </TableRow>
-              ))
+                )
+              })
             )}
           </TableBody>
         </Table>
