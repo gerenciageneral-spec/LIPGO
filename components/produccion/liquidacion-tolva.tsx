@@ -26,6 +26,7 @@ import {
 } from "@/lib/liquidacion-tolva-actions"
 
 const ton = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { maximumFractionDigits: 3 })
+const signedTon = (n: number) => (n >= 0 ? "+" : "−") + ton(Math.abs(n))
 const money = (n: number) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO")
 
 function hoyISO(): string {
@@ -258,12 +259,15 @@ function AuditoriaTolvaTab() {
   const totales = rows.reduce(
     (a, r) => ({
       entrega: a.entrega + r.entregaToneladas,
+      facturado: a.facturado + r.facturadoToneladas,
       pago: a.pago + r.pago,
       cobro: a.cobro + r.cobro,
       alertas: a.alertas + r.ordenesSinPersonal,
+      discrepancias: a.discrepancias + (r.discrepancia ? 1 : 0),
     }),
-    { entrega: 0, pago: 0, cobro: 0, alertas: 0 },
+    { entrega: 0, facturado: 0, pago: 0, cobro: 0, alertas: 0, discrepancias: 0 },
   )
+  const diasConDiscrepancia = rows.filter((r) => r.discrepancia)
 
   return (
     <div className="space-y-4">
@@ -289,8 +293,32 @@ function AuditoriaTolvaTab() {
 
       {cargado && (
         <>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {diasConDiscrepancia.length > 0 && (
+            <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+              <div>
+                <strong>{diasConDiscrepancia.length} día(s)</strong> con discrepancia entre toneladas{" "}
+                <strong>entregadas</strong> y <strong>facturadas</strong> (diferencia mayor a 0,05 t):
+                <ul className="mt-1 list-disc space-y-0.5 pl-5">
+                  {diasConDiscrepancia.map((r) => (
+                    <li key={r.fecha}>
+                      {r.fecha}: entregó {ton(r.entregaToneladas)} t, facturó {ton(r.facturadoToneladas)} t (
+                      {signedTon(r.diferenciaToneladas)} t)
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          )}
+
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <Kpi label="Entrega real" value={`${ton(totales.entrega)} t`} />
+            <Kpi label="Facturado" value={`${ton(totales.facturado)} t`} />
+            <Kpi
+              label="Días con discrepancia"
+              value={String(totales.discrepancias)}
+              tone={totales.discrepancias > 0 ? "down" : "up"}
+            />
             <Kpi label="Pago a trabajadores" value={money(totales.pago)} />
             <Kpi label="Cobro (facturación)" value={money(totales.cobro)} />
             <Kpi
@@ -302,7 +330,7 @@ function AuditoriaTolvaTab() {
 
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base">Cruce por día — entrega vs. pago vs. cobro</CardTitle>
+              <CardTitle className="text-base">Cruce por día — entrega vs. facturado vs. pago</CardTitle>
             </CardHeader>
             <CardContent className="overflow-x-auto">
               {rows.length === 0 ? (
@@ -315,6 +343,8 @@ function AuditoriaTolvaTab() {
                     <TableRow>
                       <TableHead>Fecha</TableHead>
                       <TableHead className="text-right">Entrega (t)</TableHead>
+                      <TableHead className="text-right">Facturado (t)</TableHead>
+                      <TableHead className="text-right">Diferencia</TableHead>
                       <TableHead className="text-right">Pago</TableHead>
                       <TableHead className="text-right">Cobro</TableHead>
                       <TableHead className="text-right">Alertas</TableHead>
@@ -322,9 +352,22 @@ function AuditoriaTolvaTab() {
                   </TableHeader>
                   <TableBody className="tabular-nums">
                     {rows.map((r) => (
-                      <TableRow key={r.fecha}>
+                      <TableRow key={r.fecha} className={r.discrepancia ? "bg-destructive/5" : ""}>
                         <TableCell className="whitespace-nowrap">{r.fecha}</TableCell>
                         <TableCell className="text-right">{ton(r.entregaToneladas)}</TableCell>
+                        <TableCell className="text-right">{ton(r.facturadoToneladas)}</TableCell>
+                        <TableCell
+                          className={`text-right font-medium ${r.discrepancia ? "text-destructive" : "text-muted-foreground"}`}
+                        >
+                          {r.discrepancia ? (
+                            <span className="inline-flex items-center gap-1">
+                              <AlertTriangle className="h-3.5 w-3.5" />
+                              {signedTon(r.diferenciaToneladas)}
+                            </span>
+                          ) : (
+                            "✓ 0"
+                          )}
+                        </TableCell>
                         <TableCell className="text-right">{money(r.pago)}</TableCell>
                         <TableCell className="text-right">{money(r.cobro)}</TableCell>
                         <TableCell className="text-right">
@@ -342,9 +385,10 @@ function AuditoriaTolvaTab() {
                 </Table>
               )}
               <p className="mt-2 text-xs text-muted-foreground">
-                Pago y cobro nacen de las mismas toneladas registradas en <code>detalleoc</code>; el verdadero valor
-                de este cruce es detectar cuando NO cuadran (atrasados/sin turno sin resolver, o turnos registrados
-                sin personal asignado → pago $0 con entrega/cobro mayor a 0).
+                <strong>Entrega</strong> = toneladas aprobadas en producción (invtrans). <strong>Facturado</strong> =
+                toneladas de las órdenes de Tolva/Tolva f (mismas que valorizan el cobro). Deben coincidir al 100% —
+                una diferencia indica ingresos "atrasados"/"sin turno" sin resolver, o una Tolva creada a mano con
+                otra cantidad. Pago = $0 con entrega/cobro mayor a 0 señala un turno registrado sin personal.
               </p>
             </CardContent>
           </Card>

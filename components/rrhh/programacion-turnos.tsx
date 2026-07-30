@@ -57,6 +57,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { useToast } from "@/hooks/use-toast"
 import {
   Loader2,
@@ -69,6 +77,7 @@ import {
   Wand2,
   CheckSquare,
   Square,
+  Wallet,
 } from "lucide-react"
 import {
   getActiveHeadcountForScheduling,
@@ -80,6 +89,7 @@ import {
   type PuestoOption,
   type ProgramacionExistenteRow,
 } from "@/lib/programacion-turnos-actions"
+import { getHorarioTolva, guardarHorarioTolva, type VentanaTurno } from "@/lib/horario-tolva-actions"
 
 /**
  * Opciones de novedad. Replica el catalogo usado por
@@ -190,6 +200,45 @@ export default function ProgramacionTurnos() {
   const [saving, setSaving] = useState(false)
   const [deletingId, setDeletingId] = useState<number | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<ProgramacionExistenteRow | null>(null)
+
+  // ── Horario de Tolva (Turno 1/2) — ventana COMPARTIDA por día+empresa,
+  // independiente del horaentrada/salida normal de cada persona. La usa
+  // "Liquidación Tolva del día" para clasificar los ingresos por turno.
+  const [horarioTolvaOpen, setHorarioTolvaOpen] = useState(false)
+  const [horarioTolvaLoading, setHorarioTolvaLoading] = useState(false)
+  const [horarioTolvaSaving, setHorarioTolvaSaving] = useState(false)
+  const [turno1Horario, setTurno1Horario] = useState<VentanaTurno>({ horaInicio: "", horaFin: "" })
+  const [turno2Horario, setTurno2Horario] = useState<VentanaTurno>({ horaInicio: "", horaFin: "" })
+
+  async function abrirHorarioTolva() {
+    if (!selectedEmpresaId || !fecha) {
+      toast({ title: "Selecciona empresa y fecha primero", variant: "destructive" })
+      return
+    }
+    setHorarioTolvaOpen(true)
+    setHorarioTolvaLoading(true)
+    const r = await getHorarioTolva(selectedEmpresaId, fecha)
+    setHorarioTolvaLoading(false)
+    if (r.success && r.data) {
+      setTurno1Horario({ horaInicio: r.data.turno1.horaInicio || "", horaFin: r.data.turno1.horaFin || "" })
+      setTurno2Horario({ horaInicio: r.data.turno2.horaInicio || "", horaFin: r.data.turno2.horaFin || "" })
+    } else {
+      toast({ title: "No se pudo cargar el horario de Tolva", description: r.message, variant: "destructive" })
+    }
+  }
+
+  async function guardarHorario() {
+    if (!selectedEmpresaId || !fecha) return
+    setHorarioTolvaSaving(true)
+    const r = await guardarHorarioTolva(selectedEmpresaId, fecha, turno1Horario, turno2Horario)
+    setHorarioTolvaSaving(false)
+    if (r.success) {
+      toast({ title: "Horario de Tolva guardado", description: `Turno 1/2 para ${fecha}` })
+      setHorarioTolvaOpen(false)
+    } else {
+      toast({ title: "No se pudo guardar", description: r.message, variant: "destructive" })
+    }
+  }
 
   // Carga inicial del headcount + puestos. Se reactiva con la
   // empresa seleccionada para que un cambio de empresa repinte ambos.
@@ -584,11 +633,17 @@ export default function ProgramacionTurnos() {
                 Programa a futuro al personal activo, asignando puesto y hora de entrada.
               </CardDescription>
             </div>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Users className="h-4 w-4" />
-              <span>
-                {people.length} activos · {puestos.length} puestos disponibles
-              </span>
+            <div className="flex items-center gap-3">
+              <Button variant="outline" size="sm" onClick={abrirHorarioTolva} className="gap-1.5">
+                <Wallet className="h-3.5 w-3.5" />
+                Horario de Tolva
+              </Button>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Users className="h-4 w-4" />
+                <span>
+                  {people.length} activos · {puestos.length} puestos disponibles
+                </span>
+              </div>
             </div>
           </div>
         </CardHeader>
@@ -1152,6 +1207,86 @@ export default function ProgramacionTurnos() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Horario de Tolva — ventana COMPARTIDA de Turno 1/Turno 2 para la
+          fecha objetivo, independiente del horario normal de cada persona.
+          La usa "Liquidación Tolva del día" para clasificar los ingresos. */}
+      <Dialog open={horarioTolvaOpen} onOpenChange={setHorarioTolvaOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Wallet className="h-5 w-5 text-primary" />
+              Horario de Tolva — {fecha || "—"}
+            </DialogTitle>
+            <DialogDescription>
+              Ventana horaria de Turno 1 y Turno 2 para clasificar los ingresos de producción
+              aprobados. No afecta la hora de entrada/salida normal de cada persona.
+            </DialogDescription>
+          </DialogHeader>
+
+          {horarioTolvaLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <div className="space-y-4 py-2">
+              <div className="space-y-2 rounded-lg border p-3">
+                <Label className="text-sm font-semibold">Turno 1</Label>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Hora inicio</Label>
+                    <Input
+                      type="time"
+                      value={turno1Horario.horaInicio || ""}
+                      onChange={(e) => setTurno1Horario((v) => ({ ...v, horaInicio: e.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Hora fin</Label>
+                    <Input
+                      type="time"
+                      value={turno1Horario.horaFin || ""}
+                      onChange={(e) => setTurno1Horario((v) => ({ ...v, horaFin: e.target.value }))}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-2 rounded-lg border p-3">
+                <Label className="text-sm font-semibold">Turno 2</Label>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Hora inicio</Label>
+                    <Input
+                      type="time"
+                      value={turno2Horario.horaInicio || ""}
+                      onChange={(e) => setTurno2Horario((v) => ({ ...v, horaInicio: e.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Hora fin</Label>
+                    <Input
+                      type="time"
+                      value={turno2Horario.horaFin || ""}
+                      onChange={(e) => setTurno2Horario((v) => ({ ...v, horaFin: e.target.value }))}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setHorarioTolvaOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={guardarHorario} disabled={horarioTolvaSaving || horarioTolvaLoading} className="gap-2">
+              {horarioTolvaSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              Guardar horario
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

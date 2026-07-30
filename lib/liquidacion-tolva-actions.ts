@@ -21,18 +21,26 @@
  *  - El DÍA de un ingreso = invtrans.fechaprod (fecha real de producción).
  *  - Dentro de ese día, el TURNO se determina por la hora de `creado`
  *    (hora de Bogotá) cayendo en la ventana [horaInicio, horaFin) del
- *    Turno 1 o Turno 2 programado ese día para "Auxiliar Mixto".
+ *    Turno 1 o Turno 2 configurados en `horario_tolva` (botón "Horario de
+ *    Tolva" en Programación de turnos) — ventana COMPARTIDA por día+empresa,
+ *    independiente del horaentradaprogramada/horasalidaprogramada normal de
+ *    cada persona (que sigue siendo para asistencia/horas extra).
  *  - Si `creado` cae en una fecha distinta a `fechaprod` (aprobación
  *    atrasada), el ingreso queda "atrasado" y NO se asigna automáticamente
  *    a ningún turno — requiere revisión manual.
- *  - Si `creado` cae fuera de ambas ventanas (o no hay turnos programados
- *    ese día), el ingreso queda "sin turno" — también requiere revisión.
+ *  - Si `creado` cae fuera de ambas ventanas (o no hay horario_tolva
+ *    configurado ese día), el ingreso queda "sin turno" — también requiere
+ *    revisión.
  *  - `ordentolva IS NULL` excluye ingresos que YA se metieron a una Tolva
  *    (a mano o por este módulo), evitando duplicar si se vuelve a abrir
  *    la pantalla.
+ *  - Las personas asignadas a cada turno salen de `registroasistencia.turno`
+ *    (1/2, puesto="Auxiliar Mixto") — solo se usa el NOMBRE, no su horario
+ *    individual.
  */
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
+import { getHorarioTolva } from "@/lib/horario-tolva-actions"
 
 const ORIGEN_INGRESO_PRODUCCION = "%ingreso producci%"
 const PUESTO_AUXILIAR_MIXTO = "Auxiliar Mixto"
@@ -142,10 +150,17 @@ export async function getLiquidacionTolvaDia(
   try {
     const admin: any = await getSupabaseAdmin()
 
-    // 1) Ventanas de Turno 1 / Turno 2 (Auxiliar Mixto) programadas ese día.
+    // 1) Ventana COMPARTIDA de Turno 1 / Turno 2 (horario_tolva, botón "Horario
+    //    de Tolva" en Programación de turnos) — independiente del horario
+    //    normal de cada persona. Las PERSONAS de cada turno sí salen de
+    //    registroasistencia.turno (solo el nombre, no su horaentrada/salida).
+    const horarioRes = await getHorarioTolva(idempresa, fecha)
+    if (!horarioRes.success || !horarioRes.data) return { success: false, message: horarioRes.message }
+    const horario = horarioRes.data
+
     const { data: prog, error: errProg } = await admin
       .from("registroasistencia")
-      .select("nombre, turno, horaentradaprogramada, horasalidaprogramada")
+      .select("nombre, turno")
       .eq("fecha", fecha)
       .eq("idempresa", idempresa)
       .eq("puesto", PUESTO_AUXILIAR_MIXTO)
@@ -153,28 +168,15 @@ export async function getLiquidacionTolvaDia(
     if (errProg) return { success: false, message: errProg.message }
 
     const ventanas = new Map<number, TurnoVentanaInterna>([
-      [1, { horaInicio: null, horaFin: null, personas: [] }],
-      [2, { horaInicio: null, horaFin: null, personas: [] }],
+      [1, { horaInicio: horario.turno1.horaInicio, horaFin: horario.turno1.horaFin, personas: [] }],
+      [2, { horaInicio: horario.turno2.horaInicio, horaFin: horario.turno2.horaFin, personas: [] }],
     ])
-    for (const t of [1, 2]) {
-      const filas = (prog || []).filter((r: any) => Number(r.turno) === t)
+    for (const r of prog || []) {
+      const t = Number(r.turno)
+      if (t !== 1 && t !== 2) continue
       const v = ventanas.get(t)!
-      let minIni: number | null = null
-      let maxFin: number | null = null
-      for (const r of filas) {
-        const nombre = String(r.nombre || "").trim()
-        if (nombre && !v.personas.includes(nombre)) v.personas.push(nombre)
-        const ini = horaAMinutos(r.horaentradaprogramada)
-        const fin = horaAMinutos(r.horasalidaprogramada)
-        if (ini != null && (minIni == null || ini < minIni)) {
-          minIni = ini
-          v.horaInicio = String(r.horaentradaprogramada).slice(0, 5)
-        }
-        if (fin != null && (maxFin == null || fin > maxFin)) {
-          maxFin = fin
-          v.horaFin = String(r.horasalidaprogramada).slice(0, 5)
-        }
-      }
+      const nombre = String(r.nombre || "").trim()
+      if (nombre && !v.personas.includes(nombre)) v.personas.push(nombre)
     }
 
     // 2) Ingresos APROBADOS de ese día (fechaprod=fecha) sin Tolva asignada.
@@ -402,9 +404,16 @@ export async function registrarTolvaTurno(
 // Auditoría: pago (nómina) vs cobro (facturación) vs entrega real (invtrans)
 // ---------------------------------------------------------------------------
 
+// Tolerancia de redondeo (bultos→toneladas, varios productos) antes de marcar
+// una fecha como discrepancia real entre lo entregado y lo facturado.
+const TOLERANCIA_TONELADAS = 0.05
+
 export interface AuditoriaTolvaDia {
   fecha: string
   entregaToneladas: number
+  facturadoToneladas: number
+  diferenciaToneladas: number // entrega − facturado (con signo)
+  discrepancia: boolean
   pago: number
   cobro: number
   ordenesSinPersonal: number
@@ -490,7 +499,17 @@ export async function getAuditoriaTolva(
 
     const porFecha = new Map<string, AuditoriaTolvaDia>()
     const getRow = (f: string): AuditoriaTolvaDia => {
-      if (!porFecha.has(f)) porFecha.set(f, { fecha: f, entregaToneladas: 0, pago: 0, cobro: 0, ordenesSinPersonal: 0 })
+      if (!porFecha.has(f))
+        porFecha.set(f, {
+          fecha: f,
+          entregaToneladas: 0,
+          facturadoToneladas: 0,
+          diferenciaToneladas: 0,
+          discrepancia: false,
+          pago: 0,
+          cobro: 0,
+          ordenesSinPersonal: 0,
+        })
       return porFecha.get(f)!
     }
     for (const [f, ton] of entregaPorFecha) getRow(f).entregaToneladas += ton
@@ -504,7 +523,18 @@ export async function getAuditoriaTolva(
       const tarifaCobro = tarifaVigente(tarifasOperacion || [], o.tipooperacion, f, "fechainicio", "fechafin")
       row.pago += tieneAuxiliares ? toneladas * tarifaPago : 0
       row.cobro += toneladas * tarifaCobro
+      // Toneladas FACTURADAS = mismas toneladas de detalleoc que valorizan el
+      // cobro (Σ detalleoc.toneladas de las órdenes Tolva/Tolva f del día) —
+      // es la comparación pedida: lo entregado (invtrans) vs. lo facturado.
+      row.facturadoToneladas += toneladas
       if (!tieneAuxiliares) row.ordenesSinPersonal += 1
+    }
+
+    // Diferencia + alerta de discrepancia (entrega vs. facturado), con
+    // tolerancia de redondeo por conversión bultos→toneladas.
+    for (const row of porFecha.values()) {
+      row.diferenciaToneladas = row.entregaToneladas - row.facturadoToneladas
+      row.discrepancia = Math.abs(row.diferenciaToneladas) > TOLERANCIA_TONELADAS
     }
 
     const data = Array.from(porFecha.values()).sort((a, b) => (a.fecha < b.fecha ? 1 : -1))
