@@ -27,14 +27,11 @@ import {
   rechazarBono,
   eliminarBono,
   getBonos,
-  NOVEDADES_BONO,
-  TIPOS_BONO,
   type ColaboradorBono,
   type BonoRow,
   type BonosResumen,
-  type TipoBono,
-  type EstadoBono,
 } from "@/lib/bonos-actions"
+import { NOVEDADES_BONO, TIPOS_BONO, type TipoBono, type EstadoBono } from "@/lib/bonos-constants"
 
 const money = (n: number) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO")
 
