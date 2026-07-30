@@ -16,8 +16,11 @@ export async function getBasculaHistory(selectedEmpresaId?: number | null) {
       )
       // Las proyecciones (tipooperacion="proyeccion") son estimados de
       // producción/pedidos, no pasan por báscula real: no pertenecen a este
-      // historial.
+      // historial. La Tolva ("Tolva"/"Tolva f") es tonelaje interno de
+      // producción (destajo de auxiliares), tampoco pasa por báscula.
       .neq("tipooperacion", "proyeccion")
+      .neq("tipooperacion", "Tolva")
+      .neq("tipooperacion", "Tolva f")
       .order("fechaorden", { ascending: false })
 
     // Aplicar filtro de empresa

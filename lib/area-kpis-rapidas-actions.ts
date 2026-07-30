@@ -137,6 +137,8 @@ async function getSubmoduloKpis(
           .select("pesovascula")
           .eq("idempresa", empresaId)
           .neq("tipooperacion", "proyeccion")
+          .neq("tipooperacion", "Tolva")
+          .neq("tipooperacion", "Tolva f")
           .gte("fechaorden", desde)
           .lte("fechaorden", hasta)
           .range(offset, offset + pageSize - 1)
