@@ -14,6 +14,10 @@ export async function getBasculaHistory(selectedEmpresaId?: number | null) {
       .select(
         "id, ordendecargue, fechaorden, fechacargue, placa, transporte, tiquetebascula, pesoorden, pesovascula",
       )
+      // Las proyecciones (tipooperacion="proyeccion") son estimados de
+      // producción/pedidos, no pasan por báscula real: no pertenecen a este
+      // historial.
+      .neq("tipooperacion", "proyeccion")
       .order("fechaorden", { ascending: false })
 
     // Aplicar filtro de empresa
