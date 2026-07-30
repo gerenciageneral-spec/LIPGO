@@ -49,9 +49,9 @@ function hoyColombia(): string {
   return new Date(colombiaDate).toISOString().split("T")[0]
 }
 
-// Opciones de valor para el ajuste manual: únicamente 1 y 3 (jornada base
-// 7h vigente desde el 16-jul-2026; antes era 0.66/2.66 con jornada 7.3333h).
-const OPCIONES_AJUSTE: number[] = [1, 3]
+// Opciones de valor para el ajuste manual: 1, 2 o 3 (jornada base 7h vigente
+// desde el 16-jul-2026; antes era 0.66/2.66 con jornada 7.3333h).
+const OPCIONES_AJUSTE: number[] = [1, 2, 3]
 
 // Botón + popover para ajustar manualmente un campo de hora extra
 // (HED, HEDF, HEN o HN) con un valor entre 1 y 3.
