@@ -591,37 +591,72 @@ export async function getRevisionNomina(
 }
 
 // ---------------------------------------------------------------------------
-// CONCILIACIÓN BÁSCULA ↔ PAGO ↔ FACTURACIÓN (quincena, plantas id 1/2)
-// Garantiza que lo PAGADO al personal cuadre con lo FACTURABLE: en las plantas
-// con báscula física (Indupan=1, Avimol=2) tanto el cobro al cliente como el
-// destajo del personal se calculan sobre cabeceraoc.pesovascula (fuente de
-// verdad). Esta conciliación replica EXACTAMENTE el reparto de `pagonomina`
-// (peso báscula ÷ n auxiliares × tarifaspersonal, universo = órdenes con
-// fincargue) y lo cruza contra la vista real, exponiendo:
-//   - diferencia peso PRODUCTO (Σ detalleoc.toneladas) vs peso BÁSCULA por
-//     orden, con el factor de prorrateo (prevalece báscula);
-//   - órdenes sin auxiliares (facturables pero sin nadie a quien pagar);
-//   - órdenes sin tarifa vigente (reparten toneladas pero pagan $0);
+// CONCILIACIÓN PESO ↔ PAGO ↔ FACTURACIÓN (quincena, LIP completo: id 1-4)
+// Garantiza que lo PAGADO al personal cuadre con lo FACTURABLE. La fuente de
+// verdad del peso cambia por proyecto — MISMO criterio que `peso_base_calculo`
+// en pagonomina_reemplazo.sql (no se reinventa, se replica 1:1):
+//   - Plantas con báscula física (Indupan=1, Avimol=2): SIEMPRE pesovascula,
+//     cualquier operación.
+//   - CEDIS (Cedi Funza=3, Cedi Medellín=4) en Descargue: báscula del tiquete
+//     normalizada (÷1000 si viene en kg), con fallback a pesoorden si no hay
+//     báscula o el dato es corrupto (fuera de rango 0.1×–10× el pesoorden).
+//   - CEDIS en el resto de operaciones (Cargue, etc.): pesoorden (peso
+//     declarado por los productos de la orden).
+// Universo = mismas órdenes que liquida pagonomina (fincargue no vacío),
+// EXCLUYENDO los clones de Distribución (+D): heredan pesovascula/pesoorden
+// de la orden madre (ya se pesó/declaró ahí) — incluirlos duplicaría el
+// tonelaje. Reparte igual que pagonomina (peso base ÷ n auxiliares ×
+// tarifaspersonal) y cruza contra la vista real, exponiendo:
+//   - diferencia peso PRODUCTO (Σ detalleoc.toneladas) vs peso BASE por
+//     orden, con el factor de prorrateo (prevalece el peso base/fuente
+//     de verdad de cada proyecto);
+//   - órdenes sin auxiliares (facturables pero sin nadie a quien pagar —
+//     puede ser vehículo no atendido por personal propio de LIP);
+//   - órdenes sin tarifa vigente (reparten toneladas pero pagan $0 — se paga
+//     solo donde hay tarifa asignada, p. ej. ID 4 sí, otros ID pueden no);
 //   - órdenes marcadas NO facturar (pagan nómina sin ingreso);
 //   - auxiliares que no cruzan con Head Count (nombre huérfano);
 //   - Δ por colaborador entre este cálculo y pagonomina (vínculo/retiro/fechas).
 // ---------------------------------------------------------------------------
 
+const PLANTAS_BASCULA = new Set([1, 2]) // Indupan, Avimol — báscula física
+const CEDIS = new Set([3, 4]) // Cedi Funza, Cedi Medellín — sin báscula propia
+
+/** Replica exacta de `peso_base_calculo` (pagonomina_reemplazo.sql). */
+function pesoBaseCalculo(
+  idempresa: number,
+  tipooperacion: string,
+  pesovascula: number,
+  pesoorden: number,
+): { peso: number; fuente: "bascula" | "producto" } {
+  if (CEDIS.has(idempresa) && tipooperacion === "Descargue") {
+    if (pesovascula <= 0) return { peso: pesoorden, fuente: "producto" }
+    const norm = pesoorden > 0 && pesovascula / pesoorden > 50 ? pesovascula / 1000 : pesovascula
+    if (pesoorden > 0) {
+      const ratio = norm / pesoorden
+      if (ratio < 0.1 || ratio > 10) return { peso: pesoorden, fuente: "producto" }
+    }
+    return { peso: norm, fuente: "bascula" }
+  }
+  if (CEDIS.has(idempresa)) return { peso: pesoorden, fuente: "producto" }
+  return { peso: pesovascula, fuente: "bascula" }
+}
+
 export interface OrdenConciliada {
   idorden: number
   orden: string
   fecha: string
-  planta: number // 1=Indupan, 2=Avimol
+  planta: number // 1=Indupan, 2=Avimol, 3=Cedi Funza, 4=Cedi Medellín
   tipooperacion: string
-  conBascula: boolean // Cargue/Descargue = pesaje físico; resto = interno (proyección/Tolva/…)
-  tonBascula: number // cabeceraoc.pesovascula — fuente de verdad de pago y cobro
+  fuente: "bascula" | "producto" // origen del peso base (ver pesoBaseCalculo)
+  tonBase: number // peso base de cálculo — fuente de verdad de pago y cobro
   tonProducto: number // Σ detalleoc.toneladas (peso declarado por productos)
-  factor: number // tonBascula / tonProducto (prorrateo del detalle; 0 = no calculable)
+  factor: number // tonBase / tonProducto (prorrateo del detalle; 0 = no calculable)
   nAux: number
   auxiliares: string[]
   facturar: boolean
   tarifa: number
-  valorPago: number // tonBascula × tarifa (0 si no hay auxiliares)
+  valorPago: number // tonBase × tarifa (0 si no hay auxiliares)
 }
 
 export interface DetalleOrdenColaborador {
@@ -652,8 +687,8 @@ export interface ConciliacionData {
   quincena: { anio: number; mes: number; num: number; desde: string; hasta: string }
   resumen: {
     ordenes: number
-    ordenesBascula: number
-    tonBascula: number
+    ordenesBascula: number // con fuente="bascula" (pesaje físico real)
+    tonBase: number // Σ peso base de cálculo (báscula en 1/2, producto/báscula normalizada en 3/4)
     tonProducto: number
     tonAsignada: number
     valorCalculado: number
@@ -665,7 +700,7 @@ export interface ConciliacionData {
     ordenesNoFacturar: number
     tonNoFacturar: number
     ordenesConDiferencia: number
-    difProductoBascula: number // Σ (tonBascula − tonProducto) en órdenes con pesaje físico
+    difProductoBase: number // Σ (tonBase − tonProducto) en órdenes con pesaje físico
     auxiliaresHuerfanos: string[]
   }
   ordenesConDiferencia: OrdenConciliada[]
@@ -679,13 +714,11 @@ export async function getConciliacionQuincena(
   anio: number,
   mes: number,
   quincena: 1 | 2,
-  empresa: number, // 0 = ambas plantas; 1 = Indupan; 2 = Avimol
+  empresa: number, // 0 = todo LIP (1-4); o un id específico
 ): Promise<{ success: boolean; data?: ConciliacionData; message?: string }> {
   try {
     const admin: any = await getSupabaseAdmin()
-    // Mismo criterio que esBascula en facturacion-control-actions.ts: solo las
-    // plantas 1/2 tienen báscula física; la conciliación aplica solo a ellas.
-    const emps = empresa === 1 || empresa === 2 ? [empresa] : [1, 2]
+    const emps = [1, 2, 3, 4].includes(empresa) ? [empresa] : [1, 2, 3, 4]
 
     const diaIni = quincena === 1 ? 1 : 16
     const diaFin = quincena === 1 ? 15 : fin(anio, mes)
@@ -769,13 +802,12 @@ export async function getConciliacionQuincena(
         .map((s) => s.trim())
         .filter(Boolean)
       const nAux = auxiliares.length
-      // En plantas 1/2 pagonomina usa pesovascula CRUDO como peso base (sin
-      // normalizar) — misma base aquí para que el cruce sea exacto.
-      const tonBascula = num(o.pesovascula)
+      // Peso base = MISMA fuente de verdad que usa pagonomina para pagar y
+      // facturación para cobrar en cada proyecto (ver pesoBaseCalculo arriba).
+      const { peso: tonBase, fuente } = pesoBaseCalculo(planta, tipo, num(o.pesovascula), num(o.pesoorden))
       const tonProducto = tonProductoPorOrden.get(Number(o.id)) || 0
-      const conBascula = /^(cargue|descargue)$/i.test(tipo)
       const tarifa = tarifaDe(planta, tipo, fecha)
-      const valorPago = nAux > 0 ? tonBascula * tarifa : 0
+      const valorPago = nAux > 0 ? tonBase * tarifa : 0
 
       const orden: OrdenConciliada = {
         idorden: Number(o.id),
@@ -783,10 +815,10 @@ export async function getConciliacionQuincena(
         fecha,
         planta,
         tipooperacion: tipo,
-        conBascula,
-        tonBascula,
+        fuente,
+        tonBase,
         tonProducto,
-        factor: tonProducto > 0 && tonBascula > 0 ? tonBascula / tonProducto : 0,
+        factor: tonProducto > 0 && tonBase > 0 ? tonBase / tonProducto : 0,
         nAux,
         auxiliares,
         facturar: o.facturar !== false,
@@ -796,8 +828,8 @@ export async function getConciliacionQuincena(
       ordenes.push(orden)
 
       // Reparto por persona (tonelaje ÷ n, igual que pagonomina).
-      if (nAux > 0 && tonBascula > 0) {
-        const tonPersona = tonBascula / nAux
+      if (nAux > 0 && tonBase > 0) {
+        const tonPersona = tonBase / nAux
         for (const p of auxiliares) {
           const key = p.toUpperCase()
           if (!nombresHc.has(key)) huerfanos.add(p)
@@ -823,7 +855,7 @@ export async function getConciliacionQuincena(
             orden: orden.orden,
             tipooperacion: tipo,
             planta,
-            tonOrden: tonBascula,
+            tonOrden: tonBase,
             nAux,
             tonPersona,
             tarifa,
@@ -859,35 +891,35 @@ export async function getConciliacionQuincena(
 
     // 7) Resumen y listados de alerta.
     const conAux = ordenes.filter((o) => o.nAux > 0)
-    const sinAux = ordenes.filter((o) => o.nAux === 0 && o.tonBascula > 0)
-    const sinTarifa = ordenes.filter((o) => o.nAux > 0 && o.tonBascula > 0 && o.tarifa === 0)
+    const sinAux = ordenes.filter((o) => o.nAux === 0 && o.tonBase > 0)
+    const sinTarifa = ordenes.filter((o) => o.nAux > 0 && o.tonBase > 0 && o.tarifa === 0)
     const noFacturar = ordenes.filter((o) => !o.facturar)
     const conDif = ordenes
-      .filter((o) => o.conBascula && o.tonProducto > 0 && Math.abs(o.tonBascula - o.tonProducto) > 0.05)
-      .sort((a, b) => Math.abs(b.tonBascula - b.tonProducto) - Math.abs(a.tonBascula - a.tonProducto))
+      .filter((o) => o.fuente === "bascula" && o.tonProducto > 0 && Math.abs(o.tonBase - o.tonProducto) > 0.05)
+      .sort((a, b) => Math.abs(b.tonBase - b.tonProducto) - Math.abs(a.tonBase - a.tonProducto))
 
     const colaboradores = Array.from(porPersona.values()).sort((a, b) => b.tonAsignada - a.tonAsignada)
     for (const c of colaboradores) c.detalle.sort((a, b) => (a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0))
 
-    const tonBascula = ordenes.reduce((a, o) => a + o.tonBascula, 0)
+    const tonBase = ordenes.reduce((a, o) => a + o.tonBase, 0)
     const data: ConciliacionData = {
       quincena: { anio, mes, num: quincena, desde, hasta },
       resumen: {
         ordenes: ordenes.length,
-        ordenesBascula: ordenes.filter((o) => o.conBascula).length,
-        tonBascula,
+        ordenesBascula: ordenes.filter((o) => o.fuente === "bascula").length,
+        tonBase,
         tonProducto: ordenes.reduce((a, o) => a + o.tonProducto, 0),
-        tonAsignada: conAux.reduce((a, o) => a + o.tonBascula, 0),
+        tonAsignada: conAux.reduce((a, o) => a + o.tonBase, 0),
         valorCalculado: ordenes.reduce((a, o) => a + o.valorPago, 0),
         tonPagonomina: colaboradores.reduce((a, c) => a + c.tonPagonomina, 0),
         pagoPagonomina: colaboradores.reduce((a, c) => a + c.pagoPagonomina, 0),
-        tonSinAsignar: sinAux.reduce((a, o) => a + o.tonBascula, 0),
+        tonSinAsignar: sinAux.reduce((a, o) => a + o.tonBase, 0),
         ordenesSinAux: sinAux.length,
         ordenesSinTarifa: sinTarifa.length,
         ordenesNoFacturar: noFacturar.length,
-        tonNoFacturar: noFacturar.reduce((a, o) => a + o.tonBascula, 0),
+        tonNoFacturar: noFacturar.reduce((a, o) => a + o.tonBase, 0),
         ordenesConDiferencia: conDif.length,
-        difProductoBascula: conDif.reduce((a, o) => a + (o.tonBascula - o.tonProducto), 0),
+        difProductoBase: conDif.reduce((a, o) => a + (o.tonBase - o.tonProducto), 0),
         auxiliaresHuerfanos: Array.from(huerfanos).sort(),
       },
       ordenesConDiferencia: conDif,

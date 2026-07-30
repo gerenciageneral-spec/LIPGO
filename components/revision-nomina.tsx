@@ -692,11 +692,13 @@ function Fila({
 }
 
 // ---------------------------------------------------------------------------
-// CONCILIACIÓN BÁSCULA ↔ PAGO ↔ FACTURACIÓN (plantas 1/2). El peso de báscula
-// (pesovascula) es la fuente de verdad tanto del cobro como del destajo: aquí
-// se verifica que TODO lo pesado quede asignado y pagado, se expone la
-// diferencia producto vs báscula (con su factor de prorrateo) y se puede abrir
-// cada colaborador para revisar todo lo pagado orden por orden.
+// CONCILIACIÓN PESO ↔ PAGO ↔ FACTURACIÓN (LIP completo, id 1-4). La fuente de
+// verdad del peso cambia por proyecto (igual que pagonomina): báscula física
+// en las plantas (Indupan=1, Avimol=2); en los CEDIS (Cedi Funza=3, Cedi
+// Medellín=4) es el peso declarado por productos, salvo Descargue con báscula
+// del tiquete. Aquí se verifica que TODO lo pesado quede asignado y pagado,
+// se expone la diferencia producto vs peso base (con su factor de prorrateo)
+// y se puede abrir cada colaborador para revisar todo lo pagado orden a orden.
 // ---------------------------------------------------------------------------
 function ConciliacionBascula() {
   const { toast } = useToast()
@@ -704,7 +706,7 @@ function ConciliacionBascula() {
   const [anio, setAnio] = useState(hoy.getFullYear())
   const [mes, setMes] = useState(hoy.getMonth() + 1)
   const [quincena, setQuincena] = useState<1 | 2>(hoy.getDate() <= 15 ? 1 : 2)
-  const [planta, setPlanta] = useState(0) // 0 = ambas
+  const [planta, setPlanta] = useState(0) // 0 = todo LIP (1-4)
   const [data, setData] = useState<ConciliacionData | null>(null)
   const [loading, setLoading] = useState(false)
   const [expand, setExpand] = useState<Set<string>>(new Set())
@@ -713,7 +715,8 @@ function ConciliacionBascula() {
   const anios = [hoy.getFullYear() + 1, hoy.getFullYear(), hoy.getFullYear() - 1, hoy.getFullYear() - 2]
   const t1 = (x: number) => (Number(x) || 0).toLocaleString("es-CO", { maximumFractionDigits: 1 })
   const t2 = (x: number) => (Number(x) || 0).toLocaleString("es-CO", { maximumFractionDigits: 2 })
-  const plantaNombre = (id: number) => (id === 1 ? "Indupan" : id === 2 ? "Avimol" : `ID ${id}`)
+  const PLANTAS: Record<number, string> = { 1: "Indupan", 2: "Avimol", 3: "Cedi Funza", 4: "Cedi Medellín" }
+  const plantaNombre = (id: number) => PLANTAS[id] || `ID ${id}`
 
   const consultar = useCallback(async () => {
     setLoading(true)
@@ -743,7 +746,7 @@ function ConciliacionBascula() {
   }, [data, buscar])
 
   const r = data?.resumen
-  const cobertura = r && r.tonBascula > 0 ? (r.tonAsignada / r.tonBascula) * 100 : 0
+  const cobertura = r && r.tonBase > 0 ? (r.tonAsignada / r.tonBase) * 100 : 0
   const deltaPagonomina = r ? r.tonPagonomina - r.tonAsignada : 0
   const totalAlertas = r ? r.ordenesSinAux + r.ordenesSinTarifa + r.ordenesNoFacturar + r.auxiliaresHuerfanos.length : 0
 
@@ -755,7 +758,8 @@ function ConciliacionBascula() {
           <TableHead>Orden</TableHead>
           <TableHead>Planta</TableHead>
           <TableHead>Operación</TableHead>
-          <TableHead className="text-right">Ton báscula</TableHead>
+          <TableHead>Fuente</TableHead>
+          <TableHead className="text-right">Ton base</TableHead>
           <TableHead className="text-right">Ton producto</TableHead>
           <TableHead className="text-right">Diferencia</TableHead>
           <TableHead className="text-right">Factor prorrateo</TableHead>
@@ -764,14 +768,19 @@ function ConciliacionBascula() {
       </TableHeader>
       <TableBody className="tabular-nums">
         {rows.map((o) => {
-          const dif = o.tonBascula - o.tonProducto
+          const dif = o.tonBase - o.tonProducto
           return (
             <TableRow key={o.idorden}>
               <TableCell className="whitespace-nowrap">{o.fecha.slice(5)}</TableCell>
               <TableCell>{o.orden}</TableCell>
               <TableCell>{plantaNombre(o.planta)}</TableCell>
               <TableCell>{o.tipooperacion}</TableCell>
-              <TableCell className="text-right font-medium">{t2(o.tonBascula)}</TableCell>
+              <TableCell>
+                <span className={`text-xs ${o.fuente === "bascula" ? "text-primary" : "text-muted-foreground"}`}>
+                  {o.fuente === "bascula" ? "Báscula" : "Producto"}
+                </span>
+              </TableCell>
+              <TableCell className="text-right font-medium">{t2(o.tonBase)}</TableCell>
               <TableCell className="text-right text-muted-foreground">{t2(o.tonProducto)}</TableCell>
               <TableCell
                 className={`text-right font-medium ${Math.abs(dif) > 0.05 ? (dif > 0 ? "text-amber-600 dark:text-amber-400" : "text-rose-600 dark:text-rose-400") : "text-muted-foreground"}`}
@@ -838,15 +847,17 @@ function ConciliacionBascula() {
             </Select>
           </div>
           <div className="space-y-1">
-            <Label>Planta</Label>
+            <Label>Proyecto</Label>
             <Select value={String(planta)} onValueChange={(v) => setPlanta(Number(v))}>
-              <SelectTrigger className="w-[150px]">
+              <SelectTrigger className="w-[170px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="0">Ambas (1 y 2)</SelectItem>
+                <SelectItem value="0">Todo LIP (1–4)</SelectItem>
                 <SelectItem value="1">Indupan (1)</SelectItem>
                 <SelectItem value="2">Avimol (2)</SelectItem>
+                <SelectItem value="3">Cedi Funza (3)</SelectItem>
+                <SelectItem value="4">Cedi Medellín (4)</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -862,8 +873,8 @@ function ConciliacionBascula() {
           {/* Tarjetas comparativas */}
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Kpi
-              label="Toneladas báscula (fuente de verdad)"
-              value={`${t1(r.tonBascula)} t`}
+              label="Toneladas base de cálculo (fuente de verdad)"
+              value={`${t1(r.tonBase)} t`}
               hint={`${r.ordenes} órdenes · ${r.ordenesBascula} con pesaje físico`}
             />
             <Kpi
@@ -873,7 +884,7 @@ function ConciliacionBascula() {
               tone={cobertura >= 99.5 ? "up" : "down"}
             />
             <Kpi
-              label="Destajo calculado (báscula × tarifa)"
+              label="Destajo calculado (peso base × tarifa)"
               value={money(r.valorCalculado)}
               hint={`pagonomina liquida ${money(r.pagoPagonomina)}`}
               tone={Math.abs(r.valorCalculado - r.pagoPagonomina) <= Math.max(2000, r.valorCalculado * 0.01) ? "up" : "down"}
@@ -927,8 +938,9 @@ function ConciliacionBascula() {
               <CardContent className="overflow-x-auto">
                 <TablaOrdenes rows={data.ordenesSinAux} />
                 <p className="mt-2 text-xs text-muted-foreground">
-                  Estas toneladas se cobran al cliente (báscula) pero no generan destajo: o falta asignar el personal en
-                  la orden, o la operación no lleva auxiliares (verificar).
+                  Estas toneladas se cobran (peso base) pero no generan destajo. No siempre es un error: puede ser un
+                  vehículo que no atiende LIP con personal propio, o un auxiliar de refuerzo (solo entra en picos de
+                  volumen) que quedó sin registrar en la orden. Vale la pena revisarlas igual, caso a caso.
                 </p>
               </CardContent>
             </Card>
@@ -945,7 +957,9 @@ function ConciliacionBascula() {
                 <TablaOrdenes rows={data.ordenesSinTarifa} mostrarAux />
                 <p className="mt-2 text-xs text-muted-foreground">
                   No hay tarifa en Financiera › Tarifas › Personal para esa operación/planta con vigencia en la fecha de
-                  cargue: los auxiliares acumulan toneladas pero el destajo queda en $0.
+                  cargue: los auxiliares acumulan toneladas pero el destajo queda en $0. Se paga solo donde hay tarifa
+                  asignada (p. ej. Distribución nunca la tiene: es la entrega del mismo cargue ya pagado, se muestra
+                  aquí a propósito para poder verificar que siga en $0).
                 </p>
               </CardContent>
             </Card>
@@ -992,13 +1006,13 @@ function ConciliacionBascula() {
             </Card>
           )}
 
-          {/* Diferencias producto vs báscula */}
+          {/* Diferencias producto vs peso base (báscula) */}
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-base">
                 Peso producto vs peso báscula — {r.ordenesConDiferencia} órden(es) con diferencia (
-                {r.difProductoBascula >= 0 ? "+" : ""}
-                {t1(r.difProductoBascula)} t neta)
+                {r.difProductoBase >= 0 ? "+" : ""}
+                {t1(r.difProductoBase)} t neta)
               </CardTitle>
             </CardHeader>
             <CardContent className="overflow-x-auto">
@@ -1011,9 +1025,10 @@ function ConciliacionBascula() {
                 <>
                   <TablaOrdenes rows={data.ordenesConDiferencia} />
                   <p className="mt-2 text-xs text-muted-foreground">
-                    <strong>Prevalece la báscula</strong>: el pago y el cobro reparten el peso de báscula; el factor
-                    indica cómo se prorratea el detalle de productos para llegar a ella (báscula ÷ producto). Una
-                    diferencia grande sugiere error de digitación en el detalle o en el tiquete.
+                    <strong>Prevalece la báscula</strong>: el pago y el cobro reparten el peso base de cálculo (báscula
+                    en plantas y en Descargue de CEDIs); el factor indica cómo se prorratea el detalle de productos
+                    para llegar a él (base ÷ producto). Una diferencia grande sugiere error de digitación en el
+                    detalle o en el tiquete.
                   </p>
                 </>
               )}
