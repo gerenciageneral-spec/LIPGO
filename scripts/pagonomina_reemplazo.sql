@@ -487,8 +487,18 @@ create or replace view public.pagonomina as
     COALESCE((idempresa_operacion)::integer, idempresa_origen, 0) AS idempresaliquidacion,
     persona,
     actividad_registrada,
+        -- Marcador de domingo perdido por licencia no remunerada en la semana.
+        -- OJO: `archivoplano` consume esta columna como NOVEDAD REAL, y Siigo
+        -- procesa toda novedad de días DESCONTANDO el día. Por eso solo se marca
+        -- el domingo que NO se trabajó: si la persona trabajó ese domingo, LIPgo
+        -- le paga base + recargo (regla del 1,90), y mandar el 38 hacía que Siigo
+        -- le descontara un día efectivamente trabajado. Caso real: CARLOS DANIEL
+        -- OJITO, domingo 26-jul-2026, −$58.364 contra Siigo.
+        -- Para quien NO trabajó el domingo el marcador sigue igual: ya perdió el
+        -- descanso por `bloquea_domingo`, y la novedad lo deja documentado.
         CASE
-            WHEN ((dia_semana = (0)::numeric) AND (tuvo_licencia_no_rem_semana = 1)) THEN '38- Licencia no remunerada- Deducción'::text
+            WHEN ((dia_semana = (0)::numeric) AND (tuvo_licencia_no_rem_semana = 1)
+                  AND ((asistio_ok = 0) OR (actividad_registrada = ANY (ARRAY['Festivo'::text, 'Sin Registro'::text])))) THEN '38- Licencia no remunerada- Deducción'::text
             ELSE asistencia_texto
         END AS novedad_reportada,
     especialidad,

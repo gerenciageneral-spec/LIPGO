@@ -501,7 +501,22 @@ function armarPersona(
       }
       const hod = salario / (30 * jornada)
       const baseDiaSim = salario / 30
-      const baseQuincenal = Math.round(salario / 2)
+      // Base quincenal de Siigo = 15 días (convención de mes de 30)... PERO
+      // PRORRATEADA si la persona ingresó DENTRO de la quincena: Siigo paga
+      // desde la fecha de contratación, no el periodo completo. Sin esto, a un
+      // ingreso de mitad de quincena se le atribuían los 15 días y salía un
+      // descuadre del tamaño de los días que aún no era empleado (caso real:
+      // ANDRÉS FELIPE ESCORCIA y OTONIEL MURILLO, ingreso 27-jul, ~$642.000
+      // cada uno). Mismo criterio con el que `pagonomina` corta por
+      // headcount.fechainicio.
+      const ingreso = hc?.fechainicio ? String(hc.fechainicio).slice(0, 10) : ""
+      let diasBase = 15
+      if (ingreso && ingreso > desde) {
+        const tope = ingreso > hasta ? hasta : ingreso
+        const diasFuera = Math.round((Date.parse(tope) - Date.parse(desde)) / 86400000)
+        diasBase = Math.max(0, 15 - diasFuera)
+      }
+      const baseQuincenal = Math.round(diasBase * baseDiaSim)
       const fmtX = (m: number) =>
         "×" + m.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
@@ -515,9 +530,12 @@ function armarPersona(
 
       const conceptos: ConceptoSiigo[] = [
         {
-          concepto: "Salario básico de la quincena (contrato)",
+          concepto:
+            diasBase < 15
+              ? `Salario básico de la quincena (contrato, prorrateado desde el ingreso ${ingreso})`
+              : "Salario básico de la quincena (contrato)",
           tipo: "Base",
-          cantidad: 15,
+          cantidad: diasBase,
           unidad: "días",
           factor: "salario/30",
           valor: baseQuincenal,
@@ -702,7 +720,7 @@ export async function getRevisionNomina(
     // Ficha del colaborador (Head Count)
     const { data: hc } = await admin
       .from("headcount")
-      .select("nombre, identificacion, salario, idempresa, contratosiigo")
+      .select("nombre, identificacion, salario, idempresa, contratosiigo, fechainicio")
       .eq("nombre", persona)
       .limit(1)
       .maybeSingle()
@@ -827,7 +845,7 @@ export async function getRevisionNominaProyecto(
     const { desde, hasta } = rangoQ(anio, mes, quincena)
 
     // 1) Universo = Head Count del proyecto (centro de costo del selector global).
-    let qhc = admin.from("headcount").select("nombre, identificacion, salario, idempresa, contratosiigo, estado")
+    let qhc = admin.from("headcount").select("nombre, identificacion, salario, idempresa, contratosiigo, estado, fechainicio")
     if (idempresa != null) qhc = qhc.eq("idempresa", idempresa)
     const { data: hcRows, error: errHc } = await qhc
     if (errHc) return { success: false, message: errHc.message }
