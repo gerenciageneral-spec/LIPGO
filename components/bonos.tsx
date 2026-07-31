@@ -19,7 +19,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { AlertTriangle, Check, ChevronsUpDown, Gift, Loader2, Trash2, Users, X } from "lucide-react"
+import { AlertTriangle, Briefcase, Check, ChevronsUpDown, Gift, Loader2, Lock, Trash2, Users, X } from "lucide-react"
+import { useAuth } from "@/components/auth-provider"
 import {
   getColaboradoresBonos,
   registrarBono,
@@ -27,6 +28,7 @@ import {
   rechazarBono,
   eliminarBono,
   getBonos,
+  verificarClaveBonos,
   type ColaboradorBono,
   type BonoRow,
   type BonosResumen,
@@ -75,14 +77,91 @@ export default function Bonos() {
   )
 }
 
+/**
+ * Picker de colaborador. Vive a nivel de módulo a propósito: si se definiera
+ * dentro del formulario, React lo remontaría en cada tecla y el buscador
+ * perdería el foco. El campo inactivo se deshabilita, no se oculta, para que se
+ * vea de un golpe cuál de los dos gobierna el Tipo.
+ */
+function PickerColaborador({
+  activo,
+  items,
+  valorSel,
+  setValorSel,
+  open,
+  setOpen,
+  placeholder,
+  vacio,
+}: {
+  activo: boolean
+  items: ColaboradorBono[]
+  valorSel: string
+  setValorSel: (v: string) => void
+  open: boolean
+  setOpen: (v: boolean) => void
+  placeholder: string
+  vacio: string
+}) {
+  return (
+    <Popover open={activo && open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          disabled={!activo}
+          className="w-full justify-between font-normal disabled:opacity-50"
+        >
+          <span className="flex items-center gap-2 truncate">
+            <Users className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span className="truncate">{valorSel || placeholder}</span>
+          </span>
+          <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[360px] p-0" align="start">
+        <Command filter={(value, search) => (value.toLowerCase().includes(search.toLowerCase()) ? 1 : 0)}>
+          <CommandInput placeholder="Buscar colaborador…" />
+          <CommandList>
+            <CommandEmpty>{vacio}</CommandEmpty>
+            <CommandGroup>
+              {items.map((c) => (
+                <CommandItem
+                  key={c.nombre}
+                  value={c.nombre}
+                  onSelect={() => {
+                    setValorSel(c.nombre)
+                    setOpen(false)
+                  }}
+                >
+                  <Check className={`mr-2 h-4 w-4 ${valorSel === c.nombre ? "opacity-100" : "opacity-0"}`} />
+                  <span className="flex-1 truncate">{c.nombre}</span>
+                  <span className="ml-2 text-xs text-muted-foreground">{c.estado}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Registrar
 // ---------------------------------------------------------------------------
 function RegistrarBonoTab() {
   const { toast } = useToast()
-  const [colaboradores, setColaboradores] = useState<ColaboradorBono[]>([])
-  const [persona, setPersona] = useState("")
-  const [openPicker, setOpenPicker] = useState(false)
+  const { selectedEmpresaId, selectedEmpresaNombre } = useAuth() as any
+  const empresaId: number | null = selectedEmpresaId != null ? Number(selectedEmpresaId) : null
+  // Dos listados independientes, igual que las pestañas de Head Count:
+  //   · operativos     = los del proyecto del selector global (centro de costo).
+  //   · administrativos = headcount.admin = true, transversales a todo LIP.
+  const [operativos, setOperativos] = useState<ColaboradorBono[]>([])
+  const [administrativos, setAdministrativos] = useState<ColaboradorBono[]>([])
+  const [personaOp, setPersonaOp] = useState("")
+  const [personaAdm, setPersonaAdm] = useState("")
+  const [openOp, setOpenOp] = useState(false)
+  const [openAdm, setOpenAdm] = useState(false)
   const [fecha, setFecha] = useState(hoyISO())
   const [tipo, setTipo] = useState<TipoBono>("Operativo")
   const [concepto, setConcepto] = useState("")
@@ -91,14 +170,35 @@ function RegistrarBonoTab() {
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // El Tipo es el interruptor: decide cuál de los dos campos queda habilitado, y
+  // cuál colaborador viaja al registro. Así no se puede mandar un bono
+  // Administrativo a un operario ni al revés.
+  const esAdm = tipo === "Administrativo"
+  const persona = esAdm ? personaAdm : personaOp
+  const lista = esAdm ? administrativos : operativos
+
+  // Los operativos dependen del selector global: al cambiar de proyecto se
+  // recarga la lista y se limpia el elegido si ya no pertenece.
   useEffect(() => {
-    getColaboradoresBonos().then((r) => {
-      if (r.success) setColaboradores(r.data)
-      else toast({ title: "No se pudieron cargar los colaboradores", description: r.message, variant: "destructive" })
+    getColaboradoresBonos("operativo", empresaId).then((r) => {
+      if (r.success) {
+        setOperativos(r.data)
+        setPersonaOp((p) => (r.data.some((c) => c.nombre === p) ? p : ""))
+      } else {
+        toast({ title: "No se pudieron cargar los colaboradores", description: r.message, variant: "destructive" })
+      }
+    })
+  }, [empresaId, toast])
+
+  // Los administrativos NO dependen del proyecto: se cargan una sola vez.
+  useEffect(() => {
+    getColaboradoresBonos("administrativo").then((r) => {
+      if (r.success) setAdministrativos(r.data)
+      else toast({ title: "No se pudo cargar el personal administrativo", description: r.message, variant: "destructive" })
     })
   }, [toast])
 
-  const seleccionado = useMemo(() => colaboradores.find((c) => c.nombre === persona), [colaboradores, persona])
+  const seleccionado = useMemo(() => lista.find((c) => c.nombre === persona), [lista, persona])
 
   const guardar = useCallback(async () => {
     setGuardando(true)
@@ -124,6 +224,7 @@ function RegistrarBonoTab() {
 
   const puedeGuardar = persona && fecha && concepto.trim() && Number(valor.replace(/[^\d.-]/g, "")) > 0
 
+
   return (
     <div className="space-y-4">
       <Card>
@@ -131,59 +232,11 @@ function RegistrarBonoTab() {
           <CardTitle className="text-base">Nuevo bono</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* El Tipo va primero porque es el INTERRUPTOR: decide cuál de los dos
+              campos de colaborador queda habilitado. */}
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-1">
-              <Label>Colaborador</Label>
-              <Popover open={openPicker} onOpenChange={setOpenPicker}>
-                <PopoverTrigger asChild>
-                  <Button variant="outline" role="combobox" className="w-full justify-between font-normal">
-                    <span className="flex items-center gap-2 truncate">
-                      <Users className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      <span className="truncate">{persona || "Selecciona un colaborador…"}</span>
-                    </span>
-                    <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-[360px] p-0" align="start">
-                  <Command filter={(value, search) => (value.toLowerCase().includes(search.toLowerCase()) ? 1 : 0)}>
-                    <CommandInput placeholder="Buscar colaborador…" />
-                    <CommandList>
-                      <CommandEmpty>Sin resultados.</CommandEmpty>
-                      <CommandGroup>
-                        {colaboradores.map((c) => (
-                          <CommandItem
-                            key={c.nombre}
-                            value={c.nombre}
-                            onSelect={() => {
-                              setPersona(c.nombre)
-                              setOpenPicker(false)
-                            }}
-                          >
-                            <Check className={`mr-2 h-4 w-4 ${persona === c.nombre ? "opacity-100" : "opacity-0"}`} />
-                            <span className="flex-1 truncate">{c.nombre}</span>
-                            <span className="ml-2 text-xs text-muted-foreground">{c.estado}</span>
-                          </CommandItem>
-                        ))}
-                      </CommandGroup>
-                    </CommandList>
-                  </Command>
-                </PopoverContent>
-              </Popover>
-              {seleccionado && (
-                <p className="text-xs text-muted-foreground">
-                  CC {seleccionado.identificacion || "—"} ·{" "}
-                  {seleccionado.idempresa != null ? `emp${seleccionado.idempresa}` : "—"} · {seleccionado.estado}
-                </p>
-              )}
-            </div>
-
-            <div className="space-y-1">
-              <Label>Fecha del bono</Label>
-              <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
-            </div>
-
-            <div className="space-y-1">
-              <Label>Tipo</Label>
+              <Label>Tipo de bono</Label>
               <Select value={tipo} onValueChange={(v) => setTipo(v as TipoBono)}>
                 <SelectTrigger>
                   <SelectValue />
@@ -196,8 +249,74 @@ function RegistrarBonoTab() {
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">Solo clasificación; el cálculo es idéntico en ambos.</p>
+              <p className="text-xs text-muted-foreground">
+                Habilita el campo de colaborador correspondiente. El cálculo y el pago son idénticos en ambos.
+              </p>
             </div>
+
+            <div className="space-y-1">
+              <Label>Fecha del bono</Label>
+              <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
+            </div>
+
+            <div className={`space-y-1 ${esAdm ? "opacity-50" : ""}`}>
+              <Label className="flex items-center gap-1.5">
+                <Users className="h-3.5 w-3.5" /> Colaborador operativo
+              </Label>
+              <PickerColaborador
+                activo={!esAdm}
+                items={operativos}
+                valorSel={personaOp}
+                setValorSel={setPersonaOp}
+                open={openOp}
+                setOpen={setOpenOp}
+                placeholder="Selecciona un colaborador…"
+                vacio="Sin resultados en este proyecto."
+              />
+              <p className="text-xs text-muted-foreground">
+                Personal de{" "}
+                <strong>{selectedEmpresaNombre || (empresaId != null ? `emp${empresaId}` : "todos los proyectos")}</strong>{" "}
+                ({operativos.length}) — sigue el selector global de proyecto.
+              </p>
+            </div>
+
+            <div className={`space-y-1 ${esAdm ? "" : "opacity-50"}`}>
+              <Label className="flex items-center gap-1.5">
+                <Briefcase className="h-3.5 w-3.5" /> Colaborador administrativo
+              </Label>
+              <PickerColaborador
+                activo={esAdm}
+                items={administrativos}
+                valorSel={personaAdm}
+                setValorSel={setPersonaAdm}
+                open={openAdm}
+                setOpen={setOpenAdm}
+                placeholder="Selecciona un administrativo…"
+                vacio="Nadie marcado como administrativo en Head Count."
+              />
+              <p className="text-xs text-muted-foreground">
+                Todo el personal administrativo de LIP ({administrativos.length}) — transversal, no depende del
+                proyecto.
+              </p>
+            </div>
+
+            {seleccionado && (
+              <p className="text-xs text-muted-foreground md:col-span-2">
+                Seleccionado: <strong>{seleccionado.nombre}</strong> · CC {seleccionado.identificacion || "—"} ·{" "}
+                {seleccionado.idempresa != null ? `emp${seleccionado.idempresa}` : "—"} · {seleccionado.estado}
+                {seleccionado.cargo ? ` · ${seleccionado.cargo}` : ""}
+              </p>
+            )}
+
+            {esAdm && administrativos.length === 0 && (
+              <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm md:col-span-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                <span>
+                  Todavía no hay nadie marcado como <strong>administrativo</strong> en Head Count. Márcalos en Gestión
+                  Humana › Head Count (pestaña <em>Administrativo</em>) y aparecerán aquí.
+                </span>
+              </div>
+            )}
 
             <div className="space-y-1">
               <Label>Novedad en Siigo</Label>
@@ -289,6 +408,35 @@ function ListadoBonosTab() {
   const [updatingId, setUpdatingId] = useState<number | null>(null)
   const [rechazando, setRechazando] = useState<number | null>(null)
   const [motivo, setMotivo] = useState("")
+  // Clave de aprobación. Se pide UNA vez por sesión de pantalla (aprobar 20
+  // bonos tecleándola 20 veces no lo usaría nadie) y queda solo en memoria:
+  // nunca se guarda en localStorage ni viaja a otro lado. El servidor la
+  // vuelve a validar en CADA aprobación, así que esto es comodidad, no el
+  // control — el control está en la server action.
+  const [clave, setClave] = useState("")
+  const [claveOk, setClaveOk] = useState(false)
+  const [verificando, setVerificando] = useState(false)
+  const [claveError, setClaveError] = useState<string | null>(null)
+
+  const verificarClave = useCallback(async () => {
+    setVerificando(true)
+    setClaveError(null)
+    const r = await verificarClaveBonos(clave)
+    setVerificando(false)
+    if (r.success) {
+      setClaveOk(true)
+      toast({ title: "Aprobación desbloqueada", description: "Ya puedes aprobar bonos en esta pantalla." })
+    } else {
+      setClaveOk(false)
+      setClaveError(r.message || "Clave incorrecta.")
+    }
+  }, [clave, toast])
+
+  const bloquear = useCallback(() => {
+    setClaveOk(false)
+    setClave("")
+    setClaveError(null)
+  }, [])
 
   const consultar = useCallback(async () => {
     setLoading(true)
@@ -384,6 +532,62 @@ function ListadoBonosTab() {
         </div>
       )}
 
+      {/* Clave de aprobación. Aprobar es lo que convierte el bono en plata
+          pagada, así que va detrás de clave; el servidor la revalida en cada
+          aprobación (esto solo desbloquea el botón). */}
+      <Card className={claveOk ? "border-emerald-500/40" : "border-amber-500/40"}>
+        <CardContent className="flex flex-wrap items-end gap-3 pt-6">
+          {claveOk ? (
+            <>
+              <div className="flex items-center gap-2 text-sm">
+                <Check className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                <span>
+                  <strong>Aprobación desbloqueada.</strong> Los botones de aprobar están habilitados en esta pantalla.
+                </span>
+              </div>
+              <Button variant="outline" size="sm" onClick={bloquear} className="gap-1">
+                <Lock className="h-3.5 w-3.5" /> Bloquear
+              </Button>
+            </>
+          ) : (
+            <>
+              <div className="space-y-1">
+                <Label className="flex items-center gap-1.5">
+                  <Lock className="h-3.5 w-3.5" /> Clave de aprobación
+                </Label>
+                <Input
+                  type="password"
+                  value={clave}
+                  onChange={(e) => {
+                    setClave(e.target.value)
+                    setClaveError(null)
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && clave) verificarClave()
+                  }}
+                  placeholder="••••••••"
+                  className="w-[200px]"
+                  autoComplete="off"
+                />
+              </div>
+              <Button onClick={verificarClave} disabled={!clave || verificando} className="min-w-[130px]">
+                {verificando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Lock className="mr-2 h-4 w-4" />}
+                Desbloquear
+              </Button>
+              <p className="flex-1 text-xs text-muted-foreground">
+                Aprobar un bono lo mete a la nómina y al archivo plano. Sin la clave se puede consultar y rechazar,
+                pero no aprobar.
+              </p>
+            </>
+          )}
+          {claveError && (
+            <div className="flex w-full items-center gap-2 text-sm text-destructive">
+              <AlertTriangle className="h-4 w-4 shrink-0" /> {claveError}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Bonos del periodo — {rows.length}</CardTitle>
@@ -442,10 +646,11 @@ function ListadoBonosTab() {
                               size="sm"
                               variant="default"
                               className="h-7 gap-1"
-                              disabled={updatingId === b.id}
-                              onClick={() => accion(b.id, () => aprobarBono(b.id), "Bono aprobado")}
+                              disabled={updatingId === b.id || !claveOk}
+                              title={claveOk ? "Aprobar el bono" : "Ingresa la clave de aprobación para habilitar"}
+                              onClick={() => accion(b.id, () => aprobarBono(b.id, clave), "Bono aprobado")}
                             >
-                              <Check className="h-3 w-3" /> Aprobar
+                              {claveOk ? <Check className="h-3 w-3" /> : <Lock className="h-3 w-3" />} Aprobar
                             </Button>
                             <Button
                               size="sm"

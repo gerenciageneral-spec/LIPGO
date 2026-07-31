@@ -29,11 +29,24 @@ import { NOVEDADES_BONO, TIPOS_BONO, type TipoBono, type EstadoBono } from "@/li
 
 const num = (v: any) => Number(v || 0)
 
+/**
+ * Clave que exige la aprobación de bonos. Vive SOLO aquí a propósito: este
+ * archivo es `"use server"` y su código nunca se envía al navegador. Ponerla en
+ * `lib/bonos-constants.ts` (que sí importa el cliente) la publicaría en el
+ * bundle. Se puede rotar por variable de entorno sin volver a desplegar.
+ */
+const CLAVE_APROBACION = process.env.BONOS_APROBACION_CLAVE || "Jeff1234"
+
+/** De dónde sale el listado de colaboradores del formulario. */
+export type OrigenColaborador = "operativo" | "administrativo"
+
 export interface ColaboradorBono {
   nombre: string
   identificacion: string
   idempresa: number | null
   estado: string
+  cargo: string
+  admin: boolean
 }
 
 export interface BonoRow {
@@ -63,19 +76,34 @@ export interface BonosResumen {
   personas: number
 }
 
-/** Colaboradores del Head Count para el selector (mismo criterio que Revisión de nómina). */
-export async function getColaboradoresBonos(): Promise<{
+/**
+ * Colaboradores del Head Count para el selector del formulario. Replica el
+ * criterio que ya usa el propio módulo Head Count (components/headcount-management.tsx),
+ * para que las dos pantallas muestren siempre la misma gente:
+ *   · `operativo`      → los del proyecto del SELECTOR GLOBAL (cada id es su
+ *                        centro de costo).
+ *   · `administrativo` → TODO el personal marcado `headcount.admin = true`,
+ *                        SIN filtro de empresa: el administrativo es transversal
+ *                        a LIP, no pertenece a un proyecto.
+ */
+export async function getColaboradoresBonos(
+  origen: OrigenColaborador = "operativo",
+  idempresa?: number | null,
+): Promise<{
   success: boolean
   data: ColaboradorBono[]
   message?: string
 }> {
   try {
     const admin: any = await getSupabaseAdmin()
-    const { data, error } = await admin
+    let q = admin
       .from("headcount")
-      .select("nombre, identificacion, idempresa, estado")
+      .select("nombre, identificacion, idempresa, estado, cargo, admin")
       .order("estado", { ascending: true })
       .order("nombre", { ascending: true })
+    if (origen === "administrativo") q = q.eq("admin", true)
+    else if (idempresa != null) q = q.eq("idempresa", idempresa)
+    const { data, error } = await q
     if (error) return { success: false, data: [], message: error.message }
 
     const vistos = new Set<string>()
@@ -91,12 +119,23 @@ export async function getColaboradoresBonos(): Promise<{
         identificacion,
         idempresa: r.idempresa != null ? Number(r.idempresa) : null,
         estado: String(r.estado || "").trim() || "—",
+        cargo: String(r.cargo || "").trim(),
+        admin: r.admin === true,
       })
     }
     return { success: true, data: out }
   } catch (e: any) {
     return { success: false, data: [], message: e?.message || "Error al leer colaboradores." }
   }
+}
+
+/**
+ * Valida la clave de aprobación sin aprobar nada, para que la pantalla pueda
+ * desbloquear la sesión una sola vez en vez de pedirla bono por bono.
+ */
+export async function verificarClaveBonos(clave: string): Promise<{ success: boolean; message?: string }> {
+  if (String(clave || "") !== CLAVE_APROBACION) return { success: false, message: "Clave incorrecta." }
+  return { success: true }
 }
 
 export interface RegistrarBonoInput {
@@ -133,7 +172,7 @@ export async function registrarBono(
     // Head Count no se puede registrar el bono (no habría a quién pagarle).
     const { data: hc } = await admin
       .from("headcount")
-      .select("nombre, identificacion, idempresa")
+      .select("nombre, identificacion, idempresa, admin")
       .eq("nombre", nombre)
       .limit(1)
       .maybeSingle()
@@ -142,6 +181,16 @@ export async function registrarBono(
       return {
         success: false,
         message: `${nombre} no tiene identificación en Head Count; sin cédula el bono no puede salir en el archivo plano.`,
+      }
+    }
+
+    // Coherencia tipo ↔ Head Count: un bono Administrativo solo puede ir a quien
+    // esté marcado como administrativo. El formulario ya separa los dos campos,
+    // pero se valida aquí también para que no entre por otra vía.
+    if (input.tipo === "Administrativo" && hc?.admin !== true) {
+      return {
+        success: false,
+        message: `${nombre} no está marcado como personal administrativo en Head Count. Márcalo allí (pestaña Administrativo) o registra el bono como Operativo.`,
       }
     }
 
@@ -165,10 +214,17 @@ export async function registrarBono(
   }
 }
 
-/** Aprueba un bono: desde aquí YA impacta pagonomina y el archivo plano. */
-export async function aprobarBono(id: number): Promise<{ success: boolean; message?: string }> {
+/**
+ * Aprueba un bono: desde aquí YA impacta pagonomina y el archivo plano.
+ * Exige la CLAVE de aprobación. Se valida en el servidor (no solo en pantalla)
+ * porque aprobar es lo que convierte el bono en plata pagada: una validación
+ * únicamente en el cliente se saltaría llamando la action directo.
+ */
+export async function aprobarBono(id: number, clave: string): Promise<{ success: boolean; message?: string }> {
   try {
     if (!id) return { success: false, message: "Bono inválido." }
+    if (String(clave || "") !== CLAVE_APROBACION)
+      return { success: false, message: "Clave de aprobación incorrecta. El bono NO fue aprobado." }
     const admin: any = await getSupabaseAdmin()
     const usuario = await getCurrentUsuarioForInsert()
     const { error } = await admin
