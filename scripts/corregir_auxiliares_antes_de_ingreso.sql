@@ -96,7 +96,7 @@ SELECT c.idempresa,
        c.auxiliares AS auxiliares_actual,
        (SELECT string_agg(
                  CASE WHEN UPPER(TRIM(t.parte)) LIKE o.patron
-                      THEN 'Auxiliar de Prueba 10'
+                      THEN 'Aux. Prueba 10'
                       ELSE TRIM(t.parte) END,
                  ',' ORDER BY t.ord)
           FROM regexp_split_to_table(c.auxiliares, ',') WITH ORDINALITY AS t(parte, ord)
@@ -126,7 +126,7 @@ recalculado AS (
   SELECT c.id,
          (SELECT string_agg(
                    CASE WHEN UPPER(TRIM(t.parte)) LIKE o.patron
-                        THEN 'Auxiliar de Prueba 10'
+                        THEN 'Aux. Prueba 10'
                         ELSE TRIM(t.parte) END,
                    ',' ORDER BY t.ord)
             FROM regexp_split_to_table(c.auxiliares, ',') WITH ORDINALITY AS t(parte, ord)
