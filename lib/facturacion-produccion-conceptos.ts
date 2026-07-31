@@ -30,6 +30,12 @@ export interface ProduccionProyecto {
   fuente: FuenteProduccion
   /** Los conceptos, con el nombre exacto del maestro de tarifas. */
   conceptos: string[]
+  /** VIGENCIA. Desde qué fecha estos conceptos se cuentan como producción.
+   *  Es el seguro contra el traslape con lo ya facturado: un período que
+   *  empiece antes de esta fecha se factura EXACTAMENTE como se venía
+   *  facturando, así que volver a generar una prefactura vieja da el mismo
+   *  documento que se revisó en su momento. `null` = sin corte. */
+  desde: string | null
   /** Se muestra en la prefactura para que quien factura entienda de un vistazo
    *  por qué el concepto está (o no está) sumando aparte. */
   nota: string
@@ -45,9 +51,18 @@ export const PRODUCCION_POR_PROYECTO: Record<number, ProduccionProyecto> = {
     owner: "Harinera Indupan",
     fuente: "ordenes",
     conceptos: ["Tolva", "Tolva f"],
+    // Desde el 1-ago-2026 la tolva de Indupan se CUENTA como producción. No se
+    // recalcula: es la misma línea de la orden, con su valor, su semáforo y su
+    // reparto por owner (parte de esa tolva es de AVIMOL y de Molinos, y
+    // recalcularla contra un solo owner la facturaría mal). Solo cambia el
+    // bloque en el que suma. Antes de esa fecha todo queda como estaba, para
+    // que ninguna prefactura ya revisada cambie al volver a generarla.
+    desde: "2026-08-01",
     nota:
-      "La producción de tolva de Indupan se registra como orden de cargue (operación Tolva / Tolva f), " +
-      "así que ya está incluida arriba con su tarifa por tonelada. No se suma aparte para no cobrarla dos veces.",
+      "La producción de tolva de Indupan se registra como orden de cargue (operación Tolva / Tolva f). " +
+      "Desde el 1-ago-2026 esas líneas suman en el bloque de PRODUCCIÓN —la misma línea, no una copia—, " +
+      "así que el total del documento no cambia y no hay forma de cobrarla dos veces. " +
+      "Los períodos anteriores se facturan exactamente como se venían facturando.",
   },
   // Avimol — lo que se cobra por producción son los ingresos de tolva de
   // `invtrans` (Salvado / Estibado PT, con sus variantes de festivo) más las
@@ -58,6 +73,9 @@ export const PRODUCCION_POR_PROYECTO: Record<number, ProduccionProyecto> = {
     owner: "AVIMOL",
     fuente: "conciliacion",
     conceptos: ["Salvado", "Salvado Festivo", "Estibado PT", "Estibado PT Festivo", "Horas extra por puesto"],
+    // Sin corte: esta producción NUNCA se facturó desde el Cuadro de Control
+    // (no existía como línea), así que no hay nada viejo con que traslaparse.
+    desde: null,
     nota:
       "La producción de Avimol (Salvado y Estibado PT) sale de los ingresos de tolva y las horas extra de la " +
       "nómina: no existen como orden de cargue, por eso se suman aparte. Es el mismo cálculo de Conciliación Avimol.",
@@ -71,3 +89,28 @@ export function produccionDelProyecto(idempresa: number | null | undefined): Pro
 
 /** Prefijo con el que se nombra cada concepto de hora extra en el documento. */
 export const CONCEPTO_HORA_EXTRA = "Hora extra"
+
+/**
+ * ¿El período que se está facturando cae dentro de la vigencia de producción?
+ *
+ *   "si"      → el período empieza en la vigencia o después: aplica.
+ *   "no"      → termina antes de la vigencia: se factura como se venía haciendo.
+ *   "parcial" → el rango se monta sobre la fecha de corte. NO se aplica: partir
+ *               un concepto por la mitad daría dos líneas con el mismo nombre y
+ *               es señal de que el rango está mal armado (las facturas van por
+ *               mes o quincena). Se avisa para que se corrija el rango.
+ */
+export function vigenciaProduccion(
+  cfg: ProduccionProyecto | null,
+  desde?: string | null,
+  hasta?: string | null,
+): "si" | "no" | "parcial" {
+  if (!cfg) return "no"
+  if (!cfg.desde) return "si"
+  const d = String(desde || "").slice(0, 10)
+  const h = String(hasta || "").slice(0, 10)
+  if (!d || !h) return "no" // sin rango no se puede garantizar que no toque lo viejo
+  if (d >= cfg.desde) return "si"
+  if (h < cfg.desde) return "no"
+  return "parcial"
+}

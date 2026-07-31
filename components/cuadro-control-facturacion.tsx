@@ -358,15 +358,21 @@ export function CuadroControlFacturacion() {
       porFacturar: number
       facturado: number
       enProceso: number
+      operacion: number // subtotal de lo que nace de órdenes de cargue
+      produccion: number // subtotal de lo que se cobra por producción
     }
     const porOwner = new Map<string, Grupo>()
     for (const r of rows) {
       const g =
         porOwner.get(r.owner) ||
-        ({ owner: r.owner, items: [] as any, ton: 0, total: 0, porFacturar: 0, facturado: 0, enProceso: 0 } as Grupo)
+        ({ owner: r.owner, items: [] as any, ton: 0, total: 0, porFacturar: 0, facturado: 0, enProceso: 0, operacion: 0, produccion: 0 } as Grupo)
       g.items.push(r)
       if (r.unidad !== "h") g.ton += r.toneladas // las horas extra no son tonelaje
       g.total += r.valor
+      // Subtotales por bloque: cuánto de la factura es movimiento de órdenes y
+      // cuánto es producción. Es la lectura que pide el cliente.
+      if (r.bloque === "produccion") g.produccion += r.valor
+      else g.operacion += r.valor
       g.porFacturar += r.valorPorFacturar
       g.facturado += r.valorFacturado
       g.enProceso += r.valorEnProceso
@@ -380,6 +386,8 @@ export function CuadroControlFacturacion() {
     const totalPorFacturar = rows.reduce((s, r) => s + r.valorPorFacturar, 0)
     const totalFacturado = rows.reduce((s, r) => s + r.valorFacturado, 0)
     const totalEnProceso = rows.reduce((s, r) => s + r.valorEnProceso, 0)
+    const totalProduccion = rows.reduce((s, r) => s + (r.bloque === "produccion" ? r.valor : 0), 0)
+    const totalOperacion = totalVal - totalProduccion
     return {
       grupos,
       totalTon,
@@ -387,6 +395,8 @@ export function CuadroControlFacturacion() {
       totalPorFacturar,
       totalFacturado,
       totalEnProceso,
+      totalProduccion,
+      totalOperacion,
       keys: new Set(rows.map((r) => keyRes(r.owner, r.operacion))),
     }
   }, [pref, selKeys])
@@ -444,7 +454,7 @@ export function CuadroControlFacturacion() {
           it.unidad === "h" ? "h" : "t",
           it.tarifa,
           Math.round(it.valor),
-          it.fuente === "produccion" ? "Producción" : "Órdenes de cargue",
+          it.bloque === "produccion" ? "Producción" : "Movimiento de órdenes",
         ])
       }
       aoa.push(["", `Subtotal ${g.owner}`, Number(g.ton.toFixed(3)), "t", "", Math.round(g.total), ""])
@@ -967,6 +977,18 @@ export function CuadroControlFacturacion() {
                       <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                       <span>
                         <strong>Producción de {proyectoNombre}:</strong> {pref.produccionNota}
+                        {pref.produccionDesde && (
+                          <>
+                            {" "}
+                            <strong>
+                              {pref.produccionVigencia === "si"
+                                ? `Este período está dentro de la vigencia (desde ${pref.produccionDesde}): la producción sí suma en su bloque.`
+                                : pref.produccionVigencia === "parcial"
+                                  ? `Ojo: el rango se monta sobre el ${pref.produccionDesde}.`
+                                  : `Este período es anterior al ${pref.produccionDesde}: se factura tal como se venía facturando.`}
+                            </strong>
+                          </>
+                        )}
                       </span>
                     </div>
                   )}
@@ -1015,7 +1037,7 @@ export function CuadroControlFacturacion() {
                               <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${soloFacturado ? "bg-red-500" : x.valorFacturado > 0 ? "bg-amber-400" : "bg-emerald-500"}`} />
                               <span className="flex-1 truncate">
                                 <span className="font-medium">{x.owner}</span> · {x.operacion}
-                                {x.fuente === "produccion" && (
+                                {x.bloque === "produccion" && (
                                   <span className="ml-1 rounded bg-sky-100 px-1 py-px text-[9px] font-semibold uppercase text-sky-700 dark:bg-sky-950/50 dark:text-sky-300">
                                     prod
                                   </span>
@@ -1114,6 +1136,10 @@ export function CuadroControlFacturacion() {
                                 {g.items.map((it) => {
                                   const k = keyRes(it.owner, it.operacion)
                                   const abierto = expand.has(k)
+                                  // `bloque` decide cómo se presenta; `fuente`, de dónde sale el
+                                  // respaldo. La tolva de Indupan suma como producción pero su
+                                  // detalle sigue siendo el de las órdenes.
+                                  const esBloqueProd = it.bloque === "produccion"
                                   const esProd = it.fuente === "produccion"
                                   const det = abierto && !esProd ? detalleDe(it.owner, it.operacion) : []
                                   const detProd = abierto && esProd ? detalleProduccionDe(it.owner, it.operacion) : []
@@ -1127,7 +1153,7 @@ export function CuadroControlFacturacion() {
                                           <span className="inline-flex items-center gap-1">
                                             <ChevronRight className={`h-3 w-3 text-muted-foreground transition-transform ${abierto ? "rotate-90" : ""}`} />
                                             {it.operacion}
-                                            {esProd && (
+                                            {esBloqueProd && (
                                               <span className="rounded bg-sky-100 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-sky-700 dark:bg-sky-950/50 dark:text-sky-300">
                                                 producción
                                               </span>
@@ -1234,6 +1260,24 @@ export function CuadroControlFacturacion() {
                                     </Fragment>
                                   )
                                 })}
+                                {/* Desglose operación / producción: solo cuando el owner
+                                    tiene de los dos, que es cuando aporta algo. */}
+                                {g.operacion > 0 && g.produccion > 0 && (
+                                  <>
+                                    <tr className="border-t text-[11px] text-muted-foreground">
+                                      <td className="py-1 pl-2">Movimiento de órdenes</td>
+                                      <td colSpan={3}></td>
+                                      <td className="py-1 pr-3 text-right tabular-nums">{money(g.operacion)}</td>
+                                      <td></td>
+                                    </tr>
+                                    <tr className="text-[11px] text-sky-700 dark:text-sky-300">
+                                      <td className="py-1 pl-2">Producción</td>
+                                      <td colSpan={3}></td>
+                                      <td className="py-1 pr-3 text-right tabular-nums">{money(g.produccion)}</td>
+                                      <td></td>
+                                    </tr>
+                                  </>
+                                )}
                                 <tr className="border-t bg-muted/30 font-semibold">
                                   <td className="py-1.5 pl-2">Subtotal {g.owner}</td>
                                   <td className="py-1.5 text-right tabular-nums">{ton(g.ton)}</td>
@@ -1251,7 +1295,15 @@ export function CuadroControlFacturacion() {
 
                     {/* Total general */}
                     <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t-2 border-primary/40 pt-3">
-                      <span className="text-sm font-bold">TOTAL PREFACTURA</span>
+                      <div>
+                        <span className="text-sm font-bold">TOTAL PREFACTURA</span>
+                        {prefSel.totalProduccion > 0 && (
+                          <div className="text-[11px] text-muted-foreground">
+                            Movimiento de órdenes {money(prefSel.totalOperacion)} ·{" "}
+                            <span className="text-sky-700 dark:text-sky-300">Producción {money(prefSel.totalProduccion)}</span>
+                          </div>
+                        )}
+                      </div>
                       <div className="flex items-center gap-4">
                         <span className="text-xs text-muted-foreground">Total período {money(prefSel.totalVal)}</span>
                         <span className="flex items-center gap-1.5 text-xl font-extrabold tabular-nums text-emerald-600">

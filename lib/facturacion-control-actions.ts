@@ -12,7 +12,7 @@ import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { esPlacaDistribucion, cargarPlacasDistribucion } from "@/lib/distribucion-placas"
 import { PLACAS_EXCLUIDAS_FACTURAS } from "@/lib/facturas-exclusiones"
 import { getConciliacionAvimol } from "@/lib/conciliacion-avimol-actions"
-import { produccionDelProyecto, CONCEPTO_HORA_EXTRA } from "@/lib/facturacion-produccion-conceptos"
+import { produccionDelProyecto, vigenciaProduccion, CONCEPTO_HORA_EXTRA } from "@/lib/facturacion-produccion-conceptos"
 
 export type CategoriaFactura = "facturado" | "en_proceso" | "sin_gestionar"
 
@@ -266,11 +266,18 @@ export interface PrefacturaResumen {
   valorEnProceso: number // factura solicitada / a crédito (ámbar)
   tonFacturado: number
   valorFacturado: number // ya facturado — NO volver a facturar (rojo)
-  /** De dónde nace la línea. "ordenes" = una orden de cargue procesada (tiene
-   *  semáforo de factura Siigo). "produccion" = concepto sin orden detrás
-   *  (tolva de Avimol, horas extra): no tiene marca de facturado, así que
-   *  entra completo como POR FACTURAR. Ver lib/facturacion-produccion-conceptos.ts. */
+  /** DE DÓNDE SALE EL DATO. "ordenes" = una orden de cargue procesada (tiene
+   *  semáforo de factura Siigo y detalle por orden). "produccion" = concepto
+   *  sin orden detrás (tolva de Avimol, horas extra): no tiene marca de
+   *  facturado, así que entra completo como POR FACTURAR y su respaldo es el
+   *  día a día. Ver lib/facturacion-produccion-conceptos.ts. */
   fuente: "ordenes" | "produccion"
+  /** EN QUÉ BLOQUE SUMA en el documento. Es distinto de `fuente`: la tolva de
+   *  Indupan sale de una orden (`fuente: "ordenes"`, conserva su semáforo y su
+   *  reparto por owner) pero desde su fecha de vigencia se cuenta como
+   *  producción. Reclasificar la MISMA línea —en vez de recalcularla— es lo que
+   *  hace imposible cobrarla dos veces. */
+  bloque: "operacion" | "produccion"
   /** Unidad de `toneladas`: toneladas o HORAS (horas extra). Sin esto las horas
    *  se sumarían al tonelaje del documento. */
   unidad: "t" | "h"
@@ -287,6 +294,10 @@ export interface Prefactura {
   /** Avisos del cálculo de producción (sin tarifa, sin solicitud de horas extra,
    *  rango incompleto…). Se muestran para que nadie facture a ciegas. */
   produccionAlertas: string[]
+  /** Desde cuándo los conceptos de este proyecto cuentan como producción. */
+  produccionDesde: string | null
+  /** Si el período facturado cae dentro de esa vigencia. */
+  produccionVigencia: "si" | "no" | "parcial"
 }
 
 // ---------- Prefacturas GUARDADAS (borrador/aprobada) ----------
@@ -563,7 +574,7 @@ export async function getPrefactura(
           owner: l.owner, operacion: op, toneladas: 0, tarifa: l.tarifaServicio, valor: 0,
           tonPorFacturar: 0, valorPorFacturar: 0, tonEnProceso: 0, valorEnProceso: 0,
           tonFacturado: 0, valorFacturado: 0,
-          fuente: "ordenes" as const, unidad: "t" as const,
+          fuente: "ordenes" as const, bloque: "operacion" as const, unidad: "t" as const,
         }
       // Valor POR LÍNEA (ya calculado con la tarifa del owner/operación real).
       const v = l.valorServicio
@@ -593,17 +604,58 @@ export async function getPrefactura(
     )
 
     // ---------------------------------------------------------------------
-    // PRODUCCIÓN — conceptos del proyecto que NO nacen de una orden de cargue.
-    // Sin esto la factura de Avimol sale incompleta: la tolva y las horas extra
-    // no tienen orden detrás, así que la vista `facturacion` no las ve.
-    // El proyecto declara su fuente en lib/facturacion-produccion-conceptos.ts;
-    // si es "ordenes" (Indupan: Tolva ya es un tipooperacion) NO se agrega nada,
-    // solo se deja la nota, porque sumarlo sería cobrarlo dos veces.
+    // PRODUCCIÓN. Cada proyecto declara sus conceptos, de dónde salen y desde
+    // cuándo cuentan (lib/facturacion-produccion-conceptos.ts). Hay dos casos y
+    // NINGUNO puede duplicar plata:
+    //
+    //   A) El concepto ya viene de una orden (Indupan: Tolva / Tolva f) → se
+    //      RECLASIFICA la misma línea al bloque de producción. Mismo valor,
+    //      mismo semáforo, mismo reparto por owner: es una etiqueta, no una
+    //      suma. Recalcularlo aparte sí duplicaría, y además perdería el
+    //      reparto (parte de esa tolva es de AVIMOL y de Molinos).
+    //
+    //   B) El concepto no tiene orden detrás (Avimol: tolva de `invtrans` y
+    //      horas extra de nómina) → hay que AGREGARLO, porque la vista
+    //      `facturacion` no lo ve y sin él la factura sale incompleta.
     // ---------------------------------------------------------------------
     const cfg = produccionDelProyecto(idempresa)
     const produccionAlertas: string[] = []
     const soporteProduccion: SoporteLinea[] = []
-    if (cfg && cfg.fuente === "conciliacion") {
+    // VIGENCIA: el corte por fecha es el seguro contra el traslape con lo ya
+    // facturado. Un período anterior a la vigencia se factura exactamente como
+    // se venía facturando, así que regenerar una prefactura vieja da el mismo
+    // documento que se revisó en su momento.
+    const vigencia = vigenciaProduccion(cfg, filtros.desde, filtros.hasta)
+    if (cfg && vigencia === "parcial") {
+      produccionAlertas.push(
+        `El rango se monta sobre el ${cfg.desde}, fecha desde la que ${cfg.conceptos.join(" / ")} se cuentan como ` +
+          `producción. Se dejó la presentación anterior para no partir un concepto en dos. Factura hasta el ` +
+          `${cfg.desde} por un lado y desde el ${cfg.desde} por otro.`,
+      )
+    }
+
+    // Caso A — el concepto YA viene de una orden (Indupan: Tolva / Tolva f).
+    // No se recalcula ni se agrega nada: se RECLASIFICA la misma línea al
+    // bloque de producción a partir de su vigencia. El valor, el semáforo y el
+    // reparto por owner quedan intactos, y por eso no puede haber doble cobro.
+    if (cfg && cfg.fuente === "ordenes" && vigencia === "si") {
+      const conceptosK = new Set(cfg.conceptos.map((c) => ownerKey(c)))
+      let reclasificadas = 0
+      for (const r of resumen) {
+        if (conceptosK.has(ownerKey(r.operacion))) {
+          r.bloque = "produccion"
+          reclasificadas++
+        }
+      }
+      if (reclasificadas === 0 && filtros.desde) {
+        produccionAlertas.push(
+          `No hubo movimiento de ${cfg.conceptos.join(" / ")} en el período: el bloque de producción va en $0.`,
+        )
+      }
+    }
+
+    // Caso B — el concepto NO tiene orden detrás (Avimol) y hay que traerlo.
+    if (cfg && cfg.fuente === "conciliacion" && vigencia === "si") {
       if (!filtros.desde || !filtros.hasta) {
         produccionAlertas.push(
           "Define el rango Desde/Hasta y vuelve a generar: sin período no se puede calcular la producción, " +
@@ -704,6 +756,7 @@ export async function getPrefactura(
               tonFacturado: 0,
               valorFacturado: 0,
               fuente: "produccion",
+              bloque: "produccion",
               unidad,
             })
             totalValor += valor
@@ -725,6 +778,8 @@ export async function getPrefactura(
         soporteProduccion,
         produccionNota: cfg?.nota ?? null,
         produccionAlertas,
+        produccionDesde: cfg?.desde ?? null,
+        produccionVigencia: vigencia,
       },
     }
   } catch (e: any) {
