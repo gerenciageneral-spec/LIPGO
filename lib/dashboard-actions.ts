@@ -225,13 +225,18 @@ export async function getDashboardOperacionesData(
     const empresaId = selectedEmpresaId || await getCurrentEmpresaId()
     const fechaFiltro = fecha || getColombiaDate()
 
-    // Importante: NO filtramos por `fechacargue` en la query; lo hacemos
-    // en JS. La vista `dashboardoperaciones` expone `fechacargue` con
-    // formatos heterogeneos (DATE vs TIMESTAMP) e incluso `null` para
-    // ordenes que aun no han sido cargadas. Filtrar en SQL con `.eq` o
-    // rango terminaba dejando la tabla vacia. La vista ya esta acotada
-    // por empresa y tipo, asi que el volumen es manejable y la opcion
-    // mas robusta es comparar la "parte de fecha" en codigo.
+    // FILTRO DE FECHA EN SQL — mismo motivo que en getDashboardOperacionesStats.
+    // Sin él se pedía toda la historia de la empresa (2.803 filas en Indupan) y
+    // Supabase la cortaba en 1000. Aquí el `.order(ordendecargue DESC)` disimulaba
+    // el problema —se quedaba con las más recientes—, pero igual es una bomba de
+    // tiempo: en cuanto un solo día quede fuera de esas 1000 filas, la tabla
+    // empieza a mentir igual que las tarjetas.
+    // Rango [fecha, fecha+1) para tolerar DATE y TIMESTAMP. El filtro en JS de
+    // abajo se conserva como red de seguridad.
+    const finDiaTabla = new Date(`${fechaFiltro}T00:00:00Z`)
+    finDiaTabla.setUTCDate(finDiaTabla.getUTCDate() + 1)
+    const diaSiguienteTabla = finDiaTabla.toISOString().slice(0, 10)
+
     const { data, error } = await supabase
       .from("dashboardoperaciones")
       .select(
@@ -239,6 +244,8 @@ export async function getDashboardOperacionesData(
       )
       .eq("idempresa", empresaId)
       .neq("tipooperacion", "Tolva")
+      .gte("fechacargue", fechaFiltro)
+      .lt("fechacargue", diaSiguienteTabla)
       .order("ordendecargue", { ascending: false })
 
     if (error) {
@@ -303,14 +310,34 @@ export async function getDashboardOperacionesStats(
     // mirando el dia actual. En fechas pasadas/futuras los suprimimos.
     const esHoy = fechaFiltro === hoy
 
-    // Mismo razonamiento que getDashboardOperacionesData: filtramos en
-    // JS por la "parte de fecha" del campo `fechacargue` para tolerar
-    // mezcla de formatos DATE/TIMESTAMP.
+    // FILTRO DE FECHA EN SQL — obligatorio, no es una optimización.
+    //
+    // Antes esta consulta pedía TODA la historia de la empresa y filtraba el día
+    // en JS. Supabase corta cualquier respuesta en 1000 filas y aquí no había ni
+    // `.order()`, así que PostgREST devolvía las 1000 MÁS ANTIGUAS: las órdenes
+    // del día quedaban fuera y las TARJETAS DE TONELADAS Y METAS se congelaban
+    // con datos viejos. Medido el 31-jul-2026: Indupan tiene 2.803 filas en la
+    // vista y esta consulta veía 0 de las 18 órdenes del día; Avimol, 0 de 14.
+    // (La tabla de abajo sí se veía bien porque su consulta ordena por
+    // ordendecargue DESC y se queda con las más recientes.)
+    //
+    // El comentario anterior justificaba filtrar en JS por "formatos heterogéneos
+    // DATE vs TIMESTAMP". Verificado contra la base: `fechacargue` es hoy un DATE
+    // limpio y el filtro en SQL devuelve exactamente las filas del día. Se usa un
+    // RANGO [fecha, fecha+1) en vez de `.eq` para que siga sirviendo si la
+    // columna vuelve a ser TIMESTAMP. El filtro en JS de más abajo se conserva
+    // como red de seguridad.
+    const finDiaStats = new Date(`${fechaFiltro}T00:00:00Z`)
+    finDiaStats.setUTCDate(finDiaStats.getUTCDate() + 1)
+    const diaSiguienteStats = finDiaStats.toISOString().slice(0, 10)
+
     const { data: rawData, error } = await supabase
       .from("dashboardoperaciones")
       .select("pesoorden, tipooperacion, fincargue, placa, estado, fechacargue")
       .eq("idempresa", empresaId)
       .neq("tipooperacion", "Tolva")
+      .gte("fechacargue", fechaFiltro)
+      .lt("fechacargue", diaSiguienteStats)
 
     if (error) {
       console.error("[v0] Error fetching stats from dashboardoperaciones:", error)

@@ -75,12 +75,23 @@ export async function GET(request: Request) {
 
     const fechaFiltro = searchParams.get("fecha") || getColombiaDate()
 
+    // FILTRO DE FECHA EN SQL — mismo bug que tenían las tarjetas del dashboard:
+    // sin él se pedía toda la historia de la empresa, Supabase cortaba en 1000
+    // filas y devolvía las más antiguas, así que las órdenes del día quedaban
+    // fuera y la alerta no se disparaba. Rango [fecha, fecha+1) para tolerar
+    // DATE y TIMESTAMP; el filtro en JS de abajo queda como red de seguridad.
+    const finDia = new Date(`${fechaFiltro}T00:00:00Z`)
+    finDia.setUTCDate(finDia.getUTCDate() + 1)
+    const fechaSiguiente = finDia.toISOString().slice(0, 10)
+
     const { data, error } = await supabase
       .from("dashboardoperaciones")
       .select(
         "ordendecargue, cliente, placa, tipooperacion, iniciocargue, fincargue, estado, fechacargue",
       )
       .eq("idempresa", parseInt(empresaId, 10))
+      .gte("fechacargue", fechaFiltro)
+      .lt("fechacargue", fechaSiguiente)
 
     if (error) {
       console.error("[v0] operaciones-dia-alerts error:", error)
