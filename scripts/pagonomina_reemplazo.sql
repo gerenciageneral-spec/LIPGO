@@ -405,6 +405,18 @@ create or replace view public.pagonomina as
                     -- DÍA 31: no paga dominical de ningún tipo (ni el día de descanso
                     -- ni el festivo). Decisión del negocio: el 31 solo lleva novedades.
                     WHEN (EXTRACT(day FROM calculo_nomina_base.fecha) = (31)::numeric) THEN (0)::numeric
+                    -- DOMINGO TRABAJADO (desde 16-jul-2026): NO paga día de descanso.
+                    -- El día trabajado ya lo cubre la base, y encima va el RECARGO
+                    -- dominical (ver `recargodominical` abajo): total 1 + pct = 1,90.
+                    -- Antes se pagaba el día otra vez (2,00 en Indupan, hasta 2,90 en
+                    -- Avimol cuando además entraba el recargo) y descuadraba contra
+                    -- Siigo, que solo recibe la novedad del recargo.
+                    -- El descanso dominical de quien NO trabajó no se toca: sigue
+                    -- pagándose completo por la rama de abajo.
+                    WHEN ((calculo_nomina_base.fecha >= DATE '2026-07-16')
+                      AND (calculo_nomina_base.dia_semana = (0)::numeric)
+                      AND (calculo_nomina_base.asistio_ok = 1)
+                      AND (calculo_nomina_base.actividad_registrada <> ALL (ARRAY['Festivo'::text, 'Sin Registro'::text]))) THEN (0)::numeric
                     WHEN ((calculo_nomina_base.dia_semana = (0)::numeric) AND ((calculo_nomina_base.faltas_semana_anterior = 0) OR (calculo_nomina_base.faltas_semana_anterior IS NULL)) AND ((calculo_nomina_base.vacios_semana_anterior = 0) OR (calculo_nomina_base.vacios_semana_anterior IS NULL)) AND ((calculo_nomina_base.novedades_semana_anterior = 0) OR (calculo_nomina_base.novedades_semana_anterior IS NULL)) AND ((calculo_nomina_base.tiene_compensatorio_posterior = 0) OR (calculo_nomina_base.tiene_compensatorio_posterior IS NULL))) THEN
                     CASE
                         WHEN ((calculo_nomina_base.especialidad = true) AND (calculo_nomina_base.base_turno IS NOT NULL)) THEN calculo_nomina_base.base_turno
@@ -436,6 +448,25 @@ create or replace view public.pagonomina as
                 CASE
                     -- DÍA 31: sin recargo dominical (mismo criterio que arriba).
                     WHEN (EXTRACT(day FROM calculo_nomina_base.fecha) = (31)::numeric) THEN (0)::numeric
+                    -- DOMINGO TRABAJADO (desde 16-jul-2026): SIEMPRE paga el recargo,
+                    -- venga el día por toneladas o por turno. Antes solo lo cobraba el
+                    -- personal de turno CON CERO toneladas, así que el destajo quedaba
+                    -- por fuera y, peor, un domingo de tolva con el tonelaje en cero
+                    -- caía en un limbo: ni recargo aquí ni novedad en el plano.
+                    -- El % sale de la vigencia (80% hasta 15-jul-2026, 90% desde el 16),
+                    -- así que el día trabajado queda en 1 + pct = 1,90 hoy.
+                    -- Cruza exactamente contra la novedad "25- Recargo dominical o
+                    -- festivo" del archivo plano, que Siigo valora a ese mismo pct.
+                    WHEN ((calculo_nomina_base.fecha >= DATE '2026-07-16')
+                      AND (calculo_nomina_base.dia_semana = (0)::numeric)
+                      AND (calculo_nomina_base.asistio_ok = 1)
+                      AND (calculo_nomina_base.actividad_registrada <> ALL (ARRAY['Festivo'::text, 'Sin Registro'::text]))) THEN
+                    (
+                        CASE
+                            WHEN ((calculo_nomina_base.especialidad = true) AND (calculo_nomina_base.base_turno IS NOT NULL)) THEN calculo_nomina_base.base_turno
+                            ELSE calculo_nomina_base.valor_diario_ley
+                        END * (calculo_nomina_base.pct_recargo_dominical / 100.0)
+                    )
                     WHEN ((calculo_nomina_base.dia_semana = (0)::numeric) AND (calculo_nomina_base.asistio_ok = 1) AND (calculo_nomina_base.especialidad = true) AND (COALESCE(calculo_nomina_base.toneladas, (0)::numeric) = (0)::numeric)) THEN (calculo_nomina_base.valor_diario_ley * (calculo_nomina_base.pct_recargo_dominical / 100.0))
                     ELSE (0)::numeric
                 END AS recargodominical

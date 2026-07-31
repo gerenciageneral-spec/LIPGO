@@ -478,7 +478,14 @@ function armarPersona(
       componentes: [],
       explicaciones: [],
     }
-    if (salario > 0) {
+    // Solo se simula a quien la nómina EFECTIVAMENTE liquida en la quincena.
+    // Sin `dias.length > 0` se le asignaba una base quincenal fantasma de 15
+    // días a cualquiera con salario en Head Count — incluidos los RETIRADOS,
+    // que `pagonomina` y `archivoplano` ya excluyen y cuya liquidación va por el
+    // módulo Liquidaciones, no por el plano. Eso inventaba un descuadre del
+    // tamaño de medio salario por cada retirado (en Indupan eran $4,4 millones
+    // de diferencia falsa).
+    if (salario > 0 && dias.length > 0) {
       // Vigencia legal aplicable a la quincena (ya resuelta en el contexto: los
       // cortes legales rigen el 16-jul, que coincide con el inicio de la 2ª
       // quincena → una sola vigencia por quincena).
@@ -829,6 +836,11 @@ export async function getRevisionNominaProyecto(
     for (const r of hcRows || []) {
       const p = String(r.nombre || "").trim()
       if (!p || /prueba/i.test(p)) continue
+      // RETIRADOS FUERA. Mismo criterio literal que la vista `archivoplano`
+      // (lower(coalesce(estado,'activo')) <> 'inactivo'): si el plano no los
+      // envía, Siigo no los liquida y no hay nada que cruzar. Su nómina
+      // pendiente se paga desde el submódulo Liquidaciones.
+      if (String(r.estado || "activo").trim().toLowerCase() === "inactivo") continue
       if (!hcPorPersona.has(p)) hcPorPersona.set(p, r)
     }
     const personas = Array.from(hcPorPersona.keys())
