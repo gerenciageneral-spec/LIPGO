@@ -297,7 +297,14 @@ create or replace view public.pagonomina as
              LEFT JOIN datos_asistencia a ON (((c.fecha = a.fecha) AND (c.persona = a.persona))))
              LEFT JOIN calculo_turnos ct ON (((c.fecha = ct.fecha) AND (c.persona = ct.persona))))
              LEFT JOIN festivos f ON ((c.fecha = f.fecha)))
-             LEFT JOIN headcount h ON ((h.nombre = c.persona)))
+             -- TRIM en los DOS lados: `persona` viene ya recortado (datos_asistencia_raw
+             -- hace TRIM del nombre), pero `headcount.nombre` puede traer espacios de
+             -- sobra del digitado. Sin TRIM el cruce falla en silencio y la persona
+             -- queda SIN SALARIO (cae al default de $58.364) y SIN CÉDULA, así que
+             -- tampoco la identifica el archivo plano. Casos reales encontrados:
+             -- MIGUEL ANTONIO SANDOVAL (activo) y JUAN PABLO RAIGOSA GALEANO, ambos
+             -- con un espacio al final del nombre en Head Count.
+             LEFT JOIN headcount h ON ((TRIM(BOTH FROM h.nombre) = TRIM(BOTH FROM c.persona))))
              LEFT JOIN bonos_dia bo ON (((c.fecha = bo.fecha) AND (c.persona = bo.persona))))
              LEFT JOIN LATERAL (SELECT * FROM parametros_legales_vigencia pv
                                  WHERE (pv.fecha_desde <= c.fecha)

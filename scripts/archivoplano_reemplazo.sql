@@ -89,11 +89,26 @@ create view public.archivoplano as
                 END AS num_quincena,
             to_char((p.fecha)::timestamp with time zone, 'DD/MM/YYYY'::text) AS fecha_evento
            FROM (pagonomina p
-             LEFT JOIN headcount h ON ((h.nombre = p.persona)))
+             -- TRIM en los DOS lados, igual que en pagonomina: `headcount.nombre`
+             -- puede traer espacios de sobra del digitado y sin TRIM el cruce falla
+             -- en silencio, dejando la fila sin cédula (y por tanto sin destinatario
+             -- en Siigo). Los otros dos JOIN a headcount de esta vista ya usan TRIM.
+             LEFT JOIN headcount h ON ((TRIM(BOTH FROM h.nombre) = TRIM(BOTH FROM p.persona))))
           -- Excluir del archivo plano a los trabajadores RETIRADOS (estado
           -- Inactivo). null/'activo' permanecen (no rompe a los legados). Su
           -- nómina pendiente se paga desde el submódulo Liquidaciones.
           WHERE (lower(COALESCE(h.estado, 'activo'::text)) <> 'inactivo'::text)
+            -- AL PLANO SOLO PASA QUIEN TIENE CONTRATO CON LIP (regla del negocio).
+            -- Sin cédula en Head Count, Siigo no puede asignarle la novedad a
+            -- nadie: la fila viaja con identificacionempleado en NULL y se pierde.
+            -- Medido antes de poner el filtro: 259 filas así, de 41 nombres que
+            -- NO están en Head Count (ex-trabajadores, gente que nunca se
+            -- registró, y el relleno "SIN AUXILIAR"). Ninguna se estaba pagando
+            -- —sin cédula es imposible—, pero ensuciaban el archivo que se sube
+            -- a Siigo. El trabajo de esas personas sigue visible en pagonomina;
+            -- lo que se corta es su viaje al plano.
+            AND (h.identificacion IS NOT NULL)
+            AND (TRIM(BOTH FROM h.identificacion) <> ''::text)
         ), agrupado_quincena AS (
          SELECT base_datos.mes_txt,
             base_datos.mes_num,
