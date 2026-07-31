@@ -328,7 +328,7 @@ export default function Nominapersonal() {
       while (hasMore) {
         const { data, error } = await supabase
           .from("archivoplano")
-          .select("identificacionempleado, contratoempleado, nombrenovedad, tiponovedad, cantidadvalor, nominaproyectada, fechainicio, fechafin, diasnohabiles, mes, quincena")
+          .select("identificacionempleado, nombreempleado, contratoempleado, nombrenovedad, tiponovedad, cantidadvalor, nominaproyectada, fechainicio, fechafin, diasnohabiles, mes, quincena")
           .eq("idempresa", selectedEmpresaId)
           .order("mes", { ascending: false })
           .order("quincena", { ascending: false })
@@ -618,12 +618,16 @@ export default function Nominapersonal() {
 
   const exportToExcelArchivoplanano = async () => {
     try {
-      const headers = ["Contrato", "Identificación", "Novedad", "Tipo Novedad", "Cantidad/Valor", "Fecha Inicio", "Fecha Fin", "Días No Hábiles"]
-      
+      // ORDEN EXIGIDO POR SIIGO: el NOMBRE del empleado va inmediatamente
+      // después de la cédula. Este array es el que manda en el archivo — el
+      // orden de columnas de la vista `archivoplano` NO se vuelca aquí.
+      const headers = ["Contrato", "Identificación", "Nombre", "Novedad", "Tipo Novedad", "Cantidad/Valor", "Fecha Inicio", "Fecha Fin", "Días No Hábiles"]
+
       // Create data array with proper numeric formatting
       const data = archivoplanosFiltrados.map((item) => [
         item.contratoempleado || "",
         item.identificacionempleado || "",
+        item.nombreempleado || "",
         item.nombrenovedad || "",
         item.tiponovedad || "",
         item.cantidadvalor || "",
@@ -637,11 +641,13 @@ export default function Nominapersonal() {
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, "Archivo Plano")
 
-      // Format numeric columns with thousand separators and comma as decimal separator
-      // Column indices: 4 (Cantidad/Valor) and 7 (Días No Hábiles)
-      const numericColumns = [4, 7]
-      // Date columns: 5 (Fecha Inicio) and 6 (Fecha Fin)
-      const dateColumns = [5, 6]
+      // Formato por POSICIÓN de columna: si se agrega o mueve una columna en
+      // `headers`, estos índices hay que correrlos o el formato cae en la
+      // columna equivocada (se corrieron +1 al entrar "Nombre" en la 3ª).
+      // Numéricas: 5 (Cantidad/Valor) y 8 (Días No Hábiles)
+      const numericColumns = [5, 8]
+      // Fechas: 6 (Fecha Inicio) y 7 (Fecha Fin)
+      const dateColumns = [6, 7]
       
       for (let rowIndex = 1; rowIndex < data.length + 1; rowIndex++) {
         numericColumns.forEach((colIndex) => {
@@ -666,7 +672,7 @@ export default function Nominapersonal() {
       }
 
       // Set column widths for better readability
-      const colWidths = [15, 15, 20, 15, 15, 15, 15, 15]
+      const colWidths = [15, 15, 32, 20, 15, 15, 15, 15, 15]  // el nombre necesita más ancho
       ws["!cols"] = colWidths.map(width => ({ wch: width }))
 
       // Generate the file
@@ -1829,6 +1835,7 @@ export default function Nominapersonal() {
                       <TableRow>
                         <TableHead className="text-xs">Contrato</TableHead>
                         <TableHead className="text-xs">Identificación</TableHead>
+                        <TableHead className="text-xs">Nombre</TableHead>
                         <TableHead className="text-xs">Novedad</TableHead>
                         <TableHead className="text-xs">Tipo Novedad</TableHead>
                         <TableHead className="text-xs">Cantidad/Valor</TableHead>
@@ -1840,13 +1847,13 @@ export default function Nominapersonal() {
                     <TableBody>
                       {loading ? (
                         <TableRow>
-                          <TableCell colSpan={8} className="text-center text-xs">
+                          <TableCell colSpan={9} className="text-center text-xs">
                             Cargando...
                           </TableCell>
                         </TableRow>
                       ) : archivoplanosFiltrados.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={8} className="text-center text-xs">
+                          <TableCell colSpan={9} className="text-center text-xs">
                             No hay registros
                           </TableCell>
                         </TableRow>
@@ -1855,6 +1862,7 @@ export default function Nominapersonal() {
                           <TableRow key={idx}>
                             <TableCell className="text-xs">{item.contratoempleado || "-"}</TableCell>
                             <TableCell className="text-xs">{item.identificacionempleado || "-"}</TableCell>
+                            <TableCell className="text-xs">{item.nombreempleado || "-"}</TableCell>
                             <TableCell className="text-xs">{item.nombrenovedad || "-"}</TableCell>
                             <TableCell className="text-xs">{item.tiponovedad || "-"}</TableCell>
                             <TableCell className="text-xs">{item.cantidadvalor || "-"}</TableCell>

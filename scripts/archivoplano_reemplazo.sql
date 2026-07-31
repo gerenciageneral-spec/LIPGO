@@ -23,10 +23,27 @@
 --     la 1ª quincena de julio sigue saliendo como '71-Bonificación Ajuste
 --     Toneladas-Ingreso', porque esos planos ya se enviaron a Siigo con ese
 --     código. Cambia SOLO la etiqueta: el cálculo es el mismo en ambas ramas.
+--   · NOMBRE DEL EMPLEADO (`nombreempleado`, columna 5): Siigo lo exige justo
+--     después de la cédula. Sale de `headcount.nombre` — que es la misma llave
+--     con la que esta vista une contra pagonomina (h.nombre = p.persona), así
+--     que no introduce una segunda fuente de verdad para el nombre.
 --   REVERSIBLE: definición previa en git (scripts/vistas_financieras.sql).
+--
+-- OJO — ESTE SCRIPT USA DROP + CREATE, NO "CREATE OR REPLACE":
+-- Postgres solo deja AÑADIR columnas AL FINAL con CREATE OR REPLACE VIEW;
+-- insertar `nombreempleado` en medio (posición 5) da error 42P16. Va todo
+-- dentro de una transacción para que la vista nunca quede caída: si el CREATE
+-- falla, el DROP se revierte solo.
+-- Verificado antes de hacerlo: ninguna otra vista, función o script depende de
+-- `archivoplano` (la dependencia es al revés — ella lee pagonomina, headcount,
+-- jornada_legal, bonos_nomina y ajustes_proyeccion).
 -- ============================================================================
 
-create or replace view public.archivoplano as
+BEGIN;
+
+DROP VIEW IF EXISTS public.archivoplano;
+
+create view public.archivoplano as
  WITH base_datos AS (
          SELECT p.fecha,
             p.idempresa,
@@ -86,6 +103,10 @@ create or replace view public.archivoplano as
             base_datos.identificacion,
             base_datos.contratosiigo,
             max(base_datos.salario) AS salario_ref,
+            -- Nombre del empleado para el plano. `persona` viene de pagonomina y
+            -- es el mismo valor que headcount.nombre (la vista une por ahí), así
+            -- que el MAX sobre un grupo de una sola persona devuelve su nombre.
+            max(base_datos.persona) AS nombre_ref,
             -- Excedente NETO de la quincena (Σ con signo): los días bajos restan a los
             -- altos. Es el "cruce" por trabajador toneladas vs base.
             -- OJO: aquí va SOLO `bonif_prestacional`. `bonif_no_prestacional` (los
@@ -105,6 +126,7 @@ create or replace view public.archivoplano as
             agrupado_quincena.identificacion,
             agrupado_quincena.contratosiigo,
             agrupado_quincena.salario_ref,
+            agrupado_quincena.nombre_ref,
             agrupado_quincena.total_bono_nomina,
             agrupado_quincena.total_hed_moneda,
             agrupado_quincena.total_hed_horas,
@@ -120,6 +142,7 @@ create or replace view public.archivoplano as
     nivelacion.num_quincena AS quincena,
     nivelacion.idempresa,
     nivelacion.identificacion AS identificacionempleado,
+    nivelacion.nombre_ref AS nombreempleado,
     nivelacion.contratosiigo AS contratoempleado,
     -- RENOMBRADA DESDE LA QUINCENA DEL 16-JUL-2026. Lo ÚNICO que cambia es el
     -- código y el nombre, para que coincidan con el concepto creado en Siigo: el
@@ -151,6 +174,7 @@ UNION ALL
     base_datos.num_quincena AS quincena,
     base_datos.idempresa,
     base_datos.identificacion AS identificacionempleado,
+    base_datos.persona AS nombreempleado,  -- rama sin GROUP BY: el nombre va directo
     base_datos.contratosiigo AS contratoempleado,
     base_datos.novedad_reportada AS nombrenovedad,
     'Dias'::text AS tiponovedad,
@@ -166,6 +190,7 @@ UNION ALL
     nivelacion.num_quincena AS quincena,
     nivelacion.idempresa,
     nivelacion.identificacion AS identificacionempleado,
+    nivelacion.nombre_ref AS nombreempleado,
     nivelacion.contratosiigo AS contratoempleado,
     '10- Horas extras diurnas 125%- Ingreso'::text AS nombrenovedad,
     'Horas'::text AS tiponovedad,
@@ -181,6 +206,7 @@ UNION ALL
     base_datos.num_quincena AS quincena,
     base_datos.idempresa,
     base_datos.identificacion AS identificacionempleado,
+    max(base_datos.persona) AS nombreempleado,  -- rama agrupada: MAX sobre una sola persona
     base_datos.contratosiigo AS contratoempleado,
     '07- Hora extra diurna dominical o festiva- Ingreso'::text AS nombrenovedad,
     'Horas'::text AS tiponovedad,
@@ -197,6 +223,7 @@ UNION ALL
     base_datos.num_quincena AS quincena,
     base_datos.idempresa,
     base_datos.identificacion AS identificacionempleado,
+    max(base_datos.persona) AS nombreempleado,  -- rama agrupada: MAX sobre una sola persona
     base_datos.contratosiigo AS contratoempleado,
     '11- Horas extras nocturnas 175%- Ingreso'::text AS nombrenovedad,
     'Horas'::text AS tiponovedad,
@@ -213,6 +240,7 @@ UNION ALL
     base_datos.num_quincena AS quincena,
     base_datos.idempresa,
     base_datos.identificacion AS identificacionempleado,
+    max(base_datos.persona) AS nombreempleado,  -- rama agrupada: MAX sobre una sola persona
     base_datos.contratosiigo AS contratoempleado,
     '12- Horas extras nocturnas dominical o festiva- Ingreso'::text AS nombrenovedad,
     'Horas'::text AS tiponovedad,
@@ -229,6 +257,7 @@ UNION ALL
     base_datos.num_quincena AS quincena,
     base_datos.idempresa,
     base_datos.identificacion AS identificacionempleado,
+    max(base_datos.persona) AS nombreempleado,  -- rama agrupada: MAX sobre una sola persona
     base_datos.contratosiigo AS contratoempleado,
     '26- Recargo nocturno- Ingreso'::text AS nombrenovedad,
     'Horas'::text AS tiponovedad,
@@ -245,6 +274,7 @@ UNION ALL
     base_datos.num_quincena AS quincena,
     base_datos.idempresa,
     base_datos.identificacion AS identificacionempleado,
+    max(base_datos.persona) AS nombreempleado,  -- rama agrupada: MAX sobre una sola persona
     base_datos.contratosiigo AS contratoempleado,
     '08- Hora extra recargo dominical o festivo- Ingreso'::text AS nombrenovedad,
     'Horas'::text AS tiponovedad,
@@ -261,6 +291,7 @@ UNION ALL
     base_datos.num_quincena AS quincena,
     base_datos.idempresa,
     base_datos.identificacion AS identificacionempleado,
+    max(base_datos.persona) AS nombreempleado,  -- rama agrupada: MAX sobre una sola persona
     base_datos.contratosiigo AS contratoempleado,
     '25- Recargo dominical o festivo- Ingreso'::text AS nombrenovedad,
     'Horas'::text AS tiponovedad,
@@ -288,6 +319,9 @@ UNION ALL
         END AS quincena,
     b.idempresa,
     b.identificacion AS identificacionempleado,
+    -- `bonos_nomina` guarda su propio nombre: sirve de respaldo si la cédula no
+    -- cruza con Head Count, para que la fila no salga sin nombre al plano.
+    COALESCE(max(h.nombre), max(b.nombre)) AS nombreempleado,
     h.contratosiigo AS contratoempleado,
     b.novedad_siigo AS nombrenovedad,
     'Valor'::text AS tiponovedad,
@@ -320,6 +354,9 @@ UNION ALL
     a.quincena_aplica AS quincena,
     a.idempresa,
     a.identificacion AS identificacionempleado,
+    -- Mismo criterio que la rama de bonos: `ajustes_proyeccion.persona` es el
+    -- respaldo si la cédula no cruza con Head Count.
+    COALESCE(max(h.nombre), max(a.persona)) AS nombreempleado,
     h.contratosiigo AS contratoempleado,
     a.novedad_siigo AS nombrenovedad,
     'Valor'::text AS tiponovedad,
@@ -334,4 +371,9 @@ UNION ALL
   GROUP BY to_char(make_date(a.anio_aplica, a.mes_aplica, 1), 'MM'::text),
     a.quincena_aplica, a.idempresa, a.identificacion, h.contratosiigo, a.novedad_siigo
  HAVING (round(abs(sum(a.valor_ajuste))) > (0)::numeric)
+  -- ORDER BY POSICIONAL: 1 = mes, 2 = quincena, 4 = identificacionempleado.
+  -- `nombreempleado` entró en la 5, así que las posiciones 1, 2 y 4 no se
+  -- movieron y este ORDER BY sigue significando lo mismo.
   ORDER BY 1 DESC, 2, 4;
+
+COMMIT;
