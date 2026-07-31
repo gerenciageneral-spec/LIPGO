@@ -17,10 +17,14 @@
 --     jun-2026 → 7,3333 h/80%/hedf 2,05; desde 16-jul-2026 → 7 h/90%/hedf 2,15. Automático.
 --     Unifica y reemplaza jornada_legal + recargo_dominical_legal.
 --   - DÍA 31 — MES CALENDARIO DE 30 DÍAS (regla histórica del negocio): el día 31
---     NO paga base salarial ni dominical/festivo. Solo lleva las NOVEDADES del día
---     (horas extra, que viven en total_recargos) y, para quien trabaja por
---     TONELADAS, lo PRODUCIDO ese día. Ese destajo NO genera excedente para el bono
---     de quincena: ya cobró lo producido, sumarlo al bono lo pagaría dos veces.
+--     NO paga base salarial ni dominical/festivo, para NADIE. Solo lleva las
+--     NOVEDADES del día (horas extra, en total_recargos) y, para quien trabaja por
+--     TONELADAS, lo producido — pero ese tonelaje va COMPLETO al EXCEDENTE
+--     (bonif_prestacional), NO a la base. Razón: el archivo plano no transmite la
+--     base (Siigo la paga sola desde el contrato); si el tonelaje fuera a base, se
+--     vería en pagonomina pero nunca le llegaría al trabajador y descuadraría
+--     contra Siigo. En excedente sale por la novedad 71 y además queda sujeto al
+--     Ajuste de Proyecciones.
 --     Aplica a TODO el histórico (sin piso de vigencia), por decisión del negocio.
 --   - CORTE por FECHA DE INGRESO (headcount.fechainicio): no liquida días
 --     ANTERIORES al inicio de actividades. `headcount.fechainicio` es la FUENTE
@@ -372,17 +376,21 @@ create or replace view public.pagonomina as
             calculo_nomina_base.tiene_compensatorio_posterior,
                 CASE
                     -- DÍA 31 — MES CALENDARIO DE 30 DÍAS. El salario mensual ya cubre
-                    -- el mes completo, así que el 31 NO paga base salarial. Solo:
-                    --   · quien trabaja por TONELADAS cobra lo PRODUCIDO ese día;
-                    --   · los demás (turno/jornal) no cobran base — solo les quedan
-                    --     sus novedades (horas extra), que viven en total_recargos.
+                    -- el mes completo, así que el 31 NO paga base salarial: NADIE, ni
+                    -- siquiera el destajo.
+                    --
+                    -- OJO — por qué el destajo tampoco va en base: el ARCHIVO PLANO no
+                    -- transmite la base (Siigo la paga sola desde el contrato, 15 días
+                    -- fijos). Solo viajan las NOVEDADES. Si el tonelaje del 31 se
+                    -- pusiera aquí, se vería en pagonomina pero NUNCA le llegaría al
+                    -- trabajador por Siigo, y además descuadraría contra el plano.
+                    -- Por eso todo el tonelaje del 31 se va al EXCEDENTE
+                    -- (excedente_bruto_destajo, más abajo), que sí sale como novedad 71
+                    -- y además queda sujeto al Ajuste de Proyecciones.
+                    --
                     -- Va PRIMERO para ganarle a festivo/novedades: el 31 no paga base
                     -- ni aunque sea festivo (ver también valor_domingo_final abajo).
-                    WHEN (EXTRACT(day FROM calculo_nomina_base.fecha) = (31)::numeric) THEN
-                    CASE
-                        WHEN ((calculo_nomina_base.toneladas > (0)::numeric) AND (calculo_nomina_base.especialidad IS NOT TRUE)) THEN calculo_nomina_base.pago_produccion
-                        ELSE (0)::numeric
-                    END
+                    WHEN (EXTRACT(day FROM calculo_nomina_base.fecha) = (31)::numeric) THEN (0)::numeric
                     WHEN (TRIM(BOTH FROM calculo_nomina_base.asistencia_texto) = '15- Incapacidad por enfermedad general al 66%- ingreso'::text) THEN (calculo_nomina_base.valor_diario_ley * 0.6667)
                     WHEN (calculo_nomina_base.es_festivo = 1) THEN calculo_nomina_base.valor_diario_ley
                     WHEN (TRIM(BOTH FROM calculo_nomina_base.asistencia_texto) = ANY (ARRAY['13- Incapacidad por enfermedad general al 100%'::text, '31- Vacaciones disfrutadas'::text, '14- Incapacidad por enfermedad general al 50'::text, 'Descanso'::text, 'Descanso compensatorio domingo anterior'::text])) THEN calculo_nomina_base.valor_diario_ley
@@ -411,10 +419,17 @@ create or replace view public.pagonomina as
                 -- con días bajos (el bono nunca baja la base; ver archivoplano). Excluye
                 -- especialidad (esos días son por turno/horas, no por tonelaje).
                 CASE
-                    -- DÍA 31: NO genera excedente. Ese día el destajo ya cobró lo
-                    -- producido directo (ver valor_base_final), así que sumarlo también
-                    -- al bono de quincena le pagaría el mismo tonelaje DOS VECES.
-                    WHEN (EXTRACT(day FROM calculo_nomina_base.fecha) = (31)::numeric) THEN (0)::numeric
+                    -- DÍA 31: TODO el tonelaje va al excedente, COMPLETO (sin restarle
+                    -- base, porque ese día no hay base que descontar). Es la única vía
+                    -- por la que ese pago llega al trabajador: el excedente se netea
+                    -- por quincena y sale como novedad 71 en el archivo plano — la base
+                    -- no viaja en el plano. Además, al quedar en excedente queda sujeto
+                    -- al Ajuste de Proyecciones, que es el objetivo del negocio.
+                    WHEN (EXTRACT(day FROM calculo_nomina_base.fecha) = (31)::numeric) THEN
+                    CASE
+                        WHEN ((calculo_nomina_base.toneladas > (0)::numeric) AND (calculo_nomina_base.especialidad IS NOT TRUE)) THEN calculo_nomina_base.pago_produccion
+                        ELSE (0)::numeric
+                    END
                     WHEN ((calculo_nomina_base.toneladas > (0)::numeric) AND (calculo_nomina_base.especialidad IS NOT TRUE)) THEN (calculo_nomina_base.pago_produccion - calculo_nomina_base.valor_diario_ley)
                     ELSE (0)::numeric
                 END AS excedente_bruto_destajo,
@@ -466,15 +481,15 @@ create or replace view public.pagonomina as
     recargodominical,
     (((
         CASE
-            -- DÍA 31 (mes calendario de 30 días): sin base. El destajo cobra lo
-            -- producido, el resto $0. Debe ir PRIMERO y en sincronía con la misma
+            -- DÍA 31 (mes calendario de 30 días): SIN BASE para nadie. El tonelaje
+            -- del destajo NO va aquí: se liquida por `excedente_bruto_destajo` ->
+            -- novedad 71 del archivo plano (la base no viaja en el plano; Siigo la
+            -- paga sola desde el contrato). Así el total del día queda solo con las
+            -- novedades (horas extra), y el tonelaje se paga por el bono, sujeto al
+            -- Ajuste de Proyecciones. Debe ir PRIMERO y en sincronía con la misma
             -- rama de `valor_base_final` (pre_calculo_valores) — este CASE es un
             -- duplicado histórico de aquel; si se toca uno, tocar el otro.
-            WHEN (EXTRACT(day FROM fecha) = (31)::numeric) THEN
-            CASE
-                WHEN ((toneladas > (0)::numeric) AND (especialidad IS NOT TRUE)) THEN pago_produccion
-                ELSE (0)::numeric
-            END
+            WHEN (EXTRACT(day FROM fecha) = (31)::numeric) THEN (0)::numeric
             WHEN (TRIM(BOTH FROM asistencia_texto) = '15- Incapacidad por enfermedad general al 66%- ingreso'::text) THEN (valor_diario_ley * 0.6667)
             WHEN (es_festivo = 1) THEN valor_diario_ley
             WHEN (TRIM(BOTH FROM asistencia_texto) = ANY (ARRAY['13- Incapacidad por enfermedad general al 100%'::text, '31- Vacaciones disfrutadas'::text, '14- Incapacidad por enfermedad general al 50'::text, 'Descanso'::text, 'Descanso compensatorio domingo anterior'::text])) THEN valor_diario_ley
