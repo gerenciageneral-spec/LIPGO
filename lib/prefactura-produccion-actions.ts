@@ -252,20 +252,36 @@ async function armarIndupan(desde: string, hasta: string) {
   }
 
   const opsNorm = new Set(OPS_INDUPAN.map(normOp))
+  const facturables = ordenes.filter(
+    (o: any) => opsNorm.has(normOp(o.tipooperacion)) && o.fincargue && o.facturar !== false && num(o.pesovascula) > 0,
+  )
+
+  // DETALLE DE PRODUCTOS. El soporte tiene que mostrar de dónde salen las
+  // toneladas, porque el producto se maneja en BULTOS y se nombra en kilos
+  // ("Indupan Especial 50 Kg."), pero la TARIFA es por TONELADA. Sin esto el
+  // anexo solo diría "Tolva6586 = 73,9 t" sin explicar el 1.478 × 50 kg.
+  const detPorOrden = new Map<string, any[]>()
+  const codigos = facturables.map((o: any) => String(o.ordendecargue || "").trim()).filter(Boolean)
+  for (let i = 0; i < codigos.length; i += 100) {
+    const { data } = await admin
+      .from("detalleoc")
+      .select("numeroorden, producto, cantidad, toneladas")
+      .in("numeroorden", codigos.slice(i, i + 100))
+    for (const d of data || []) {
+      const k = String(d.numeroorden || "").trim()
+      if (!detPorOrden.has(k)) detPorOrden.set(k, [])
+      detPorOrden.get(k)!.push(d)
+    }
+  }
+
   const porOp = new Map<string, { cantidad: number; total: number; tarifa: number; sinTarifa: boolean }>()
   const soporte: SoporteProduccion[] = []
   const alertas: AlertaAvimol[] = []
   const sinTarifaSet = new Set<string>()
 
-  for (const o of ordenes) {
-    if (!opsNorm.has(normOp(o.tipooperacion))) continue
-    // Solo órdenes PROCESADAS y facturables.
-    if (!o.fincargue) continue
-    if (o.facturar === false) continue
-
+  for (const o of facturables) {
     const fecha = String(o.fechacargue).slice(0, 10)
-    const ton = num(o.pesovascula)
-    if (ton <= 0) continue
+    const ton = num(o.pesovascula) // la BÁSCULA es la fuente de verdad del cobro
 
     // Se cobra con el nombre de operación tal como está en la tarifa, para que
     // el concepto del documento coincida con el maestro.
@@ -281,18 +297,50 @@ async function armarIndupan(desde: string, hasta: string) {
     else g.sinTarifa = true
     porOp.set(opTarifa, g)
 
-    soporte.push({
-      fecha,
-      concepto: opTarifa,
-      detalle: String(o.ordendecargue || ""),
-      referencia: String(o.ordendecargue || ""),
-      bultos: null,
-      kg: null,
-      cantidad: ton,
-      unidad: "t",
-      tarifa,
-      valor,
-    })
+    const orden = String(o.ordendecargue || "").trim()
+    const lineas = detPorOrden.get(orden) || []
+    const sumaDetalle = lineas.reduce((a: number, l: any) => a + num(l.toneladas), 0)
+
+    if (lineas.length === 0 || sumaDetalle <= 0) {
+      // Sin detalle utilizable: se soporta la orden completa con el peso de báscula.
+      soporte.push({
+        fecha,
+        concepto: opTarifa,
+        detalle: orden,
+        referencia: orden,
+        bultos: null,
+        kg: null,
+        cantidad: ton,
+        unidad: "t",
+        tarifa,
+        valor,
+      })
+      continue
+    }
+
+    // PRORRATEO a la báscula: si el detalle no suma exactamente lo pesado, se
+    // ajusta para que el soporte cuadre con lo facturado al peso. Mismo criterio
+    // que la prefactura del Cuadro de Control.
+    const factor = ton / sumaDetalle
+    for (const l of lineas) {
+      const tonLinea = num(l.toneladas) * factor
+      if (tonLinea <= 0) continue
+      const bultos = num(l.cantidad)
+      soporte.push({
+        fecha,
+        concepto: opTarifa,
+        detalle: String(l.producto || "(sin producto)"),
+        referencia: orden,
+        bultos,
+        // Kg reconstruido desde las toneladas ya prorrateadas: así el anexo
+        // muestra la cadena completa bultos -> kg -> toneladas -> valor.
+        kg: Number((tonLinea * 1000).toFixed(1)),
+        cantidad: Number(tonLinea.toFixed(3)),
+        unidad: "t",
+        tarifa,
+        valor: tonLinea * tarifa,
+      })
+    }
   }
 
   for (const k of sinTarifaSet) {

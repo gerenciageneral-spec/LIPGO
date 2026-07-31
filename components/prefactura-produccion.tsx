@@ -25,6 +25,7 @@ import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -254,6 +255,13 @@ export default function PrefacturaProduccion({ idempresaFija }: { idempresaFija?
         </div>
       </div>
 
+      <Tabs defaultValue="generar" className="w-full">
+        <TabsList>
+          <TabsTrigger value="generar">Generar prefactura</TabsTrigger>
+          <TabsTrigger value="guardadas">Guardadas ({guardadas.length})</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="generar" className="mt-4 space-y-4">
       {/* Filtros */}
       <Card>
         <CardContent className="flex flex-wrap items-end gap-3 pt-6">
@@ -476,7 +484,9 @@ export default function PrefacturaProduccion({ idempresaFija }: { idempresaFija?
           </CardContent>
         </Card>
       )}
+        </TabsContent>
 
+        <TabsContent value="guardadas" className="mt-4 space-y-4">
       {/* Prefacturas guardadas */}
       <Card>
         <CardHeader className="pb-2">
@@ -600,6 +610,8 @@ export default function PrefacturaProduccion({ idempresaFija }: { idempresaFija?
           )}
         </CardContent>
       </Card>
+        </TabsContent>
+      </Tabs>
 
       {/* Confirmaciones */}
       <AlertDialog open={confirmar != null} onOpenChange={(o) => !o && setConfirmar(null)}>
