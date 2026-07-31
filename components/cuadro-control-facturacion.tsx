@@ -92,7 +92,8 @@ function agruparSoporte(lineas: SoporteLinea[]): { grupos: SoporteGrupo[]; total
   const grupos = Array.from(map.values()).sort(
     (a, b) => a.owner.localeCompare(b.owner) || a.operacion.localeCompare(b.operacion),
   )
-  const totalTon = lineas.reduce((s, l) => s + (Number(l.toneladas) || 0), 0)
+  // Las horas extra comparten la columna de cantidad pero NO son tonelaje.
+  const totalTon = lineas.reduce((s, l) => s + (l.unidad === "h" ? 0 : Number(l.toneladas) || 0), 0)
   const totalVal = lineas.reduce((s, l) => s + (Number(l.valor) || 0), 0)
   return { grupos, totalTon, totalVal }
 }
@@ -121,7 +122,7 @@ function SoporteAnexo({ lineas }: { lineas: SoporteLinea[] }) {
                   <th className="py-1 font-medium">Placa</th>
                   <th className="py-1 font-medium">Cliente</th>
                   <th className="py-1 font-medium">Producto</th>
-                  <th className="py-1 text-right font-medium">Ton</th>
+                  <th className="py-1 text-right font-medium">Cantidad</th>
                   <th className="py-1 text-right font-medium">Tarifa</th>
                   <th className="py-1 pr-2 text-right font-medium">Valor</th>
                 </tr>
@@ -134,7 +135,9 @@ function SoporteAnexo({ lineas }: { lineas: SoporteLinea[] }) {
                     <td className="py-1">{l.placa ?? "-"}</td>
                     <td className="py-1">{l.cliente ?? "-"}</td>
                     <td className="py-1">{l.producto ?? "-"}</td>
-                    <td className="py-1 text-right tabular-nums">{ton(l.toneladas)}</td>
+                    <td className="py-1 text-right tabular-nums">
+                      {ton(l.toneladas)} <span className="text-[9px] text-muted-foreground">{l.unidad === "h" ? "h" : "t"}</span>
+                    </td>
                     <td className="py-1 text-right tabular-nums text-muted-foreground">{money(l.tarifa)}</td>
                     <td className="py-1 pr-2 text-right tabular-nums">{money(l.valor)}</td>
                   </tr>
@@ -182,13 +185,15 @@ function exportarSoporteExcel(lineas: SoporteLinea[], nombre: string) {
       Cliente: l.cliente ?? "",
       Producto: l.producto ?? "",
       Servicio: l.servicio,
-      Toneladas: Number((Number(l.toneladas) || 0).toFixed(3)),
+      Cantidad: Number((Number(l.toneladas) || 0).toFixed(3)),
+      Unidad: l.unidad === "h" ? "h" : "t",
       Tarifa: l.tarifa,
       Valor: Math.round(Number(l.valor) || 0),
     }))
     rows.push({
       Fecha: "", Orden: "", Placa: "", Cliente: "", Producto: "", Servicio: "SUBTOTAL",
-      Toneladas: Number(g.ton.toFixed(3)), Tarifa: "" as any, Valor: Math.round(g.valor),
+      Cantidad: Number(g.ton.toFixed(3)), Unidad: g.lineas[0]?.unidad === "h" ? "h" : "t",
+      Tarifa: "" as any, Valor: Math.round(g.valor),
     })
     let hoja = `${abrev(g.owner)} - ${g.operacion}`.substring(0, 31).replace(/[\\/?*[\]:]/g, "")
     let i = 2
@@ -360,7 +365,7 @@ export function CuadroControlFacturacion() {
         porOwner.get(r.owner) ||
         ({ owner: r.owner, items: [] as any, ton: 0, total: 0, porFacturar: 0, facturado: 0, enProceso: 0 } as Grupo)
       g.items.push(r)
-      g.ton += r.toneladas
+      if (r.unidad !== "h") g.ton += r.toneladas // las horas extra no son tonelaje
       g.total += r.valor
       g.porFacturar += r.valorPorFacturar
       g.facturado += r.valorFacturado
@@ -368,7 +373,9 @@ export function CuadroControlFacturacion() {
       porOwner.set(r.owner, g)
     }
     const grupos = Array.from(porOwner.values()).sort((a, b) => a.owner.localeCompare(b.owner))
-    const totalTon = rows.reduce((s, r) => s + r.toneladas, 0)
+    // Solo TONELADAS: las horas extra vienen en la misma columna con unidad "h"
+    // y sumarlas al tonelaje daría un peso inventado.
+    const totalTon = rows.reduce((s, r) => s + (r.unidad === "h" ? 0 : r.toneladas), 0)
     const totalVal = rows.reduce((s, r) => s + r.valor, 0)
     const totalPorFacturar = rows.reduce((s, r) => s + r.valorPorFacturar, 0)
     const totalFacturado = rows.reduce((s, r) => s + r.valorFacturado, 0)
@@ -384,10 +391,12 @@ export function CuadroControlFacturacion() {
     }
   }, [pref, selKeys])
 
-  // SOPORTE (anexo) de la prefactura seleccionada: detalle de órdenes por owner×operación.
+  // SOPORTE (anexo) de la prefactura seleccionada: detalle de órdenes por
+  // owner×operación MÁS el detalle de producción (día × producto / puesto), que
+  // no tiene orden detrás pero igual hay que respaldarlo ante el cliente.
   const soporteLineas = useMemo<SoporteLinea[]>(() => {
     if (!pref || !prefSel) return []
-    return pref.origen
+    const deOrdenes = pref.origen
       // solo lo seleccionado y POR FACTURAR (sin factura Siigo) — igual que lo que se factura
       .filter((l) => prefSel.keys.has(keyRes(l.owner, l.tipooperacion || "(sin operación)")) && l.categoria !== "facturado")
       .map((l) => ({
@@ -402,8 +411,15 @@ export function CuadroControlFacturacion() {
         toneladas: Number((l.toneladas || 0).toFixed(3)),
         tarifa: l.tarifaServicio,
         valor: Math.round(l.valorServicio),
+        unidad: "t" as const,
       }))
+    const deProduccion = (pref.soporteProduccion || []).filter((l) => prefSel.keys.has(keyRes(l.owner, l.operacion)))
+    return [...deOrdenes, ...deProduccion]
   }, [pref, prefSel])
+
+  // Detalle de producción de un concepto (lo que respalda una línea sin orden).
+  const detalleProduccionDe = (owner: string, operacion: string) =>
+    (pref?.soporteProduccion || []).filter((l) => l.owner === owner && l.operacion === operacion)
 
   // Descarga la prefactura SELECCIONADA, bien formateada (encabezado por owner,
   // filas de servicio con nombre/tipo operación, subtotales, total) + TABLA ORIGEN.
@@ -417,16 +433,24 @@ export function CuadroControlFacturacion() {
       ["Proyecto", proyecto],
       ["Período", rango],
       [],
-      ["Owner", "Servicio", "Toneladas", "Tarifa", "Total"],
+      ["Owner", "Concepto", "Cantidad", "Unidad", "Tarifa", "Total", "Origen"],
     ]
     for (const g of prefSel.grupos) {
       for (const it of g.items) {
-        aoa.push([g.owner, it.operacion, Number(it.toneladas.toFixed(3)), it.tarifa, Math.round(it.valor)])
+        aoa.push([
+          g.owner,
+          it.operacion,
+          Number(it.toneladas.toFixed(3)),
+          it.unidad === "h" ? "h" : "t",
+          it.tarifa,
+          Math.round(it.valor),
+          it.fuente === "produccion" ? "Producción" : "Órdenes de cargue",
+        ])
       }
-      aoa.push(["", `Subtotal ${g.owner}`, Number(g.ton.toFixed(3)), "", Math.round(g.total)])
+      aoa.push(["", `Subtotal ${g.owner}`, Number(g.ton.toFixed(3)), "t", "", Math.round(g.total), ""])
       aoa.push([])
     }
-    aoa.push(["", "TOTAL PREFACTURA", Number(prefSel.totalTon.toFixed(3)), "", Math.round(prefSel.totalVal)])
+    aoa.push(["", "TOTAL PREFACTURA", Number(prefSel.totalTon.toFixed(3)), "t", "", Math.round(prefSel.totalVal), ""])
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), "PREFACTURA")
     // TABLA ORIGEN de lo SELECCIONADO (soporte).
@@ -450,6 +474,22 @@ export function CuadroControlFacturacion() {
         "Valor a Facturar": Math.round(l.valor_a_facturar),
       }))
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(origen), "TABLA ORIGEN")
+    // La PRODUCCIÓN no tiene orden de cargue: su respaldo es el día a día, y va
+    // en su propia hoja para que el anexo del cliente esté completo.
+    const prod = (pref.soporteProduccion || [])
+      .filter((l) => prefSel.keys.has(keyRes(l.owner, l.operacion)))
+      .map((l) => ({
+        Fecha: l.fecha ?? "",
+        Owner: l.owner,
+        Concepto: l.operacion,
+        Tipo: l.servicio,
+        Detalle: l.producto ?? "",
+        Cantidad: Number((Number(l.toneladas) || 0).toFixed(3)),
+        Unidad: l.unidad === "h" ? "h" : "t",
+        Tarifa: l.tarifa,
+        Valor: Math.round(Number(l.valor) || 0),
+      }))
+    if (prod.length > 0) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(prod), "PRODUCCION")
     XLSX.writeFile(wb, `Prefactura_${proyecto.replace(/[^a-zA-Z0-9]+/g, "_")}.xlsx`)
   }
 
@@ -483,6 +523,8 @@ export function CuadroControlFacturacion() {
             toneladas: Number(it.tonPorFacturar.toFixed(3)),
             tarifa: it.tarifa,
             total: Math.round(it.valorPorFacturar),
+            fuente: it.fuente,
+            unidad: it.unidad,
           })),
       )
     if (lineas.length === 0) {
@@ -501,7 +543,8 @@ export function CuadroControlFacturacion() {
       lineas,
       soporte,
       total: Math.round(prefSel.totalPorFacturar),
-      toneladas: Number(lineas.reduce((s, l) => s + l.toneladas, 0).toFixed(3)),
+      // Solo tonelaje real: las horas extra van en la misma columna con unidad "h".
+      toneladas: Number(lineas.reduce((s, l) => s + (l.unidad === "h" ? 0 : l.toneladas), 0).toFixed(3)),
       usuario: user?.email || user?.nombre || null,
       observacion: obs || null,
     })
@@ -896,7 +939,8 @@ export function CuadroControlFacturacion() {
                     <div>
                       <div className="text-base font-bold">Prefactura</div>
                       <div className="text-xs text-muted-foreground">
-                        Se arma con las <strong>órdenes procesadas del período</strong>, por <strong>owner y tipo de operación</strong>, con su tarifa. Elige qué
+                        Se arma con las <strong>órdenes procesadas del período</strong> por <strong>owner y tipo de operación</strong>, más los{" "}
+                        <strong>conceptos de producción del proyecto</strong>, cada uno con su tarifa. Elige qué
                         incluir, revísala abajo, <strong>guárdala</strong> y <strong>apruébala</strong> (luego se enlaza a Siigo).
                       </div>
                     </div>
@@ -914,6 +958,36 @@ export function CuadroControlFacturacion() {
                       </Button>
                     </div>
                   </div>
+
+                  {/* Cómo se factura la PRODUCCIÓN de este proyecto. Se muestra siempre
+                      (incluso cuando ya viene en las órdenes) para que quede explícito
+                      por qué el concepto suma aparte o no. */}
+                  {pref?.produccionNota && (
+                    <div className="flex items-start gap-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800 dark:border-sky-900 dark:bg-sky-950/20 dark:text-sky-200">
+                      <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      <span>
+                        <strong>Producción de {proyectoNombre}:</strong> {pref.produccionNota}
+                      </span>
+                    </div>
+                  )}
+
+                  {pref && pref.produccionAlertas.length > 0 && (
+                    <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200">
+                      <div className="mb-1 flex items-center gap-1.5 font-semibold">
+                        <AlertTriangle className="h-3.5 w-3.5" /> Revisar antes de facturar ({pref.produccionAlertas.length})
+                      </div>
+                      <ul className="ml-4 list-disc space-y-0.5">
+                        {pref.produccionAlertas.slice(0, 15).map((a, i) => (
+                          <li key={i}>{a}</li>
+                        ))}
+                      </ul>
+                      {pref.produccionAlertas.length > 15 && (
+                        <p className="mt-1 text-[11px]">
+                          … y {pref.produccionAlertas.length - 15} más. El detalle completo está en Conciliación Avimol.
+                        </p>
+                      )}
+                    </div>
+                  )}
 
                   {/* Selección compacta de qué incluir */}
                   {pref && (
@@ -941,6 +1015,11 @@ export function CuadroControlFacturacion() {
                               <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${soloFacturado ? "bg-red-500" : x.valorFacturado > 0 ? "bg-amber-400" : "bg-emerald-500"}`} />
                               <span className="flex-1 truncate">
                                 <span className="font-medium">{x.owner}</span> · {x.operacion}
+                                {x.fuente === "produccion" && (
+                                  <span className="ml-1 rounded bg-sky-100 px-1 py-px text-[9px] font-semibold uppercase text-sky-700 dark:bg-sky-950/50 dark:text-sky-300">
+                                    prod
+                                  </span>
+                                )}
                                 {soloFacturado && <span className="ml-1 text-[10px] text-red-500">(ya facturado)</span>}
                               </span>
                               <span className="tabular-nums text-emerald-700">{money(x.valorPorFacturar)}</span>
@@ -1023,8 +1102,8 @@ export function CuadroControlFacturacion() {
                             <table className="w-full text-xs">
                               <thead>
                                 <tr className="border-b bg-muted/40 text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-                                  <th className="py-1.5 pl-2 font-medium">Operación</th>
-                                  <th className="py-1.5 text-right font-medium">Cantidad (t)</th>
+                                  <th className="py-1.5 pl-2 font-medium">Concepto</th>
+                                  <th className="py-1.5 text-right font-medium">Cantidad</th>
                                   <th className="py-1.5 text-right font-medium">Tarifa</th>
                                   <th className="py-1.5 text-right font-medium">Por facturar</th>
                                   <th className="py-1.5 pr-3 text-right font-medium">Total</th>
@@ -1035,7 +1114,9 @@ export function CuadroControlFacturacion() {
                                 {g.items.map((it) => {
                                   const k = keyRes(it.owner, it.operacion)
                                   const abierto = expand.has(k)
-                                  const det = abierto ? detalleDe(it.owner, it.operacion) : []
+                                  const esProd = it.fuente === "produccion"
+                                  const det = abierto && !esProd ? detalleDe(it.owner, it.operacion) : []
+                                  const detProd = abierto && esProd ? detalleProduccionDe(it.owner, it.operacion) : []
                                   return (
                                     <Fragment key={k}>
                                       <tr
@@ -1046,9 +1127,17 @@ export function CuadroControlFacturacion() {
                                           <span className="inline-flex items-center gap-1">
                                             <ChevronRight className={`h-3 w-3 text-muted-foreground transition-transform ${abierto ? "rotate-90" : ""}`} />
                                             {it.operacion}
+                                            {esProd && (
+                                              <span className="rounded bg-sky-100 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-sky-700 dark:bg-sky-950/50 dark:text-sky-300">
+                                                producción
+                                              </span>
+                                            )}
                                           </span>
                                         </td>
-                                        <td className="py-1.5 text-right tabular-nums">{ton(it.toneladas)}</td>
+                                        <td className="py-1.5 text-right tabular-nums">
+                                          {ton(it.toneladas)}
+                                          {it.unidad === "h" && <span className="ml-1 text-[9px] text-muted-foreground">h</span>}
+                                        </td>
                                         <td className="py-1.5 text-right tabular-nums text-muted-foreground">{money(it.tarifa)}</td>
                                         <td className="py-1.5 text-right tabular-nums">
                                           <span className="inline-flex items-center justify-end gap-1.5">
@@ -1064,7 +1153,7 @@ export function CuadroControlFacturacion() {
                                         <td className="py-1.5 pr-3 text-right font-semibold tabular-nums">{money(it.valor)}</td>
                                         <td></td>
                                       </tr>
-                                      {abierto && (
+                                      {abierto && !esProd && (
                                         <tr className="bg-muted/20">
                                           <td colSpan={6} className="px-2 py-2">
                                             <div className="max-h-64 overflow-auto rounded border bg-background">
@@ -1095,6 +1184,45 @@ export function CuadroControlFacturacion() {
                                                   {det.length === 0 && (
                                                     <tr>
                                                       <td colSpan={7} className="py-2 text-center text-muted-foreground">Sin líneas.</td>
+                                                    </tr>
+                                                  )}
+                                                </tbody>
+                                              </table>
+                                            </div>
+                                          </td>
+                                        </tr>
+                                      )}
+                                      {/* PRODUCCIÓN: el respaldo no son órdenes sino el día a
+                                          día de la tolva / las horas extra por puesto. */}
+                                      {abierto && esProd && (
+                                        <tr className="bg-muted/20">
+                                          <td colSpan={6} className="px-2 py-2">
+                                            <div className="max-h-64 overflow-auto rounded border bg-background">
+                                              <table className="w-full text-[11px]">
+                                                <thead>
+                                                  <tr className="border-b text-left text-muted-foreground">
+                                                    <th className="py-1 pl-2 font-medium">Fecha</th>
+                                                    <th className="py-1 font-medium">Detalle</th>
+                                                    <th className="py-1 text-right font-medium">Cantidad</th>
+                                                    <th className="py-1 text-right font-medium">Tarifa</th>
+                                                    <th className="py-1 pr-2 text-right font-medium">Valor</th>
+                                                  </tr>
+                                                </thead>
+                                                <tbody>
+                                                  {detProd.map((l, i) => (
+                                                    <tr key={`${l.operacion}-${l.fecha}-${i}`} className="border-b last:border-0">
+                                                      <td className="py-1 pl-2 tabular-nums">{l.fecha ?? "-"}</td>
+                                                      <td className="py-1">{l.producto ?? "-"}</td>
+                                                      <td className="py-1 text-right tabular-nums">
+                                                        {ton(l.toneladas)} {l.unidad === "h" ? "h" : "t"}
+                                                      </td>
+                                                      <td className="py-1 text-right tabular-nums text-muted-foreground">{money(l.tarifa)}</td>
+                                                      <td className="py-1 pr-2 text-right tabular-nums">{money(l.valor)}</td>
+                                                    </tr>
+                                                  ))}
+                                                  {detProd.length === 0 && (
+                                                    <tr>
+                                                      <td colSpan={5} className="py-2 text-center text-muted-foreground">Sin detalle.</td>
                                                     </tr>
                                                   )}
                                                 </tbody>
