@@ -807,7 +807,7 @@ function ResultadoProyecto({
           tone={cuadraTodo ? "up" : "down"}
         />
         <Kpi
-          label="Bono destajo (71)"
+          label="Bono productividad (52)"
           value={money(r.bono)}
           hint={r.perdida > 0 ? `pérdida asumida: ${money(r.perdida)}` : "neto de la quincena"}
           tone={r.bono > 0 ? "up" : undefined}

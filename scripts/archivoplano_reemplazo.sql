@@ -16,8 +16,12 @@
 --     Requiere scripts/create_ajustes_proyeccion.sql.
 --   · BONOS no prestacionales (Compensación › Bonos): rama propia al final que
 --     lee `bonos_nomina` (solo APROBADOS), una fila por código de novedad
---     (43/50/66). NO se mezclan con la novedad 71- del bono de toneladas.
+--     (43/50/66). NO se mezclan con la novedad 52- del bono de productividad.
 --     Requiere scripts/create_bonos_nomina.sql.
+--   · BONO DE PRODUCTIVIDAD (excedente de destajo): viaja como
+--     '52-Bonificación Por Productividad-Ingreso'. Antes era la novedad 71-
+--     ('Bonificación Ajuste Toneladas'); cambió el código y el nombre para
+--     alinearse con Siigo, NO el cálculo.
 --   REVERSIBLE: definición previa en git (scripts/vistas_financieras.sql).
 -- ============================================================================
 
@@ -85,7 +89,7 @@ create or replace view public.archivoplano as
             -- altos. Es el "cruce" por trabajador toneladas vs base.
             -- OJO: aquí va SOLO `bonif_prestacional`. `bonif_no_prestacional` (los
             -- bonos del módulo Compensación › Bonos) NO se mezcla con la novedad
-            -- 71-: sale por su propia rama al final, con su código 43/50/66.
+            -- 52-: sale por su propia rama al final, con su código 43/50/66.
             sum(base_datos.bonif_prestacional) AS total_bono_nomina,
             sum(COALESCE(base_datos.hed, (0)::numeric)) AS total_hed_moneda,
             sum(COALESCE(base_datos.horas_hed, (0)::numeric)) AS total_hed_horas
@@ -116,7 +120,10 @@ create or replace view public.archivoplano as
     nivelacion.idempresa,
     nivelacion.identificacion AS identificacionempleado,
     nivelacion.contratosiigo AS contratoempleado,
-    '71-Bonificación Ajuste Toneladas-Ingreso'::text AS nombrenovedad,
+    -- RENOMBRADA: antes '71-Bonificación Ajuste Toneladas-Ingreso'. Solo cambian
+    -- el código y el nombre, para que coincidan con el concepto creado en Siigo;
+    -- el cálculo, el piso 0 y su carácter prestacional siguen exactamente iguales.
+    '52-Bonificación Por Productividad-Ingreso'::text AS nombrenovedad,
     'Valor'::text AS tiponovedad,
     round(nivelacion.bono_final) AS cantidadvalor,
     round(COALESCE(nivelacion.salario_ref, (1750905)::numeric) / (2)::numeric)::integer AS nominaproyectada, -- quincenal por trabajador (antes fijo 875452); ::integer para no cambiar el tipo de la columna existente
@@ -254,7 +261,7 @@ UNION ALL
 UNION ALL
 -- BONOS no prestacionales (Compensación › Bonos). Una fila por CÓDIGO de
 -- novedad (43 ocasionales / 50 no prestacional / 66 aux. movilidad), para que
--- en Siigo queden separados entre sí y del bono de toneladas (71-).
+-- en Siigo queden separados entre sí y del bono de productividad (52-).
 --
 -- Se lee `bonos_nomina` DIRECTO (no vía pagonomina) a propósito: el archivo
 -- plano necesita `identificacionempleado`, y la cédula es la llave natural de

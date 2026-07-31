@@ -455,7 +455,7 @@ function armarPersona(
     // archivo plano, para CRUZARLO contra el Total quincena de LIPgo:
     //   1. Base quincenal automática = salario/2 (15 días × salario/30, convención 30
     //      días; Siigo la paga sola desde el contrato — el plano NO la envía).
-    //   2. Novedades tipo "Valor" (71-Bono) → suman directo.
+    //   2. Novedades tipo "Valor" (52-Bono de productividad) → suman directo.
     //   3. Novedades tipo "Horas" → horas × HOD × factor del concepto, con HOD =
     //      salario/(30×jornada) y los % de la vigencia legal de la quincena (los
     //      mismos con los que LIPgo calculó las horas: hed 25, hedf, hen 75, hef,
@@ -517,11 +517,11 @@ function armarPersona(
         },
       ]
       for (const [nom, g] of agg) {
-        // Novedades de VALOR directo: 71 (bono de toneladas) y los bonos del
-        // módulo Compensación › Bonos (43 ocasionales / 50 no prestacional /
-        // 66 aux. movilidad). Sin listarlos aquí caerían fuera de todas las
-        // ramas y se ignorarían en silencio, descuadrando el cruce con Siigo.
-        if (nom.startsWith("71") || nom.startsWith("43") || nom.startsWith("50") || nom.startsWith("66")) {
+        // Novedades de VALOR directo: 52 (bono de productividad — antes 71) y
+        // los bonos del módulo Compensación › Bonos (43 ocasionales / 50 no
+        // prestacional / 66 aux. movilidad). Sin listarlos aquí caerían fuera de
+        // todas las ramas y se ignorarían en silencio, descuadrando el cruce.
+        if (nom.startsWith("52") || nom.startsWith("43") || nom.startsWith("50") || nom.startsWith("66")) {
           conceptos.push({
             concepto: nom,
             tipo: "Valor",
@@ -593,9 +593,9 @@ function armarPersona(
           siigo: sumC((c) => c.concepto.startsWith("08") || c.concepto.startsWith("25")),
         },
         {
-          nombre: "Bono productividad (71)",
+          nombre: "Bono productividad (52)",
           lipgo: Math.round(bono),
-          siigo: sumC((c) => c.concepto.startsWith("71")),
+          siigo: sumC((c) => c.concepto.startsWith("52")),
         },
         {
           // Bonos del módulo Compensación › Bonos. No cotizan al IBC, pero se

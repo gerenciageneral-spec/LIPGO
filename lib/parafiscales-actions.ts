@@ -349,8 +349,9 @@ export async function getParafiscales(
       const auxilio = salarioRef <= smlv * 2 ? (auxilioMes / 30) * Math.min(a.diasTrab, 30) : 0
       // Bonificación por productividad = excedente NETO de cada quincena con piso 0
       // (los días bajos netean con los altos DENTRO de la quincena; nunca baja la base).
-      // TODA prestacional → entra al IBC. Es exactamente el "71-Bonificación Ajuste
-      // Toneladas" del archivo plano, garantizando IBC LIPgo = archivo plano = Siigo.
+      // TODA prestacional → entra al IBC. Es exactamente el "52-Bonificación Por
+      // Productividad" del archivo plano (antes la novedad 71-), garantizando
+      // IBC LIPgo = archivo plano = Siigo.
       const bonoProductividad = Math.max(0, a.excQ1) + Math.max(0, a.excQ2)
       const ap = calcularAportes(
         {

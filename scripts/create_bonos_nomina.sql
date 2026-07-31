@@ -3,7 +3,7 @@
 -- ----------------------------------------------------------------------------
 -- Registra, por DÍA y por PERSONA, un bono discrecional con su concepto. Es
 -- distinto del bono de destajo (`pagonomina.bonif_prestacional` → novedad
--- "71-Bonificación Ajuste Toneladas-Ingreso"), que se calcula solo.
+-- "52-Bonificación Por Productividad-Ingreso"), que se calcula solo.
 --
 -- Reglas de negocio (confirmadas con el negocio):
 --   · NO PRESTACIONAL: no cotiza a seguridad social (no entra al IBC de la
