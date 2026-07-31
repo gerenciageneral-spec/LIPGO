@@ -146,6 +146,26 @@ async function fetchAllRows(makeQuery: (from: number, to: number) => any): Promi
   return all
 }
 
+/**
+ * ¿Esta persona entra a la Revisión de nómina? Misma regla del negocio que
+ * filtra el ARCHIVO PLANO (ver scripts/archivoplano_reemplazo.sql), para que las
+ * dos pantallas hablen del mismo universo:
+ *   · RETIRADOS fuera — su nómina pendiente se paga por el submódulo
+ *     Liquidaciones, no por el plano. Se detecta por `estado = 'Inactivo'` y
+ *     también por tener `fecha_retiro`, porque hay filas marcadas Activo con
+ *     fecha de retiro puesta (inconsistencia real en Head Count).
+ *   · SIN CONTRATO fuera — sin `contratosiigo` no hay vínculo al que cargarle la
+ *     novedad en Siigo, así que no hay nada que cruzar.
+ * Medido sobre Head Count: de 57 personas no inactivas, solo 3 quedan fuera por
+ * contrato, y las 3 son casos a corregir allá.
+ */
+function liquidable(r: any): boolean {
+  if (String(r?.estado || "activo").trim().toLowerCase() === "inactivo") return false
+  if (String(r?.fecha_retiro || "").trim()) return false
+  if (!String(r?.contratosiigo || "").trim()) return false
+  return true
+}
+
 /** Parte una lista larga en lotes, para no reventar la URL de un `.in(...)`. */
 function enLotes<T>(arr: T[], n: number): T[][] {
   const out: T[][] = []
@@ -166,7 +186,7 @@ export async function getColaboradores(
     const admin: any = await getSupabaseAdmin()
     let q = admin
       .from("headcount")
-      .select("nombre, identificacion, idempresa, estado")
+      .select("nombre, identificacion, idempresa, estado, contratosiigo, fecha_retiro")
       .order("estado", { ascending: true })
       .order("nombre", { ascending: true })
     if (idempresa != null) q = q.eq("idempresa", idempresa)
@@ -177,6 +197,7 @@ export async function getColaboradores(
     for (const r of data || []) {
       const persona = String(r.nombre || "").trim()
       if (!persona || /prueba/i.test(persona)) continue
+      if (!liquidable(r)) continue
       if (vistos.has(persona)) continue
       vistos.add(persona)
       out.push({
@@ -845,7 +866,7 @@ export async function getRevisionNominaProyecto(
     const { desde, hasta } = rangoQ(anio, mes, quincena)
 
     // 1) Universo = Head Count del proyecto (centro de costo del selector global).
-    let qhc = admin.from("headcount").select("nombre, identificacion, salario, idempresa, contratosiigo, estado, fechainicio")
+    let qhc = admin.from("headcount").select("nombre, identificacion, salario, idempresa, contratosiigo, estado, fechainicio, fecha_retiro")
     if (idempresa != null) qhc = qhc.eq("idempresa", idempresa)
     const { data: hcRows, error: errHc } = await qhc
     if (errHc) return { success: false, message: errHc.message }
@@ -854,11 +875,10 @@ export async function getRevisionNominaProyecto(
     for (const r of hcRows || []) {
       const p = String(r.nombre || "").trim()
       if (!p || /prueba/i.test(p)) continue
-      // RETIRADOS FUERA. Mismo criterio literal que la vista `archivoplano`
-      // (lower(coalesce(estado,'activo')) <> 'inactivo'): si el plano no los
-      // envía, Siigo no los liquida y no hay nada que cruzar. Su nómina
-      // pendiente se paga desde el submódulo Liquidaciones.
-      if (String(r.estado || "activo").trim().toLowerCase() === "inactivo") continue
+      // RETIRADOS y SIN CONTRATO fuera — misma regla que filtra el archivo
+      // plano, para que el cruce compare exactamente el mismo universo que
+      // viaja a Siigo. Ver `liquidable`.
+      if (!liquidable(r)) continue
       if (!hcPorPersona.has(p)) hcPorPersona.set(p, r)
     }
     const personas = Array.from(hcPorPersona.keys())

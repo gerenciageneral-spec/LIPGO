@@ -99,16 +99,25 @@ create view public.archivoplano as
           -- nómina pendiente se paga desde el submódulo Liquidaciones.
           WHERE (lower(COALESCE(h.estado, 'activo'::text)) <> 'inactivo'::text)
             -- AL PLANO SOLO PASA QUIEN TIENE CONTRATO CON LIP (regla del negocio).
-            -- Sin cédula en Head Count, Siigo no puede asignarle la novedad a
-            -- nadie: la fila viaja con identificacionempleado en NULL y se pierde.
-            -- Medido antes de poner el filtro: 259 filas así, de 41 nombres que
-            -- NO están en Head Count (ex-trabajadores, gente que nunca se
-            -- registró, y el relleno "SIN AUXILIAR"). Ninguna se estaba pagando
-            -- —sin cédula es imposible—, pero ensuciaban el archivo que se sube
-            -- a Siigo. El trabajo de esas personas sigue visible en pagonomina;
-            -- lo que se corta es su viaje al plano.
+            -- Se exige lo que Siigo necesita para poder asignar la novedad:
+            --   · CÉDULA  -> identificacionempleado. Sin ella la fila viaja en
+            --     NULL y no le pertenece a nadie. Medido antes de este filtro:
+            --     259 filas así, de 41 nombres que ni siquiera están en Head
+            --     Count (ex-trabajadores, gente nunca registrada, y el relleno
+            --     "SIN AUXILIAR" de Indupan).
+            --   · CONTRATO SIIGO -> contratoempleado. Sin contrato no hay a qué
+            --     vínculo cargarle la novedad. Medido: 3 de 57 personas no
+            --     inactivas no lo tienen, y las 3 son casos a corregir en Head
+            --     Count (dos marcadas Activo pero con fecha de retiro, y una con
+            --     cédula ficticia).
+            -- Los RETIRADOS ya salen por el filtro de estado de arriba: su
+            -- nómina pendiente se paga por el submódulo Liquidaciones, no por el
+            -- plano. El trabajo de todos ellos sigue visible en pagonomina; lo
+            -- que se corta es su viaje a Siigo.
             AND (h.identificacion IS NOT NULL)
             AND (TRIM(BOTH FROM h.identificacion) <> ''::text)
+            AND (h.contratosiigo IS NOT NULL)
+            AND (TRIM(BOTH FROM h.contratosiigo) <> ''::text)
         ), agrupado_quincena AS (
          SELECT base_datos.mes_txt,
             base_datos.mes_num,
