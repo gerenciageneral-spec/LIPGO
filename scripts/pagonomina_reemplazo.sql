@@ -26,6 +26,16 @@
 --     contra Siigo. En excedente sale por la novedad 71 y además queda sujeto al
 --     Ajuste de Proyecciones.
 --     Aplica a TODO el histórico (sin piso de vigencia), por decisión del negocio.
+--   - DOMINGO TRABAJADO = 1 + recargo (1,90 hoy), DESDE EL 16-JUL-2026: el día
+--     trabajado lo cubre la base y encima va el RECARGO dominical; NO se paga
+--     además el día de descanso. Se separa del TONELAJE: aplica igual venga el
+--     día por toneladas o por turno (antes el recargo solo lo cobraba el
+--     personal de turno con cero toneladas, y un domingo de tolva con tonelaje
+--     en cero quedaba sin recargo y sin novedad en el plano). El % sale de la
+--     vigencia (80% hasta 15-jul-2026, 90% desde el 16). Cruza al peso contra la
+--     novedad "25- Recargo dominical o festivo" del archivo plano.
+--     El descanso dominical de quien NO trabajó no cambia: se paga completo.
+--     PISO 16-jul-2026 — no se mueven las quincenas ya pagadas.
 --   - CORTE por FECHA DE INGRESO (headcount.fechainicio): no liquida días
 --     ANTERIORES al inicio de actividades. `headcount.fechainicio` es la FUENTE
 --     DE VERDAD del ingreso (el filtro de vínculo contra colaboradores_th falla
