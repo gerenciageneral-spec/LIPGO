@@ -184,7 +184,22 @@ UNION ALL
     base_datos.fecha_evento AS fechafin,
     0 AS diasnohabiles
    FROM base_datos
-  WHERE ((base_datos.novedad_reportada IS NOT NULL) AND (TRIM(BOTH FROM base_datos.novedad_reportada) <> ''::text) AND (TRIM(BOTH FROM base_datos.novedad_reportada) <> 'Descanso'::text) AND (TRIM(BOTH FROM base_datos.novedad_reportada) <> 'Descanso compensatorio domingo anterior'::text) AND (TRIM(BOTH FROM base_datos.novedad_reportada) <> 'Retiro'::text))
+  WHERE ((base_datos.novedad_reportada IS NOT NULL) AND (TRIM(BOTH FROM base_datos.novedad_reportada) <> ''::text) AND (TRIM(BOTH FROM base_datos.novedad_reportada) <> 'Descanso'::text) AND (TRIM(BOTH FROM base_datos.novedad_reportada) <> 'Descanso compensatorio domingo anterior'::text) AND (TRIM(BOTH FROM base_datos.novedad_reportada) <> 'Retiro'::text)
+         -- DÍA 31: las novedades de DÍAS no se reportan. Siigo procesa toda
+         -- novedad de tipo "Dias" DESCONTANDO el día de la base y pagando el
+         -- concepto a su porcentaje. Pero la base quincenal de Siigo son 15 días
+         -- —que por la convención de mes de 30 son el 16 al 30—, así que el 31
+         -- NO está dentro de esa base: descontarlo resta un día que nunca se
+         -- pagó. Y en LIPgo el 31 ya vale $0 por la misma regla (ver
+         -- pagonomina_reemplazo.sql), o sea que el día quedaba castigado DOS
+         -- veces. Medido sobre datos reales: 7 casos de "38- Licencia no
+         -- remunerada" fechados un 31, cada uno restando un día completo
+         -- (~$58.364) que LIPgo sí pagaba — era la diferencia contra Siigo.
+         -- Las de efecto neto 0 (13-Incapacidad, 20-Licencia, 31-Vacaciones)
+         -- también salen, por coherencia: en un mes de 30 días el 31 no existe
+         -- para la nómina. El soporte clínico/ausentismo vive en su módulo, no
+         -- en el plano.
+         AND (EXTRACT(day FROM base_datos.fecha) <> (31)::numeric))
 UNION ALL
  SELECT nivelacion.mes_txt AS mes,
     nivelacion.num_quincena AS quincena,
