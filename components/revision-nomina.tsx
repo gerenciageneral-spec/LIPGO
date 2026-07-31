@@ -29,14 +29,18 @@ import {
   TrendingUp,
   Users,
 } from "lucide-react"
+import { useAuth } from "@/components/auth-provider"
 import {
   getColaboradores,
   getRevisionNomina,
+  getRevisionNominaProyecto,
   getHcPorDia,
   getConciliacionQuincena,
   getAuxiliaresVsAsistencia,
   type ColaboradorRef,
   type RevisionNominaData,
+  type RevisionProyectoData,
+  type PersonaProyectoRow,
   type HcDiaProyecto,
   type ConciliacionData,
   type OrdenConciliada,
@@ -58,8 +62,12 @@ const MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "O
 const money = (n: number) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO", { maximumFractionDigits: 0 })
 const signed = (n: number) => (n >= 0 ? "+" : "−") + Math.abs(Math.round(Number(n) || 0)).toLocaleString("es-CO")
 
+/** Valor centinela del selector de colaborador para "todo el proyecto". */
+const TODOS = "__TODOS__"
+
 export default function RevisionNomina() {
   const { toast } = useToast()
+  const { selectedEmpresaId, selectedEmpresaNombre } = useAuth() as any
   const hoy = new Date()
   const [colaboradores, setColaboradores] = useState<ColaboradorRef[]>([])
   const [persona, setPersona] = useState("")
@@ -68,14 +76,28 @@ export default function RevisionNomina() {
   const [quincena, setQuincena] = useState<1 | 2>(hoy.getDate() <= 15 ? 1 : 2)
   const [openPicker, setOpenPicker] = useState(false)
   const [data, setData] = useState<RevisionNominaData | null>(null)
+  const [proyecto, setProyecto] = useState<RevisionProyectoData | null>(null)
   const [loading, setLoading] = useState(false)
 
+  // El listado sale del SELECTOR GLOBAL: cada id es un centro de costo, así que
+  // solo se ven los colaboradores amarrados a ese proyecto — el mismo universo
+  // con el que se cruza el archivo plano contra Siigo.
+  const empresaId: number | null = selectedEmpresaId != null ? Number(selectedEmpresaId) : null
+
   useEffect(() => {
-    getColaboradores().then((r) => {
-      if (r.success) setColaboradores(r.data)
-      else toast({ title: "No se pudieron cargar los colaboradores", description: r.message, variant: "destructive" })
+    getColaboradores(empresaId).then((r) => {
+      if (r.success) {
+        setColaboradores(r.data)
+        // Si el que estaba elegido no pertenece al proyecto nuevo, se limpia
+        // (así el botón no revisa a alguien de otro centro de costo).
+        setPersona((p) => (p === TODOS || r.data.some((c) => c.persona === p) ? p : ""))
+      } else {
+        toast({ title: "No se pudieron cargar los colaboradores", description: r.message, variant: "destructive" })
+      }
     })
-  }, [toast])
+    setData(null)
+    setProyecto(null)
+  }, [empresaId, toast])
 
   const revisar = useCallback(async () => {
     if (!persona) {
@@ -83,19 +105,33 @@ export default function RevisionNomina() {
       return
     }
     setLoading(true)
+    if (persona === TODOS) {
+      const r = await getRevisionNominaProyecto(empresaId, anio, mes, quincena)
+      setLoading(false)
+      setData(null)
+      if (r.success && r.data) setProyecto(r.data)
+      else {
+        setProyecto(null)
+        toast({ title: "No se pudo armar el consolidado", description: r.message, variant: "destructive" })
+      }
+      return
+    }
     const r = await getRevisionNomina(persona, anio, mes, quincena)
     setLoading(false)
+    setProyecto(null)
     if (r.success && r.data) setData(r.data)
     else {
       setData(null)
       toast({ title: "No se pudo armar la revisión", description: r.message, variant: "destructive" })
     }
-  }, [persona, anio, mes, quincena, toast])
+  }, [persona, empresaId, anio, mes, quincena, toast])
 
   const personaLabel = useMemo(() => {
+    if (persona === TODOS)
+      return `Todos los colaboradores${selectedEmpresaNombre ? ` — ${selectedEmpresaNombre}` : ""} (${colaboradores.length})`
     const c = colaboradores.find((x) => x.persona === persona)
     return c ? c.persona : "Selecciona un colaborador…"
-  }, [colaboradores, persona])
+  }, [colaboradores, persona, selectedEmpresaNombre])
 
   const anios = useMemo(() => {
     const y = new Date().getFullYear()
@@ -127,7 +163,8 @@ export default function RevisionNomina() {
         <div>
           <h1 className="text-xl font-semibold">Revisión de nómina</h1>
           <p className="text-sm text-muted-foreground">
-            Cuadro definitivo por colaborador — liquidación diaria, resumen de quincena y archivo plano (Siigo).
+            Cuadro definitivo por colaborador o por proyecto completo — liquidación diaria, resumen de quincena y cruce
+            del archivo plano contra Siigo.
           </p>
         </div>
       </div>
@@ -164,6 +201,24 @@ export default function RevisionNomina() {
                   <CommandInput placeholder="Buscar colaborador…" />
                   <CommandList>
                     <CommandEmpty>Sin resultados.</CommandEmpty>
+                    {/* Consolidado del proyecto: mismo cuadro, pero para todo el
+                        centro de costo, que es como se cruza el plano con Siigo. */}
+                    <CommandGroup>
+                      <CommandItem
+                        value="Todos los colaboradores del proyecto"
+                        onSelect={() => {
+                          setPersona(TODOS)
+                          setOpenPicker(false)
+                        }}
+                      >
+                        <Check className={`mr-2 h-4 w-4 ${persona === TODOS ? "opacity-100" : "opacity-0"}`} />
+                        <span className="flex-1 truncate font-medium">Todos los colaboradores</span>
+                        <span className="ml-2 text-xs text-muted-foreground">
+                          {selectedEmpresaNombre || (empresaId != null ? `emp${empresaId}` : "LIP")} ·{" "}
+                          {colaboradores.length}
+                        </span>
+                      </CommandItem>
+                    </CommandGroup>
                     <CommandGroup>
                       {colaboradores.map((c) => (
                         <CommandItem
@@ -243,6 +298,22 @@ export default function RevisionNomina() {
       </Card>
 
           {data && <Resultado data={data} tipoBadge={tipoBadge} />}
+          {proyecto && (
+            <ResultadoProyecto
+              data={proyecto}
+              empresaNombre={selectedEmpresaNombre}
+              onVerPersona={(p) => {
+                setPersona(p)
+                setProyecto(null)
+                setLoading(true)
+                getRevisionNomina(p, anio, mes, quincena).then((r) => {
+                  setLoading(false)
+                  if (r.success && r.data) setData(r.data)
+                  else toast({ title: "No se pudo armar la revisión", description: r.message, variant: "destructive" })
+                })
+              }}
+            />
+          )}
         </TabsContent>
 
         <TabsContent value="hc" className="mt-4">
@@ -670,6 +741,384 @@ function Resultado({
         </>
       )}
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// CONSOLIDADO POR PROYECTO ("Todos los colaboradores")
+// Mismo cruce con Siigo que la vista individual — de hecho corre la misma
+// función en el servidor —, pero sumado para todo el centro de costo. Sirve para
+// validar el archivo plano COMPLETO antes de subirlo, en vez de persona por
+// persona: arriba el total, en medio DÓNDE nace la diferencia (por componente),
+// y abajo la lista de trabajo ordenada por quién descuadra más.
+// ---------------------------------------------------------------------------
+function ResultadoProyecto({
+  data,
+  empresaNombre,
+  onVerPersona,
+}: {
+  data: RevisionProyectoData
+  empresaNombre: string | null
+  onVerPersona: (persona: string) => void
+}) {
+  const { quincena: q, personas, resumen: r, componentes, plano } = data
+  const [soloDescuadran, setSoloDescuadran] = useState(false)
+  const [buscar, setBuscar] = useState("")
+  const moneyS = (n: number) => (n < 0 ? "−" : "") + "$" + Math.abs(Math.round(Number(n) || 0)).toLocaleString("es-CO")
+
+  const filtradas = useMemo(() => {
+    const txt = buscar.trim().toLowerCase()
+    return personas.filter((p) => {
+      if (soloDescuadran && (p.cuadra || !p.simulable)) return false
+      if (txt && !p.persona.toLowerCase().includes(txt) && !p.identificacion.includes(txt)) return false
+      return true
+    })
+  }, [personas, soloDescuadran, buscar])
+
+  const cuadraTodo = r.nDescuadran === 0 && r.nSinSalario === 0
+
+  return (
+    <div className="space-y-4">
+      {/* Encabezado del proyecto */}
+      <Card>
+        <CardContent className="flex flex-wrap items-center justify-between gap-4 pt-6">
+          <div>
+            <div className="text-lg font-semibold">
+              {empresaNombre || (data.empresa != null ? `Proyecto ${data.empresa}` : "LIP completo")}
+            </div>
+            <div className="text-sm text-muted-foreground">
+              {r.nPersonas} colaborador(es) del Head Count · {r.nConDatos} con días liquidados en la quincena
+            </div>
+          </div>
+          <div className="text-right text-sm text-muted-foreground">
+            {MESES[q.mes - 1]} {q.anio} · {q.num}ª quincena ({q.desde.slice(8)}–{q.hasta.slice(8)})
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Totales del cruce */}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Kpi label="Total LIPgo" value={money(r.totalLipgo)} hint="lo que liquida pagonomina" />
+        <Kpi label="Total Siigo (simulado)" value={money(r.totalSiigo)} hint="base de contrato + novedades del plano" />
+        <Kpi
+          label="Δ Siigo − LIPgo"
+          value={moneyS(r.diferencia)}
+          hint={`${r.nCuadran} cuadran · ${r.nDescuadran} descuadran`}
+          tone={cuadraTodo ? "up" : "down"}
+        />
+        <Kpi
+          label="Bono destajo (71)"
+          value={money(r.bono)}
+          hint={r.perdida > 0 ? `pérdida asumida: ${money(r.perdida)}` : "neto de la quincena"}
+          tone={r.bono > 0 ? "up" : undefined}
+        />
+      </div>
+
+      {/* Señales que impiden un cruce limpio */}
+      {(r.nSinSalario > 0 || r.nSinPlano > 0 || r.anomalias > 0 || r.diasSinPago > 0) && (
+        <Card>
+          <CardContent className="space-y-2 pt-6 text-sm">
+            {r.nSinSalario > 0 && (
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+                <span>
+                  <strong>{r.nSinSalario}</strong> colaborador(es) <strong>sin salario en Head Count</strong>: no se
+                  puede simular su pago en Siigo, así que quedan fuera del total simulado. Corregir el Head Count.
+                </span>
+              </div>
+            )}
+            {r.nSinPlano > 0 && (
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                <span>
+                  <strong>{r.nSinPlano}</strong> colaborador(es) <strong>sin novedades en el archivo plano</strong>.
+                  Normal si solo les corresponde la base; a revisar si tienen bono u horas extra en LIPgo.
+                </span>
+              </div>
+            )}
+            {r.anomalias > 0 && (
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+                <span>
+                  <strong>{r.anomalias}</strong> día(s) de Cargue/Descargue con <strong>0 toneladas</strong> en el
+                  proyecto: falta acreditar tonelaje o marcar la novedad correcta.
+                </span>
+              </div>
+            )}
+            {r.diasSinPago > 0 && (
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                <span>
+                  <strong>{r.diasSinPago}</strong> día(s)-persona <strong>sin pago en LIPgo</strong> que la base
+                  quincenal de Siigo sí paga. Si son faltas reales, deben reportarse como novedad de ausencia en Siigo.
+                </span>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Dónde nace la diferencia */}
+      <Card>
+        <CardHeader className="pb-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle className="text-base">Cruce por componente — proyecto completo</CardTitle>
+            {cuadraTodo ? (
+              <Badge className="gap-1 bg-emerald-500/15 text-emerald-600 hover:bg-emerald-500/15 dark:text-emerald-400">
+                <Check className="h-3.5 w-3.5" /> CUADRA · dif {moneyS(r.diferencia)}
+              </Badge>
+            ) : (
+              <Badge variant="destructive" className="gap-1">
+                <AlertTriangle className="h-3.5 w-3.5" /> Δ {moneyS(r.diferencia)} — revisar
+              </Badge>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent className="overflow-x-auto">
+          {componentes.length === 0 ? (
+            <p className="py-4 text-sm text-muted-foreground">
+              Sin componentes que cruzar: ningún colaborador del proyecto tiene salario en Head Count.
+            </p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Componente</TableHead>
+                  <TableHead className="text-right">LIPgo</TableHead>
+                  <TableHead className="text-right">Siigo (sim.)</TableHead>
+                  <TableHead className="text-right">Δ (Siigo − LIPgo)</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody className="tabular-nums">
+                {componentes.map((co, i) => {
+                  const delta = co.siigo - co.lipgo
+                  const ok = Math.abs(delta) <= 500 * Math.max(1, r.nConDatos)
+                  return (
+                    <TableRow key={i}>
+                      <TableCell>{co.nombre}</TableCell>
+                      <TableCell className="text-right">{money(co.lipgo)}</TableCell>
+                      <TableCell className="text-right">{money(co.siigo)}</TableCell>
+                      <TableCell
+                        className={`text-right font-medium ${ok ? "text-muted-foreground" : delta > 0 ? "text-amber-600 dark:text-amber-400" : "text-rose-600 dark:text-rose-400"}`}
+                      >
+                        {ok ? "✓ " : ""}
+                        {moneyS(delta)}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+                <TableRow className="border-t-2">
+                  <TableCell className="font-semibold">TOTAL</TableCell>
+                  <TableCell className="text-right font-bold">{money(r.totalLipgo)}</TableCell>
+                  <TableCell className="text-right font-bold">{money(r.totalSiigo)}</TableCell>
+                  <TableCell
+                    className={`text-right text-base font-bold ${cuadraTodo ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}
+                  >
+                    {moneyS(r.diferencia)}
+                  </TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+          )}
+          <p className="mt-2 text-xs text-muted-foreground">
+            Mismo desglose de la vista individual, sumado. Si el Δ total es grande pero se concentra en un componente,
+            el problema es de ese concepto (no de un colaborador suelto).
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* Lista de trabajo por colaborador */}
+      <Card>
+        <CardHeader className="pb-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle className="text-base">Por colaborador — ordenado por diferencia</CardTitle>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                value={buscar}
+                onChange={(e) => setBuscar(e.target.value)}
+                placeholder="Buscar nombre o cédula…"
+                className="h-9 w-[220px] rounded-md border bg-background px-3 text-sm"
+              />
+              <Button
+                variant={soloDescuadran ? "default" : "outline"}
+                size="sm"
+                onClick={() => setSoloDescuadran((v) => !v)}
+              >
+                Solo los que descuadran ({r.nDescuadran})
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Colaborador</TableHead>
+                <TableHead className="text-right">Días</TableHead>
+                <TableHead className="text-right">Base</TableHead>
+                <TableHead className="text-right">Recargos</TableHead>
+                <TableHead className="text-right">Dominical</TableHead>
+                <TableHead className="text-right">Bono</TableHead>
+                <TableHead className="text-right">Total LIPgo</TableHead>
+                <TableHead className="text-right">Total Siigo</TableHead>
+                <TableHead className="text-right">Δ</TableHead>
+                <TableHead />
+              </TableRow>
+            </TableHeader>
+            <TableBody className="tabular-nums">
+              {filtradas.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={10} className="py-8 text-center text-muted-foreground">
+                    Sin colaboradores que mostrar con el filtro actual.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                filtradas.map((p) => <FilaProyecto key={p.persona} p={p} onVer={onVerPersona} moneyS={moneyS} />)
+              )}
+              <TableRow className="border-t-2">
+                <TableCell className="font-semibold">
+                  TOTAL {filtradas.length !== personas.length ? `(${filtradas.length} de ${personas.length})` : ""}
+                </TableCell>
+                <TableCell />
+                <TableCell className="text-right font-semibold">
+                  {money(filtradas.reduce((a, p) => a + p.baseGarantizada, 0))}
+                </TableCell>
+                <TableCell className="text-right font-semibold">
+                  {money(filtradas.reduce((a, p) => a + p.ingresoTurno, 0))}
+                </TableCell>
+                <TableCell className="text-right font-semibold">
+                  {money(filtradas.reduce((a, p) => a + p.recargoDominical, 0))}
+                </TableCell>
+                <TableCell className="text-right font-semibold">
+                  {money(filtradas.reduce((a, p) => a + p.bono, 0))}
+                </TableCell>
+                <TableCell className="text-right font-bold">
+                  {money(filtradas.reduce((a, p) => a + p.totalLipgo, 0))}
+                </TableCell>
+                <TableCell className="text-right font-bold">
+                  {money(filtradas.reduce((a, p) => a + p.totalSiigo, 0))}
+                </TableCell>
+                <TableCell className="text-right font-bold">
+                  {moneyS(filtradas.reduce((a, p) => a + (p.simulable ? p.diferencia : 0), 0))}
+                </TableCell>
+                <TableCell />
+              </TableRow>
+            </TableBody>
+          </Table>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Abre cualquier colaborador para ver su cuadro completo (liquidación diaria, plano y simulación Siigo) con la
+            misma vista de siempre.
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* Archivo plano consolidado */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">Archivo plano → Siigo — consolidado del proyecto</CardTitle>
+        </CardHeader>
+        <CardContent className="overflow-x-auto">
+          {plano.length === 0 ? (
+            <p className="py-4 text-sm text-muted-foreground">
+              Sin novedades en el archivo plano para este proyecto en la quincena.
+            </p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Novedad</TableHead>
+                  <TableHead>Tipo</TableHead>
+                  <TableHead className="text-right">Personas</TableHead>
+                  <TableHead className="text-right">Cant./Valor</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody className="tabular-nums">
+                {plano.map((p, i) => (
+                  <TableRow key={i}>
+                    <TableCell>{p.nombrenovedad}</TableCell>
+                    <TableCell className="text-muted-foreground">{p.tiponovedad}</TableCell>
+                    <TableCell className="text-right">{p.personas}</TableCell>
+                    <TableCell className="text-right font-medium">
+                      {p.tiponovedad === "Horas"
+                        ? p.cantidadvalor.toLocaleString("es-CO", { maximumFractionDigits: 2 }) + " h"
+                        : p.tiponovedad === "Dias"
+                          ? p.cantidadvalor + " día(s)"
+                          : money(p.cantidadvalor)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+          <p className="mt-2 text-xs text-muted-foreground">
+            Es lo que viajará a Siigo por este centro de costo. El salario quincenal NO va aquí: Siigo lo paga solo
+            desde el contrato; el plano solo lleva las <strong>novedades</strong>.
+          </p>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+function FilaProyecto({
+  p,
+  onVer,
+  moneyS,
+}: {
+  p: PersonaProyectoRow
+  onVer: (persona: string) => void
+  moneyS: (n: number) => string
+}) {
+  const sinDatos = p.diasLiquidados === 0
+  return (
+    <TableRow className={!p.simulable ? "bg-destructive/5" : sinDatos ? "opacity-60" : ""}>
+      <TableCell>
+        <div className="flex items-center gap-2">
+          <span className="font-medium">{p.persona}</span>
+          {!p.simulable && (
+            <Badge variant="destructive" className="text-[10px]">
+              sin salario
+            </Badge>
+          )}
+          {p.anomalias > 0 && (
+            <Badge variant="destructive" className="gap-1 text-[10px]">
+              <AlertTriangle className="h-3 w-3" /> {p.anomalias}
+            </Badge>
+          )}
+        </div>
+        <div className="text-xs text-muted-foreground">
+          CC {p.identificacion || "—"} · {p.estado}
+          {p.novedadesPlano === 0 ? " · sin plano" : ` · ${p.novedadesPlano} novedad(es)`}
+        </div>
+      </TableCell>
+      <TableCell className="text-right text-muted-foreground">{p.diasLiquidados || ""}</TableCell>
+      <TableCell className="text-right">{p.baseGarantizada ? money(p.baseGarantizada) : ""}</TableCell>
+      <TableCell className="text-right">{p.ingresoTurno ? money(p.ingresoTurno) : ""}</TableCell>
+      <TableCell className="text-right">{p.recargoDominical ? money(p.recargoDominical) : ""}</TableCell>
+      <TableCell className="text-right">
+        {p.bono ? (
+          <span className="text-emerald-600 dark:text-emerald-400">{money(p.bono)}</span>
+        ) : p.perdida ? (
+          <span className="text-rose-600 dark:text-rose-400" title="pérdida de productividad asumida por la empresa">
+            −{money(p.perdida)}
+          </span>
+        ) : (
+          ""
+        )}
+      </TableCell>
+      <TableCell className="text-right font-medium">{money(p.totalLipgo)}</TableCell>
+      <TableCell className="text-right">{p.simulable ? money(p.totalSiigo) : "—"}</TableCell>
+      <TableCell
+        className={`text-right font-medium ${!p.simulable ? "text-muted-foreground" : p.cuadra ? "text-muted-foreground" : Math.abs(p.diferencia) > 0 ? "text-rose-600 dark:text-rose-400" : ""}`}
+      >
+        {p.simulable ? (p.cuadra ? "✓ " : "") + moneyS(p.diferencia) : "—"}
+      </TableCell>
+      <TableCell className="text-right">
+        <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => onVer(p.persona)}>
+          Ver <ChevronRight className="ml-1 h-3.5 w-3.5" />
+        </Button>
+      </TableCell>
+    </TableRow>
   )
 }
 

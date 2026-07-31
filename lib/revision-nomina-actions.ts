@@ -128,15 +128,49 @@ const DOW = ["Do", "Lu", "Ma", "Mi", "Ju", "Vi", "Sa"]
 const num = (v: any) => Number(v || 0)
 const fin = (anio: number, mes: number) => new Date(anio, mes, 0).getDate()
 
-/** Colaboradores para el selector (Head Count, activos primero). */
-export async function getColaboradores(): Promise<{ success: boolean; data: ColaboradorRef[]; message?: string }> {
+// Supabase topa toda respuesta en 1000 filas aunque se pida más: para leer el
+// proyecto completo (todas las personas × todos los días) hay que paginar con
+// .range hasta agotar. `makeQuery(from,to)` arma la consulta con su .range.
+async function fetchAllRows(makeQuery: (from: number, to: number) => any): Promise<any[]> {
+  const PAGE = 1000
+  let offset = 0
+  const all: any[] = []
+  for (;;) {
+    const { data, error } = await makeQuery(offset, offset + PAGE - 1)
+    if (error) throw new Error(error.message)
+    const batch = data ?? []
+    all.push(...batch)
+    if (batch.length < PAGE) break
+    offset += PAGE
+  }
+  return all
+}
+
+/** Parte una lista larga en lotes, para no reventar la URL de un `.in(...)`. */
+function enLotes<T>(arr: T[], n: number): T[][] {
+  const out: T[][] = []
+  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n))
+  return out
+}
+
+/**
+ * Colaboradores para el selector (Head Count, activos primero).
+ * `idempresa` = el SELECTOR GLOBAL: cada id es un centro de costo, así que al
+ * filtrar por él salen solo los colaboradores amarrados a ese proyecto — que es
+ * exactamente el universo con el que se cruza el plano contra Siigo.
+ */
+export async function getColaboradores(
+  idempresa?: number | null,
+): Promise<{ success: boolean; data: ColaboradorRef[]; message?: string }> {
   try {
     const admin: any = await getSupabaseAdmin()
-    const { data, error } = await admin
+    let q = admin
       .from("headcount")
       .select("nombre, identificacion, idempresa, estado")
       .order("estado", { ascending: true })
       .order("nombre", { ascending: true })
+    if (idempresa != null) q = q.eq("idempresa", idempresa)
+    const { data, error } = await q
     if (error) return { success: false, data: [], message: error.message }
     const vistos = new Set<string>()
     const out: ColaboradorRef[] = []
@@ -158,76 +192,117 @@ export async function getColaboradores(): Promise<{ success: boolean; data: Cola
   }
 }
 
-/** Cuadro completo (A/B/C) de un colaborador para una quincena. */
-export async function getRevisionNomina(
-  persona: string,
+/** Columnas de `pagonomina` que necesita el cuadro (una sola definición). */
+const PN_COLS =
+  "fecha, persona, idempresa, idempresaliquidacion, actividad_registrada, novedad_reportada, especialidad, toneladas, pago_produccion, base_dia, bonif_prestacional, bonif_no_prestacional, hed, hedf, hen, hef, hn, pago_domingo, recargodominical, total_liquidado_dia"
+
+/**
+ * Contexto del cálculo que NO depende del colaborador (metas del proyecto, HC
+ * real por día, vigencia legal de la quincena). Se arma UNA vez y se reutiliza,
+ * de modo que el consolidado por proyecto corra EXACTAMENTE la misma lógica que
+ * la revisión individual — sin duplicarla ni dejarla derivar.
+ */
+interface CtxRevision {
+  anio: number
+  mes: number
+  quincena: 1 | 2
+  desde: string
+  hasta: string
+  metaObjPorEmpresa: Map<number, { meta: number; hc: number }>
+  hcReal: (fecha: string, emp: number) => number
+  vig: any | null
+}
+
+/** Rango [desde, hasta] de la quincena, en ISO. */
+function rangoQ(anio: number, mes: number, quincena: 1 | 2) {
+  const diaIni = quincena === 1 ? 1 : 16
+  const diaFin = quincena === 1 ? 15 : fin(anio, mes)
+  const p = (n: number) => String(n).padStart(2, "0")
+  return { desde: `${anio}-${p(mes)}-${p(diaIni)}`, hasta: `${anio}-${p(mes)}-${p(diaFin)}` }
+}
+
+async function armarContexto(
+  admin: any,
   anio: number,
   mes: number,
   quincena: 1 | 2,
-): Promise<{ success: boolean; data?: RevisionNominaData; message?: string }> {
-  try {
-    if (!persona) return { success: false, message: "Selecciona un colaborador." }
-    const admin: any = await getSupabaseAdmin()
+  desde: string,
+  hasta: string,
+  proyectos: Set<number>,
+): Promise<CtxRevision> {
+  // Metas de toneladas por proyecto (idempresa) — indicador de productividad.
+  const metasRes = await getMetasToneladas()
+  const metaObjPorEmpresa = new Map<number, { meta: number; hc: number }>()
+  for (const m of metasRes.data || []) metaObjPorEmpresa.set(m.idempresa, { meta: m.metaTonTrabajadorDia, hc: m.hc })
 
-    const diaIni = quincena === 1 ? 1 : 16
-    const diaFin = quincena === 1 ? 15 : fin(anio, mes)
-    const desde = `${anio}-${String(mes).padStart(2, "0")}-${String(diaIni).padStart(2, "0")}`
-    const hasta = `${anio}-${String(mes).padStart(2, "0")}-${String(diaFin).padStart(2, "0")}`
-
-    // Ficha del colaborador (Head Count)
-    const { data: hc } = await admin
-      .from("headcount")
-      .select("nombre, identificacion, salario, idempresa, contratosiigo")
-      .eq("nombre", persona)
-      .limit(1)
-      .maybeSingle()
-    const identificacion = String(hc?.identificacion || "").trim()
-    const salario = num(hc?.salario)
-    const baseDia = salario > 0 ? salario / 30 : 58364
-
-    // A) Días de la quincena (pagonomina — modelo nuevo ya liquida base por día)
-    const { data: filas, error: errPn } = await admin
-      .from("pagonomina")
-      .select(
-        "fecha, idempresa, idempresaliquidacion, actividad_registrada, novedad_reportada, especialidad, toneladas, pago_produccion, base_dia, bonif_prestacional, bonif_no_prestacional, hed, hedf, hen, hef, hn, pago_domingo, recargodominical, total_liquidado_dia",
-      )
-      .eq("persona", persona)
-      .gte("fecha", desde)
-      .lte("fecha", hasta)
-      .order("fecha", { ascending: true })
-    if (errPn) return { success: false, message: errPn.message }
-
-    // Metas de toneladas por proyecto (idempresa) — indicador de productividad.
-    const metasRes = await getMetasToneladas()
-    const metaObjPorEmpresa = new Map<number, { meta: number; hc: number }>()
-    for (const m of metasRes.data || [])
-      metaObjPorEmpresa.set(m.idempresa, { meta: m.metaTonTrabajadorDia, hc: m.hc })
-
-    // HC REAL por día: trabajadores que movieron toneladas ese día en el proyecto
-    // (asistencia ya ratificada en pagonomina). El HC varía a diario según el volumen.
-    const proyectos = new Set<number>()
-    for (const r of filas || []) {
-      const esp = r.especialidad === true || String(r.especialidad) === "true"
-      if (num(r.toneladas) > 0 && !esp && r.idempresaliquidacion != null) proyectos.add(Number(r.idempresaliquidacion))
-    }
-    const hcPorFechaEmp = new Map<string, Set<string>>()
-    if (proyectos.size > 0) {
-      const { data: hcRows } = await admin
+  // HC REAL por día: trabajadores que movieron toneladas ese día en el proyecto
+  // (asistencia ya ratificada en pagonomina). El HC varía a diario según el volumen.
+  // PAGINADO: un proyecto entero en 15 días supera fácil el tope de 1000 filas de
+  // Supabase, y sin paginar el HC real saldría corto en silencio.
+  const hcPorFechaEmp = new Map<string, Set<string>>()
+  if (proyectos.size > 0) {
+    const hcRows = await fetchAllRows((f, t) =>
+      admin
         .from("pagonomina")
         .select("fecha, persona, idempresaliquidacion, especialidad")
         .in("idempresaliquidacion", Array.from(proyectos))
         .gte("fecha", desde)
         .lte("fecha", hasta)
         .gt("toneladas", 0)
-      for (const r of hcRows || []) {
-        if (r.especialidad === true || String(r.especialidad) === "true") continue
-        const key = String(r.fecha).slice(0, 10) + "|" + Number(r.idempresaliquidacion)
-        if (!hcPorFechaEmp.has(key)) hcPorFechaEmp.set(key, new Set())
-        hcPorFechaEmp.get(key)!.add(String(r.persona || "").trim())
-      }
+        .order("fecha", { ascending: true })
+        .range(f, t),
+    )
+    for (const r of hcRows) {
+      if (r.especialidad === true || String(r.especialidad) === "true") continue
+      const key = String(r.fecha).slice(0, 10) + "|" + Number(r.idempresaliquidacion)
+      if (!hcPorFechaEmp.has(key)) hcPorFechaEmp.set(key, new Set())
+      hcPorFechaEmp.get(key)!.add(String(r.persona || "").trim())
     }
-    const hcReal = (fecha: string, emp: number) => hcPorFechaEmp.get(fecha + "|" + emp)?.size || 0
+  }
 
+  // Vigencia legal aplicable a la quincena (los cortes legales rigen el 16-jul,
+  // que coincide con el inicio de la 2ª quincena → una sola vigencia por quincena).
+  const { data: vig } = await admin
+    .from("parametros_legales_vigencia")
+    .select("*")
+    .lte("fecha_desde", desde)
+    .order("fecha_desde", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  return {
+    anio,
+    mes,
+    quincena,
+    desde,
+    hasta,
+    metaObjPorEmpresa,
+    hcReal: (fecha: string, emp: number) => hcPorFechaEmp.get(fecha + "|" + emp)?.size || 0,
+    vig: vig || null,
+  }
+}
+
+/**
+ * Cuadro completo (A/B/C/D) de UNA persona, a partir de datos ya leídos.
+ * Función pura: la usan tanto la vista individual como el consolidado por
+ * proyecto, así que el cruce con Siigo es idéntico en ambos casos.
+ */
+function armarPersona(
+  persona: string,
+  hc: any | null,
+  filas: any[],
+  planoRows: any[],
+  ctx: CtxRevision,
+): RevisionNominaData {
+  const { anio, mes, quincena, desde, hasta, metaObjPorEmpresa, hcReal } = ctx
+  const identificacion = String(hc?.identificacion || "").trim()
+  const salario = num(hc?.salario)
+  const baseDia = salario > 0 ? salario / 30 : 58364
+
+  // Bloque A/B/C/D — se conserva tal cual estaba en la versión de una sola
+  // persona (misma lógica ya validada contra Siigo); lo único que cambió es de
+  // dónde llegan los datos: antes los leía aquí, ahora se los pasa el llamador.
+  {
     const dias: DiaRevision[] = []
     let baseGar = 0,
       ingTurno = 0,
@@ -366,23 +441,15 @@ export async function getRevisionNomina(
       anomalias,
     }
 
-    // C) Archivo plano (novedades a Siigo) para ese id + mes + quincena
-    let plano: PlanoRevision[] = []
-    if (identificacion) {
-      const { data: pl } = await admin
-        .from("archivoplano")
-        .select("nombrenovedad, tiponovedad, cantidadvalor, nominaproyectada, fechainicio, quincena, mes")
-        .eq("identificacionempleado", identificacion)
-        .eq("mes", String(mes).padStart(2, "0"))
-        .eq("quincena", quincena)
-      plano = (pl || []).map((p: any) => ({
-        nombrenovedad: String(p.nombrenovedad || ""),
-        tiponovedad: String(p.tiponovedad || ""),
-        cantidadvalor: num(p.cantidadvalor),
-        nominaproyectada: num(p.nominaproyectada),
-        fechainicio: p.fechainicio || null,
-      }))
-    }
+    // C) Archivo plano (novedades a Siigo) para ese id + mes + quincena.
+    // Las filas ya vienen leídas y filtradas por el llamador (`planoRows`).
+    const plano: PlanoRevision[] = (planoRows || []).map((p: any) => ({
+      nombrenovedad: String(p.nombrenovedad || ""),
+      tiponovedad: String(p.tiponovedad || ""),
+      cantidadvalor: num(p.cantidadvalor),
+      nominaproyectada: num(p.nominaproyectada),
+      fechainicio: p.fechainicio || null,
+    }))
 
     // D) SIMULACIÓN SIIGO — replica el proceso de liquidación de Siigo al ingerir el
     // archivo plano, para CRUZARLO contra el Total quincena de LIPgo:
@@ -412,15 +479,10 @@ export async function getRevisionNomina(
       explicaciones: [],
     }
     if (salario > 0) {
-      // Vigencia legal aplicable a la quincena (los cortes legales rigen el 16-jul,
-      // que coincide con el inicio de la 2ª quincena → una sola vigencia por quincena).
-      const { data: vig } = await admin
-        .from("parametros_legales_vigencia")
-        .select("*")
-        .lte("fecha_desde", desde)
-        .order("fecha_desde", { ascending: false })
-        .limit(1)
-        .maybeSingle()
+      // Vigencia legal aplicable a la quincena (ya resuelta en el contexto: los
+      // cortes legales rigen el 16-jul, que coincide con el inicio de la 2ª
+      // quincena → una sola vigencia por quincena).
+      const vig = ctx.vig
       const jornada = vig?.jornada_horas != null ? Number(vig.jornada_horas) : 7
       const pct = {
         hed: vig?.pct_hed != null ? Number(vig.pct_hed) : 25,
@@ -588,26 +650,366 @@ export async function getRevisionNomina(
     }
 
     return {
+      colaborador: {
+        persona,
+        identificacion,
+        salario,
+        baseDia,
+        empresa,
+        contratosiigo: String(hc?.contratosiigo || "").trim(),
+      },
+      quincena: { anio, mes, num: quincena, desde, hasta },
+      dias,
+      resumen,
+      metaResumen,
+      plano,
+      siigo,
+    }
+  }
+}
+
+/** Cuadro completo (A/B/C/D) de un colaborador para una quincena. */
+export async function getRevisionNomina(
+  persona: string,
+  anio: number,
+  mes: number,
+  quincena: 1 | 2,
+): Promise<{ success: boolean; data?: RevisionNominaData; message?: string }> {
+  try {
+    if (!persona) return { success: false, message: "Selecciona un colaborador." }
+    const admin: any = await getSupabaseAdmin()
+    const { desde, hasta } = rangoQ(anio, mes, quincena)
+
+    // Ficha del colaborador (Head Count)
+    const { data: hc } = await admin
+      .from("headcount")
+      .select("nombre, identificacion, salario, idempresa, contratosiigo")
+      .eq("nombre", persona)
+      .limit(1)
+      .maybeSingle()
+
+    // A) Días de la quincena (pagonomina — modelo nuevo ya liquida base por día)
+    const { data: filas, error: errPn } = await admin
+      .from("pagonomina")
+      .select(PN_COLS)
+      .eq("persona", persona)
+      .gte("fecha", desde)
+      .lte("fecha", hasta)
+      .order("fecha", { ascending: true })
+    if (errPn) return { success: false, message: errPn.message }
+
+    // C) Archivo plano de esa cédula para el mes + quincena
+    const identificacion = String(hc?.identificacion || "").trim()
+    let planoRows: any[] = []
+    if (identificacion) {
+      const { data: pl } = await admin
+        .from("archivoplano")
+        .select("nombrenovedad, tiponovedad, cantidadvalor, nominaproyectada, fechainicio, quincena, mes")
+        .eq("identificacionempleado", identificacion)
+        .eq("mes", String(mes).padStart(2, "0"))
+        .eq("quincena", quincena)
+      planoRows = pl || []
+    }
+
+    const proyectos = new Set<number>()
+    for (const r of filas || []) {
+      const esp = r.especialidad === true || String(r.especialidad) === "true"
+      if (num(r.toneladas) > 0 && !esp && r.idempresaliquidacion != null) proyectos.add(Number(r.idempresaliquidacion))
+    }
+    const ctx = await armarContexto(admin, anio, mes, quincena, desde, hasta, proyectos)
+
+    return { success: true, data: armarPersona(persona, hc, filas || [], planoRows, ctx) }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al armar la revisión de nómina." }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// CONSOLIDADO POR PROYECTO — "Todos los colaboradores"
+// Mismo cuadro, pero para TODO el centro de costo a la vez: es lo que permite
+// cruzar el archivo plano COMPLETO de LIPgo contra Siigo de una sola pasada, en
+// vez de persona por persona. El universo son los colaboradores del Head Count
+// amarrados al id del selector global (cada id ES un centro de costo), y de cada
+// uno se toman TODOS sus días — trabaje donde trabaje —, porque Siigo lo liquida
+// por su contrato, no por dónde movió el tonelaje.
+// Corre `armarPersona` (la misma función de la vista individual) sobre cada uno,
+// así que el cruce con Siigo es idéntico; aquí solo se suma y se ordena por Δ.
+// ---------------------------------------------------------------------------
+
+export interface PersonaProyectoRow {
+  persona: string
+  identificacion: string
+  estado: string
+  salario: number
+  /** LIPgo */
+  baseGarantizada: number
+  ingresoTurno: number
+  recargoDominical: number
+  bono: number
+  perdida: number
+  bonosNoPrestacionales: number
+  totalLipgo: number
+  /** Siigo (simulado desde el archivo plano) */
+  baseQuincenal: number
+  totalSiigo: number
+  diferencia: number
+  cuadra: boolean
+  simulable: boolean // hay salario en Head Count (sin él no se puede simular Siigo)
+  /** Señales para priorizar la revisión */
+  diasLiquidados: number
+  diasSinPago: number
+  anomalias: number
+  novedadesPlano: number
+  componentes: CruceComponente[]
+}
+
+export interface NovedadPlanoAgg {
+  nombrenovedad: string
+  tiponovedad: string
+  personas: number
+  cantidadvalor: number
+}
+
+export interface RevisionProyectoData {
+  empresa: number | null
+  quincena: { anio: number; mes: number; num: number; desde: string; hasta: string }
+  personas: PersonaProyectoRow[]
+  resumen: {
+    nPersonas: number
+    nConDatos: number
+    nCuadran: number
+    nDescuadran: number
+    nSinSalario: number
+    nSinPlano: number
+    totalLipgo: number
+    totalSiigo: number
+    diferencia: number
+    baseGarantizada: number
+    ingresoTurno: number
+    recargoDominical: number
+    bono: number
+    perdida: number
+    bonosNoPrestacionales: number
+    anomalias: number
+    diasSinPago: number
+  }
+  componentes: CruceComponente[]
+  plano: NovedadPlanoAgg[]
+}
+
+export async function getRevisionNominaProyecto(
+  idempresa: number | null,
+  anio: number,
+  mes: number,
+  quincena: 1 | 2,
+): Promise<{ success: boolean; data?: RevisionProyectoData; message?: string }> {
+  try {
+    const admin: any = await getSupabaseAdmin()
+    const { desde, hasta } = rangoQ(anio, mes, quincena)
+
+    // 1) Universo = Head Count del proyecto (centro de costo del selector global).
+    let qhc = admin.from("headcount").select("nombre, identificacion, salario, idempresa, contratosiigo, estado")
+    if (idempresa != null) qhc = qhc.eq("idempresa", idempresa)
+    const { data: hcRows, error: errHc } = await qhc
+    if (errHc) return { success: false, message: errHc.message }
+
+    const hcPorPersona = new Map<string, any>()
+    for (const r of hcRows || []) {
+      const p = String(r.nombre || "").trim()
+      if (!p || /prueba/i.test(p)) continue
+      if (!hcPorPersona.has(p)) hcPorPersona.set(p, r)
+    }
+    const personas = Array.from(hcPorPersona.keys())
+    if (personas.length === 0)
+      return {
+        success: false,
+        message:
+          idempresa != null
+            ? `No hay colaboradores en el Head Count del proyecto ${idempresa}.`
+            : "No hay colaboradores en el Head Count.",
+      }
+
+    // 2) pagonomina de todos ellos (por lotes para no reventar la URL del .in,
+    //    y paginado dentro de cada lote por el tope de 1000 filas de Supabase).
+    const filasTodas: any[] = []
+    for (const lote of enLotes(personas, 50)) {
+      const rows = await fetchAllRows((f, t) =>
+        admin
+          .from("pagonomina")
+          .select(PN_COLS)
+          .in("persona", lote)
+          .gte("fecha", desde)
+          .lte("fecha", hasta)
+          .order("persona", { ascending: true })
+          .order("fecha", { ascending: true })
+          .range(f, t),
+      )
+      filasTodas.push(...rows)
+    }
+    const filasPorPersona = new Map<string, any[]>()
+    for (const r of filasTodas) {
+      const p = String(r.persona || "").trim()
+      if (!filasPorPersona.has(p)) filasPorPersona.set(p, [])
+      filasPorPersona.get(p)!.push(r)
+    }
+
+    // 3) archivoplano de todas las cédulas del universo.
+    const cedulas = personas.map((p) => String(hcPorPersona.get(p)?.identificacion || "").trim()).filter(Boolean)
+    const planoTodo: any[] = []
+    for (const lote of enLotes(Array.from(new Set(cedulas)), 50)) {
+      const rows = await fetchAllRows((f, t) =>
+        admin
+          .from("archivoplano")
+          .select("identificacionempleado, nombrenovedad, tiponovedad, cantidadvalor, nominaproyectada, fechainicio, quincena, mes")
+          .in("identificacionempleado", lote)
+          .eq("mes", String(mes).padStart(2, "0"))
+          .eq("quincena", quincena)
+          .order("identificacionempleado", { ascending: true })
+          .range(f, t),
+      )
+      planoTodo.push(...rows)
+    }
+    const planoPorCedula = new Map<string, any[]>()
+    for (const r of planoTodo) {
+      const c = String(r.identificacionempleado || "").trim()
+      if (!planoPorCedula.has(c)) planoPorCedula.set(c, [])
+      planoPorCedula.get(c)!.push(r)
+    }
+
+    // 4) Contexto compartido (metas + HC real + vigencia) y cálculo por persona.
+    const proyectos = new Set<number>()
+    for (const r of filasTodas) {
+      const esp = r.especialidad === true || String(r.especialidad) === "true"
+      if (num(r.toneladas) > 0 && !esp && r.idempresaliquidacion != null) proyectos.add(Number(r.idempresaliquidacion))
+    }
+    const ctx = await armarContexto(admin, anio, mes, quincena, desde, hasta, proyectos)
+
+    const out: PersonaProyectoRow[] = []
+    const compAcum = new Map<string, { lipgo: number; siigo: number; orden: number }>()
+    const novAgg = new Map<string, { tipo: string; cant: number; personas: Set<string> }>()
+    const res = {
+      nPersonas: personas.length,
+      nConDatos: 0,
+      nCuadran: 0,
+      nDescuadran: 0,
+      nSinSalario: 0,
+      nSinPlano: 0,
+      totalLipgo: 0,
+      totalSiigo: 0,
+      diferencia: 0,
+      baseGarantizada: 0,
+      ingresoTurno: 0,
+      recargoDominical: 0,
+      bono: 0,
+      perdida: 0,
+      bonosNoPrestacionales: 0,
+      anomalias: 0,
+      diasSinPago: 0,
+    }
+
+    for (const persona of personas) {
+      const hc = hcPorPersona.get(persona)
+      const ced = String(hc?.identificacion || "").trim()
+      const filas = filasPorPersona.get(persona) || []
+      const planoRows = ced ? planoPorCedula.get(ced) || [] : []
+      const d = armarPersona(persona, hc, filas, planoRows, ctx)
+      const r = d.resumen
+      const s = d.siigo
+      const diasSinPago = d.dias.filter((x) => x.total === 0).length
+
+      out.push({
+        persona,
+        identificacion: ced,
+        estado: String(hc?.estado || "").trim() || "—",
+        salario: d.colaborador.salario,
+        baseGarantizada: r.baseGarantizada,
+        ingresoTurno: r.ingresoTurno,
+        recargoDominical: r.recargoDominical,
+        bono: r.bono,
+        perdida: r.perdida,
+        bonosNoPrestacionales: r.bonosNoPrestacionales,
+        totalLipgo: r.total,
+        baseQuincenal: s.baseQuincenal,
+        totalSiigo: s.totalSiigo,
+        diferencia: s.disponible ? s.diferencia : 0,
+        cuadra: s.disponible ? s.cuadra : false,
+        simulable: s.disponible,
+        diasLiquidados: d.dias.length,
+        diasSinPago,
+        anomalias: r.anomalias,
+        novedadesPlano: d.plano.length,
+        componentes: s.componentes,
+      })
+
+      if (d.dias.length > 0) res.nConDatos += 1
+      if (!s.disponible) res.nSinSalario += 1
+      else if (s.cuadra) res.nCuadran += 1
+      else res.nDescuadran += 1
+      if (d.plano.length === 0) res.nSinPlano += 1
+      res.totalLipgo += r.total
+      res.totalSiigo += s.disponible ? s.totalSiigo : 0
+      res.baseGarantizada += r.baseGarantizada
+      res.ingresoTurno += r.ingresoTurno
+      res.recargoDominical += r.recargoDominical
+      res.bono += r.bono
+      res.perdida += r.perdida
+      res.bonosNoPrestacionales += r.bonosNoPrestacionales
+      res.anomalias += r.anomalias
+      res.diasSinPago += diasSinPago
+
+      // Cruce por componente, acumulado del proyecto (mismo desglose que la vista
+      // individual, para poder ver DÓNDE nace la diferencia total).
+      s.componentes.forEach((c, i) => {
+        const g = compAcum.get(c.nombre) || { lipgo: 0, siigo: 0, orden: i }
+        g.lipgo += c.lipgo
+        g.siigo += c.siigo
+        compAcum.set(c.nombre, g)
+      })
+      for (const p of d.plano) {
+        const g = novAgg.get(p.nombrenovedad) || { tipo: p.tiponovedad, cant: 0, personas: new Set<string>() }
+        g.cant += p.cantidadvalor
+        g.personas.add(persona)
+        novAgg.set(p.nombrenovedad, g)
+      }
+    }
+
+    res.diferencia = res.totalSiigo - res.totalLipgo
+
+    // Orden de revisión: primero los que más descuadran (|Δ| desc), y dentro de
+    // los que cuadran, por total. Es la lista de trabajo, no un directorio.
+    out.sort((a, b) => {
+      const da = a.simulable ? Math.abs(a.diferencia) : -1
+      const db = b.simulable ? Math.abs(b.diferencia) : -1
+      if (db !== da) return db - da
+      return b.totalLipgo - a.totalLipgo
+    })
+
+    const componentes: CruceComponente[] = Array.from(compAcum.entries())
+      .sort((a, b) => a[1].orden - b[1].orden)
+      .map(([nombre, g]) => ({ nombre, lipgo: Math.round(g.lipgo), siigo: Math.round(g.siigo) }))
+
+    const plano: NovedadPlanoAgg[] = Array.from(novAgg.entries())
+      .map(([nombrenovedad, g]) => ({
+        nombrenovedad,
+        tiponovedad: g.tipo,
+        personas: g.personas.size,
+        cantidadvalor: g.cant,
+      }))
+      .sort((a, b) => a.nombrenovedad.localeCompare(b.nombrenovedad, "es"))
+
+    return {
       success: true,
       data: {
-        colaborador: {
-          persona,
-          identificacion,
-          salario,
-          baseDia,
-          empresa,
-          contratosiigo: String(hc?.contratosiigo || "").trim(),
-        },
+        empresa: idempresa,
         quincena: { anio, mes, num: quincena, desde, hasta },
-        dias,
-        resumen,
-        metaResumen,
+        personas: out,
+        resumen: res,
+        componentes,
         plano,
-        siigo,
       },
     }
   } catch (e: any) {
-    return { success: false, message: e?.message || "Error al armar la revisión de nómina." }
+    return { success: false, message: e?.message || "Error al armar el consolidado del proyecto." }
   }
 }
 
