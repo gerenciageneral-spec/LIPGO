@@ -19,6 +19,26 @@
 -- (translate ÁÉÍÓÚÜÑ -> AEIOUUN), por si en la base están acentuados. Cada
 -- nombre está atado a su idempresa para no tocar a un homónimo de otro proyecto.
 --
+-- ###########################################################################
+-- POR QUÉ NOMBRE EXACTO Y NUNCA UN PATRÓN — INCIDENTE REAL DEL 31-JUL-2026
+-- Una versión previa de este script buscaba por patrón ('%ESCORCIA%' para la
+-- ID 2). Ese apellido NO es único en Avimol, así que el reemplazo alcanzó a
+-- TRES personas en vez de una:
+--     ANDRES FELIPE ESCORCIA UCROS            9 órdenes  <- el objetivo
+--     ANDERSON MILLER DE LA ROSA ESCORCIA   107 órdenes  <- colateral
+--     LUIS ANTONIO ESCORCIA ANTONIO GUILLEN  64 órdenes  <- colateral
+-- De 178 órdenes tocadas, 171 fueron daño colateral. A Anderson le desapareció
+-- todo el tonelaje del 7 al 25 de julio (114,8 t) porque su nombre quedó como
+-- "Aux. Prueba 10", y pagonomina excluye cualquier nombre con "prueba".
+-- Se revirtió desde la tabla `auditoria`, que guardaba el valor anterior de
+-- cada orden: 169 órdenes restauradas, respaldo en
+-- scripts/BACKUP_pre_restauracion.json.
+--
+-- REGLA: este script NO debe volver a usar LIKE/ILIKE sobre el nombre. Y el
+-- PASO 0 no es opcional: hay que verificar que cada objetivo devuelva UNA
+-- sola persona antes de escribir nada.
+-- ###########################################################################
+--
 -- OJO — esto corrige el DESTAJO (cabeceraoc). Si además tienen filas en
 -- `registroasistencia` antes del ingreso, cobran la BASE del día por otra vía;
 -- el PASO 0(b) lo diagnostica.
