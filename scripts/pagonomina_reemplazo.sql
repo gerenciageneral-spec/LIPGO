@@ -515,7 +515,33 @@ create or replace view public.pagonomina as
         -- Bonificación por productividad = excedente de destajo del día CON SIGNO.
         -- TODO es prestacional (se elimina el tope de $9.948; cotiza completo al IBC).
         -- Va con signo para que la quincena netee (archivoplano suma y aplica MAX(0,·)).
-        excedente_bruto_destajo AS bonif_prestacional,
+        --
+        -- SE RESTA LA BASE EFECTIVAMENTE PAGADA (`valor_base_final`), NO la teórica
+        -- (`valor_diario_ley`), desde el 16-jul-2026.
+        --
+        -- El excedente es "lo que produjo POR ENCIMA de lo que se le pagó de base".
+        -- Si ese día NO se le pagó base —porque tuvo una novedad que no remunera—,
+        -- restarle igual salario/30 le cobra una base que nunca recibió y le borra
+        -- el bono de toda la quincena. Caso real: DANILO JOSE DE LA HOZ CAMARGO,
+        -- 21-jul-2026: movió 2,9 t ($11.889) en un día con base $0. La vista le
+        -- calculaba 11.889 − 58.364 = −46.475 y su neto quincenal caía a −$43.560
+        -- (bono $0), cuando el módulo de Revisión de nómina —que sí resta la base
+        -- real— daba +$14.803. Esa era la diferencia entre LIPgo y el archivo plano.
+        --
+        -- En un día normal las dos fórmulas dan lo MISMO (valor_base_final =
+        -- valor_diario_ley), y en el día 31 también (valor_base_final = 0, así que
+        -- el tonelaje entra completo al excedente, igual que la rama del 31).
+        -- Solo difieren en los días con tonelaje y sin base pagada: 5 personas en
+        -- la quincena en curso.
+        --
+        -- PISO 16-jul-2026: antes de esa fecha se conserva `excedente_bruto_destajo`
+        -- tal como estaba, para no reescribir quincenas ya enviadas a Siigo.
+        CASE
+            WHEN ((fecha >= DATE '2026-07-16')
+              AND (toneladas > (0)::numeric)
+              AND (especialidad IS NOT TRUE)) THEN (pago_produccion - valor_base_final)
+            ELSE excedente_bruto_destajo
+        END AS bonif_prestacional,
         -- Bono NO prestacional del módulo "Bonos" (Compensación): suma de los
         -- bonos APROBADOS de ese día para esa persona. NO entra a
         -- total_liquidado_dia (no cotiza al IBC ni genera prestaciones); se
