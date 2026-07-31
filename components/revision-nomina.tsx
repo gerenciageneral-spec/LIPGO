@@ -44,6 +44,15 @@ import {
   type DetalleAuxiliarDia,
   type ClasificacionAuxiliar,
 } from "@/lib/revision-nomina-actions"
+import {
+  getCruceProyeccion,
+  generarAjustes,
+  getAjustes,
+  aprobarAjustes,
+  rechazarAjustes,
+  type CruceProyeccionData,
+  type AjusteRow,
+} from "@/lib/ajuste-proyeccion-actions"
 
 const MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
 const money = (n: number) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO", { maximumFractionDigits: 0 })
@@ -129,6 +138,7 @@ export default function RevisionNomina() {
           <TabsTrigger value="hc">HC por día (por proyecto)</TabsTrigger>
           <TabsTrigger value="conciliacion">Conciliación báscula ↔ pago</TabsTrigger>
           <TabsTrigger value="asistencia">Auxiliares vs. Asistencia</TabsTrigger>
+          <TabsTrigger value="ajuste">Ajuste de Proyecciones</TabsTrigger>
         </TabsList>
 
         <TabsContent value="colaborador" className="mt-4 space-y-4">
@@ -245,6 +255,10 @@ export default function RevisionNomina() {
 
         <TabsContent value="asistencia" className="mt-4">
           <AuxiliaresVsAsistencia />
+        </TabsContent>
+
+        <TabsContent value="ajuste" className="mt-4">
+          <AjusteProyecciones />
         </TabsContent>
       </Tabs>
     </div>
@@ -1228,6 +1242,329 @@ function ConciliacionBascula() {
           <CardContent className="py-10 text-center text-sm text-muted-foreground">
             Selecciona la quincena y la planta, y pulsa <strong>Conciliar</strong> para cruzar báscula, pago al
             personal y facturación.
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// AJUSTE DE PROYECCIONES
+// La nómina se paga ANTES de cerrar el último día de la quincena, así que ese
+// día el tonelaje se PROYECTA. La proyección NO reemplaza a las órdenes reales:
+// se SUMA a ellas, y el día sigue llegando carga. Aquí se cruza, el día
+// siguiente al pago (16 y 1º), lo REAL contra lo PAGADO, y la diferencia se
+// paga o se descuenta en la quincena siguiente.
+// ---------------------------------------------------------------------------
+function AjusteProyecciones() {
+  const { toast } = useToast()
+  const hoy = new Date()
+  const [anio, setAnio] = useState(hoy.getFullYear())
+  const [mes, setMes] = useState(hoy.getMonth() + 1)
+  const [quincena, setQuincena] = useState<1 | 2>(hoy.getDate() <= 15 ? 1 : 2)
+  const [empresa, setEmpresa] = useState(0)
+  const [cruce, setCruce] = useState<CruceProyeccionData | null>(null)
+  const [registrados, setRegistrados] = useState<AjusteRow[]>([])
+  const [loading, setLoading] = useState(false)
+  const [guardando, setGuardando] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [sel, setSel] = useState<Set<number>>(new Set())
+
+  const anios = [hoy.getFullYear() + 1, hoy.getFullYear(), hoy.getFullYear() - 1]
+  const t2 = (x: number) => (Number(x) || 0).toLocaleString("es-CO", { maximumFractionDigits: 2 })
+  const PLANTAS: Record<number, string> = { 1: "Indupan", 2: "Avimol", 3: "Cedi Funza", 4: "Cedi Medellín" }
+
+  const consultar = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    setSel(new Set())
+    const [c, r] = await Promise.all([
+      getCruceProyeccion(anio, mes, quincena, empresa),
+      getAjustes({ anio, mes, quincena, estado: "todos" }),
+    ])
+    setLoading(false)
+    if (c.success && c.data) setCruce(c.data)
+    else {
+      setCruce(null)
+      setError(c.message || "Error al calcular el cruce.")
+    }
+    if (r.success) setRegistrados(r.data)
+  }, [anio, mes, quincena, empresa])
+
+  useEffect(() => {
+    consultar()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const generar = async () => {
+    setGuardando(true)
+    const r = await generarAjustes(anio, mes, quincena, empresa)
+    setGuardando(false)
+    if (r.success) {
+      toast({ title: "Ajustes generados", description: `${r.creados} línea(s) quedaron PENDIENTES de aprobación.` })
+      consultar()
+    } else toast({ title: "No se pudieron generar", description: r.message, variant: "destructive" })
+  }
+
+  const accion = async (fn: () => Promise<{ success: boolean; message?: string }>, ok: string) => {
+    setGuardando(true)
+    const r = await fn()
+    setGuardando(false)
+    if (r.success) {
+      toast({ title: ok })
+      setSel(new Set())
+      consultar()
+    } else toast({ title: "No se pudo completar", description: r.message, variant: "destructive" })
+  }
+
+  const pendientes = registrados.filter((a) => a.estado === "pendiente")
+  const toggleSel = (id: number) =>
+    setSel((p) => {
+      const n = new Set(p)
+      if (n.has(id)) n.delete(id)
+      else n.add(id)
+      return n
+    })
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardContent className="flex flex-wrap items-end gap-3 pt-6">
+          <div className="space-y-1">
+            <Label>Año</Label>
+            <Select value={String(anio)} onValueChange={(v) => setAnio(Number(v))}>
+              <SelectTrigger className="w-[90px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {anios.map((y) => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label>Mes</Label>
+            <Select value={String(mes)} onValueChange={(v) => setMes(Number(v))}>
+              <SelectTrigger className="w-[110px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {MESES.map((m, i) => <SelectItem key={m} value={String(i + 1)}>{m}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label>Quincena proyectada</Label>
+            <Select value={String(quincena)} onValueChange={(v) => setQuincena(Number(v) as 1 | 2)}>
+              <SelectTrigger className="w-[130px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="1">1ª (1–15)</SelectItem>
+                <SelectItem value="2">2ª (16–fin)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label>Proyecto</Label>
+            <Select value={String(empresa)} onValueChange={(v) => setEmpresa(Number(v))}>
+              <SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="0">Todos</SelectItem>
+                <SelectItem value="1">Indupan (1)</SelectItem>
+                <SelectItem value="2">Avimol (2)</SelectItem>
+                <SelectItem value="3">Cedi Funza (3)</SelectItem>
+                <SelectItem value="4">Cedi Medellín (4)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <Button onClick={consultar} disabled={loading} className="min-w-[130px]">
+            {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ClipboardCheck className="mr-2 h-4 w-4" />}
+            Cruzar
+          </Button>
+        </CardContent>
+      </Card>
+
+      {cruce?.sinProyeccion && (
+        <Card>
+          <CardContent className="py-8 text-center text-sm text-muted-foreground">
+            No hay órdenes de proyección en esta quincena, así que no hay nada que ajustar.
+          </CardContent>
+        </Card>
+      )}
+
+      {cruce && !cruce.sinProyeccion && (
+        <>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Kpi
+              label="Toneladas pagadas vs reales"
+              value={`${t2(cruce.resumen.diferenciaTon)} t`}
+              hint={`pagadas ${t2(cruce.resumen.tonPagada)} · reales ${t2(cruce.resumen.tonReal)}`}
+              tone={cruce.resumen.diferenciaTon >= 0 ? "up" : "down"}
+            />
+            <Kpi
+              label="Falta pagar"
+              value={money(cruce.resumen.valorAFavorTrabajador)}
+              hint="se movió más de lo proyectado"
+              tone={cruce.resumen.valorAFavorTrabajador > 0 ? "up" : undefined}
+            />
+            <Kpi
+              label="Se pagó de más"
+              value={money(Math.abs(cruce.resumen.valorAFavorEmpresa))}
+              hint="a descontar en la siguiente"
+              tone={cruce.resumen.valorAFavorEmpresa < 0 ? "down" : undefined}
+            />
+            <Kpi
+              label="Neto del ajuste"
+              value={signed(cruce.resumen.neto)}
+              hint={`${cruce.resumen.personas} persona(s) · aplica en ${MESES[cruce.aplicaEn.mes - 1]} ${cruce.aplicaEn.quincena}ª`}
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 p-3 text-xs">
+            <span>
+              Día(s) proyectado(s): <strong>{cruce.diasProyectados.join(", ")}</strong>. El ajuste se aplicará en la{" "}
+              <strong>{cruce.aplicaEn.quincena}ª quincena de {MESES[cruce.aplicaEn.mes - 1]} {cruce.aplicaEn.anio}</strong>.
+            </span>
+            <Button size="sm" className="ml-auto" onClick={generar} disabled={guardando || cruce.lineas.length === 0}>
+              {guardando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Generar {cruce.lineas.length} ajuste(s)
+            </Button>
+          </div>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Cruce del día proyectado — {cruce.lineas.length} diferencia(s)</CardTitle>
+            </CardHeader>
+            <CardContent className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Fecha</TableHead>
+                    <TableHead>Persona</TableHead>
+                    <TableHead>Proyecto</TableHead>
+                    <TableHead className="text-right">Ton pagadas</TableHead>
+                    <TableHead className="text-right">Ton reales</TableHead>
+                    <TableHead className="text-right">Δ ton</TableHead>
+                    <TableHead className="text-right">Valor pagado</TableHead>
+                    <TableHead className="text-right">Valor real</TableHead>
+                    <TableHead className="text-right">Ajuste</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody className="tabular-nums">
+                  {cruce.lineas.length === 0 ? (
+                    <TableRow><TableCell colSpan={9} className="h-20 text-center text-sm text-muted-foreground">
+                      La proyección coincidió con lo real. No hay nada que ajustar.
+                    </TableCell></TableRow>
+                  ) : (
+                    cruce.lineas.map((l, i) => (
+                      <TableRow key={i}>
+                        <TableCell className="whitespace-nowrap">{l.fechaProyectada}</TableCell>
+                        <TableCell>
+                          <div className="font-medium">{l.persona}</div>
+                          {!l.identificacion && <div className="text-[10px] text-amber-600 dark:text-amber-400">sin cédula en Head Count</div>}
+                        </TableCell>
+                        <TableCell className="text-xs">{PLANTAS[l.idempresa] || `ID ${l.idempresa}`}</TableCell>
+                        <TableCell className="text-right">{t2(l.tonPagada)}</TableCell>
+                        <TableCell className="text-right">{t2(l.tonReal)}</TableCell>
+                        <TableCell className={`text-right font-medium ${l.diferenciaTon < 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                          {l.diferenciaTon >= 0 ? "+" : ""}{t2(l.diferenciaTon)}
+                        </TableCell>
+                        <TableCell className="text-right text-muted-foreground">{money(l.valorPagado)}</TableCell>
+                        <TableCell className="text-right text-muted-foreground">{money(l.valorReal)}</TableCell>
+                        <TableCell className={`text-right font-semibold ${l.valorAjuste < 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                          {signed(l.valorAjuste)}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+              <p className="mt-2 text-xs text-muted-foreground">
+                <strong>Ton pagadas</strong> = lo que pagonomina liquidó ese día (proyección + órdenes reales que ya
+                habían entrado al momento del pago). <strong>Ton reales</strong> = solo las órdenes reales del día con
+                su tiquete de báscula, ya cerrado el día. La diferencia es lo que falta pagar o lo que se pagó de más.
+                Volver a generar <strong>actualiza</strong> el ajuste existente, no lo duplica.
+              </p>
+            </CardContent>
+          </Card>
+        </>
+      )}
+
+      {registrados.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <CardTitle className="text-base">
+                Ajustes registrados — {registrados.length} ({pendientes.length} pendiente(s))
+              </CardTitle>
+              {sel.size > 0 && (
+                <div className="flex gap-2">
+                  <Button size="sm" disabled={guardando} onClick={() => accion(() => aprobarAjustes([...sel]), "Ajustes aprobados")}>
+                    <Check className="mr-1 h-3 w-3" /> Aprobar {sel.size}
+                  </Button>
+                  <Button size="sm" variant="outline" disabled={guardando}
+                    onClick={() => accion(() => rechazarAjustes([...sel], "Rechazado desde Ajuste de Proyecciones"), "Ajustes rechazados")}>
+                    Rechazar
+                  </Button>
+                </div>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-8"></TableHead>
+                  <TableHead>Fecha</TableHead>
+                  <TableHead>Persona</TableHead>
+                  <TableHead className="text-right">Δ ton</TableHead>
+                  <TableHead className="text-right">Ajuste</TableHead>
+                  <TableHead>Novedad Siigo</TableHead>
+                  <TableHead>Aplica en</TableHead>
+                  <TableHead>Estado</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody className="tabular-nums">
+                {registrados.map((a) => (
+                  <TableRow key={a.id} className={a.estado === "pendiente" ? "cursor-pointer hover:bg-muted/30" : ""}
+                    onClick={() => a.estado === "pendiente" && toggleSel(a.id)}>
+                    <TableCell>
+                      {a.estado === "pendiente" && (
+                        <input type="checkbox" checked={sel.has(a.id)} onChange={() => toggleSel(a.id)} onClick={(e) => e.stopPropagation()} />
+                      )}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">{a.fechaProyectada}</TableCell>
+                    <TableCell>{a.persona}</TableCell>
+                    <TableCell className="text-right">{a.diferenciaTon >= 0 ? "+" : ""}{t2(a.diferenciaTon)}</TableCell>
+                    <TableCell className={`text-right font-medium ${a.valorAjuste < 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                      {signed(a.valorAjuste)}
+                    </TableCell>
+                    <TableCell className="text-xs">{a.novedadSiigo}</TableCell>
+                    <TableCell className="text-xs">{MESES[a.mesAplica - 1]} {a.anioAplica} · {a.quincenaAplica}ª</TableCell>
+                    <TableCell>
+                      <span className={`rounded px-2 py-0.5 text-xs font-medium ${
+                        a.estado === "aprobado" ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                        : a.estado === "rechazado" ? "bg-destructive/15 text-destructive"
+                        : "bg-amber-500/15 text-amber-600 dark:text-amber-400"}`}>
+                        {a.estado}
+                      </span>
+                      {a.aprobadoPor && <div className="mt-0.5 text-[10px] text-muted-foreground">por {a.aprobadoPor}</div>}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Solo los <strong>aprobados</strong> salen al archivo plano de la quincena de aplicación, con su novedad
+              propia. Toca una fila pendiente para seleccionarla.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {error && (
+        <Card className="border-destructive/40">
+          <CardContent className="flex items-start gap-2 py-6 text-sm">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+            <div>
+              <div className="font-medium text-destructive">No se pudo calcular el cruce</div>
+              <div className="mt-1 text-muted-foreground">{error}</div>
+            </div>
           </CardContent>
         </Card>
       )}

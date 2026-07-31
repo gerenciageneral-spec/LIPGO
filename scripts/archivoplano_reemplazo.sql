@@ -9,6 +9,11 @@
 --     vigente en la fecha (tabla `jornada_legal`), no un 7,33 fijo. jun-2026 → 7,3333;
 --     desde 16-jul-2026 → 7. Requiere scripts/create_jornada_legal.sql.
 --   · nominaproyectada = salario quincenal por trabajador (antes fijo 875452).
+--   · AJUSTE DE PROYECCIÓN (Revisión de nómina › Ajuste de Proyecciones): rama
+--     propia que liquida, en la quincena SIGUIENTE, la diferencia entre lo
+--     proyectado y lo realmente movido el último día de la quincena anterior.
+--     Solo los APROBADOS. Novedades 72 (ingreso) y 73 (deducción).
+--     Requiere scripts/create_ajustes_proyeccion.sql.
 --   · BONOS no prestacionales (Compensación › Bonos): rama propia al final que
 --     lee `bonos_nomina` (solo APROBADOS), una fila por código de novedad
 --     (43/50/66). NO se mezclan con la novedad 71- del bono de toneladas.
@@ -279,4 +284,33 @@ UNION ALL
             ELSE 2
         END,
     b.idempresa, b.identificacion, h.contratosiigo, b.novedad_siigo
+UNION ALL
+-- AJUSTE DE PROYECCIÓN (Revisión de nómina › Ajuste de Proyecciones).
+-- La nómina se paga antes de cerrar el último día de la quincena, así que ese
+-- día el tonelaje se PROYECTA; al cerrar, lo real casi nunca coincide. La
+-- diferencia se liquida en la quincena SIGUIENTE (anio_aplica/mes_aplica/
+-- quincena_aplica), con su novedad propia:
+--   · a favor del trabajador -> 72-Ajuste proyección toneladas ingreso-Ingreso
+--   · pagado de más          -> 73-Ajuste mayor valor pagado toneladas-Deducción
+-- Solo entran los APROBADOS. Se agrupa por novedad para que ingreso y deducción
+-- salgan en filas separadas. `cantidadvalor` va en VALOR ABSOLUTO: el signo lo
+-- da el concepto (la 73 es de deducción), no un número negativo en el plano.
+ SELECT to_char(make_date(a.anio_aplica, a.mes_aplica, 1), 'MM'::text) AS mes,
+    a.quincena_aplica AS quincena,
+    a.idempresa,
+    a.identificacion AS identificacionempleado,
+    h.contratosiigo AS contratoempleado,
+    a.novedad_siigo AS nombrenovedad,
+    'Valor'::text AS tiponovedad,
+    round(abs(sum(a.valor_ajuste))) AS cantidadvalor,
+    round(COALESCE(max(h.salario), (1750905)::numeric) / (2)::numeric)::integer AS nominaproyectada,
+    NULL::text AS fechainicio,
+    NULL::text AS fechafin,
+    0 AS diasnohabiles
+   FROM (ajustes_proyeccion a
+     LEFT JOIN headcount h ON ((TRIM(BOTH FROM h.identificacion) = TRIM(BOTH FROM a.identificacion))))
+  WHERE ((a.estado = 'aprobado'::text) AND (lower(COALESCE(h.estado, 'activo'::text)) <> 'inactivo'::text))
+  GROUP BY to_char(make_date(a.anio_aplica, a.mes_aplica, 1), 'MM'::text),
+    a.quincena_aplica, a.idempresa, a.identificacion, h.contratosiigo, a.novedad_siigo
+ HAVING (round(abs(sum(a.valor_ajuste))) > (0)::numeric)
   ORDER BY 1 DESC, 2, 4;
