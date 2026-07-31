@@ -16,6 +16,11 @@
 --     salen de `parametros_legales_vigencia` según la fecha del turno — no por año.
 --     jun-2026 → 7,3333 h/80%/hedf 2,05; desde 16-jul-2026 → 7 h/90%/hedf 2,15. Automático.
 --     Unifica y reemplaza jornada_legal + recargo_dominical_legal.
+--   - CORTE por FECHA DE INGRESO (headcount.fechainicio): no liquida días
+--     ANTERIORES al inicio de actividades. `headcount.fechainicio` es la FUENTE
+--     DE VERDAD del ingreso (el filtro de vínculo contra colaboradores_th falla
+--     hacia pagar y dejaba pasar festivos previos al ingreso). Con PISO DE
+--     VIGENCIA 2026-07-16 para no reescribir quincenas ya pagadas/reportadas.
 --   - BONOS no prestacionales (módulo Compensación › Bonos): la CTE `bonos_dia`
 --     agrega por (fecha, persona) los bonos APROBADOS de `bonos_nomina` y los
 --     expone en la columna `bonif_no_prestacional` (antes muerta en 0). NO se
@@ -482,6 +487,43 @@ create or replace view public.pagonomina as
       AND NOT EXISTS (SELECT 1 FROM headcount ha
                        WHERE (TRIM(BOTH FROM ha.nombre) = TRIM(BOTH FROM pc.persona))
                          AND (UPPER(TRIM(BOTH FROM COALESCE(ha.estado, ''::text))) = 'ACTIVO'))
+    )
+    -- ------------------------------------------------------------------------
+    -- CORTE POR FECHA DE INGRESO (headcount.fechainicio) — simétrico al de
+    -- retiro. `headcount.fechainicio` es la FUENTE DE VERDAD del inicio de
+    -- actividades: antes de esa fecha no se liquida NADA.
+    --
+    -- Por qué era necesario: el filtro de vínculo laboral de arriba compara
+    -- contra `colaboradores_th` y FALLA HACIA PAGAR — solo excluye si la
+    -- persona tiene contrato registrado allí y ninguno cubre la fecha. Quien
+    -- no tenga fila en `colaboradores_th` (caso real y frecuente) cobraba días
+    -- previos a su ingreso. Y el caso más silencioso son los FESTIVOS: el
+    -- calendario es cartesiano (todos los días × todas las personas), así que
+    -- un festivo se liquidaba a cualquiera de la lista aunque aún no existiera
+    -- como empleado — sin pasar por registroasistencia ni por cabeceraoc, o
+    -- sea, sin ningún dato que se pudiera corregir a mano.
+    --
+    -- PISO DE VIGENCIA (2026-07-16): la regla NO se aplica retroactivamente.
+    -- Reescribir quincenas ya pagadas cambiaría liquidaciones cerradas, el IBC
+    -- ya reportado a la PILA y archivos planos ya enviados a Siigo. Medido
+    -- sobre datos reales: con este piso afecta 2 personas / $116.727 (el caso
+    -- que originó la regla); sin piso serían 50 personas / $17.8 millones.
+    -- Para extenderla hacia atrás, basta mover esta fecha — pero eso es una
+    -- decisión de negocio, no técnica.
+    --
+    -- MULTI-EMPRESA: se toma la fechainicio MÍNIMA de la persona entre todas
+    -- sus filas de Head Count. Si trabajó antes en otro proyecto, esos días
+    -- siguen siendo válidos.
+    -- FALLA HACIA PAGAR: si no tiene `fechainicio`, no se corta nada.
+    -- ------------------------------------------------------------------------
+    AND NOT (
+          pc.fecha >= DATE '2026-07-16'
+      AND EXISTS (SELECT 1 FROM headcount hi
+                   WHERE (TRIM(BOTH FROM hi.nombre) = TRIM(BOTH FROM pc.persona))
+                     AND (hi.fechainicio IS NOT NULL))
+      AND pc.fecha < (SELECT min(hi2.fechainicio) FROM headcount hi2
+                       WHERE (TRIM(BOTH FROM hi2.nombre) = TRIM(BOTH FROM pc.persona))
+                         AND (hi2.fechainicio IS NOT NULL))
     )
   ORDER BY persona, fecha DESC;
 
