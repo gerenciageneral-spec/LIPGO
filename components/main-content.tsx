@@ -78,6 +78,7 @@ import { Tarifas } from "@/components/configuration/tarifas" // Added import for
 import { FacturacionProyectos } from "@/components/facturacion-proyectos" // Added import for Facturacion Proyectos component
 import { CuadroControlFacturacion } from "@/components/cuadro-control-facturacion"
 import ConciliacionAvimol from "@/components/conciliacion-avimol"
+import PrefacturaProduccion from "@/components/prefactura-produccion"
 import { DashboardOperacionesLip } from "@/components/dashboard-operaciones-lip" // Dashboard Operaciones LIP
 import { RegistroPreoperacional } from "@/components/registro-preoperacional" // Registro Preoperacional
 import GestionContratos from "@/components/rrhh/gestion-contratos"
@@ -261,6 +262,7 @@ export function MainContent({
       Tarifas: "tarifas", // Added mapping for Tarifas module
       "Facturación Proyectos": "facturacion_proyectos", // Added mapping for Facturacion Proyectos module
       "Cuadro de Control Facturación": "cuadro_facturacion",
+      "Prefactura de Producción": "prefactura_produccion",
       "Gestión de Facturas": "gestionfacturas", // Added mapping for Gestión de Facturas module
       "Dashboard Operaciones LIP": "dashboardop", // Dashboard Operaciones LIP
       "Recepción de Traslado": "transfer_requests", // Added mapping for renamed module
@@ -969,6 +971,10 @@ export function MainContent({
           ) : selectedModule === "Conciliación Avimol" ? (
             <PermissionGuard moduleName="Conciliación Avimol">
               <ConciliacionAvimol />
+            </PermissionGuard>
+          ) : selectedModule === "Prefactura de Producción" ? (
+            <PermissionGuard moduleName="Prefactura de Producción">
+              <PrefacturaProduccion />
             </PermissionGuard>
           ) : selectedModule === "Gestión de Facturas" ? (
             <PermissionGuard moduleName="Gestión de Facturas">

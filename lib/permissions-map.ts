@@ -170,6 +170,7 @@ export interface UserPermissions {
   facturacion_proyectos: boolean
   cuadro_facturacion: boolean
   conciliacion_avimol: boolean
+  prefactura_produccion: boolean
   bonos: boolean
   // ---------------------------------------------------------------------------
   // Certificaciones LIP · SST. Estas columnas ya existian en
@@ -312,6 +313,10 @@ export const MODULE_PERMISSION_MAP: Record<string, keyof UserPermissions> = {
   "Cuadro de Control Facturación": "cuadro_facturacion",
   // Conciliación Avimol (cobro por producción vs pago por turnos); permiso propio.
   "Conciliación Avimol": "conciliacion_avimol",
+  // Prefactura de lo que se cobra por PRODUCCIÓN: Avimol (Salvado / Estibado PT
+  // + horas extra) e Indupan (Tolva). Documento cobrable con ciclo de vida, así
+  // que lleva permiso propio y no el del Cuadro de Control.
+  "Prefactura de Producción": "prefactura_produccion",
   // Ambos modulos del flujo de gastos comparten un unico permiso `gastos`
   // en `permisos_usuarios`, asi que mapean al mismo campo.
   "Registrar Gasto": "gastos",

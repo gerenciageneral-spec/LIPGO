@@ -233,6 +233,10 @@ export const groups: Group[] = [
           // Avimol: se cobra por producción (tolva × tarifa/ton) pero se paga por
           // turnos (Estibado PT / Salvado). Cruce día a día. Permiso propio.
           { name: "Conciliación Avimol", icon: Scale },
+          // Prefactura de lo que se cobra por PRODUCCIÓN, con selector de proyecto:
+          // Avimol (Salvado / Estibado PT + horas extra) e Indupan (Tolva / Tolva f).
+          // La de Avimol también vive como pestaña dentro de Conciliación Avimol.
+          { name: "Prefactura de Producción", icon: FileText },
           { name: "Tarifas", icon: CreditCard },
           // "Gestión de Facturas" se MOVIÓ a Gestión LIP → Operación Lip (función
           // operativa del coordinador). Conserva su permiso (gestionfacturas).

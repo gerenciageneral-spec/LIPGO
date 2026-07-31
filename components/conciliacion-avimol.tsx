@@ -14,12 +14,14 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { AlertTriangle, ChevronRight, Loader2, Scale, TrendingDown, TrendingUp } from "lucide-react"
 import {
   getConciliacionAvimol,
   type ConciliacionAvimolData,
   type AlertaAvimol,
 } from "@/lib/conciliacion-avimol-actions"
+import PrefacturaProduccion from "@/components/prefactura-produccion"
 
 const money = (n: number) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO")
 const moneyS = (n: number) =>
@@ -98,6 +100,13 @@ export default function ConciliacionAvimol() {
         </div>
       </div>
 
+      <Tabs defaultValue="conciliacion" className="w-full">
+        <TabsList>
+          <TabsTrigger value="conciliacion">Conciliación</TabsTrigger>
+          <TabsTrigger value="prefactura">Prefactura</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="conciliacion" className="mt-4 space-y-4">
       {/* Filtros */}
       <Card>
         <CardContent className="flex flex-wrap items-end gap-3 pt-6">
@@ -454,6 +463,15 @@ export default function ConciliacionAvimol() {
           </CardContent>
         </Card>
       )}
+        </TabsContent>
+
+        <TabsContent value="prefactura" className="mt-4">
+          {/* Es la MISMA pantalla del módulo "Prefactura de Producción", montada
+              aquí con el proyecto fijo en Avimol para no tener dos códigos que
+              mantener. El selector de proyecto se oculta solo. */}
+          <PrefacturaProduccion idempresaFija={2} />
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }
