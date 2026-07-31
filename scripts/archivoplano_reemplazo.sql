@@ -18,10 +18,11 @@
 --     lee `bonos_nomina` (solo APROBADOS), una fila por código de novedad
 --     (43/50/66). NO se mezclan con la novedad 52- del bono de productividad.
 --     Requiere scripts/create_bonos_nomina.sql.
---   · BONO DE PRODUCTIVIDAD (excedente de destajo): viaja como
---     '52-Bonificación Por Productividad-Ingreso'. Antes era la novedad 71-
---     ('Bonificación Ajuste Toneladas'); cambió el código y el nombre para
---     alinearse con Siigo, NO el cálculo.
+--   · BONO DE PRODUCTIVIDAD (excedente de destajo): DESDE LA QUINCENA DEL
+--     16-JUL-2026 viaja como '52-Bonificación Por Productividad-Ingreso'; hasta
+--     la 1ª quincena de julio sigue saliendo como '71-Bonificación Ajuste
+--     Toneladas-Ingreso', porque esos planos ya se enviaron a Siigo con ese
+--     código. Cambia SOLO la etiqueta: el cálculo es el mismo en ambas ramas.
 --   REVERSIBLE: definición previa en git (scripts/vistas_financieras.sql).
 -- ============================================================================
 
@@ -120,10 +121,23 @@ create or replace view public.archivoplano as
     nivelacion.idempresa,
     nivelacion.identificacion AS identificacionempleado,
     nivelacion.contratosiigo AS contratoempleado,
-    -- RENOMBRADA: antes '71-Bonificación Ajuste Toneladas-Ingreso'. Solo cambian
-    -- el código y el nombre, para que coincidan con el concepto creado en Siigo;
-    -- el cálculo, el piso 0 y su carácter prestacional siguen exactamente iguales.
-    '52-Bonificación Por Productividad-Ingreso'::text AS nombrenovedad,
+    -- RENOMBRADA DESDE LA QUINCENA DEL 16-JUL-2026. Lo ÚNICO que cambia es el
+    -- código y el nombre, para que coincidan con el concepto creado en Siigo: el
+    -- cálculo (bono_final), el piso 0 y su carácter prestacional son idénticos en
+    -- ambas ramas — es la misma cifra con otra etiqueta.
+    --
+    -- Por qué el corte y no un cambio retroactivo: hasta la 1ª quincena de julio
+    -- los planos YA se enviaron a Siigo con la 71. Renombrar hacia atrás dejaría
+    -- LIPgo diciendo 52 sobre periodos que Siigo tiene registrados como 71.
+    -- El corte es por QUINCENA (el plano se emite por quincena, no por día): se
+    -- arma el primer día del periodo (1 ó 16) y se compara contra el 16-jul-2026.
+        CASE
+            WHEN (make_date((nivelacion.anio_num)::integer, (nivelacion.mes_num)::integer,
+                            CASE WHEN nivelacion.num_quincena = 1 THEN 1 ELSE 16 END)
+                  >= DATE '2026-07-16')
+              THEN '52-Bonificación Por Productividad-Ingreso'::text
+            ELSE '71-Bonificación Ajuste Toneladas-Ingreso'::text
+        END AS nombrenovedad,
     'Valor'::text AS tiponovedad,
     round(nivelacion.bono_final) AS cantidadvalor,
     round(COALESCE(nivelacion.salario_ref, (1750905)::numeric) / (2)::numeric)::integer AS nominaproyectada, -- quincenal por trabajador (antes fijo 875452); ::integer para no cambiar el tipo de la columna existente

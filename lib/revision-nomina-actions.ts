@@ -517,11 +517,22 @@ function armarPersona(
         },
       ]
       for (const [nom, g] of agg) {
-        // Novedades de VALOR directo: 52 (bono de productividad — antes 71) y
-        // los bonos del módulo Compensación › Bonos (43 ocasionales / 50 no
-        // prestacional / 66 aux. movilidad). Sin listarlos aquí caerían fuera de
-        // todas las ramas y se ignorarían en silencio, descuadrando el cruce.
-        if (nom.startsWith("52") || nom.startsWith("43") || nom.startsWith("50") || nom.startsWith("66")) {
+        // Novedades de VALOR directo: el bono de productividad y los bonos del
+        // módulo Compensación › Bonos (43 ocasionales / 50 no prestacional /
+        // 66 aux. movilidad). Sin listarlos aquí caerían fuera de todas las
+        // ramas y se ignorarían en silencio, descuadrando el cruce.
+        //
+        // El bono de productividad se acepta con SUS DOS códigos: 52 desde la
+        // quincena del 16-jul-2026 y 71 antes (ver archivoplano_reemplazo.sql).
+        // Reconocer solo el nuevo dejaría sin bono el cruce de toda quincena
+        // anterior, que es justo donde uno va a revisar el histórico.
+        if (
+          nom.startsWith("52") ||
+          nom.startsWith("71") ||
+          nom.startsWith("43") ||
+          nom.startsWith("50") ||
+          nom.startsWith("66")
+        ) {
           conceptos.push({
             concepto: nom,
             tipo: "Valor",
@@ -593,9 +604,10 @@ function armarPersona(
           siigo: sumC((c) => c.concepto.startsWith("08") || c.concepto.startsWith("25")),
         },
         {
+          // 52 desde la quincena del 16-jul-2026; 71 en las anteriores.
           nombre: "Bono productividad (52)",
           lipgo: Math.round(bono),
-          siigo: sumC((c) => c.concepto.startsWith("52")),
+          siigo: sumC((c) => c.concepto.startsWith("52") || c.concepto.startsWith("71")),
         },
         {
           // Bonos del módulo Compensación › Bonos. No cotizan al IBC, pero se
