@@ -56,6 +56,11 @@ export interface ResumenOwner {
   val_facturado: number
   val_en_proceso: number
   val_sin_gestionar: number
+  /** Dónde suma. "produccion" = concepto de producción del proyecto. Ver
+   *  lib/facturacion-produccion-conceptos.ts. */
+  bloque: "operacion" | "produccion"
+  /** Unidad de `toneladas`: "h" en las horas extra. */
+  unidad: "t" | "h"
 }
 
 export interface ControlFacturacion {
@@ -70,8 +75,16 @@ export interface ControlFacturacion {
     val_sin_gestionar: number
     ordenes_sin_gestionar: number
     ordenes_sin_tarifa: number
+    /** Cuánto del valor a facturar es PRODUCCIÓN. Se muestra aparte porque no
+     *  tiene semáforo: no hay orden ni factura Siigo detrás, así que meterlo en
+     *  "sin gestionar" dispararía una alarma falsa. */
+    val_produccion: number
   }
   operaciones: string[] // operaciones REALES del proyecto (para el filtro), sin depender del filtro aplicado
+  /** Explicación y estado de la producción del proyecto, para la pestaña de resumen. */
+  produccionNota: string | null
+  produccionAviso: string | null
+  produccionAlertas: string[]
 }
 
 export interface FiltrosControl {
@@ -430,6 +443,104 @@ export async function eliminarPrefactura(id: number): Promise<{ success: boolean
 }
 
 /**
+ * PRODUCCIÓN sin orden detrás (hoy: Avimol). Devuelve los conceptos agregados y
+ * su soporte día a día. Vive aquí, en una sola función, para que el Cuadro y la
+ * Prefactura NO puedan mostrar cifras distintas de lo mismo.
+ *
+ * No reimplementa el cálculo: consume `getConciliacionAvimol`, que ya está
+ * validado contra el negocio y resuelve festivos, vigencias y horas extra.
+ */
+interface ConceptoProduccion {
+  concepto: string
+  unidad: "t" | "h"
+  cantidad: number
+  valor: number
+  tarifa: number
+}
+async function calcularProduccion(
+  cfg: { owner: string },
+  desde: string,
+  hasta: string,
+): Promise<{ conceptos: ConceptoProduccion[]; soporte: SoporteLinea[]; alertas: string[] }> {
+  const alertas: string[] = []
+  const soporte: SoporteLinea[] = []
+  const conc = await getConciliacionAvimol(desde, hasta)
+  if (!conc.success || !conc.data) {
+    return { conceptos: [], soporte, alertas: [`No se pudo calcular la producción: ${conc.message || "error desconocido"}.`] }
+  }
+
+  type Acum = { cantidad: number; valor: number; tarifa: number }
+  const porConcepto = new Map<string, { unidad: "t" | "h"; a: Acum }>()
+  const acum = (concepto: string, unidad: "t" | "h", cantidad: number, valor: number, tarifa: number) => {
+    const e = porConcepto.get(concepto) || { unidad, a: { cantidad: 0, valor: 0, tarifa: 0 } }
+    e.a.cantidad += cantidad
+    e.a.valor += valor
+    if (tarifa > 0) e.a.tarifa = tarifa
+    porConcepto.set(concepto, e)
+  }
+
+  for (const d of conc.data.dias) {
+    for (const p of d.productos) {
+      if (p.toneladas <= 0) continue
+      acum(p.operacion, "t", p.toneladas, p.cobro, p.tarifa)
+      soporte.push({
+        owner: cfg.owner,
+        operacion: p.operacion,
+        servicio: "Producción",
+        fecha: d.fecha,
+        numeroorden: "—", // la producción no tiene orden de cargue
+        placa: null,
+        cliente: null,
+        producto: p.nombreproducto,
+        toneladas: Number(p.toneladas.toFixed(3)),
+        tarifa: p.tarifa,
+        valor: Math.round(p.cobro),
+        unidad: "t",
+      })
+    }
+    for (const h of d.detalleHorasExtra) {
+      if (h.horas <= 0) continue
+      const concepto = `${CONCEPTO_HORA_EXTRA} · ${h.puesto}`
+      acum(concepto, "h", h.horas, h.cobro, h.tarifa)
+      soporte.push({
+        owner: cfg.owner,
+        operacion: concepto,
+        servicio: "Hora extra",
+        fecha: d.fecha,
+        numeroorden: "—",
+        placa: null,
+        cliente: null,
+        producto: `HED ${h.hed} · HEDF ${h.hedf} · HEN ${h.hen} · HEF ${h.hef} · HN ${h.hn}`,
+        toneladas: Number(h.horas.toFixed(2)),
+        tarifa: h.tarifa,
+        valor: Math.round(h.cobro),
+        unidad: "h",
+      })
+    }
+  }
+
+  const conceptos: ConceptoProduccion[] = []
+  for (const [concepto, { unidad, a }] of porConcepto) {
+    if (a.cantidad <= 0) continue
+    if (a.tarifa <= 0 && a.valor <= 0) {
+      alertas.push(`"${concepto}" no tiene tarifa vigente en el maestro: se cobraría $0.`)
+    }
+    conceptos.push({
+      concepto,
+      unidad,
+      cantidad: Number(a.cantidad.toFixed(unidad === "h" ? 2 : 3)),
+      valor: Math.round(a.valor),
+      // Tarifa EFECTIVA del grupo: si en el período cambió la vigencia,
+      // valor/cantidad refleja la mezcla real mejor que una tarifa suelta.
+      tarifa: a.cantidad > 0 ? Math.round(a.valor / a.cantidad) : a.tarifa,
+    })
+  }
+  conceptos.sort((x, y) => x.concepto.localeCompare(y.concepto, "es"))
+  for (const al of conc.data.alertas) alertas.push(al.detalle)
+  return { conceptos, soporte, alertas }
+}
+
+/**
  * Arma la PREFACTURA de un proyecto (idempresa) para un rango: la TABLA ORIGEN
  * (líneas de la vista `facturacion`, owner ya resuelto) + un resumen por
  * owner×servicio. Solo órdenes procesadas. Base para el anexo/soporte de factura.
@@ -667,102 +778,41 @@ export async function getPrefactura(
             "Quita el filtro y vuelve a generar para facturar el período completo.",
         )
       } else {
-        const conc = await getConciliacionAvimol(filtros.desde, filtros.hasta)
-        if (!conc.success || !conc.data) {
-          produccionAlertas.push(`No se pudo calcular la producción: ${conc.message || "error desconocido"}.`)
-        } else {
-          // Se agrega la salida de la conciliación tal cual (ya trae la operación
-          // resuelta con festivo y la tarifa vigente aplicada); aquí solo se agrupa.
-          type Acum = { cantidad: number; valor: number; tarifa: number }
-          const porConcepto = new Map<string, { unidad: "t" | "h"; a: Acum }>()
-          const acum = (concepto: string, unidad: "t" | "h", cantidad: number, valor: number, tarifa: number) => {
-            const e = porConcepto.get(concepto) || { unidad, a: { cantidad: 0, valor: 0, tarifa: 0 } }
-            e.a.cantidad += cantidad
-            e.a.valor += valor
-            if (tarifa > 0) e.a.tarifa = tarifa
-            porConcepto.set(concepto, e)
-          }
-          for (const d of conc.data.dias) {
-            for (const p of d.productos) {
-              if (p.toneladas <= 0) continue
-              acum(p.operacion, "t", p.toneladas, p.cobro, p.tarifa)
-              soporteProduccion.push({
-                owner: cfg.owner,
-                operacion: p.operacion,
-                servicio: "Producción",
-                fecha: d.fecha,
-                numeroorden: "—", // la producción no tiene orden de cargue
-                placa: null,
-                cliente: null,
-                producto: p.nombreproducto,
-                toneladas: Number(p.toneladas.toFixed(3)),
-                tarifa: p.tarifa,
-                valor: Math.round(p.cobro),
-                unidad: "t",
-              })
-            }
-            for (const h of d.detalleHorasExtra) {
-              if (h.horas <= 0) continue
-              const concepto = `${CONCEPTO_HORA_EXTRA} · ${h.puesto}`
-              acum(concepto, "h", h.horas, h.cobro, h.tarifa)
-              soporteProduccion.push({
-                owner: cfg.owner,
-                operacion: concepto,
-                servicio: "Hora extra",
-                fecha: d.fecha,
-                numeroorden: "—",
-                placa: null,
-                cliente: null,
-                producto: `HED ${h.hed} · HEDF ${h.hedf} · HEN ${h.hen} · HEF ${h.hef} · HN ${h.hn}`,
-                toneladas: Number(h.horas.toFixed(2)),
-                tarifa: h.tarifa,
-                valor: Math.round(h.cobro),
-                unidad: "h",
-              })
-            }
-          }
+        const prod = await calcularProduccion(cfg, filtros.desde, filtros.hasta)
+        soporteProduccion.push(...prod.soporte)
+        produccionAlertas.push(...prod.alertas)
 
-          // GUARDA ANTI-DOBLE-COBRO: si el concepto YA vino como operación de una
-          // orden (alguien creó `cabeceraoc` con tipooperacion "Salvado"), no se
-          // agrega — se avisa. Es la única forma de que este bloque duplique plata.
-          const yaEnOrdenes = new Set(resumen.map((r) => `${ownerKey(r.owner)}|||${ownerKey(r.operacion)}`))
-          for (const [concepto, { unidad, a }] of porConcepto) {
-            if (a.cantidad <= 0) continue
-            if (yaEnOrdenes.has(`${ownerKey(cfg.owner)}|||${ownerKey(concepto)}`)) {
-              produccionAlertas.push(
-                `"${concepto}" ya viene como operación de órdenes de cargue: NO se sumó aparte para no cobrarlo dos veces.`,
-              )
-              continue
-            }
-            if (a.tarifa <= 0 && a.valor <= 0) {
-              produccionAlertas.push(`"${concepto}" no tiene tarifa vigente en el maestro: se cobraría $0.`)
-            }
-            const cantidad = Number(a.cantidad.toFixed(unidad === "h" ? 2 : 3))
-            const valor = Math.round(a.valor)
-            resumen.push({
-              owner: cfg.owner,
-              operacion: concepto,
-              toneladas: cantidad,
-              // Tarifa EFECTIVA del grupo: si en el período cambió la vigencia,
-              // valor/cantidad refleja la mezcla real mejor que una tarifa suelta.
-              tarifa: a.cantidad > 0 ? Math.round(a.valor / a.cantidad) : a.tarifa,
-              valor,
-              // La producción no tiene factura Siigo por registro: entra completa
-              // como POR FACTURAR (verde). El anti-doble-cobro aquí es el período.
-              tonPorFacturar: cantidad,
-              valorPorFacturar: valor,
-              tonEnProceso: 0,
-              valorEnProceso: 0,
-              tonFacturado: 0,
-              valorFacturado: 0,
-              fuente: "produccion",
-              bloque: "produccion",
-              unidad,
-            })
-            totalValor += valor
-            if (unidad === "t") totalToneladas += cantidad
+        // GUARDA ANTI-DOBLE-COBRO: si el concepto YA vino como operación de una
+        // orden (alguien creó `cabeceraoc` con tipooperacion "Salvado"), no se
+        // agrega — se avisa. Es la única forma de que este bloque duplique plata.
+        const yaEnOrdenes = new Set(resumen.map((r) => `${ownerKey(r.owner)}|||${ownerKey(r.operacion)}`))
+        for (const c of prod.conceptos) {
+          if (yaEnOrdenes.has(`${ownerKey(cfg.owner)}|||${ownerKey(c.concepto)}`)) {
+            produccionAlertas.push(
+              `"${c.concepto}" ya viene como operación de órdenes de cargue: NO se sumó aparte para no cobrarlo dos veces.`,
+            )
+            continue
           }
-          for (const al of conc.data.alertas) produccionAlertas.push(al.detalle)
+          resumen.push({
+            owner: cfg.owner,
+            operacion: c.concepto,
+            toneladas: c.cantidad,
+            tarifa: c.tarifa,
+            valor: c.valor,
+            // La producción no tiene factura Siigo por registro: entra completa
+            // como POR FACTURAR (verde). El anti-doble-cobro aquí es el período.
+            tonPorFacturar: c.cantidad,
+            valorPorFacturar: c.valor,
+            tonEnProceso: 0,
+            valorEnProceso: 0,
+            tonFacturado: 0,
+            valorFacturado: 0,
+            fuente: "produccion",
+            bloque: "produccion",
+            unidad: c.unidad,
+          })
+          totalValor += c.valor
+          if (c.unidad === "t") totalToneladas += c.cantidad
         }
       }
       resumen.sort((a, b) => a.owner.localeCompare(b.owner) || a.operacion.localeCompare(b.operacion))
@@ -1002,7 +1052,7 @@ export async function getControlFacturacion(
     const t = {
       ordenes: 0, toneladas: 0, valor_a_facturar: 0,
       val_facturado: 0, val_en_proceso: 0, val_sin_gestionar: 0,
-      ordenes_sin_gestionar: 0, ordenes_sin_tarifa: 0,
+      ordenes_sin_gestionar: 0, ordenes_sin_tarifa: 0, val_produccion: 0,
     }
     // Resumen por OWNER × TIPO DE OPERACIÓN (un owner puede tener Cargue, Descargue,
     // Distribución y se muestran separados).
@@ -1016,6 +1066,7 @@ export async function getControlFacturacion(
       const o = ownerMap.get(gk) || {
         owner: f.owner, operacion: op, ordenes: 0, toneladas: 0, valor_a_facturar: 0,
         val_facturado: 0, val_en_proceso: 0, val_sin_gestionar: 0,
+        bloque: "operacion" as const, unidad: "t" as const,
       }
       o.toneladas += f.toneladas
       o.valor_a_facturar += f.valor_a_facturar
@@ -1043,12 +1094,92 @@ export async function getControlFacturacion(
     t.ordenes_sin_gestionar = ordenesSinGestionar.size
     t.ordenes_sin_tarifa = ordenesSinTarifa.size
 
-    const porOwner = Array.from(ownerMap.values()).sort(
-      (a, b) => a.owner.localeCompare(b.owner) || a.operacion.localeCompare(b.operacion),
+    const porOwnerBase: ResumenOwner[] = Array.from(ownerMap.values())
+
+    // -------------------------------------------------------------------
+    // PRODUCCIÓN en el resumen. Sin esto el módulo miente por omisión: se abre
+    // Avimol, se ve Cargue/Descargue/Distribución y parece que eso es todo lo
+    // que se le factura, cuando la tolva y las horas extra son ~$39M al mes.
+    // Mismo cálculo que la prefactura (`calcularProduccion`), para que las dos
+    // pestañas no puedan mostrar cifras distintas.
+    // -------------------------------------------------------------------
+    const cfg = produccionDelProyecto(idempresa)
+    const vigencia = vigenciaProduccion(cfg, filtros.desde, filtros.hasta)
+    let produccionAviso: string | null = null
+    const produccionAlertas: string[] = []
+
+    if (cfg && cfg.fuente === "ordenes" && vigencia === "si") {
+      // La tolva de Indupan ya está en `porOwner`: solo se etiqueta.
+      const conceptosK = new Set(cfg.conceptos.map((c) => ownerKey(c)))
+      for (const o of porOwnerBase) {
+        if (conceptosK.has(ownerKey(o.operacion))) {
+          o.bloque = "produccion"
+          t.val_produccion += o.valor_a_facturar
+        }
+      }
+    } else if (cfg && cfg.fuente === "conciliacion") {
+      if (!filtros.desde || !filtros.hasta) {
+        produccionAviso =
+          `La producción de ${cfg.conceptos.slice(0, 4).join(", ")} y las horas extra NO están incluidas todavía: ` +
+          `se calculan por período. Pon un rango en Desde/Hasta y dale Aplicar para verlas aquí.`
+      } else if (vigencia !== "si") {
+        produccionAviso = `El período es anterior al ${cfg.desde}: la producción no se cuenta.`
+      } else {
+        const prod = await calcularProduccion(cfg, filtros.desde, filtros.hasta)
+        produccionAlertas.push(...prod.alertas)
+        // Si un filtro deja al owner fuera, no tiene sentido agregarle producción.
+        const ownerVisible = !filtros.owner || ownerKey(filtros.owner) === ownerKey(cfg.owner)
+        const yaEnOrdenes = new Set(porOwnerBase.map((o) => `${ownerKey(o.owner)}|||${ownerKey(o.operacion)}`))
+        if (!ownerVisible || opSet.size > 0) {
+          produccionAviso =
+            "Hay filtros activos (owner u operación) que aplican a las órdenes de cargue, así que la producción " +
+            "no se sumó. Quita esos filtros para ver la facturación completa del proyecto."
+        } else {
+          for (const c of prod.conceptos) {
+            if (yaEnOrdenes.has(`${ownerKey(cfg.owner)}|||${ownerKey(c.concepto)}`)) continue
+            porOwnerBase.push({
+              owner: cfg.owner,
+              operacion: c.concepto,
+              ordenes: 0, // la producción no se mide en órdenes
+              toneladas: c.cantidad,
+              valor_a_facturar: c.valor,
+              // Sin semáforo: no hay factura Siigo por registro. Dejarlo en
+              // "sin gestionar" pintaría de rojo una alarma que no existe.
+              val_facturado: 0,
+              val_en_proceso: 0,
+              val_sin_gestionar: 0,
+              bloque: "produccion",
+              unidad: c.unidad,
+            })
+            t.valor_a_facturar += c.valor
+            t.val_produccion += c.valor
+            if (c.unidad === "t") t.toneladas += c.cantidad
+          }
+        }
+      }
+    }
+
+    const porOwner = porOwnerBase.sort(
+      (a, b) =>
+        a.owner.localeCompare(b.owner) ||
+        // La producción va después del movimiento de órdenes dentro del owner.
+        (a.bloque === b.bloque ? 0 : a.bloque === "produccion" ? 1 : -1) ||
+        a.operacion.localeCompare(b.operacion),
     )
     filas.sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)))
 
-    return { success: true, data: { filas, porOwner, totales: t, operaciones } }
+    return {
+      success: true,
+      data: {
+        filas,
+        porOwner,
+        totales: t,
+        operaciones,
+        produccionNota: cfg?.nota ?? null,
+        produccionAviso,
+        produccionAlertas,
+      },
+    }
   } catch (e: any) {
     return { success: false, message: e?.message || "Error al calcular el control de facturación." }
   }

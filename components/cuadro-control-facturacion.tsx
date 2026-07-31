@@ -266,6 +266,18 @@ export function CuadroControlFacturacion() {
 
   const setF = (k: keyof FiltrosControl, v: any) => setPending((p) => ({ ...p, [k]: v }))
   const aplicar = () => setFiltros(pending)
+  // La producción se calcula POR PERÍODO (la tolva y las horas extra son un día
+  // a día), así que sin rango no se puede incluir. Este atajo evita que el
+  // usuario tenga que armar el rango a mano solo para verla.
+  const verMesActual = () => {
+    const hoy = new Date()
+    const p = (n: number) => String(n).padStart(2, "0")
+    const ini = `${hoy.getFullYear()}-${p(hoy.getMonth() + 1)}-01`
+    const fin = `${hoy.getFullYear()}-${p(hoy.getMonth() + 1)}-${p(new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0).getDate())}`
+    const nuevos = { ...pending, desde: ini, hasta: fin, tipooperaciones: [], owner: "" }
+    setPending(nuevos)
+    setFiltros(nuevos)
+  }
   const limpiar = () => {
     setPending(emptyFiltros())
     setFiltros(emptyFiltros())
@@ -279,7 +291,7 @@ export function CuadroControlFacturacion() {
       const g = m.get(o.owner) || { owner: o.owner, filas: [] as ControlFacturacion["porOwner"], ordenes: 0, toneladas: 0, valor: 0, fact: 0, proc: 0, sinG: 0 }
       g.filas.push(o)
       g.ordenes += o.ordenes
-      g.toneladas += o.toneladas
+      if (o.unidad !== "h") g.toneladas += o.toneladas // las horas extra no son tonelaje
       g.valor += o.valor_a_facturar
       g.fact += o.val_facturado
       g.proc += o.val_en_proceso
@@ -808,14 +820,51 @@ export function CuadroControlFacturacion() {
         </Card>
       ) : (
         <>
-          {/* Tarjetas resumen */}
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
-            <StatCard l="Valor a facturar" v={money(t!.valor_a_facturar)} sub={`${t!.ordenes} órdenes`} />
+          {/* Tarjetas resumen. La de PRODUCCIÓN solo aparece en los proyectos que
+              facturan por producción: en los demás sería una tarjeta en $0. */}
+          <div className={`grid grid-cols-2 gap-3 md:grid-cols-3 ${t!.val_produccion > 0 ? "lg:grid-cols-6" : "lg:grid-cols-5"}`}>
+            <StatCard
+              l="Valor a facturar"
+              v={money(t!.valor_a_facturar)}
+              sub={t!.val_produccion > 0 ? `${t!.ordenes} órdenes + producción` : `${t!.ordenes} órdenes`}
+            />
+            {t!.val_produccion > 0 && (
+              <StatCard l="Producción" v={money(t!.val_produccion)} icon={FileText} color="text-sky-600" sub="incluido arriba" />
+            )}
             <StatCard l="Facturado" v={money(t!.val_facturado)} icon={CheckCircle2} color="text-emerald-600" />
             <StatCard l="En proceso" v={money(t!.val_en_proceso)} icon={Clock} color="text-amber-600" />
             <StatCard l="Sin gestionar" v={money(t!.val_sin_gestionar)} icon={AlertTriangle} color="text-red-600" sub={`${t!.ordenes_sin_gestionar} órdenes 🔴`} rojo={t!.val_sin_gestionar > 0} />
             <StatCard l="Órdenes sin tarifa" v={String(t!.ordenes_sin_tarifa)} icon={AlertTriangle} color="text-red-600" sub="revisar maestro" rojo={t!.ordenes_sin_tarifa > 0} />
           </div>
+
+          {/* Por qué la producción está (o no está) sumando. Va arriba del todo
+              porque su ausencia es silenciosa: sin esto el módulo parece completo
+              cuando le falta la mitad de lo que se le cobra al cliente. */}
+          {data.produccionAviso && (
+            <Card className="border-amber-300 bg-amber-50/70 dark:bg-amber-950/20">
+              <CardContent className="flex flex-wrap items-center justify-between gap-2 p-3">
+                <span className="flex items-start gap-2 text-xs text-amber-900 dark:text-amber-200">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  {data.produccionAviso}
+                </span>
+                {!filtros.desde && (
+                  <Button size="sm" variant="outline" className="h-8 shrink-0" onClick={verMesActual}>
+                    <Filter className="mr-1 h-3 w-3" /> Ver el mes actual
+                  </Button>
+                )}
+              </CardContent>
+            </Card>
+          )}
+          {!data.produccionAviso && data.produccionNota && t!.val_produccion > 0 && (
+            <Card className="border-sky-200 bg-sky-50/70 dark:border-sky-900 dark:bg-sky-950/20">
+              <CardContent className="flex items-start gap-2 p-3 text-xs text-sky-900 dark:text-sky-200">
+                <FileText className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>
+                  <strong>Producción:</strong> {data.produccionNota}
+                </span>
+              </CardContent>
+            </Card>
+          )}
 
           <Tabs defaultValue="owner">
             <TabsList>
@@ -831,9 +880,9 @@ export function CuadroControlFacturacion() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Owner</TableHead>
-                        <TableHead>Operación</TableHead>
+                        <TableHead>Concepto</TableHead>
                         <TableHead className="text-right">Órdenes</TableHead>
-                        <TableHead className="text-right">Toneladas</TableHead>
+                        <TableHead className="text-right">Cantidad</TableHead>
                         <TableHead className="text-right">Valor a facturar</TableHead>
                         <TableHead className="text-right">Facturado</TableHead>
                         <TableHead className="text-right">En proceso</TableHead>
@@ -844,17 +893,40 @@ export function CuadroControlFacturacion() {
                       {porOwnerGrupos.map((g) => (
                         <Fragment key={g.owner}>
                           {g.filas.map((o, i) => (
-                            <TableRow key={`${o.owner}-${o.operacion}`}>
+                            <TableRow key={`${o.owner}-${o.operacion}`} className={o.bloque === "produccion" ? "bg-sky-50/50 dark:bg-sky-950/10" : ""}>
                               <TableCell className="font-medium">{i === 0 ? g.owner : ""}</TableCell>
-                              <TableCell className="text-xs">{o.operacion}</TableCell>
-                              <TableCell className="text-right tabular-nums">{o.ordenes}</TableCell>
-                              <TableCell className="text-right tabular-nums">{ton(o.toneladas)}</TableCell>
-                              <TableCell className="text-right font-semibold tabular-nums">{money(o.valor_a_facturar)}</TableCell>
-                              <TableCell className="text-right tabular-nums text-emerald-700">{money(o.val_facturado)}</TableCell>
-                              <TableCell className="text-right tabular-nums text-amber-700">{money(o.val_en_proceso)}</TableCell>
-                              <TableCell className={`text-right tabular-nums font-semibold ${o.val_sin_gestionar > 0 ? "bg-red-50 text-red-700 dark:bg-red-950/40" : "text-muted-foreground"}`}>
-                                {money(o.val_sin_gestionar)}
+                              <TableCell className="text-xs">
+                                <span className="inline-flex items-center gap-1.5">
+                                  {o.operacion}
+                                  {o.bloque === "produccion" && (
+                                    <span className="rounded bg-sky-100 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-sky-700 dark:bg-sky-950/50 dark:text-sky-300">
+                                      producción
+                                    </span>
+                                  )}
+                                </span>
                               </TableCell>
+                              {/* La producción no se mide en órdenes: mostrar 0 haría pensar
+                                  que falta información, cuando simplemente no aplica. */}
+                              <TableCell className="text-right tabular-nums">{o.ordenes > 0 ? o.ordenes : "—"}</TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {ton(o.toneladas)} <span className="text-[9px] text-muted-foreground">{o.unidad === "h" ? "h" : "t"}</span>
+                              </TableCell>
+                              <TableCell className="text-right font-semibold tabular-nums">{money(o.valor_a_facturar)}</TableCell>
+                              {o.bloque === "produccion" ? (
+                                // El semáforo se apoya en la factura Siigo de la orden, y la
+                                // producción no tiene orden: no aplica, no es un cero.
+                                <TableCell colSpan={3} className="text-right text-[11px] text-muted-foreground">
+                                  sin semáforo de factura (no nace de una orden)
+                                </TableCell>
+                              ) : (
+                                <>
+                                  <TableCell className="text-right tabular-nums text-emerald-700">{money(o.val_facturado)}</TableCell>
+                                  <TableCell className="text-right tabular-nums text-amber-700">{money(o.val_en_proceso)}</TableCell>
+                                  <TableCell className={`text-right tabular-nums font-semibold ${o.val_sin_gestionar > 0 ? "bg-red-50 text-red-700 dark:bg-red-950/40" : "text-muted-foreground"}`}>
+                                    {money(o.val_sin_gestionar)}
+                                  </TableCell>
+                                </>
+                              )}
                             </TableRow>
                           ))}
                           {g.filas.length > 1 && (
