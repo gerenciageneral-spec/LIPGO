@@ -20,6 +20,12 @@ import {
   CONCEPTO_TURNO,
   OP_PRODUCCION,
 } from "@/lib/facturacion-produccion-conceptos"
+import {
+  medioPagoEsperado,
+  medioPagoInconsistente,
+  proyectoConReglaMedioPago,
+  type MedioPago,
+} from "@/lib/facturacion-medio-pago"
 
 export type CategoriaFactura = "facturado" | "en_proceso" | "sin_gestionar"
 
@@ -51,6 +57,13 @@ export interface ControlFacturaFila {
   tipooperacion: string | null
   cliente: string | null
   owner: string
+  /** Quién mueve la carga. En Avimol determina la condición de pago. */
+  transporte: string | null
+  mediopago: string | null
+  /** Lo que le corresponde a ese transporte (null si el proyecto no tiene regla). */
+  medioPagoEsperado: MedioPago | null
+  /** El medio de pago registrado contradice la regla del transporte. */
+  medioPagoInconsistente: boolean
   toneladas: number // CANTIDAD facturable: peso báscula (id 1/2) o peso orden/detalle (id 3/4)
   fuente_peso: "bascula" | "orden"
   tarifa: number | null
@@ -75,6 +88,13 @@ export interface ResumenOwner {
   bloque: "operacion" | "produccion"
   /** Unidad de `toneladas`: "h" en las horas extra. */
   unidad: UnidadCobro
+  /** Transporte del grupo. Solo se separa por transporte en los proyectos con
+   *  regla de medio de pago (hoy Avimol); en los demás va null. */
+  transporte: string | null
+  /** Condición de pago que le corresponde a ese transporte. */
+  medioPagoEsperado: MedioPago | null
+  /** Órdenes del grupo cuyo medio de pago contradice la regla. */
+  ordenesInconsistentes: number
 }
 
 export interface ControlFacturacion {
@@ -89,6 +109,8 @@ export interface ControlFacturacion {
     val_sin_gestionar: number
     ordenes_sin_gestionar: number
     ordenes_sin_tarifa: number
+    /** Órdenes cuyo medio de pago contradice la regla del transporte. */
+    ordenes_medio_pago: number
     /** Cuánto del valor a facturar es PRODUCCIÓN. Se muestra aparte porque no
      *  tiene semáforo: no hay orden ni factura Siigo detrás, así que meterlo en
      *  "sin gestionar" dispararía una alarma falsa. */
@@ -909,7 +931,7 @@ export async function getControlFacturacion(
     //    Solo procesadas (fincargue) y facturables (facturar != false).
     const estadoPorOrden = new Map<
       string,
-      { estado: string | null; facturasiigo: string | null; valorpago: number | null; pesovascula: number }
+      { estado: string | null; facturasiigo: string | null; valorpago: number | null; pesovascula: number; mediopago: string | null }
     >()
     const procesadas = new Set<string>()
     // Operaciones REALES del proyecto (para poblar el filtro con lo que sí existe).
@@ -919,7 +941,7 @@ export async function getControlFacturacion(
       for (let offset = 0; ; offset += pageSize) {
         const { data, error } = await sb
           .from("cabeceraoc")
-          .select("ordendecargue, estadofactura, facturasiigo, valorpago, fincargue, facturar, tipooperacion, pesovascula")
+          .select("ordendecargue, estadofactura, facturasiigo, valorpago, fincargue, facturar, tipooperacion, pesovascula, mediopago")
           .eq("idempresa", idempresa)
           .neq("tipooperacion", "proyeccion")
           .range(offset, offset + pageSize - 1)
@@ -933,6 +955,7 @@ export async function getControlFacturacion(
             facturasiigo: o.facturasiigo ?? null,
             valorpago: o.valorpago ?? null,
             pesovascula: num(o.pesovascula),
+            mediopago: o.mediopago ?? null,
           })
           const procesada = o.fincargue && o.facturar !== false
           if (procesada) procesadas.add(on)
@@ -1084,6 +1107,10 @@ export async function getControlFacturacion(
         tipooperacion: a.op || null,
         cliente: a.r.cliente ?? null,
         owner: a.owner,
+        transporte: a.r.transporte ?? null,
+        mediopago: est?.mediopago ?? null,
+        medioPagoEsperado: medioPagoEsperado(idempresa, a.r.transporte),
+        medioPagoInconsistente: medioPagoInconsistente(idempresa, a.r.transporte, est?.mediopago),
         toneladas,
         fuente_peso: fuente,
         tarifa: a.sinTarifa || toneladas <= 0 ? null : Math.round(valor / toneladas),
@@ -1103,24 +1130,37 @@ export async function getControlFacturacion(
     const ordenesSet = new Set<string>()
     const ordenesSinGestionar = new Set<string>()
     const ordenesSinTarifa = new Set<string>()
+    // Órdenes cuyo medio de pago contradice la regla del transporte (Avimol).
+    const ordenesMedioPago = new Set<string>()
     const t = {
       ordenes: 0, toneladas: 0, valor_a_facturar: 0,
       val_facturado: 0, val_en_proceso: 0, val_sin_gestionar: 0,
-      ordenes_sin_gestionar: 0, ordenes_sin_tarifa: 0, val_produccion: 0,
+      ordenes_sin_gestionar: 0, ordenes_sin_tarifa: 0, val_produccion: 0, ordenes_medio_pago: 0,
     }
     // Resumen por OWNER × TIPO DE OPERACIÓN (un owner puede tener Cargue, Descargue,
-    // Distribución y se muestran separados).
-    const grupoKey = (owner: string, op: string) => `${owner}|||${op}`
+    // Distribución y se muestran separados). En los proyectos donde el TRANSPORTE
+    // decide la condición de pago (Avimol) se abre además por transporte: sin eso
+    // el cargue de terceros (contado) y el de Zamudio (crédito) quedarían sumados
+    // en una sola línea y no habría cómo distinguirlos.
+    const separaTransporte = proyectoConReglaMedioPago(idempresa)
+    const transporteDe = (f: ControlFacturaFila) =>
+      separaTransporte ? String(f.transporte ?? "").trim() || "(sin transporte)" : null
+    const grupoKey = (owner: string, op: string, tr: string | null) =>
+      tr === null ? `${owner}|||${op}` : `${owner}|||${op}|||${tr}`
+    const ordenesInconsistentesPorGrupo = new Map<string, Set<string>>()
     for (const f of filas) {
       ordenesSet.add(f.numeroorden)
       if (f.categoria === "sin_gestionar") ordenesSinGestionar.add(f.numeroorden)
       if (f.sin_tarifa) ordenesSinTarifa.add(f.numeroorden)
+      if (f.medioPagoInconsistente) ordenesMedioPago.add(f.numeroorden)
       const op = f.tipooperacion || "(sin operación)"
-      const gk = grupoKey(f.owner, op)
+      const tr = transporteDe(f)
+      const gk = grupoKey(f.owner, op, tr)
       const o = ownerMap.get(gk) || {
         owner: f.owner, operacion: op, ordenes: 0, toneladas: 0, valor_a_facturar: 0,
         val_facturado: 0, val_en_proceso: 0, val_sin_gestionar: 0,
         bloque: "operacion" as const, unidad: "t" as const,
+        transporte: tr, medioPagoEsperado: f.medioPagoEsperado, ordenesInconsistentes: 0,
       }
       o.toneladas += f.toneladas
       o.valor_a_facturar += f.valor_a_facturar
@@ -1128,25 +1168,34 @@ export async function getControlFacturacion(
       else if (f.categoria === "en_proceso") o.val_en_proceso += f.valor_a_facturar
       else o.val_sin_gestionar += f.valor_a_facturar
       ownerMap.set(gk, o)
+      if (f.medioPagoInconsistente) {
+        const s = ordenesInconsistentesPorGrupo.get(gk) || new Set<string>()
+        s.add(f.numeroorden)
+        ordenesInconsistentesPorGrupo.set(gk, s)
+      }
       t.toneladas += f.toneladas
       t.valor_a_facturar += f.valor_a_facturar
       if (f.categoria === "facturado") t.val_facturado += f.valor_a_facturar
       else if (f.categoria === "en_proceso") t.val_en_proceso += f.valor_a_facturar
       else t.val_sin_gestionar += f.valor_a_facturar
     }
-    // órdenes distintas por owner × operación
+    // órdenes distintas por grupo
     const ordenesPorGrupo = new Map<string, Set<string>>()
     for (const f of filas) {
-      const gk = grupoKey(f.owner, f.tipooperacion || "(sin operación)")
+      const gk = grupoKey(f.owner, f.tipooperacion || "(sin operación)", transporteDe(f))
       const s = ordenesPorGrupo.get(gk) || new Set<string>()
       s.add(f.numeroorden)
       ordenesPorGrupo.set(gk, s)
     }
-    for (const [gk, o] of ownerMap) o.ordenes = ordenesPorGrupo.get(gk)?.size || 0
+    for (const [gk, o] of ownerMap) {
+      o.ordenes = ordenesPorGrupo.get(gk)?.size || 0
+      o.ordenesInconsistentes = ordenesInconsistentesPorGrupo.get(gk)?.size || 0
+    }
 
     t.ordenes = ordenesSet.size
     t.ordenes_sin_gestionar = ordenesSinGestionar.size
     t.ordenes_sin_tarifa = ordenesSinTarifa.size
+    t.ordenes_medio_pago = ordenesMedioPago.size
 
     const porOwnerBase: ResumenOwner[] = Array.from(ownerMap.values())
 
@@ -1207,6 +1256,11 @@ export async function getControlFacturacion(
               val_sin_gestionar: 0,
               bloque: "produccion",
               unidad: c.unidad,
+              // La producción no nace de una orden: no tiene transporte y no le
+              // aplica la regla de condición de pago.
+              transporte: null,
+              medioPagoEsperado: null,
+              ordenesInconsistentes: 0,
             })
             t.valor_a_facturar += c.valor
             t.val_produccion += c.valor

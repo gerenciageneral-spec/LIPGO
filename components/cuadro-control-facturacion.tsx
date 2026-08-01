@@ -47,6 +47,7 @@ import {
 } from "@/lib/facturacion-control-actions"
 import { getAccessibleEmpresesFromPermisos } from "@/lib/orders-actions"
 import { OP_PRODUCCION, OP_PRODUCCION_LABEL } from "@/lib/facturacion-produccion-conceptos"
+import { proyectoConReglaMedioPago } from "@/lib/facturacion-medio-pago"
 
 const money = (n: number) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO")
 const ton = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { maximumFractionDigits: 2 })
@@ -310,6 +311,9 @@ export function CuadroControlFacturacion() {
   const opcionesOperacion = useMemo(() => data?.operaciones || [], [data])
 
   const t = data?.totales
+  // En Avimol el TRANSPORTE decide la condición de pago, así que el cuadro lo
+  // muestra y separa por él. En los demás proyectos esas columnas no aportan.
+  const hayTransporte = proyectoConReglaMedioPago(empresaId)
 
   const exportarDetalle = () => {
     if (!data) return
@@ -320,6 +324,10 @@ export function CuadroControlFacturacion() {
       Tiquete: f.tiquete ?? "",
       Operación: f.tipooperacion ?? "",
       Owner: f.owner,
+      Transporte: f.transporte ?? "",
+      "Pago que corresponde": f.medioPagoEsperado ?? "",
+      "Pago registrado": f.mediopago ?? "",
+      "Pago no cuadra": f.medioPagoInconsistente ? "SÍ" : "",
       Cliente: f.cliente ?? "",
       Cantidad: Number(f.toneladas.toFixed(3)),
       Peso: f.fuente_peso === "bascula" ? "báscula" : "orden",
@@ -850,6 +858,16 @@ export function CuadroControlFacturacion() {
             <StatCard l="En proceso" v={money(t!.val_en_proceso)} icon={Clock} color="text-amber-600" />
             <StatCard l="Sin gestionar" v={money(t!.val_sin_gestionar)} icon={AlertTriangle} color="text-red-600" sub={`${t!.ordenes_sin_gestionar} órdenes 🔴`} rojo={t!.val_sin_gestionar > 0} />
             <StatCard l="Órdenes sin tarifa" v={String(t!.ordenes_sin_tarifa)} icon={AlertTriangle} color="text-red-600" sub="revisar maestro" rojo={t!.ordenes_sin_tarifa > 0} />
+            {hayTransporte && (
+              <StatCard
+                l="Pago que no cuadra"
+                v={String(t!.ordenes_medio_pago)}
+                icon={AlertTriangle}
+                color="text-red-600"
+                sub="TERCEROS=contado · ZAMUDIO=crédito"
+                rojo={t!.ordenes_medio_pago > 0}
+              />
+            )}
           </div>
 
           {/* Por qué la producción está (o no está) sumando. Va arriba del todo
@@ -895,6 +913,8 @@ export function CuadroControlFacturacion() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Owner</TableHead>
+                        {hayTransporte && <TableHead>Transporte</TableHead>}
+                        {hayTransporte && <TableHead>Pago</TableHead>}
                         <TableHead>Concepto</TableHead>
                         <TableHead className="text-right">Órdenes</TableHead>
                         <TableHead className="text-right">Cantidad</TableHead>
@@ -908,8 +928,38 @@ export function CuadroControlFacturacion() {
                       {porOwnerGrupos.map((g) => (
                         <Fragment key={g.owner}>
                           {g.filas.map((o, i) => (
-                            <TableRow key={`${o.owner}-${o.operacion}`} className={o.bloque === "produccion" ? "bg-sky-50/50 dark:bg-sky-950/10" : ""}>
+                            <TableRow key={`${o.owner}-${o.operacion}-${o.transporte ?? ""}`} className={o.bloque === "produccion" ? "bg-sky-50/50 dark:bg-sky-950/10" : ""}>
                               <TableCell className="font-medium">{i === 0 ? g.owner : ""}</TableCell>
+                              {hayTransporte && (
+                                <TableCell className="text-xs font-medium">{o.transporte ?? "—"}</TableCell>
+                              )}
+                              {hayTransporte && (
+                                <TableCell className="text-xs">
+                                  {o.medioPagoEsperado ? (
+                                    <span className="inline-flex items-center gap-1.5">
+                                      <span
+                                        className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                                          o.medioPagoEsperado === "Contado"
+                                            ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+                                            : "bg-indigo-100 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300"
+                                        }`}
+                                      >
+                                        {o.medioPagoEsperado}
+                                      </span>
+                                      {o.ordenesInconsistentes > 0 && (
+                                        <span
+                                          className="text-[10px] font-semibold text-red-600"
+                                          title={`${o.ordenesInconsistentes} orden(es) registradas con otra condición de pago`}
+                                        >
+                                          ⚠ {o.ordenesInconsistentes}
+                                        </span>
+                                      )}
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] text-muted-foreground">sin regla</span>
+                                  )}
+                                </TableCell>
+                              )}
                               <TableCell className="text-xs">
                                 <span className="inline-flex items-center gap-1.5">
                                   {o.operacion}
@@ -947,6 +997,7 @@ export function CuadroControlFacturacion() {
                           {g.filas.length > 1 && (
                             <TableRow className="border-t bg-muted/40">
                               <TableCell className="font-semibold">{g.owner}</TableCell>
+                              {hayTransporte && <TableCell colSpan={2} />}
                               <TableCell className="text-xs font-semibold">Subtotal</TableCell>
                               <TableCell className="text-right font-semibold tabular-nums">{g.ordenes}</TableCell>
                               <TableCell className="text-right font-semibold tabular-nums">{ton(g.toneladas)}</TableCell>
@@ -976,6 +1027,8 @@ export function CuadroControlFacturacion() {
                         <TableHead>Tiquete</TableHead>
                         <TableHead>Operación</TableHead>
                         <TableHead>Owner</TableHead>
+                        {hayTransporte && <TableHead>Transporte</TableHead>}
+                        {hayTransporte && <TableHead>Pago</TableHead>}
                         <TableHead>Cliente</TableHead>
                         <TableHead className="text-right">Cantidad</TableHead>
                         <TableHead className="text-right">Tarifa</TableHead>
@@ -987,13 +1040,38 @@ export function CuadroControlFacturacion() {
                       {data.filas.slice(0, 500).map((f, i) => {
                         const rojo = f.categoria === "sin_gestionar" || f.sin_tarifa
                         return (
-                          <TableRow key={`${f.numeroorden}-${f.owner}-${i}`} className={rojo ? "bg-red-50 dark:bg-red-950/30" : ""}>
+                          <TableRow key={`${f.numeroorden}-${f.owner}-${i}`} className={f.medioPagoInconsistente ? "bg-amber-50 dark:bg-amber-950/25" : rojo ? "bg-red-50 dark:bg-red-950/30" : ""}>
                             <TableCell className="text-xs font-medium">{f.numeroorden}</TableCell>
                             <TableCell className="text-xs">{f.fecha ?? "-"}</TableCell>
                             <TableCell className="text-xs">{f.placa ?? "-"}</TableCell>
                             <TableCell className="text-xs">{f.tiquete ?? "-"}</TableCell>
                             <TableCell className="text-xs">{f.tipooperacion ?? "-"}</TableCell>
                             <TableCell className="text-xs">{f.owner}</TableCell>
+                            {hayTransporte && <TableCell className="text-xs font-medium">{f.transporte ?? "-"}</TableCell>}
+                            {hayTransporte && (
+                              <TableCell className="text-xs">
+                                {f.medioPagoEsperado ? (
+                                  <span className="inline-flex flex-col leading-tight">
+                                    <span
+                                      className={`font-semibold ${
+                                        f.medioPagoEsperado === "Contado" ? "text-emerald-700" : "text-indigo-700"
+                                      }`}
+                                    >
+                                      {f.medioPagoEsperado}
+                                    </span>
+                                    {/* Solo se muestra lo registrado cuando CONTRADICE la
+                                        regla: si coincide, repetirlo es ruido. */}
+                                    {f.medioPagoInconsistente && (
+                                      <span className="text-[10px] font-semibold text-red-600">
+                                        registrado: {f.mediopago}
+                                      </span>
+                                    )}
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] text-muted-foreground">{f.mediopago ?? "-"}</span>
+                                )}
+                              </TableCell>
+                            )}
                             <TableCell className="text-xs">{f.cliente ?? "-"}</TableCell>
                             <TableCell className="text-right text-xs tabular-nums">
                               {ton(f.toneladas)}
