@@ -43,12 +43,17 @@ import {
   type Prefactura,
   type PrefacturaGuardada,
   type SoporteLinea,
+  type UnidadCobro,
 } from "@/lib/facturacion-control-actions"
 import { getAccessibleEmpresesFromPermisos } from "@/lib/orders-actions"
 import { OP_PRODUCCION, OP_PRODUCCION_LABEL } from "@/lib/facturacion-produccion-conceptos"
 
 const money = (n: number) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO")
 const ton = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { maximumFractionDigits: 2 })
+// La columna de cantidad es una sola para toneladas, horas y turnos: la unidad
+// va al lado del número y SOLO las toneladas suman al tonelaje del documento.
+const uLabel = (u?: UnidadCobro) => (u === "h" ? "h" : u === "turno" ? "turnos" : "t")
+const esTon = (u?: UnidadCobro) => u !== "h" && u !== "turno"
 
 // Semáforo de facturación (lo determina la FACTURA DE SIIGO):
 //   VERDE = por facturar (sin factura Siigo) · ROJO = ya facturado (tiene factura Siigo, NO recobrar).
@@ -94,7 +99,7 @@ function agruparSoporte(lineas: SoporteLinea[]): { grupos: SoporteGrupo[]; total
     (a, b) => a.owner.localeCompare(b.owner) || a.operacion.localeCompare(b.operacion),
   )
   // Las horas extra comparten la columna de cantidad pero NO son tonelaje.
-  const totalTon = lineas.reduce((s, l) => s + (l.unidad === "h" ? 0 : Number(l.toneladas) || 0), 0)
+  const totalTon = lineas.reduce((s, l) => s + (esTon(l.unidad) ? Number(l.toneladas) || 0 : 0), 0)
   const totalVal = lineas.reduce((s, l) => s + (Number(l.valor) || 0), 0)
   return { grupos, totalTon, totalVal }
 }
@@ -137,7 +142,7 @@ function SoporteAnexo({ lineas }: { lineas: SoporteLinea[] }) {
                     <td className="py-1">{l.cliente ?? "-"}</td>
                     <td className="py-1">{l.producto ?? "-"}</td>
                     <td className="py-1 text-right tabular-nums">
-                      {ton(l.toneladas)} <span className="text-[9px] text-muted-foreground">{l.unidad === "h" ? "h" : "t"}</span>
+                      {ton(l.toneladas)} <span className="text-[9px] text-muted-foreground">{uLabel(l.unidad)}</span>
                     </td>
                     <td className="py-1 text-right tabular-nums text-muted-foreground">{money(l.tarifa)}</td>
                     <td className="py-1 pr-2 text-right tabular-nums">{money(l.valor)}</td>
@@ -187,13 +192,13 @@ function exportarSoporteExcel(lineas: SoporteLinea[], nombre: string) {
       Producto: l.producto ?? "",
       Servicio: l.servicio,
       Cantidad: Number((Number(l.toneladas) || 0).toFixed(3)),
-      Unidad: l.unidad === "h" ? "h" : "t",
+      Unidad: uLabel(l.unidad),
       Tarifa: l.tarifa,
       Valor: Math.round(Number(l.valor) || 0),
     }))
     rows.push({
       Fecha: "", Orden: "", Placa: "", Cliente: "", Producto: "", Servicio: "SUBTOTAL",
-      Cantidad: Number(g.ton.toFixed(3)), Unidad: g.lineas[0]?.unidad === "h" ? "h" : "t",
+      Cantidad: Number(g.ton.toFixed(3)), Unidad: uLabel(g.lineas[0]?.unidad),
       Tarifa: "" as any, Valor: Math.round(g.valor),
     })
     let hoja = `${abrev(g.owner)} - ${g.operacion}`.substring(0, 31).replace(/[\\/?*[\]:]/g, "")
@@ -292,7 +297,7 @@ export function CuadroControlFacturacion() {
       const g = m.get(o.owner) || { owner: o.owner, filas: [] as ControlFacturacion["porOwner"], ordenes: 0, toneladas: 0, valor: 0, fact: 0, proc: 0, sinG: 0 }
       g.filas.push(o)
       g.ordenes += o.ordenes
-      if (o.unidad !== "h") g.toneladas += o.toneladas // las horas extra no son tonelaje
+      if (esTon(o.unidad)) g.toneladas += o.toneladas // las horas extra no son tonelaje
       g.valor += o.valor_a_facturar
       g.fact += o.val_facturado
       g.proc += o.val_en_proceso
@@ -380,7 +385,7 @@ export function CuadroControlFacturacion() {
         porOwner.get(r.owner) ||
         ({ owner: r.owner, items: [] as any, ton: 0, total: 0, porFacturar: 0, facturado: 0, enProceso: 0, operacion: 0, produccion: 0 } as Grupo)
       g.items.push(r)
-      if (r.unidad !== "h") g.ton += r.toneladas // las horas extra no son tonelaje
+      if (esTon(r.unidad)) g.ton += r.toneladas // las horas extra no son tonelaje
       g.total += r.valor
       // Subtotales por bloque: cuánto de la factura es movimiento de órdenes y
       // cuánto es producción. Es la lectura que pide el cliente.
@@ -394,7 +399,7 @@ export function CuadroControlFacturacion() {
     const grupos = Array.from(porOwner.values()).sort((a, b) => a.owner.localeCompare(b.owner))
     // Solo TONELADAS: las horas extra vienen en la misma columna con unidad "h"
     // y sumarlas al tonelaje daría un peso inventado.
-    const totalTon = rows.reduce((s, r) => s + (r.unidad === "h" ? 0 : r.toneladas), 0)
+    const totalTon = rows.reduce((s, r) => s + (esTon(r.unidad) ? r.toneladas : 0), 0)
     const totalVal = rows.reduce((s, r) => s + r.valor, 0)
     const totalPorFacturar = rows.reduce((s, r) => s + r.valorPorFacturar, 0)
     const totalFacturado = rows.reduce((s, r) => s + r.valorFacturado, 0)
@@ -464,7 +469,7 @@ export function CuadroControlFacturacion() {
           g.owner,
           it.operacion,
           Number(it.toneladas.toFixed(3)),
-          it.unidad === "h" ? "h" : "t",
+          uLabel(it.unidad),
           it.tarifa,
           Math.round(it.valor),
           it.bloque === "produccion" ? "Producción" : "Movimiento de órdenes",
@@ -508,7 +513,7 @@ export function CuadroControlFacturacion() {
         Tipo: l.servicio,
         Detalle: l.producto ?? "",
         Cantidad: Number((Number(l.toneladas) || 0).toFixed(3)),
-        Unidad: l.unidad === "h" ? "h" : "t",
+        Unidad: uLabel(l.unidad),
         Tarifa: l.tarifa,
         Valor: Math.round(Number(l.valor) || 0),
       }))
@@ -567,7 +572,7 @@ export function CuadroControlFacturacion() {
       soporte,
       total: Math.round(prefSel.totalPorFacturar),
       // Solo tonelaje real: las horas extra van en la misma columna con unidad "h".
-      toneladas: Number(lineas.reduce((s, l) => s + (l.unidad === "h" ? 0 : l.toneladas), 0).toFixed(3)),
+      toneladas: Number(lineas.reduce((s, l) => s + (esTon(l.unidad) ? l.toneladas : 0), 0).toFixed(3)),
       usuario: user?.email || user?.nombre || null,
       observacion: obs || null,
     })
@@ -919,7 +924,7 @@ export function CuadroControlFacturacion() {
                                   que falta información, cuando simplemente no aplica. */}
                               <TableCell className="text-right tabular-nums">{o.ordenes > 0 ? o.ordenes : "—"}</TableCell>
                               <TableCell className="text-right tabular-nums">
-                                {ton(o.toneladas)} <span className="text-[9px] text-muted-foreground">{o.unidad === "h" ? "h" : "t"}</span>
+                                {ton(o.toneladas)} <span className="text-[9px] text-muted-foreground">{uLabel(o.unidad)}</span>
                               </TableCell>
                               <TableCell className="text-right font-semibold tabular-nums">{money(o.valor_a_facturar)}</TableCell>
                               {o.bloque === "produccion" ? (
@@ -1244,7 +1249,7 @@ export function CuadroControlFacturacion() {
                                         </td>
                                         <td className="py-1.5 text-right tabular-nums">
                                           {ton(it.toneladas)}
-                                          {it.unidad === "h" && <span className="ml-1 text-[9px] text-muted-foreground">h</span>}
+                                          {!esTon(it.unidad) && <span className="ml-1 text-[9px] text-muted-foreground">{uLabel(it.unidad)}</span>}
                                         </td>
                                         <td className="py-1.5 text-right tabular-nums text-muted-foreground">{money(it.tarifa)}</td>
                                         <td className="py-1.5 text-right tabular-nums">
@@ -1322,7 +1327,7 @@ export function CuadroControlFacturacion() {
                                                       <td className="py-1 pl-2 tabular-nums">{l.fecha ?? "-"}</td>
                                                       <td className="py-1">{l.producto ?? "-"}</td>
                                                       <td className="py-1 text-right tabular-nums">
-                                                        {ton(l.toneladas)} {l.unidad === "h" ? "h" : "t"}
+                                                        {ton(l.toneladas)} {uLabel(l.unidad)}
                                                       </td>
                                                       <td className="py-1 text-right tabular-nums text-muted-foreground">{money(l.tarifa)}</td>
                                                       <td className="py-1 pr-2 text-right tabular-nums">{money(l.valor)}</td>

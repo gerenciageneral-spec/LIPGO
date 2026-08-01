@@ -17,10 +17,18 @@ import {
   vigenciaProduccion,
   separarFiltroOperaciones,
   CONCEPTO_HORA_EXTRA,
+  CONCEPTO_TURNO,
   OP_PRODUCCION,
 } from "@/lib/facturacion-produccion-conceptos"
 
 export type CategoriaFactura = "facturado" | "en_proceso" | "sin_gestionar"
+
+/**
+ * Unidad en la que se cobra una línea. La columna de cantidad del documento es
+ * una sola, así que sin esto las horas y los turnos se sumarían al tonelaje.
+ *   "t" = toneladas · "h" = horas extra · "turno" = personas-turno
+ */
+export type UnidadCobro = "t" | "h" | "turno"
 
 // Determinante REAL de "¿se facturó?": existe la FACTURA DE SIIGO (`facturasiigo`).
 // Sin factura Siigo → NO facturado (verde), aunque el estado sea "Factura solicitada"
@@ -66,7 +74,7 @@ export interface ResumenOwner {
    *  lib/facturacion-produccion-conceptos.ts. */
   bloque: "operacion" | "produccion"
   /** Unidad de `toneladas`: "h" en las horas extra. */
-  unidad: "t" | "h"
+  unidad: UnidadCobro
 }
 
 export interface ControlFacturacion {
@@ -299,7 +307,7 @@ export interface PrefacturaResumen {
   bloque: "operacion" | "produccion"
   /** Unidad de `toneladas`: toneladas o HORAS (horas extra). Sin esto las horas
    *  se sumarían al tonelaje del documento. */
-  unidad: "t" | "h"
+  unidad: UnidadCobro
 }
 export interface Prefactura {
   origen: PrefacturaLinea[]
@@ -329,7 +337,7 @@ export interface PrefacturaLineaGuardada {
   /** Presentes solo en las prefacturas nuevas; las guardadas antes de incluir la
    *  producción no los traen y se leen como "ordenes"/"t". */
   fuente?: "ordenes" | "produccion"
-  unidad?: "t" | "h"
+  unidad?: UnidadCobro
 }
 // Línea del SOPORTE (anexo) congelado: detalle de órdenes que respalda la factura.
 export interface SoporteLinea {
@@ -345,7 +353,7 @@ export interface SoporteLinea {
   tarifa: number
   valor: number
   /** "h" en las horas extra. Ausente = toneladas (soportes anteriores). */
-  unidad?: "t" | "h"
+  unidad?: UnidadCobro
 }
 export interface PrefacturaGuardada {
   id: number
@@ -458,7 +466,7 @@ export async function eliminarPrefactura(id: number): Promise<{ success: boolean
  */
 interface ConceptoProduccion {
   concepto: string
-  unidad: "t" | "h"
+  unidad: UnidadCobro
   cantidad: number
   valor: number
   tarifa: number
@@ -476,8 +484,8 @@ async function calcularProduccion(
   }
 
   type Acum = { cantidad: number; valor: number; tarifa: number }
-  const porConcepto = new Map<string, { unidad: "t" | "h"; a: Acum }>()
-  const acum = (concepto: string, unidad: "t" | "h", cantidad: number, valor: number, tarifa: number) => {
+  const porConcepto = new Map<string, { unidad: UnidadCobro; a: Acum }>()
+  const acum = (concepto: string, unidad: UnidadCobro, cantidad: number, valor: number, tarifa: number) => {
     const e = porConcepto.get(concepto) || { unidad, a: { cantidad: 0, valor: 0, tarifa: 0 } }
     e.a.cantidad += cantidad
     e.a.valor += valor
@@ -521,6 +529,32 @@ async function calcularProduccion(
         tarifa: h.tarifa,
         valor: Math.round(h.cobro),
         unidad: "h",
+      })
+    }
+    // TURNOS solicitados y aprobados. Solo los que se pudieron valorizar: los
+    // que no (puesto sin resolver, o cobraturno = NO) viajan como alerta, no
+    // como una línea en $0 que ensuciaría la factura del cliente.
+    for (const tr of d.detalleTurnos) {
+      if (tr.cobro <= 0) continue
+      const concepto = `${CONCEPTO_TURNO} · ${tr.puesto}`
+      acum(concepto, "turno", tr.personas, tr.cobro, tr.tarifa)
+      soporte.push({
+        owner: cfg.owner,
+        operacion: concepto,
+        servicio: "Turno",
+        fecha: d.fecha,
+        numeroorden: "—",
+        placa: null,
+        cliente: null,
+        // Se deja constancia del texto original cuando hubo que traducirlo:
+        // así el anexo permite auditar por qué se cobró ese puesto.
+        producto:
+          `${tr.personas} turno(s) aprobado(s)` +
+          (tr.via === "alias" ? ` · solicitado como "${tr.puestoSolicitado}"` : ""),
+        toneladas: tr.personas,
+        tarifa: tr.tarifa,
+        valor: Math.round(tr.cobro),
+        unidad: "turno",
       })
     }
   }

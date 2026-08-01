@@ -89,6 +89,8 @@ export function produccionDelProyecto(idempresa: number | null | undefined): Pro
 
 /** Prefijo con el que se nombra cada concepto de hora extra en el documento. */
 export const CONCEPTO_HORA_EXTRA = "Hora extra"
+/** Prefijo de los turnos solicitados y aprobados que se facturan. */
+export const CONCEPTO_TURNO = "Turno"
 
 /**
  * Valor centinela del chip "Producción" en el filtro de Operación. Va con

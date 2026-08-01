@@ -41,6 +41,7 @@
  */
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
+import { normalizarPuesto, resolverPuesto } from "@/lib/puestos-turno-alias"
 
 /** Avimol. El módulo es específico de este proyecto (no usa el selector global). */
 const AVIMOL_IDEMPRESA = 2
@@ -115,6 +116,41 @@ function tarifaHoraExtraVigente(tarifas: any[], puesto: string, fecha: string): 
   return fila ? num(fila.tarifahoraextra) : 0
 }
 
+/**
+ * Fila vigente del maestro para un puesto. Mismo lookup que la hora extra
+ * (por puesto + vigencia, sin filtrar empresa: el maestro es global).
+ */
+function filaTurnoVigente(tarifas: any[], puesto: string, fecha: string): any | null {
+  const p = normalizarPuesto(puesto)
+  return (
+    (tarifas || []).find(
+      (t) =>
+        normalizarPuesto(t.puesto) === p &&
+        String(t.fechainicio).slice(0, 10) <= fecha &&
+        String(t.fechafin).slice(0, 10) >= fecha,
+    ) || null
+  )
+}
+
+/**
+ * Tarifa de TURNO vigente. Usa `tarifaturnofestivo` cuando el día es festivo:
+ * el maestro la declara ($188.045 vs $136.131) y la vista legacy
+ * `facturacionturnos` la ignora, cobrando festivos como ordinarios.
+ */
+function tarifaTurnoVigente(fila: any | null, esFestivo: boolean): number {
+  if (!fila) return 0
+  if (esFestivo) {
+    const f = num(fila.tarifaturnofestivo)
+    if (f > 0) return f
+  }
+  return num(fila.tarifaturno)
+}
+
+/** `cobraturno` del maestro. Ausente o distinto de 'SI' = no se cobra por turno. */
+function cobraTurno(fila: any | null): boolean {
+  return String(fila?.cobraturno ?? "").trim().toUpperCase() === "SI"
+}
+
 // ---------------------------------------------------------------------------
 // Tipos
 // ---------------------------------------------------------------------------
@@ -161,6 +197,29 @@ export interface HoraExtraPuesto {
   delta: number // horas − horasSolicitadas
 }
 
+/**
+ * Turno FACTURABLE de un puesto en un día. Se cobra lo SOLICITADO Y APROBADO en
+ * Servicios Adicionales (`solicitudesturnos`, tipo='Turnos'): el turno se le
+ * vende al proyecto cuando lo pide y lo aprueba, no cuando se ejecuta.
+ *
+ * Dos guardas para no cobrar de más:
+ *   · `cobraturno = 'NO'` en el maestro → ese puesto NO se cobra por turno
+ *     porque ya se cobra por PRODUCCIÓN (Salvado, Estibado PT). Sale en $0 en
+ *     vez de omitirse, para que se vea que la solicitud sí se tuvo en cuenta.
+ *   · Un puesto que no case con el maestro no se cobra y se reporta con su
+ *     texto literal (ver lib/puestos-turno-alias.ts).
+ */
+export interface TurnoFacturable {
+  puesto: string // nombre canónico del maestro, o el texto original si no resolvió
+  puestoSolicitado: string // el texto tal como se escribió en la solicitud
+  resuelto: boolean
+  via: "exacto" | "alias" | null
+  cobraTurno: boolean
+  personas: number // `cantidad` de la solicitud = personas-turno
+  tarifa: number // tarifaturno, o tarifaturnofestivo si el día es festivo
+  cobro: number
+}
+
 export interface ConciliacionAvimolDia {
   fecha: string
   esFestivo: boolean
@@ -171,9 +230,13 @@ export interface ConciliacionAvimolDia {
   kgTotal: number
   cobroProduccion: number
   cobroHorasExtra: number
+  cobroTurnos: number
   cobroTotal: number
   horasExtraEjecutadas: number
   horasExtraSolicitadas: number
+  turnosSolicitados: number // personas-turno aprobadas en el día
+  turnosCobrados: number // las que sí se pudieron valorizar
+  turnosEjecutados: number // personas-día trabajadas en puestos facturables por turno
   pagoBase: number
   pagoRecargos: number // recargos de los turnos Estibado PT / Salvado
   pagoDominical: number
@@ -182,16 +245,31 @@ export interface ConciliacionAvimolDia {
   // Sin esto el margen quedaría inflado, porque se factura hora extra de
   // puestos cuyo costo no entraba al módulo.
   pagoHorasExtraOtros: number
+  // Costo del TURNO (base + dominical) de los puestos que ahora se facturan por
+  // turno y no son Estibado PT / Salvado. Mismo motivo que el anterior: si se
+  // cobra su turno, su costo tiene que contarse o el margen sale inflado.
+  pagoTurnosOtros: number
   pagoTotal: number
   margen: number // cobroTotal − pagoTotal
   personas: number
   productos: ProductoConciliado[]
   detallePersonas: PersonaTurno[]
   detalleHorasExtra: HoraExtraPuesto[]
+  detalleTurnos: TurnoFacturable[]
 }
 
 export interface AlertaAvimol {
-  tipo: "lote_invalido" | "sin_tarifa" | "sin_liquidar" | "sin_solicitud" | "sin_tarifa_he" | "exceso_solicitud"
+  tipo:
+    | "lote_invalido"
+    | "sin_tarifa"
+    | "sin_liquidar"
+    | "sin_solicitud"
+    | "sin_tarifa_he"
+    | "exceso_solicitud"
+    | "puesto_no_reconocido"
+    | "turno_no_cobrable"
+    | "sin_tarifa_turno"
+    | "turno_sin_solicitud"
   detalle: string
 }
 
@@ -204,12 +282,17 @@ export interface ConciliacionAvimolData {
     tonSalvado: number
     cobroProduccion: number
     cobroHorasExtra: number
+    cobroTurnos: number
     cobroTotal: number
     horasExtraEjecutadas: number
     horasExtraSolicitadas: number
+    turnosSolicitados: number
+    turnosCobrados: number
+    turnosEjecutados: number
     pagoBase: number
     pagoRecargos: number
     pagoHorasExtraOtros: number
+    pagoTurnosOtros: number
     pagoTotal: number
     margen: number
     margenPct: number
@@ -342,31 +425,49 @@ export async function getConciliacionAvimol(
       if (data.length < 1000) break
     }
 
-    // Tarifas de facturación de HORA EXTRA por puesto (maestro global).
+    // Maestro de facturación por puesto (global): hora extra Y turno. `cobraturno`
+    // es el interruptor que el negocio ya dejó puesto: los puestos que se cobran
+    // por producción (Salvado, Estibado PT) están en 'NO'.
     const { data: tarifasHE } = await admin
       .from("tarifasfacturacionturnos")
-      .select("puesto, tarifahoraextra, fechainicio, fechafin")
+      .select("puesto, tarifahoraextra, tarifaturno, tarifaturnofestivo, cobraturno, fechainicio, fechafin")
 
     // Horas extra SOLICITADAS por el proyecto (Servicios Adicionales). Solo
     // las APROBADAS: una solicitud pendiente o rechazada no autoriza nada.
     // Para tipo='Horas Extra', `cantidad` son HORAS (para 'Turnos' son
     // personas, ver components/aprobar-turnos.tsx).
     const solicitadasPorFechaPuesto = new Map<string, number>()
+    // Solicitudes de TURNO aprobadas: son las que se facturan (ver TurnoFacturable).
+    const turnosAprobados: Array<{ fecha: string; puesto: string; personas: number }> = []
     {
-      const { data } = await admin
-        .from("solicitudesturnos")
-        .select("fecharequerida, puesto, cantidad, tipo, estado")
-        .eq("idempresa", AVIMOL_IDEMPRESA)
-        .eq("tipo", "Horas Extra")
-        .eq("estado", "aprobado")
-        .gte("fecharequerida", desde)
-        .lte("fecharequerida", hasta)
-        .range(0, 999)
-      for (const s of data || []) {
-        // TRIM + UPPER en ambos lados: el histórico de `puesto` se guardó como
-        // texto libre sin normalizar (el desplegable estricto es reciente).
-        const key = `${String(s.fecharequerida).slice(0, 10)}|${String(s.puesto || "").trim().toUpperCase()}`
-        solicitadasPorFechaPuesto.set(key, (solicitadasPorFechaPuesto.get(key) || 0) + num(s.cantidad))
+      // Se traen TODOS los tipos y se separan en código: `tipo` tiene variantes
+      // de mayúsculas en el histórico ("Turnos" y "turnos"), y un `.eq` exacto
+      // dejaría solicitudes fuera EN SILENCIO.
+      const solicitudes: any[] = []
+      for (let off = 0; ; off += 1000) {
+        const { data } = await admin
+          .from("solicitudesturnos")
+          .select("fecharequerida, puesto, cantidad, tipo, estado")
+          .eq("idempresa", AVIMOL_IDEMPRESA)
+          .eq("estado", "aprobado")
+          .gte("fecharequerida", desde)
+          .lte("fecharequerida", hasta)
+          .range(off, off + 999)
+        if (!data || data.length === 0) break
+        solicitudes.push(...data)
+        if (data.length < 1000) break
+      }
+      for (const s of solicitudes) {
+        const fecha = String(s.fecharequerida).slice(0, 10)
+        const tipo = String(s.tipo || "").trim().toUpperCase()
+        if (tipo === "HORAS EXTRA") {
+          // TRIM + UPPER en ambos lados: el histórico de `puesto` se guardó como
+          // texto libre sin normalizar (el desplegable estricto es reciente).
+          const key = `${fecha}|${String(s.puesto || "").trim().toUpperCase()}`
+          solicitadasPorFechaPuesto.set(key, (solicitadasPorFechaPuesto.get(key) || 0) + num(s.cantidad))
+        } else if (tipo === "TURNOS") {
+          turnosAprobados.push({ fecha, puesto: String(s.puesto || "").trim(), personas: num(s.cantidad) })
+        }
       }
     }
 
@@ -387,19 +488,25 @@ export async function getConciliacionAvimol(
           kgTotal: 0,
           cobroProduccion: 0,
           cobroHorasExtra: 0,
+          cobroTurnos: 0,
           cobroTotal: 0,
           horasExtraEjecutadas: 0,
           horasExtraSolicitadas: 0,
+          turnosSolicitados: 0,
+          turnosCobrados: 0,
+          turnosEjecutados: 0,
           pagoBase: 0,
           pagoRecargos: 0,
           pagoDominical: 0,
           pagoHorasExtraOtros: 0,
+          pagoTurnosOtros: 0,
           pagoTotal: 0,
           margen: 0,
           personas: 0,
           productos: [],
           detallePersonas: [],
           detalleHorasExtra: [],
+          detalleTurnos: [],
         })
       }
       return porFecha.get(fecha)!
@@ -471,6 +578,15 @@ export async function getConciliacionAvimol(
       string,
       { fecha: string; puesto: string; hed: number; hedf: number; hen: number; hef: number; hn: number; costo: number }
     >()
+    // Puestos que el maestro declara facturables por TURNO. Se usa para saber de
+    // quién hay que contar el costo de turno (si se cobra, se cuenta).
+    const puestosCobraTurno = new Set<string>(
+      (tarifasHE || []).filter((t: any) => cobraTurno(t)).map((t: any) => normalizarPuesto(t.puesto)),
+    )
+    // Turnos EJECUTADOS (personas-día) en esos puestos. Como se factura lo
+    // SOLICITADO, un puesto que se trabaja sin solicitud aprobada se ejecuta y
+    // no se cobra: sin este contador esa plata se pierde en silencio.
+    const turnosEjecPorFechaPuesto = new Map<string, { fecha: string; puesto: string; personas: Set<string> }>()
 
     for (const r of filasPago) {
       const fecha = String(r.fecha).slice(0, 10)
@@ -524,11 +640,29 @@ export async function getConciliacionAvimol(
 
         if (!personasPorDia.has(fecha)) personasPorDia.set(fecha, new Set())
         personasPorDia.get(fecha)!.add(persona.toUpperCase())
-      } else if (valorExtra > 0) {
-        // Puesto fuera del alcance de turnos: solo entra el COSTO de su hora
-        // extra (su base la paga otro concepto, ajeno a esta conciliación).
-        dia.pagoHorasExtraOtros += valorExtra
-        dia.pagoTotal += valorExtra
+      } else {
+        // Puesto fuera del alcance de turnos conciliados por producción.
+        if (valorExtra > 0) {
+          // Entra el COSTO de su hora extra: se factura, así que sin esto el
+          // margen quedaría inflado.
+          dia.pagoHorasExtraOtros += valorExtra
+          dia.pagoTotal += valorExtra
+        }
+        // Y si su TURNO se factura (cobraturno = SI en el maestro), también
+        // tiene que entrar su costo de turno, por el mismo motivo.
+        if (puestosCobraTurno.has(normalizarPuesto(puesto))) {
+          const costoTurno = baseDia + dominical
+          if (costoTurno > 0) {
+            dia.pagoTurnosOtros += costoTurno
+            dia.pagoTotal += costoTurno
+          }
+          if (persona && totalDia > 0) {
+            const k = `${fecha}|${normalizarPuesto(puesto)}`
+            if (!turnosEjecPorFechaPuesto.has(k))
+              turnosEjecPorFechaPuesto.set(k, { fecha, puesto, personas: new Set<string>() })
+            turnosEjecPorFechaPuesto.get(k)!.personas.add(persona.toUpperCase())
+          }
+        }
       }
     }
 
@@ -581,6 +715,128 @@ export async function getConciliacionAvimol(
       })
     }
 
+    // 4b-ter) TURNOS FACTURABLES. Se cobra lo SOLICITADO Y APROBADO, valorizado
+    //   con el maestro. El puesto de la solicitud es texto libre, así que se
+    //   resuelve contra el catálogo (exacto o alias declarado); lo que no
+    //   resuelve NO se cobra y se reporta con su texto literal.
+    const catalogoPuestos = Array.from(
+      new Set((tarifasHE || []).map((t: any) => String(t.puesto || "").trim()).filter(Boolean)),
+    ) as string[]
+    {
+      const noReconocidos = new Map<string, { personas: number; fechas: Set<string> }>()
+      const noCobrables = new Map<string, number>()
+      const sinTarifaTurno = new Set<string>()
+
+      // Se agrupa por (fecha, puesto normalizado): dos solicitudes del mismo
+      // puesto el mismo día son una sola línea de cobro.
+      const acc = new Map<string, { fecha: string; texto: string; personas: number }>()
+      for (const s of turnosAprobados) {
+        if (s.personas <= 0) continue
+        const k = `${s.fecha}|${normalizarPuesto(s.puesto)}`
+        const a = acc.get(k) || { fecha: s.fecha, texto: s.puesto, personas: 0 }
+        a.personas += s.personas
+        acc.set(k, a)
+      }
+
+      for (const a of acc.values()) {
+        const dia = getDia(a.fecha)
+        dia.turnosSolicitados += a.personas
+        const { puesto, via } = resolverPuesto(a.texto, catalogoPuestos)
+
+        if (!puesto) {
+          const n = noReconocidos.get(a.texto) || { personas: 0, fechas: new Set<string>() }
+          n.personas += a.personas
+          n.fechas.add(a.fecha)
+          noReconocidos.set(a.texto, n)
+          dia.detalleTurnos.push({
+            puesto: a.texto,
+            puestoSolicitado: a.texto,
+            resuelto: false,
+            via: null,
+            cobraTurno: false,
+            personas: a.personas,
+            tarifa: 0,
+            cobro: 0,
+          })
+          continue
+        }
+
+        const fila = filaTurnoVigente(tarifasHE || [], puesto, a.fecha)
+        const cobra = cobraTurno(fila)
+        const tarifa = cobra ? tarifaTurnoVigente(fila, dia.esFestivo) : 0
+        if (!cobra) noCobrables.set(puesto, (noCobrables.get(puesto) || 0) + a.personas)
+        else if (tarifa <= 0) sinTarifaTurno.add(`${puesto}|${a.fecha}`)
+
+        const cobro = a.personas * tarifa
+        dia.detalleTurnos.push({
+          puesto,
+          puestoSolicitado: a.texto,
+          resuelto: true,
+          via,
+          cobraTurno: cobra,
+          personas: a.personas,
+          tarifa,
+          cobro,
+        })
+        dia.cobroTurnos += cobro
+        if (cobro > 0) dia.turnosCobrados += a.personas
+      }
+
+      for (const [texto, n] of noReconocidos) {
+        const fechas = Array.from(n.fechas).sort()
+        alertas.push({
+          tipo: "puesto_no_reconocido",
+          detalle:
+            `Solicitud de turno con puesto "${texto}" (${n.personas} persona(s), ${fechas[0]}${fechas.length > 1 ? ` … ${fechas[fechas.length - 1]}` : ""}): ` +
+            `no corresponde a ningún puesto de tarifasfacturacionturnos, así que NO se cobró. ` +
+            `Corrige el puesto en la solicitud o declara la equivalencia en lib/puestos-turno-alias.ts.`,
+        })
+      }
+      for (const [puesto, personas] of noCobrables) {
+        alertas.push({
+          tipo: "turno_no_cobrable",
+          detalle: `${puesto}: ${personas} turno(s) aprobado(s) NO se cobran porque el maestro tiene cobraturno = NO (ese puesto se cobra por producción).`,
+        })
+      }
+      for (const k of sinTarifaTurno) {
+        const [p, f] = k.split("|")
+        alertas.push({
+          tipo: "sin_tarifa_turno",
+          detalle: `Sin tarifa de turno vigente en tarifasfacturacionturnos para "${p}" el ${f} — ese turno se factura en $0.`,
+        })
+      }
+
+      // EJECUTADO SIN SOLICITAR. Como se cobra lo solicitado, un puesto que se
+      // trabajó sin solicitud aprobada no se factura: es plata que se deja de
+      // cobrar y hay que verla. Se agrega por puesto para no llenar de ruido.
+      const sinSolicitud = new Map<string, { personasDia: number; fechas: number }>()
+      for (const e of turnosEjecPorFechaPuesto.values()) {
+        const dia = getDia(e.fecha)
+        dia.turnosEjecutados += e.personas.size
+        const solicitadas = dia.detalleTurnos
+          .filter((t) => normalizarPuesto(t.puesto) === normalizarPuesto(e.puesto))
+          .reduce((a, t) => a + t.personas, 0)
+        const faltan = e.personas.size - solicitadas
+        if (faltan > 0) {
+          const g = sinSolicitud.get(e.puesto) || { personasDia: 0, fechas: 0 }
+          g.personasDia += faltan
+          g.fechas++
+          sinSolicitud.set(e.puesto, g)
+        }
+      }
+      for (const [puesto, g] of sinSolicitud) {
+        const fila = filaTurnoVigente(tarifasHE || [], puesto, hasta)
+        const tarifa = num(fila?.tarifaturno)
+        alertas.push({
+          tipo: "turno_sin_solicitud",
+          detalle:
+            `${puesto}: se trabajaron ${g.personasDia} turno(s) en ${g.fechas} día(s) SIN solicitud aprobada, así que no se facturan` +
+            (tarifa > 0 ? ` (≈ $${Math.round(g.personasDia * tarifa).toLocaleString("es-CO")} sin cobrar)` : "") +
+            `. El proyecto debe radicarlos en Servicios Adicionales.`,
+        })
+      }
+    }
+
     // 4c) Alerta: gente con puesto de turno en asistencia que pagonomina NO
     //     liquidó como turno (falta tarifa de turno vigente — pagonomina hace
     //     INNER JOIN a tarifasturnos, ver pagonomina_reemplazo.sql:158).
@@ -610,12 +866,13 @@ export async function getConciliacionAvimol(
     // 5) Cierre: márgenes, orden y resumen.
     // -----------------------------------------------------------------------
     for (const dia of porFecha.values()) {
-      dia.cobroTotal = dia.cobroProduccion + dia.cobroHorasExtra
+      dia.cobroTotal = dia.cobroProduccion + dia.cobroHorasExtra + dia.cobroTurnos
       dia.margen = dia.cobroTotal - dia.pagoTotal
       dia.personas = dia.detallePersonas.length
       dia.productos.sort((a, b) => b.toneladas - a.toneladas)
       dia.detallePersonas.sort((a, b) => a.persona.localeCompare(b.persona))
       dia.detalleHorasExtra.sort((a, b) => b.horas - a.horas)
+      dia.detalleTurnos.sort((a, b) => b.cobro - a.cobro || a.puesto.localeCompare(b.puesto))
     }
     const dias = Array.from(porFecha.values()).sort((a, b) => (a.fecha < b.fecha ? 1 : -1))
 
@@ -624,7 +881,8 @@ export async function getConciliacionAvimol(
 
     const cobroProduccion = dias.reduce((a, d) => a + d.cobroProduccion, 0)
     const cobroHorasExtra = dias.reduce((a, d) => a + d.cobroHorasExtra, 0)
-    const cobroTotal = cobroProduccion + cobroHorasExtra
+    const cobroTurnos = dias.reduce((a, d) => a + d.cobroTurnos, 0)
+    const cobroTotal = cobroProduccion + cobroHorasExtra + cobroTurnos
     const pagoTotal = dias.reduce((a, d) => a + d.pagoTotal, 0)
     const data: ConciliacionAvimolData = {
       rango: { desde, hasta },
@@ -635,12 +893,17 @@ export async function getConciliacionAvimol(
         tonSalvado: dias.reduce((a, d) => a + d.tonSalvado, 0),
         cobroProduccion,
         cobroHorasExtra,
+        cobroTurnos,
         cobroTotal,
         horasExtraEjecutadas: dias.reduce((a, d) => a + d.horasExtraEjecutadas, 0),
         horasExtraSolicitadas: dias.reduce((a, d) => a + d.horasExtraSolicitadas, 0),
+        turnosSolicitados: dias.reduce((a, d) => a + d.turnosSolicitados, 0),
+        turnosCobrados: dias.reduce((a, d) => a + d.turnosCobrados, 0),
+        turnosEjecutados: dias.reduce((a, d) => a + d.turnosEjecutados, 0),
         pagoBase: dias.reduce((a, d) => a + d.pagoBase, 0),
         pagoRecargos: dias.reduce((a, d) => a + d.pagoRecargos, 0),
         pagoHorasExtraOtros: dias.reduce((a, d) => a + d.pagoHorasExtraOtros, 0),
+        pagoTurnosOtros: dias.reduce((a, d) => a + d.pagoTurnosOtros, 0),
         pagoTotal,
         margen: cobroTotal - pagoTotal,
         margenPct: cobroTotal > 0 ? ((cobroTotal - pagoTotal) / cobroTotal) * 100 : 0,

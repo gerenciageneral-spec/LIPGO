@@ -42,6 +42,10 @@ const TITULO_ALERTA: Record<AlertaAvimol["tipo"], string> = {
   sin_solicitud: "Horas extra sin solicitud aprobada",
   sin_tarifa_he: "Sin tarifa de hora extra",
   exceso_solicitud: "Horas extra por encima de lo solicitado",
+  puesto_no_reconocido: "Solicitud de turno con puesto no reconocido",
+  turno_no_cobrable: "Turnos aprobados que no se cobran",
+  sin_tarifa_turno: "Sin tarifa de turno",
+  turno_sin_solicitud: "Turnos trabajados SIN solicitud aprobada (no se facturan)",
 }
 
 export default function ConciliacionAvimol() {
@@ -131,7 +135,7 @@ export default function ConciliacionAvimol() {
       {data && r && (
         <>
           {/* KPIs */}
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Kpi
               label="Toneladas de ingreso"
               value={`${ton(r.tonTotal)} t`}
@@ -151,14 +155,20 @@ export default function ConciliacionAvimol() {
               }
             />
             <Kpi
+              label="Cobro turnos"
+              value={money(r.cobroTurnos)}
+              hint={`${r.turnosCobrados} cobrado(s) de ${r.turnosSolicitados} aprobado(s) · ${r.turnosEjecutados} ejecutado(s)`}
+              tone={r.turnosEjecutados > r.turnosSolicitados ? "down" : undefined}
+            />
+            <Kpi
               label="Cobro total"
               value={money(r.cobroTotal)}
-              hint={`producción ${money(r.cobroProduccion)} + extras ${money(r.cobroHorasExtra)}`}
+              hint={`producción ${money(r.cobroProduccion)} + extras ${money(r.cobroHorasExtra)} + turnos ${money(r.cobroTurnos)}`}
             />
             <Kpi
               label="Pago"
               value={money(r.pagoTotal)}
-              hint={`turnos ${money(r.pagoBase + r.pagoRecargos)} · h. extra otros puestos ${money(r.pagoHorasExtraOtros)}`}
+              hint={`turnos ${money(r.pagoBase + r.pagoRecargos)} · h. extra otros ${money(r.pagoHorasExtraOtros)} · turnos otros ${money(r.pagoTurnosOtros)}`}
             />
             <Kpi
               label="Margen"
@@ -205,6 +215,7 @@ export default function ConciliacionAvimol() {
                     <TableHead className="text-right">H. extra ejec.</TableHead>
                     <TableHead className="text-right">H. extra solic.</TableHead>
                     <TableHead className="text-right">Cobro h. extra</TableHead>
+                    <TableHead className="text-right">Cobro turnos</TableHead>
                     <TableHead className="text-right">Cobro total</TableHead>
                     <TableHead className="text-right">Pago</TableHead>
                     <TableHead className="text-right">Margen</TableHead>
@@ -214,7 +225,7 @@ export default function ConciliacionAvimol() {
                 <TableBody className="tabular-nums">
                   {data.dias.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={10} className="h-20 text-center text-sm text-muted-foreground">
+                      <TableCell colSpan={11} className="h-20 text-center text-sm text-muted-foreground">
                         Sin ingresos de producción ni turnos de Estibado PT/Salvado en el rango.
                       </TableCell>
                     </TableRow>
@@ -250,6 +261,12 @@ export default function ConciliacionAvimol() {
                               {d.horasExtraSolicitadas > 0 ? horas(d.horasExtraSolicitadas) : "—"}
                             </TableCell>
                             <TableCell className="text-right">{money(d.cobroHorasExtra)}</TableCell>
+                            <TableCell
+                              className={`text-right ${d.turnosCobrados < d.turnosSolicitados ? "text-amber-600 dark:text-amber-400" : ""}`}
+                              title={`${d.turnosCobrados} de ${d.turnosSolicitados} turno(s) aprobado(s) valorizado(s)`}
+                            >
+                              {d.turnosSolicitados > 0 ? money(d.cobroTurnos) : "—"}
+                            </TableCell>
                             <TableCell className="text-right font-medium">{money(d.cobroTotal)}</TableCell>
                             <TableCell className="text-right">{money(d.pagoTotal)}</TableCell>
                             <TableCell
@@ -262,7 +279,7 @@ export default function ConciliacionAvimol() {
 
                           {abierto && (
                             <TableRow className="bg-muted/20 hover:bg-muted/20">
-                              <TableCell colSpan={10} className="px-2 py-3">
+                              <TableCell colSpan={11} className="px-2 py-3">
                                 <div className="grid gap-3 lg:grid-cols-2">
                                   {/* Producción facturada */}
                                   <div className="rounded border bg-background">
@@ -418,6 +435,72 @@ export default function ConciliacionAvimol() {
                                                 </TableCell>
                                                 <TableCell className="text-right text-xs font-medium">{money(h.cobro)}</TableCell>
                                                 <TableCell className="text-right text-xs text-muted-foreground">{money(h.costo)}</TableCell>
+                                              </TableRow>
+                                            ))
+                                          )}
+                                        </TableBody>
+                                      </Table>
+                                    </div>
+                                  </div>
+
+                                  {/* Turnos facturados: lo SOLICITADO y aprobado.
+                                      Se listan también los que no se cobran, con
+                                      el motivo, para que no parezcan omitidos. */}
+                                  <div className="rounded border bg-background lg:col-span-2">
+                                    <div className="border-b px-2 py-1.5 text-xs font-semibold">
+                                      Turnos facturados — {money(d.cobroTurnos)}
+                                      <span className="ml-2 font-normal text-muted-foreground">
+                                        {d.turnosCobrados} cobrado(s) de {d.turnosSolicitados} aprobado(s) ·{" "}
+                                        <span className={d.turnosEjecutados > d.turnosSolicitados ? "text-amber-600 dark:text-amber-400" : ""}>
+                                          {d.turnosEjecutados} ejecutado(s)
+                                        </span>
+                                      </span>
+                                    </div>
+                                    <div className="max-h-64 overflow-auto">
+                                      <Table>
+                                        <TableHeader>
+                                          <TableRow>
+                                            <TableHead className="text-xs">Puesto</TableHead>
+                                            <TableHead className="text-xs">Solicitado como</TableHead>
+                                            <TableHead className="text-right text-xs">Turnos</TableHead>
+                                            <TableHead className="text-right text-xs">$/turno</TableHead>
+                                            <TableHead className="text-right text-xs">Cobro</TableHead>
+                                          </TableRow>
+                                        </TableHeader>
+                                        <TableBody className="tabular-nums">
+                                          {d.detalleTurnos.length === 0 ? (
+                                            <TableRow>
+                                              <TableCell colSpan={5} className="h-12 text-center text-xs text-muted-foreground">
+                                                Sin turnos aprobados este día.
+                                              </TableCell>
+                                            </TableRow>
+                                          ) : (
+                                            d.detalleTurnos.map((tr, i) => (
+                                              <TableRow key={i}>
+                                                <TableCell className="text-xs font-medium">
+                                                  {tr.puesto}
+                                                  {tr.via === "alias" && (
+                                                    <Badge variant="outline" className="ml-1 text-[9px]">
+                                                      equivalencia
+                                                    </Badge>
+                                                  )}
+                                                </TableCell>
+                                                <TableCell className="text-xs text-muted-foreground">
+                                                  {tr.puestoSolicitado}
+                                                </TableCell>
+                                                <TableCell className="text-right text-xs">{tr.personas}</TableCell>
+                                                <TableCell className="text-right text-xs">
+                                                  {tr.tarifa > 0 ? (
+                                                    money(tr.tarifa)
+                                                  ) : !tr.resuelto ? (
+                                                    <span className="text-rose-500">puesto no reconocido</span>
+                                                  ) : !tr.cobraTurno ? (
+                                                    <span className="text-muted-foreground">se cobra por producción</span>
+                                                  ) : (
+                                                    <span className="text-rose-500">sin tarifa</span>
+                                                  )}
+                                                </TableCell>
+                                                <TableCell className="text-right text-xs font-medium">{money(tr.cobro)}</TableCell>
                                               </TableRow>
                                             ))
                                           )}
