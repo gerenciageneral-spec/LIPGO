@@ -26,6 +26,7 @@ import {
   proyectoConReglaMedioPago,
   type MedioPago,
 } from "@/lib/facturacion-medio-pago"
+import { cargueSoloPlacaPropia, esCargueFiltrable } from "@/lib/facturacion-cargue-propio"
 
 export type CategoriaFactura = "facturado" | "en_proceso" | "sin_gestionar"
 
@@ -347,6 +348,15 @@ export interface Prefactura {
   produccionDesde: string | null
   /** Si el período facturado cae dentro de esa vigencia. */
   produccionVigencia: "si" | "no" | "parcial"
+  /** Cargue que NO se le factura a este proyecto porque la placa no es suya.
+   *  Se reporta —no se omite en silencio— para poder auditar el documento. */
+  exclusionCarguePlaca: {
+    nota: string
+    ordenes: number
+    toneladas: number
+    valor: number
+    porTransporte: Array<{ transporte: string; ordenes: number; valor: number }>
+  } | null
 }
 
 // ---------- Prefacturas GUARDADAS (borrador/aprobada) ----------
@@ -475,6 +485,26 @@ export async function eliminarPrefactura(id: number): Promise<{ success: boolean
     return { success: true }
   } catch (e: any) {
     return { success: false, message: e?.message || "Error al eliminar." }
+  }
+}
+
+/**
+ * Placas ACTIVAS del proyecto, leídas de `distribucion_placas` en el momento.
+ * No usa el caché ni el seed de lib/distribucion-placas.ts: ese seed incluye
+ * placas dadas de baja y facturar contra él sería cobrar por una lista que
+ * nadie revisó. `ok:false` = no se pudo leer -> no se filtra y se avisa.
+ */
+async function placasPropiasActivas(sb: any, idempresa: number): Promise<{ placas: Set<string>; ok: boolean }> {
+  try {
+    const { data, error } = await sb
+      .from("distribucion_placas")
+      .select("placa")
+      .eq("idempresa", idempresa)
+      .eq("activo", true)
+    if (error) return { placas: new Set(), ok: false }
+    return { placas: new Set((data || []).map((r: any) => String(r.placa ?? "").trim().toUpperCase())), ok: true }
+  } catch {
+    return { placas: new Set(), ok: false }
   }
 }
 
@@ -621,6 +651,14 @@ export async function getPrefactura(
 
     // Placas que NO atiende LIP (excepto cuando cargan a Susanita). Ej. WMP446 en id 4.
     const placasExcluidas = new Set((PLACAS_EXCLUIDAS_FACTURAS[idempresa] || []).map((p) => p.toUpperCase()))
+
+    // CARGUE SOLO DE PLACA PROPIA (Avimol): el cargue de vehículos de terceros y
+    // de Zamudio no se le factura al proyecto, se le cobra a ellos. Se lee la
+    // lista real de la tabla; si no se puede, NO se filtra y se avisa.
+    const cfgCargue = cargueSoloPlacaPropia(idempresa)
+    const propias = cfgCargue ? await placasPropiasActivas(sb, idempresa) : { placas: new Set<string>(), ok: true }
+    const excluidasCargue: PrefacturaLinea[] = []
+
     // Filtro multi-operación (vacío = todas). "Producción" viaja como un chip
     // más pero no es un tipooperacion, así que se separa de las operaciones.
     const cfgFiltro = produccionDelProyecto(idempresa)
@@ -681,7 +719,7 @@ export async function getPrefactura(
         const est = estadoPorOrden.get(on)
         const estadofactura = est?.estado ?? null
         const tServicio = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
-        origen.push({
+        const linea: PrefacturaLinea = {
           fechaorden: r.fechaorden ?? null,
           fechacargue: r.fechacargue ?? null,
           cliente: r.cliente ?? null,
@@ -703,7 +741,15 @@ export async function getPrefactura(
           valorServicio: num(r.toneladas) * tServicio,
           estadofactura,
           categoria: categoriaDeFactura(est?.facturasiigo, estadofactura),
-        })
+        }
+        // A este proyecto solo se le factura el cargue de SUS vehículos; el de
+        // terceros y el de Zamudio se les cobra a ellos. La línea no se pierde:
+        // se aparta para poder reportar exactamente qué quedó fuera y por qué.
+        if (cfgCargue && propias.ok && esCargueFiltrable(idempresa, r.tipooperacion) && !propias.placas.has(placa)) {
+          excluidasCargue.push(linea)
+          continue
+        }
+        origen.push(linea)
       }
       if (data.length < 1000) break
     }
@@ -712,9 +758,13 @@ export async function getPrefactura(
     // prorrateado entre owners por su participación en el detalle. Se escala toneladas
     // y valor de cada línea por (pesovascula / Σ detalle de la orden). Σ por owner = báscula.
     if (idempresa === 1 || idempresa === 2) {
+      // Las apartadas se prorratean igual: si no, el valor que se reporta como
+      // "no facturado a este proyecto" saldría con el peso del detalle en vez
+      // del de báscula y no cuadraría con el cuadro.
+      const todas = [...origen, ...excluidasCargue]
       const totalDetOrden = new Map<string, number>()
-      for (const l of origen) totalDetOrden.set(l.numeroorden, (totalDetOrden.get(l.numeroorden) || 0) + l.toneladas)
-      for (const l of origen) {
+      for (const l of todas) totalDetOrden.set(l.numeroorden, (totalDetOrden.get(l.numeroorden) || 0) + l.toneladas)
+      for (const l of todas) {
         const P = estadoPorOrden.get(l.numeroorden)?.pesovascula ?? 0
         const totalDet = totalDetOrden.get(l.numeroorden) || 0
         if (P > 0 && totalDet > 0) {
@@ -888,6 +938,40 @@ export async function getPrefactura(
       resumen.sort((a, b) => a.owner.localeCompare(b.owner) || a.operacion.localeCompare(b.operacion))
     }
 
+    // Resumen de lo que quedó fuera del documento, agrupado por transporte
+    // (que es quien lo paga). Se reporta siempre que haya algo, para que el
+    // hueco entre lo procesado y lo facturado nunca sea invisible.
+    let exclusionCargue: Prefactura["exclusionCarguePlaca"] = null
+    if (cfgCargue && !propias.ok) {
+      produccionAlertas.push(
+        "No se pudo leer la lista de placas propias (Configuración → Placas de Distribución), así que NO se " +
+          "aplicó el filtro de cargue: este documento puede incluir cargues de terceros o de Zamudio que no se " +
+          "le facturan al proyecto. Vuelve a generar antes de emitir.",
+      )
+    } else if (cfgCargue && excluidasCargue.length > 0) {
+      const porTr = new Map<string, { ordenes: Set<string>; valor: number }>()
+      let ton = 0
+      const ordenes = new Set<string>()
+      for (const l of excluidasCargue) {
+        const tr = String(l.transporte ?? "").trim() || "(sin transporte)"
+        const g = porTr.get(tr) || { ordenes: new Set<string>(), valor: 0 }
+        g.ordenes.add(l.numeroorden)
+        g.valor += l.valorServicio
+        porTr.set(tr, g)
+        ton += l.toneladas
+        ordenes.add(l.numeroorden)
+      }
+      exclusionCargue = {
+        nota: cfgCargue.nota,
+        ordenes: ordenes.size,
+        toneladas: Number(ton.toFixed(3)),
+        valor: Math.round(excluidasCargue.reduce((s, l) => s + l.valorServicio, 0)),
+        porTransporte: Array.from(porTr.entries())
+          .map(([transporte, g]) => ({ transporte, ordenes: g.ordenes.size, valor: Math.round(g.valor) }))
+          .sort((a, b) => b.valor - a.valor),
+      }
+    }
+
     return {
       success: true,
       data: {
@@ -900,6 +984,7 @@ export async function getPrefactura(
         produccionAlertas,
         produccionDesde: cfg?.desde ?? null,
         produccionVigencia: vigencia,
+        exclusionCarguePlaca: exclusionCargue,
       },
     }
   } catch (e: any) {

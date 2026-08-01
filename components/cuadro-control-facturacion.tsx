@@ -1134,6 +1134,27 @@ export function CuadroControlFacturacion() {
                     </div>
                   </div>
 
+                  {/* Cargue que NO entra en este documento porque la placa no es del
+                      proyecto. Va arriba y con el monto, porque es la diferencia
+                      entre lo procesado y lo facturado: si no se ve, parece un faltante. */}
+                  {pref?.exclusionCarguePlaca && (
+                    <div className="rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900/40">
+                      <div className="mb-1 flex items-center gap-1.5 font-semibold">
+                        <FileText className="h-3.5 w-3.5" />
+                        Cargue que no se le factura a {proyectoNombre}: {pref.exclusionCarguePlaca.ordenes} órdenes ·{" "}
+                        {ton(pref.exclusionCarguePlaca.toneladas)} t · {money(pref.exclusionCarguePlaca.valor)}
+                      </div>
+                      <p className="text-muted-foreground">{pref.exclusionCarguePlaca.nota}</p>
+                      <ul className="mt-1 ml-4 list-disc">
+                        {pref.exclusionCarguePlaca.porTransporte.map((x) => (
+                          <li key={x.transporte}>
+                            <strong>{x.transporte}</strong>: {x.ordenes} órdenes · {money(x.valor)}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
                   {/* Cómo se factura la PRODUCCIÓN de este proyecto. Se muestra siempre
                       (incluso cuando ya viene en las órdenes) para que quede explícito
                       por qué el concepto suma aparte o no. */}
