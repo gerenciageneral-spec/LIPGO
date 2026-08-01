@@ -24,8 +24,14 @@
 //     (cobraturno = SI, $136.131) y "Salvado" (cobraturno = NO, porque ese se
 //     cobra por producción de tolva). "OPERADOR SALVADO" puede ser cualquiera
 //     de los dos y la diferencia es todo el dinero de la línea.
-//   · "OPERADORES PARA SUBIR BULTOS", "OPERADOR YALISTA", "Operadores
-//     auxiliares": no corresponden a ningún puesto del maestro.
+//   · "OPERADOR MONTACARGAS": hay dos montacargas, el de producción (está en
+//     el maestro) y el de cargue (se trabaja, pero no tiene fila).
+//   · "Operadores auxiliares": no corresponde a ningún puesto conocido.
+//
+// El histórico se normalizó en la base el 2026-08-01
+// (scripts/normalizar_puestos_solicitudesturnos.sql). Esta tabla se mantiene
+// alineada con ese script y sigue cubriendo lo que se capture de aquí en
+// adelante, porque el campo aún admite texto libre.
 
 /** Normaliza para comparar: sin tildes, sin dobles espacios, en mayúsculas. */
 export function normalizarPuesto(s: unknown): string {
@@ -67,8 +73,46 @@ export const ALIAS_PUESTO: Record<string, string> = {
 
   // Operador PT (Carrusel)
   "OPERADOR CARRUSEL": "Operador PT (Carrusel)",
+  "OPERADORES CARRUSEL": "Operador PT (Carrusel)",
   "OPERADOR DE CARRUSEL": "Operador PT (Carrusel)",
   CARRUSEL: "Operador PT (Carrusel)",
+
+  // Estibado PT — los numeros identificaban a la persona, no a puestos
+  // distintos (decidido con el negocio el 2026-08-01).
+  "PT ESTIBADO": "Estibado PT",
+  "ESTIBADOR PT": "Estibado PT",
+  "ESTIBADOR 1 PT": "Estibado PT",
+  "ESTIBADOR 2 PT": "Estibado PT",
+  "ESTIBADOR 3 PT": "Estibado PT",
+  "ESTIBADOR PT 1": "Estibado PT",
+  "ESTIBADOR PT 2": "Estibado PT",
+  "ESTIBADOR PT 3": "Estibado PT",
+  "PERSONAL PT 1": "Estibado PT",
+  "PERSONAL PT 2": "Estibado PT",
+  "PERSONAL PT 3": "Estibado PT",
+  "OPERADOR PT1": "Estibado PT",
+  "OPERADOR PT2": "Estibado PT",
+  "OPERADOR PT3": "Estibado PT",
+  "OPERADOR PT 1": "Estibado PT",
+  "OPERADOR PT 2": "Estibado PT",
+  "OPERADOR PT 3": "Estibado PT",
+
+  // Montacargas de producción
+  "OPERADOR YALISTA": "Montacargas de producción",
+  YALISTA: "Montacargas de producción",
+
+  // Operador Empaque
+  "OPERADORES EMPAQUE": "Operador Empaque",
+  "OPERARIOS EMPAQUE": "Operador Empaque",
+  "OPERARIO EMPAQUE": "Operador Empaque",
+  EMPAQUE: "Operador Empaque",
+
+  // Subir Bultos
+  "OPERADORES PARA SUBIR BULTOS": "Subir Bultos",
+  "OPETADORES PARA SUBIR BULTOS": "Subir Bultos", // errata de "OPERADORES"
+  "OPERADOR PARA SUBIR BULTOS": "Subir Bultos",
+  "OPERARIOS SUBIDA DE BULTOS": "Subir Bultos",
+  "OPERARIO SUBIDA DE BULTOS": "Subir Bultos",
 }
 
 export interface PuestoResuelto {
