@@ -61,8 +61,19 @@ export function LoginForm() {
           // restrictivo) seguimos sin splash en lugar de bloquear el
           // login.
         }
-        // Redirect to home - AuthProvider will detect the session
-        window.location.href = "/"
+        // Redirect to home - AuthProvider will detect the session.
+        // Si se llegó desde una URL protegida (p. ej. el QR de un montacarga:
+        // /login?next=/equipo/abc) se vuelve allá en vez de soltar al usuario
+        // en el inicio y obligarlo a escanear otra vez. Solo se aceptan rutas
+        // internas: un `next` con host propio sería un redirect abierto.
+        let destino = "/"
+        try {
+          const next = new URLSearchParams(window.location.search).get("next")
+          if (next && next.startsWith("/") && !next.startsWith("//")) destino = next
+        } catch {
+          // sin querystring utilizable, se va al inicio
+        }
+        window.location.href = destino
       }
     } catch (err) {
       console.error("[v0] Exception during login:", err)

@@ -69,6 +69,9 @@ export interface UserPermissions {
   registro_sanitario: boolean
   ver_historial_inspeccion: boolean
   historial_aprobaciones: boolean
+  // Módulo "Gestión de Montacargas": maestro de equipos, QR, hoja de vida y
+  // bitácora de mantenimiento. Un solo permiso cubre administrar y registrar.
+  montacargas: boolean
   // Auditoría
   picking: boolean
   packing: boolean
@@ -262,6 +265,7 @@ export const MODULE_PERMISSION_MAP: Record<string, keyof UserPermissions> = {
   "Reporte de Paros": "controlpiso",
   // Alias legacy: antes este modulo se llamaba "Control piso".
   "Control piso": "controlpiso",
+  "Gestión de Montacargas": "montacargas",
   "Asignación de Lotes": "asignacion_lotes",
   "Historial de lotes": "historial_lotes",
   "Registro sanitario": "registro_sanitario",
