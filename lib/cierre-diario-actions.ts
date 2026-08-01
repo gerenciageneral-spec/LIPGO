@@ -234,8 +234,17 @@ export async function getCierreDiario(
       const valor = valorDe.get(on) || 0
       const transporte = String(o.transporte ?? "").trim() || "(sin transporte)"
 
+      // Condición de pago: manda el DATO registrado; si falta, manda la REGLA
+      // del proyecto (Indupan y Funza: todo crédito al owner — ahí no existe
+      // "sin definir"). Solo queda "sin definir" cuando NI el dato NI la regla
+      // lo determinan (ej. un descargue de Medellín sin medio registrado).
+      const ctxPago = { placa: o.placa, operacion: o.tipooperacion }
       const mp = norm(o.mediopago)
-      const cond: CondicionPago = mp.startsWith("CR") ? "Crédito" : mp.startsWith("CONT") ? "Contado" : "sin definir"
+      const cond: CondicionPago = mp.startsWith("CR")
+        ? "Crédito"
+        : mp.startsWith("CONT")
+          ? "Contado"
+          : (medioPagoEsperado(id, o.transporte, ctxPago) ?? "sin definir")
 
       const p = porProy.get(id) || {
         idempresa: id, proyecto, ordenes: 0, cobro: 0, contado: 0, credito: 0, sinDefinir: 0,
@@ -281,12 +290,11 @@ export async function getCierreDiario(
       }
 
       if (cond === "sin definir") {
-        alertas.sin_medio_pago.detalle.push({ ...base, motivo: "sin medio de pago registrado" })
+        alertas.sin_medio_pago.detalle.push({ ...base, motivo: "sin medio de pago registrado y sin regla que lo defina" })
         alertas.sin_medio_pago.ordenes++
         alertas.sin_medio_pago.valor += valor
       }
 
-      const ctxPago = { placa: o.placa, operacion: o.tipooperacion }
       if (medioPagoInconsistente(id, o.transporte, o.mediopago, ctxPago)) {
         t.inconsistentes++
         alertas.pago_no_cuadra.detalle.push({

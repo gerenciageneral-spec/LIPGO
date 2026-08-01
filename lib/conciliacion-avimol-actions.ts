@@ -52,6 +52,15 @@ const ORIGEN_INGRESO_PRODUCCION = "%ingreso producci%"
 /** Puestos de turno que se pagan y que este módulo concilia. */
 const PUESTOS_TURNO = ["Estibado PT", "Salvado"]
 
+/**
+ * HORAS EXTRA FACTURABLES — regla del negocio (gerencia, 2026-08-01): a Avimol
+ * SOLO se le cobran las horas extra de los puestos de PRODUCCIÓN — Estibado PT,
+ * Salvado y Montacargas de producción. Los demás puestos cobran su TURNO por
+ * solicitud aprobada; sus horas extra son costo del recurso, no un concepto
+ * facturable aparte.
+ */
+const PUESTOS_HE_FACTURABLE = new Set(["ESTIBADO PT", "SALVADO", "MONTACARGAS DE PRODUCCION"])
+
 /** Operaciones en tarifasoperacion (empresaid=2). */
 const OP_ESTIBADO = "Estibado PT"
 const OP_ESTIBADO_FESTIVO = "Estibado PT Festivo"
@@ -177,7 +186,9 @@ export interface PersonaTurno {
 }
 
 /**
- * Horas extra facturables de un PUESTO en un día. Se cobran TODAS las horas
+ * Horas extra facturables de un PUESTO en un día — SOLO los puestos de
+ * producción (Estibado PT, Salvado, Montacargas de producción); las de los
+ * demás puestos no se cobran. Se cobran TODAS las clases de hora
  * (hed+hedf+hen+hef+hn) a `tarifahoraextra`, y COMPLETAS: a diferencia de la
  * vista legacy `facturacionturnos`, aquí NO se resta el 0,66 (ese descuento
  * venía de la jornada de 7,3333 h y quedó obsoleto con la de 7 h).
@@ -608,8 +619,9 @@ export async function getConciliacionAvimol(
       // que revision-nomina-actions.ts:280) para que base+extra+dom = total.
       const baseDia = Math.max(0, totalDia - valorExtra - dominical)
 
-      // Horas extra facturables: de cualquier puesto con horas > 0.
-      if (horasExtra > 0 && puesto) {
+      // Horas extra facturables: SOLO los puestos de producción (ver
+      // PUESTOS_HE_FACTURABLE). Las de los demás puestos no se cobran.
+      if (horasExtra > 0 && puesto && PUESTOS_HE_FACTURABLE.has(normalizarPuesto(puesto))) {
         const key = `${fecha}|${puesto.toUpperCase()}`
         if (!hePorFechaPuesto.has(key))
           hePorFechaPuesto.set(key, { fecha, puesto, hed: 0, hedf: 0, hen: 0, hef: 0, hn: 0, costo: 0 })
@@ -643,8 +655,9 @@ export async function getConciliacionAvimol(
       } else {
         // Puesto fuera del alcance de turnos conciliados por producción.
         if (valorExtra > 0) {
-          // Entra el COSTO de su hora extra: se factura, así que sin esto el
-          // margen quedaría inflado.
+          // Entra el COSTO de su hora extra. Desde la regla de 2026-08-01 esa
+          // hora NO se factura (solo se cobran las de producción), pero el
+          // costo es real: sin él el margen saldría inflado.
           dia.pagoHorasExtraOtros += valorExtra
           dia.pagoTotal += valorExtra
         }

@@ -379,9 +379,12 @@ async function cierreDeProyecto(
         `${on} · ${String(o.placa ?? "").trim() || "sin placa"} · ${String(o.transporte ?? "").trim()} debe ser ${medioPagoEsperado(idempresa, o.transporte, ctx)} y quedó ${String(o.mediopago).trim()}`,
       )
     }
-    if (medioPagoEsperado(idempresa, o.transporte, ctx) && String(o.mediopago ?? "").trim() === "") {
+    // "Sin medio de pago" SOLO cuando ni el dato ni la regla lo definen: en
+    // Indupan/Funza todo es crédito al owner por regla, así que un campo vacío
+    // ahí no es un pendiente — la regla ya responde.
+    if (!medioPagoEsperado(idempresa, o.transporte, ctx) && String(o.mediopago ?? "").trim() === "") {
       valorSinMedio += valor
-      detalleSinMedio.push(`${on} · ${f} · sin medio de pago registrado`)
+      detalleSinMedio.push(`${on} · ${f} · sin medio de pago registrado y sin regla que lo defina`)
     }
     if (norm(o.transporte) === "TERCEROS" && idempresa === 2) {
       const sinSoporte = !tieneSoporte(o.comprobante)
