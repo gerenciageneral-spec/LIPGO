@@ -91,6 +91,49 @@ export function produccionDelProyecto(idempresa: number | null | undefined): Pro
 export const CONCEPTO_HORA_EXTRA = "Hora extra"
 
 /**
+ * Valor centinela del chip "Producción" en el filtro de Operación. Va con
+ * guiones bajos para que no pueda chocar con un `tipooperacion` real de
+ * `cabeceraoc`; la UI lo muestra con su etiqueta, nunca con este texto.
+ */
+export const OP_PRODUCCION = "__produccion__"
+export const OP_PRODUCCION_LABEL = "Producción"
+
+/**
+ * Separa el filtro de Operación en sus dos ejes, porque "Producción" no es un
+ * `tipooperacion`: es un bloque que puede o no tener órdenes detrás.
+ *
+ *   · Avimol  → la producción NO es una operación de orden, así que marcar solo
+ *     "Producción" deja el documento sin órdenes (`soloProduccion`).
+ *   · Indupan → sus conceptos SÍ son operaciones (Tolva / Tolva f), así que el
+ *     chip funciona como atajo: marcar "Producción" equivale a marcarlos.
+ *
+ * Sin filtro (nada marcado) entra todo, que es el comportamiento de siempre.
+ */
+export function separarFiltroOperaciones(
+  cfg: ProduccionProyecto | null,
+  tipooperaciones?: string[] | null,
+): { opSet: Set<string>; incluirProduccion: boolean; soloProduccion: boolean; hayFiltro: boolean } {
+  let raw = (tipooperaciones || []).map((o) => String(o ?? "").trim()).filter(Boolean)
+  // Si el proyecto no factura por producción, el chip ni siquiera se ofrece: un
+  // centinela aquí es un filtro que quedó de otro proyecto al cambiar el
+  // selector. Se ignora, porque si no dejaría la pantalla vacía sin explicación.
+  if (!cfg) raw = raw.filter((o) => o !== OP_PRODUCCION)
+  const hayFiltro = raw.length > 0
+  const incluirProduccion = raw.includes(OP_PRODUCCION)
+  const opSet = new Set(raw.filter((o) => o !== OP_PRODUCCION).map((o) => o.toLowerCase()))
+  // El chip de un proyecto cuya producción viene de órdenes se expande a ellas.
+  if (incluirProduccion && cfg?.fuente === "ordenes") {
+    for (const c of cfg.conceptos) opSet.add(c.trim().toLowerCase())
+  }
+  return {
+    opSet,
+    incluirProduccion: !hayFiltro || incluirProduccion,
+    soloProduccion: hayFiltro && opSet.size === 0,
+    hayFiltro,
+  }
+}
+
+/**
  * ¿El período que se está facturando cae dentro de la vigencia de producción?
  *
  *   "si"      → el período empieza en la vigencia o después: aplica.

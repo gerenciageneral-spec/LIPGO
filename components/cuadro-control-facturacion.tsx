@@ -45,6 +45,7 @@ import {
   type SoporteLinea,
 } from "@/lib/facturacion-control-actions"
 import { getAccessibleEmpresesFromPermisos } from "@/lib/orders-actions"
+import { OP_PRODUCCION, OP_PRODUCCION_LABEL } from "@/lib/facturacion-produccion-conceptos"
 
 const money = (n: number) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO")
 const ton = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { maximumFractionDigits: 2 })
@@ -764,6 +765,7 @@ export function CuadroControlFacturacion() {
               ) : (
                 opcionesOperacion.map((o) => {
                   const sel = (pending.tipooperaciones || []).includes(o)
+                  const esProd = o === OP_PRODUCCION
                   return (
                     <button
                       key={o}
@@ -774,11 +776,15 @@ export function CuadroControlFacturacion() {
                       }}
                       className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
                         sel
-                          ? "border-primary bg-primary text-primary-foreground"
-                          : "border-input bg-background text-foreground hover:bg-muted"
+                          ? esProd
+                            ? "border-sky-600 bg-sky-600 text-white"
+                            : "border-primary bg-primary text-primary-foreground"
+                          : esProd
+                            ? "border-sky-300 bg-sky-50 text-sky-700 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/30 dark:text-sky-300"
+                            : "border-input bg-background text-foreground hover:bg-muted"
                       }`}
                     >
-                      {o}
+                      {esProd ? OP_PRODUCCION_LABEL : o}
                     </button>
                   )
                 })
@@ -786,6 +792,7 @@ export function CuadroControlFacturacion() {
             </div>
             <p className="text-[10px] text-muted-foreground">
               Sin marcar = todas. Para la factura del owner en cedis marca solo Cargue + Distribucion (deja fuera los descargues).
+              <strong> Producción</strong> aísla lo que se cobra por producción (tolva y horas extra); necesita rango de fechas.
             </p>
           </div>
 
@@ -812,10 +819,13 @@ export function CuadroControlFacturacion() {
             Selecciona un proyecto/empresa para ver su control de facturación.
           </CardContent>
         </Card>
-      ) : !data || data.filas.length === 0 ? (
+      ) : !data || (data.filas.length === 0 && data.porOwner.length === 0) ? (
+        // El vacío se mide contra el resumen, no solo contra las órdenes: al
+        // filtrar por "Producción" no hay filas de orden y esto escondería
+        // justamente lo que se quiso ver.
         <Card>
           <CardContent className="py-12 text-center text-sm text-muted-foreground">
-            No hay órdenes procesadas para este proyecto con los filtros aplicados.
+            No hay nada facturable para este proyecto con los filtros aplicados.
           </CardContent>
         </Card>
       ) : (

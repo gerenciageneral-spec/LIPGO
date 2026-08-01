@@ -12,7 +12,13 @@ import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { esPlacaDistribucion, cargarPlacasDistribucion } from "@/lib/distribucion-placas"
 import { PLACAS_EXCLUIDAS_FACTURAS } from "@/lib/facturas-exclusiones"
 import { getConciliacionAvimol } from "@/lib/conciliacion-avimol-actions"
-import { produccionDelProyecto, vigenciaProduccion, CONCEPTO_HORA_EXTRA } from "@/lib/facturacion-produccion-conceptos"
+import {
+  produccionDelProyecto,
+  vigenciaProduccion,
+  separarFiltroOperaciones,
+  CONCEPTO_HORA_EXTRA,
+  OP_PRODUCCION,
+} from "@/lib/facturacion-produccion-conceptos"
 
 export type CategoriaFactura = "facturado" | "en_proceso" | "sin_gestionar"
 
@@ -559,8 +565,13 @@ export async function getPrefactura(
 
     // Placas que NO atiende LIP (excepto cuando cargan a Susanita). Ej. WMP446 en id 4.
     const placasExcluidas = new Set((PLACAS_EXCLUIDAS_FACTURAS[idempresa] || []).map((p) => p.toUpperCase()))
-    // Filtro multi-operación (vacío = todas).
-    const opSet = new Set((filtros.tipooperaciones || []).map((o) => String(o).trim().toLowerCase()))
+    // Filtro multi-operación (vacío = todas). "Producción" viaja como un chip
+    // más pero no es un tipooperacion, así que se separa de las operaciones.
+    const cfgFiltro = produccionDelProyecto(idempresa)
+    const { opSet, incluirProduccion, soloProduccion, hayFiltro: hayFiltroOps } = separarFiltroOperaciones(
+      cfgFiltro,
+      filtros.tipooperaciones,
+    )
 
     // Procesadas del proyecto (fuente de verdad) + ESTADO DE FACTURA por orden.
     // El estado dice qué ya se gestionó (para el semáforo y NO facturar doble): en
@@ -604,8 +615,11 @@ export async function getPrefactura(
         // WMP446 (u otras excluidas) NO las atiende LIP, SALVO cuando cargan a Susanita.
         if (placasExcluidas.has(placa) && !cl.includes("SUSANITA")) continue
         const servicio = servicioDe(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa)
-        // Filtro multi-operación (Susanita se conserva siempre, es factura del owner).
-        if (opSet.size > 0 && servicio !== "Susanita" && !opSet.has(String(r.tipooperacion ?? "").trim().toLowerCase())) continue
+        // Filtro multi-operación. Si solo se marcó "Producción" no entra NINGUNA
+        // orden (ni Susanita); si hay operaciones marcadas, Susanita se conserva
+        // siempre porque es la factura del owner.
+        if (soloProduccion) continue
+        if (hayFiltroOps && servicio !== "Susanita" && !opSet.has(String(r.tipooperacion ?? "").trim().toLowerCase())) continue
         // Owner por el id_empresa del PRODUCTO (dueño real), incluido el propio.
         const owner = String(r.owner || "SIN OWNER")
         const est = estadoPorOrden.get(on)
@@ -772,10 +786,10 @@ export async function getPrefactura(
           "Define el rango Desde/Hasta y vuelve a generar: sin período no se puede calcular la producción, " +
             "y la prefactura quedaría solo con las órdenes de cargue.",
         )
-      } else if (opSet.size > 0) {
+      } else if (!incluirProduccion) {
         produccionAlertas.push(
-          "Hay un filtro de Operación activo, así que la producción NO se incluyó (ese filtro es de órdenes de cargue). " +
-            "Quita el filtro y vuelve a generar para facturar el período completo.",
+          'El filtro de Operación no incluye "Producción", así que no se sumó. Márcala junto a las demás ' +
+            "operaciones (o no marques ninguna) para facturar el período completo.",
         )
       } else {
         const prod = await calcularProduccion(cfg, filtros.desde, filtros.hasta)
@@ -931,10 +945,16 @@ export async function getControlFacturacion(
       const cl = String(r.cliente ?? "").toUpperCase()
       return placasExcluidas.has(placa) && !cl.includes("SUSANITA")
     }
-    // Filtro multi-operación (en código para conservar Susanita aunque se excluya Descargue).
-    const opSet = new Set((filtros.tipooperaciones || []).map((o) => String(o).trim().toLowerCase()))
+    // Filtro multi-operación (en código para conservar Susanita aunque se excluya
+    // Descargue). "Producción" viaja como un chip más pero no es un tipooperacion.
+    const cfgFiltro = produccionDelProyecto(idempresa)
+    const { opSet, incluirProduccion, soloProduccion, hayFiltro: hayFiltroOps } = separarFiltroOperaciones(
+      cfgFiltro,
+      filtros.tipooperaciones,
+    )
     const filtraOperacion = (r: any, servicio: Servicio | null) => {
-      if (opSet.size === 0) return false // sin filtro → no descarta
+      if (!hayFiltroOps) return false // sin filtro → no descarta
+      if (soloProduccion) return true // solo producción → fuera todas las órdenes
       if (servicio === "Susanita") return false // Susanita se conserva siempre (factura del owner)
       return !opSet.has(String(r.tipooperacion ?? "").trim().toLowerCase())
     }
@@ -1103,7 +1123,7 @@ export async function getControlFacturacion(
     // Mismo cálculo que la prefactura (`calcularProduccion`), para que las dos
     // pestañas no puedan mostrar cifras distintas.
     // -------------------------------------------------------------------
-    const cfg = produccionDelProyecto(idempresa)
+    const cfg = cfgFiltro
     const vigencia = vigenciaProduccion(cfg, filtros.desde, filtros.hasta)
     let produccionAviso: string | null = null
     const produccionAlertas: string[] = []
@@ -1125,16 +1145,19 @@ export async function getControlFacturacion(
       } else if (vigencia !== "si") {
         produccionAviso = `El período es anterior al ${cfg.desde}: la producción no se cuenta.`
       } else {
-        const prod = await calcularProduccion(cfg, filtros.desde, filtros.hasta)
-        produccionAlertas.push(...prod.alertas)
         // Si un filtro deja al owner fuera, no tiene sentido agregarle producción.
         const ownerVisible = !filtros.owner || ownerKey(filtros.owner) === ownerKey(cfg.owner)
-        const yaEnOrdenes = new Set(porOwnerBase.map((o) => `${ownerKey(o.owner)}|||${ownerKey(o.operacion)}`))
-        if (!ownerVisible || opSet.size > 0) {
+        if (!ownerVisible) {
           produccionAviso =
-            "Hay filtros activos (owner u operación) que aplican a las órdenes de cargue, así que la producción " +
-            "no se sumó. Quita esos filtros para ver la facturación completa del proyecto."
+            `El filtro de Owner deja fuera a ${cfg.owner}, que es quien factura la producción, así que no se sumó.`
+        } else if (!incluirProduccion) {
+          produccionAviso =
+            'El filtro de Operación no incluye "Producción", así que no se sumó. Márcala junto a las demás ' +
+            "operaciones (o no marques ninguna) para ver la facturación completa del proyecto."
         } else {
+          const prod = await calcularProduccion(cfg, filtros.desde, filtros.hasta)
+          produccionAlertas.push(...prod.alertas)
+          const yaEnOrdenes = new Set(porOwnerBase.map((o) => `${ownerKey(o.owner)}|||${ownerKey(o.operacion)}`))
           for (const c of prod.conceptos) {
             if (yaEnOrdenes.has(`${ownerKey(cfg.owner)}|||${ownerKey(c.concepto)}`)) continue
             porOwnerBase.push({
@@ -1174,7 +1197,10 @@ export async function getControlFacturacion(
         filas,
         porOwner,
         totales: t,
-        operaciones,
+        // "Producción" se ofrece como un chip más del filtro de Operación, para
+        // poder aislarla igual que Cargue o Descargue. Solo en los proyectos que
+        // facturan por producción: en los demás sería un chip que no filtra nada.
+        operaciones: cfg ? [...operaciones, OP_PRODUCCION] : operaciones,
         produccionNota: cfg?.nota ?? null,
         produccionAviso,
         produccionAlertas,
