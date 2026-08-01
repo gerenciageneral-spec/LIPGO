@@ -48,6 +48,7 @@ import {
 import { getAccessibleEmpresesFromPermisos } from "@/lib/orders-actions"
 import { OP_PRODUCCION, OP_PRODUCCION_LABEL } from "@/lib/facturacion-produccion-conceptos"
 import { proyectoConReglaMedioPago } from "@/lib/facturacion-medio-pago"
+import { CierreDiarioPanel, CierreDiarioTira } from "@/components/cierre-diario"
 
 const money = (n: number) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO")
 const ton = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { maximumFractionDigits: 2 })
@@ -243,6 +244,8 @@ export function CuadroControlFacturacion() {
   const [obs, setObs] = useState("")
   const [expand, setExpand] = useState<Set<string>>(new Set()) // owner×servicio con detalle abierto
   const [verSoporteId, setVerSoporteId] = useState<number | null>(null) // prefactura guardada cuyo soporte se ve
+  // Pestaña activa: controlada para que la tira del cierre pueda saltar a ella.
+  const [tab, setTab] = useState("owner")
 
   useEffect(() => {
     getAccessibleEmpresesFromPermisos()
@@ -681,6 +684,11 @@ export function CuadroControlFacturacion() {
 
   return (
     <div className="space-y-4">
+      {/* Cierre del día, SIEMPRE visible y por encima de los filtros: es
+          cross-proyecto, así que no depende del selector ni de la pestaña
+          abierta. Su botón de alertas lleva a la pestaña del detalle. */}
+      <CierreDiarioTira onVerDetalle={() => setTab("cierre")} />
+
       <Card>
         <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
           <div className="flex flex-wrap items-center gap-3">
@@ -820,7 +828,22 @@ export function CuadroControlFacturacion() {
         </CardContent>
       </Card>
 
-      {loading ? (
+      {/* El cierre es cross-proyecto, así que va FUERA de las guardas de abajo:
+          si el proyecto seleccionado no tiene órdenes, el cierre del día debe
+          seguir estando. Solo se muestra cuando su pestaña está activa. */}
+      {tab === "cierre" ? (
+        <Tabs value={tab} onValueChange={setTab}>
+          <TabsList>
+            <TabsTrigger value="owner">Resumen por owner</TabsTrigger>
+            <TabsTrigger value="detalle">Detalle por orden</TabsTrigger>
+            <TabsTrigger value="prefactura">Prefactura</TabsTrigger>
+            <TabsTrigger value="cierre">Cierre de facturación</TabsTrigger>
+          </TabsList>
+          <TabsContent value="cierre" className="mt-4">
+            <CierreDiarioPanel />
+          </TabsContent>
+        </Tabs>
+      ) : loading ? (
         <Card>
           <CardContent className="flex items-center justify-center gap-2 py-12 text-muted-foreground">
             <Loader2 className="h-5 w-5 animate-spin" /> Cruzando órdenes con la facturación…
@@ -899,11 +922,12 @@ export function CuadroControlFacturacion() {
             </Card>
           )}
 
-          <Tabs defaultValue="owner">
+          <Tabs value={tab} onValueChange={setTab}>
             <TabsList>
               <TabsTrigger value="owner">Resumen por owner</TabsTrigger>
               <TabsTrigger value="detalle">Detalle por orden</TabsTrigger>
               <TabsTrigger value="prefactura">Prefactura</TabsTrigger>
+              <TabsTrigger value="cierre">Cierre de facturación</TabsTrigger>
             </TabsList>
 
             <TabsContent value="owner">
