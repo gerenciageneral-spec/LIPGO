@@ -720,65 +720,63 @@ create or replace view public.facturacion as
 
 -- ----------------------------------------------------------------------------
 -- facturacionturnos — facturación por turnos (especialidad).
--- Depende de: registroasistencia, tarifasfacturacionturnos.
+-- Depende de: registroasistencia, tarifasfacturacionturnos, festivos.
+-- Definición canónica y verificación: scripts/facturacionturnos_reemplazo.sql
+-- (reescrita 2026-08-01: cobraturno, 5 clases de hora extra sin −0,66, solo
+--  días trabajados, tarifa de festivo).
 -- ----------------------------------------------------------------------------
 create or replace view public.facturacionturnos as
- SELECT a.id,
+select
+    a.id,
     a.fecha,
     a.nombre,
     a.identificacion,
     a.puesto,
     a.asistencia,
-    GREATEST((0)::numeric, (COALESCE(a.hed, (0)::numeric) - 0.66)) AS hed,
-    GREATEST((0)::numeric, (COALESCE(a.hedf, (0)::numeric) - 0.66)) AS hedf,
-    GREATEST((0)::numeric, (COALESCE(a.hen, (0)::numeric) - 0.66)) AS hen,
-    GREATEST((0)::numeric, (COALESCE(a.hef, (0)::numeric) - 0.66)) AS hef,
-    GREATEST((0)::numeric, (COALESCE(a.hn, (0)::numeric) - 0.66)) AS hn,
+    -- Horas COMPLETAS: el −0,66 venía de la jornada 7,3333 y quedó obsoleto.
+    coalesce(a.hed,  0)::numeric as hed,
+    coalesce(a.hedf, 0)::numeric as hedf,
+    coalesce(a.hen,  0)::numeric as hen,
+    coalesce(a.hef,  0)::numeric as hef,
+    coalesce(a.hn,   0)::numeric as hn,
     a.idempresa,
     a.especialidad,
-    t.tarifaturno,
+    -- Tarifa EFECTIVA del día: la de festivo cuando el día es domingo o festivo.
+    case when x.es_festivo then coalesce(t.tarifaturnofestivo, t.tarifaturno) else t.tarifaturno end as tarifaturno,
     t.tarifahoraextra,
-    t.costoturno,
+    case when x.es_festivo then coalesce(t.costoturnofestivo, t.costoturno) else t.costoturno end as costoturno,
     t.costohoraextra,
-        CASE
-            WHEN (t.id IS NULL) THEN 'SIN TARIFA'::text
-            ELSE 'OK'::text
-        END AS estado_tarifa,
-    round((COALESCE(t.tarifahoraextra, (0)::numeric) * GREATEST((0)::numeric, (COALESCE(a.hed, (0)::numeric) - 0.66))), 2) AS valorextra,
-    round((COALESCE(t.tarifaturno, (0)::numeric) + (COALESCE(t.tarifahoraextra, (0)::numeric) * GREATEST((0)::numeric, (COALESCE(a.hed, (0)::numeric) - 0.66)))), 2) AS facturacion_total,
-    round((COALESCE(t.costohoraextra, (0)::numeric) * GREATEST((0)::numeric, (COALESCE(a.hed, (0)::numeric) - 0.66))), 2) AS costoextra,
-    round((COALESCE(t.costoturno, (0)::numeric) + (COALESCE(t.costohoraextra, (0)::numeric) * GREATEST((0)::numeric, (COALESCE(a.hed, (0)::numeric) - 0.66)))), 2) AS costo_total,
-    round(((COALESCE(t.tarifaturno, (0)::numeric) + (COALESCE(t.tarifahoraextra, (0)::numeric) * GREATEST((0)::numeric, (COALESCE(a.hed, (0)::numeric) - 0.66)))) - (COALESCE(t.costoturno, (0)::numeric) + (COALESCE(t.costohoraextra, (0)::numeric) * GREATEST((0)::numeric, (COALESCE(a.hed, (0)::numeric) - 0.66))))), 2) AS utilidad
-   FROM (registroasistencia a
-     LEFT JOIN tarifasfacturacionturnos t ON (((a.puesto = t.puesto) AND ((a.fecha >= t.fechainicio) AND (a.fecha <= t.fechafin)))))
-  WHERE (a.puesto <> ALL (ARRAY['Estibado PT'::text, 'Salvado'::text, 'Montacargas de producción'::text, 'Montacargas de cargue'::text, 'Cargue/Descargue'::text, 'Auxiliar Mixto'::text, 'Tolva Bulto'::text, 'Tolva Planchador'::text]))
-UNION ALL
- SELECT a.id,
-    a.fecha,
-    a.nombre,
-    a.identificacion,
-    a.puesto,
-    a.asistencia,
-    GREATEST((0)::numeric, (COALESCE(a.hed, (0)::numeric) - 0.66)) AS hed,
-    GREATEST((0)::numeric, (COALESCE(a.hedf, (0)::numeric) - 0.66)) AS hedf,
-    GREATEST((0)::numeric, (COALESCE(a.hen, (0)::numeric) - 0.66)) AS hen,
-    GREATEST((0)::numeric, (COALESCE(a.hef, (0)::numeric) - 0.66)) AS hef,
-    GREATEST((0)::numeric, (COALESCE(a.hn, (0)::numeric) - 0.66)) AS hn,
-    a.idempresa,
-    a.especialidad,
-    t.tarifaturno,
-    t.tarifahoraextra,
-    t.costoturno,
-    t.costohoraextra,
-        CASE
-            WHEN (t.id IS NULL) THEN 'SIN TARIFA'::text
-            ELSE 'OK'::text
-        END AS estado_tarifa,
-    round((COALESCE(t.tarifahoraextra, (0)::numeric) * GREATEST((0)::numeric, (COALESCE(a.hed, (0)::numeric) - 0.66))), 2) AS valorextra,
-    round((COALESCE(t.tarifaturno, (0)::numeric) + (COALESCE(t.tarifahoraextra, (0)::numeric) * GREATEST((0)::numeric, (COALESCE(a.hed, (0)::numeric) - 0.66)))), 2) AS facturacion_total,
-    round((COALESCE(t.costohoraextra, (0)::numeric) * GREATEST((0)::numeric, (COALESCE(a.hed, (0)::numeric) - 0.66))), 2) AS costoextra,
-    round((COALESCE(t.costoturno, (0)::numeric) + (COALESCE(t.costohoraextra, (0)::numeric) * GREATEST((0)::numeric, (COALESCE(a.hed, (0)::numeric) - 0.66)))), 2) AS costo_total,
-    round(((COALESCE(t.tarifaturno, (0)::numeric) + (COALESCE(t.tarifahoraextra, (0)::numeric) * GREATEST((0)::numeric, (COALESCE(a.hed, (0)::numeric) - 0.66)))) - (COALESCE(t.costoturno, (0)::numeric) + (COALESCE(t.costohoraextra, (0)::numeric) * GREATEST((0)::numeric, (COALESCE(a.hed, (0)::numeric) - 0.66))))), 2) AS utilidad
-   FROM (registroasistencia a
-     LEFT JOIN tarifasfacturacionturnos t ON (((a.puesto = t.puesto) AND ((a.fecha >= t.fechainicio) AND (a.fecha <= t.fechafin)))))
-  WHERE (a.puesto = ANY (ARRAY['Estibado PT'::text, 'Salvado'::text, 'Montacargas de producción'::text, 'Montacargas de cargue'::text, 'Cargue/Descargue'::text, 'Auxiliar Mixto'::text, 'Tolva Bulto'::text, 'Tolva Planchador'::text]));
+    case when t.id is null then 'SIN TARIFA'::text else 'OK'::text end as estado_tarifa,
+    round(coalesce(t.tarifahoraextra, 0) * x.horas, 2) as valorextra,
+    round(coalesce(case when x.es_festivo then coalesce(t.tarifaturnofestivo, t.tarifaturno) else t.tarifaturno end, 0)
+          + coalesce(t.tarifahoraextra, 0) * x.horas, 2) as facturacion_total,
+    round(coalesce(t.costohoraextra, 0) * x.horas, 2) as costoextra,
+    round(coalesce(case when x.es_festivo then coalesce(t.costoturnofestivo, t.costoturno) else t.costoturno end, 0)
+          + coalesce(t.costohoraextra, 0) * x.horas, 2) as costo_total,
+    round((coalesce(case when x.es_festivo then coalesce(t.tarifaturnofestivo, t.tarifaturno) else t.tarifaturno end, 0)
+           + coalesce(t.tarifahoraextra, 0) * x.horas)
+        - (coalesce(case when x.es_festivo then coalesce(t.costoturnofestivo, t.costoturno) else t.costoturno end, 0)
+           + coalesce(t.costohoraextra, 0) * x.horas), 2) as utilidad
+from registroasistencia a
+left join tarifasfacturacionturnos t
+       on trim(a.puesto) = trim(t.puesto)                -- TRIM: la igualdad estricta perdía filas por espacios
+      and a.fecha >= t.fechainicio and a.fecha <= t.fechafin
+cross join lateral (
+    select
+      -- Todas las clases de hora extra facturan, no solo la diurna.
+      coalesce(a.hed,0) + coalesce(a.hedf,0) + coalesce(a.hen,0) + coalesce(a.hef,0) + coalesce(a.hn,0) as horas,
+      (extract(dow from a.fecha) = 0 or exists (select 1 from festivos f where f.fecha = a.fecha)) as es_festivo
+) x
+where
+      -- Solo días TRABAJADOS: cualquier novedad (vacaciones, incapacidad,
+      -- licencia, descanso, retiro) no genera turno facturable.
+      nullif(trim(coalesce(a.asistencia, '')), '') is null
+      -- Personas de prueba fuera, igual que en pagonomina.
+  and coalesce(a.nombre, '') !~* 'prueba'
+      -- Producción y destajo NO se cobran por turno: van por órdenes o por
+      -- ingresos de producción. (La lista que el UNION viejo intentó aplicar.)
+  and trim(coalesce(a.puesto, '')) not in
+      ('Estibado PT','Salvado','Montacargas de producción','Montacargas de cargue',
+       'Cargue/Descargue','Auxiliar Mixto','Tolva Bulto','Tolva Planchador')
+      -- Y lo que el maestro declara que no se cobra por turno, tampoco.
+  and upper(trim(coalesce(t.cobraturno, 'SI'))) <> 'NO';

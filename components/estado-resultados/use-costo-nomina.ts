@@ -138,10 +138,16 @@ export function useCostoNomina({
       // Bono de productividad = excedente de destajo NETO por (persona, quincena),
       // piso 0 y todo prestacional. Se netea por bucket para no perder los dias bajos
       // ni inflar los altos — mismo criterio que parafiscales y el archivo plano.
+      //
+      // SOLO DESDE JULIO 2026: el modelo base+bono arranco con la nomina de
+      // julio. Antes de esa fecha la columna trae el excedente historico
+      // (formula legacy de la vista) pero NO se pago como bono: sumarlo
+      // inflaria el costo de los meses viejos con plata que nunca salio.
+      const BONO_DESDE = "2026-07-01"
       const excBucket = new Map<string, number>()
       for (const r of allRows) {
         const f = String((r as any).fecha || "")
-        if (f.length < 10) continue
+        if (f.length < 10 || f.slice(0, 10) < BONO_DESDE) continue
         const q = Number(f.slice(8, 10)) <= 15 ? "Q1" : "Q2"
         const key = String((r as any).persona || "") + "|" + f.slice(0, 7) + q
         excBucket.set(key, (excBucket.get(key) || 0) + (Number((r as any).bonif_prestacional) || 0))

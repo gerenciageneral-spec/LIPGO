@@ -6,8 +6,9 @@
 --   · Excluye a los trabajadores RETIRADOS (headcount.estado = 'Inactivo'); su
 --     nómina pendiente se maneja en el submódulo Liquidaciones.
 --   · JORNADA por FECHA (Ley 2101): las horas del recargo/dominical usan la jornada
---     vigente en la fecha (tabla `jornada_legal`), no un 7,33 fijo. jun-2026 → 7,3333;
---     desde 16-jul-2026 → 7. Requiere scripts/create_jornada_legal.sql.
+--     vigente en la fecha desde `parametros_legales_vigencia` — LA MISMA fuente
+--     que pagonomina (antes leía jornada_legal y podían divergir). jun-2026 →
+--     7,3333; desde 16-jul-2026 → 7. Requiere create_parametros_legales_vigencia.sql.
 --   · nominaproyectada = salario quincenal por trabajador (antes fijo 875452).
 --   · AJUSTE DE PROYECCIÓN (Revisión de nómina › Ajuste de Proyecciones): rama
 --     propia que liquida, en la quincena SIGUIENTE, la diferencia entre lo
@@ -36,7 +37,7 @@
 -- falla, el DROP se revierte solo.
 -- Verificado antes de hacerlo: ninguna otra vista, función o script depende de
 -- `archivoplano` (la dependencia es al revés — ella lee pagonomina, headcount,
--- jornada_legal, bonos_nomina y ajustes_proyeccion).
+-- parametros_legales_vigencia, bonos_nomina y ajustes_proyeccion).
 -- ============================================================================
 
 BEGIN;
@@ -54,11 +55,16 @@ create view public.archivoplano as
             COALESCE((h.salario / (30)::numeric), (58643)::numeric) AS base_diaria,
             -- Jornada VIGENTE por fecha (Ley 2101): las horas del recargo/dominical
             -- que se envían a SIIGO se toman de aquí, no de un 7,33 fijo. jun-2026 →
-            -- 7,3333; desde 16-jul-2026 → 7. Se actualiza en línea con jornada_legal.
+            -- 7,3333; desde 16-jul-2026 → 7.
+            -- FUENTE ÚNICA: parametros_legales_vigencia — LA MISMA que usa
+            -- pagonomina. Antes se leía jornada_legal (la tabla que
+            -- parametros_legales_vigencia reemplazó): si divergían, las HORAS
+            -- que viajaban a Siigo no correspondían al VALOR que LIPgo liquidó.
             COALESCE(
-              (SELECT jl.horas_dia FROM jornada_legal jl WHERE jl.fecha_desde <= p.fecha
-                ORDER BY jl.fecha_desde DESC LIMIT 1),
-              (7.33)::numeric
+              (SELECT pl.jornada_horas FROM parametros_legales_vigencia pl
+                WHERE pl.fecha_desde <= p.fecha
+                ORDER BY pl.fecha_desde DESC LIMIT 1),
+              (7)::numeric
             ) AS jornada_dia,
             p.total_liquidado_dia,
             p.novedad_reportada,

@@ -27,6 +27,7 @@
 
 import useSWR from "swr"
 import { supabase } from "@/lib/supabase-client"
+import { getConciliacionAvimol } from "@/lib/conciliacion-avimol-actions"
 
 export interface IngresosTotales {
   toneladas: number
@@ -34,6 +35,9 @@ export interface IngresosTotales {
   total: number
   conteoToneladas: number
   conteoTurnos: number
+  /** De dónde salió el renglón de turnos: la vista `facturacionturnos` o la
+   *  Conciliación (Avimol, id 2), donde vive su facturación real. */
+  fuenteTurnos: "vista" | "conciliacion"
 }
 
 interface UseIngresosArgs {
@@ -88,17 +92,45 @@ async function fetchIngresos(
 ): Promise<IngresosTotales> {
   // Facturacion toneladas: la columna `fechacargue` es timestamp en este
   // proyecto, asi que usamos gte/lt con el dia +1 exclusivo.
+  const tonsPromise = sumarPaginado(
+    (q) =>
+      q
+        .eq("idempresa", idEmpresa)
+        .gte("fechacargue", desde)
+        .lt("fechacargue", hastaExclusivo),
+    "facturacion",
+    "valor_a_facturar",
+  )
+
+  // AVIMOL (id 2): su facturacion real de turnos NO es la vista — son los
+  // turnos SOLICITADOS Y APROBADOS + la produccion aprobada + las horas extra,
+  // que arma la Conciliacion. La vista facturacionturnos cobraba por ejecucion
+  // e ignoraba `cobraturno`, doble-contando la produccion (~$12M/mes). El P&L
+  // usa el mismo motor que la prefactura para que ambos cuadren.
+  if (idEmpresa === 2) {
+    const [tons, conc] = await Promise.all([
+      tonsPromise,
+      getConciliacionAvimol(desde, hasta),
+    ])
+    if (!conc.success || !conc.data) {
+      throw new Error(
+        `Error al leer la conciliacion de Avimol: ${conc.message || "desconocido"}`,
+      )
+    }
+    const r = conc.data.resumen
+    return {
+      toneladas: tons.suma,
+      turnos: r.cobroTotal,
+      total: tons.suma + r.cobroTotal,
+      conteoToneladas: tons.filas,
+      conteoTurnos: r.diasConDatos,
+      fuenteTurnos: "conciliacion",
+    }
+  }
+
   // Facturacion turnos: la columna `fecha` es DATE puro, gte/lte inclusive.
   const [tons, turnosRes] = await Promise.all([
-    sumarPaginado(
-      (q) =>
-        q
-          .eq("idempresa", idEmpresa)
-          .gte("fechacargue", desde)
-          .lt("fechacargue", hastaExclusivo),
-      "facturacion",
-      "valor_a_facturar",
-    ),
+    tonsPromise,
     sumarPaginado(
       (q) =>
         q.eq("idempresa", idEmpresa).gte("fecha", desde).lte("fecha", hasta),
@@ -113,6 +145,7 @@ async function fetchIngresos(
     total: tons.suma + turnosRes.suma,
     conteoToneladas: tons.filas,
     conteoTurnos: turnosRes.filas,
+    fuenteTurnos: "vista",
   }
 }
 

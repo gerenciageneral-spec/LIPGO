@@ -88,8 +88,16 @@ export default function SeccionIngresos({
                   isLoading={isLoading}
                 />
                 <FilaConcepto
-                  label="Facturacion de turnos"
-                  hint="public.facturacionturnos · facturacion_total"
+                  label={
+                    data?.fuenteTurnos === "conciliacion"
+                      ? "Produccion, turnos y horas extra (Conciliacion Avimol)"
+                      : "Facturacion de turnos"
+                  }
+                  hint={
+                    data?.fuenteTurnos === "conciliacion"
+                      ? "getConciliacionAvimol · produccion aprobada + turnos aprobados + horas extra (registros = dias con datos)"
+                      : "public.facturacionturnos · facturacion_total"
+                  }
                   registros={data?.conteoTurnos}
                   valor={data?.turnos}
                   isLoading={isLoading}
