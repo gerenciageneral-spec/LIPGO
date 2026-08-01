@@ -27,6 +27,7 @@ import { getOrders, getOrderDetails, getOrderFiltersData, generateLoadOrder, get
 import { getProductStockFromInvGlobal } from "@/lib/inventory-actions"
 import { getVehiclesFromCitas } from "@/lib/vehicle-actions"
 import { getTransportes } from "@/lib/actions"
+import { TRANSPORTES_CARGUE, transporteHabilitado } from "@/lib/transportes-cargue"
 import { Loader2, X, RefreshCw, Check } from "lucide-react" // Added ChevronsUpDown for combobox
 import { toast } from "@/components/ui/use-toast"
 import { useAuth } from "@/components/auth-provider"
@@ -105,7 +106,7 @@ function GenerateLoadOrdersComponent() {
   const [nombreConductor, setNombreConductor] = useState<string>("")
   const [vehicles, setVehicles] = useState<Vehicle[]>([])
   const [fechaEntrega, setFechaEntrega] = useState<string>("")
-  const [tipoTransporte, setTipoTransporte] = useState<string>("defaultTransport") // Updated default value
+  const [tipoTransporte, setTipoTransporte] = useState<string>("") // vacío: el centinela "defaultTransport" era truthy y anulaba la validación de abajo
   const [fechaOrdenCargue, setFechaOrdenCargue] = useState<string>("")
   const [observaciones, setObservaciones] = useState<string>("")
   const [productStock, setProductStock] = useState<Record<number, number>>({})
@@ -193,7 +194,17 @@ function GenerateLoadOrdersComponent() {
   useEffect(() => {
     const loadTransportesData = async () => {
       const transportesData = await getTransportes()
-      setTransportes(transportesData)
+      // Solo las transportadoras vigentes (lib/transportes-cargue.ts). El
+      // maestro conserva las demás para no alterar las órdenes históricas.
+      const vigentes = transportesData.filter((t) => transporteHabilitado(t.nombretransporte))
+      // Se ordena como la lista declarada, no alfabéticamente: así el operador
+      // siempre encuentra cada opción en el mismo sitio.
+      vigentes.sort(
+        (a, b) =>
+          TRANSPORTES_CARGUE.indexOf(a.nombretransporte.trim().toUpperCase() as any) -
+          TRANSPORTES_CARGUE.indexOf(b.nombretransporte.trim().toUpperCase() as any),
+      )
+      setTransportes(vigentes)
     }
     loadTransportesData()
   }, [])
@@ -361,12 +372,17 @@ function GenerateLoadOrdersComponent() {
       setNombreConductor(selectedVehicle.nombreconductor)
       setPesoDisponible(selectedVehicle.peso_disponible) // Corrected typo: Peso Disponible
       setVehicleCapacity(selectedVehicle.capacidad || 0) // Set vehicle capacity
-      setTipoTransporte(selectedVehicle.transporte || "defaultTransport") // Auto-load transportadora from vehicle's transporte field
+      // Autocarga la transportadora de la cita, pero SOLO si sigue vigente. Si
+      // la cita trae una que ya no se ofrece, se deja el campo vacío para que
+      // la validación obligue a escoger: si se dejara el valor puesto, el
+      // desplegable se vería en blanco (no hay opción que lo represente) pero
+      // la orden se guardaría igual con esa transportadora, sin que nadie lo vea.
+      setTipoTransporte(transporteHabilitado(selectedVehicle.transporte) ? selectedVehicle.transporte! : "")
     } else {
       setNombreConductor("")
       setPesoDisponible(0)
       setVehicleCapacity(0) // Reset vehicle capacity
-      setTipoTransporte("defaultTransport") // Reset transportadora
+      setTipoTransporte("") // Reset transportadora
     }
   }
 
