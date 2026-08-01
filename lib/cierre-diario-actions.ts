@@ -142,6 +142,9 @@ const vacio = (): BloqueAlerta => ({ ordenes: 0, valor: 0, detalle: [] })
 
 export async function getCierreDiario(
   fecha?: string | null,
+  /** Con proyecto: el cierre se amarra al selector DEL MÓDULO (pedido de
+   *  gerencia). Sin proyecto: suma todos los accesibles, como siempre. */
+  empresaId?: number | null,
 ): Promise<{ success: boolean; data?: CierreDiario; message?: string }> {
   const dia = String(fecha || "").trim() || hoyBogota()
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dia)) return { success: false, message: "Fecha inválida." }
@@ -149,8 +152,10 @@ export async function getCierreDiario(
   try {
     const empresas = await getAccessibleEmpresesFromPermisos()
     if (!empresas.length) return { success: false, message: "No tienes proyectos asignados." }
-    const nombreDe = new Map(empresas.map((e) => [Number(e.id), e.nombre]))
-    const ids = empresas.map((e) => Number(e.id))
+    const alcance = empresaId ? empresas.filter((e) => Number(e.id) === Number(empresaId)) : empresas
+    if (!alcance.length) return { success: false, message: "No tienes acceso a ese proyecto." }
+    const nombreDe = new Map(alcance.map((e) => [Number(e.id), e.nombre]))
+    const ids = alcance.map((e) => Number(e.id))
 
     const sb: any = await getSupabaseAdmin()
 
@@ -281,11 +286,12 @@ export async function getCierreDiario(
         alertas.sin_medio_pago.valor += valor
       }
 
-      if (medioPagoInconsistente(id, o.transporte, o.mediopago)) {
+      const ctxPago = { placa: o.placa, operacion: o.tipooperacion }
+      if (medioPagoInconsistente(id, o.transporte, o.mediopago, ctxPago)) {
         t.inconsistentes++
         alertas.pago_no_cuadra.detalle.push({
           ...base,
-          motivo: `${transporte} debe ser ${medioPagoEsperado(id, o.transporte)} y quedó ${String(o.mediopago).trim()}`,
+          motivo: `${transporte} debe ser ${medioPagoEsperado(id, o.transporte, ctxPago)} y quedó ${String(o.mediopago).trim()}`,
         })
         alertas.pago_no_cuadra.ordenes++
         alertas.pago_no_cuadra.valor += valor

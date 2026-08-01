@@ -48,7 +48,7 @@ const REFRESH_MS = 60_000
  * uno pide su propia data; el server action es barato (~1 s) y así la tira
  * sigue viva aunque el usuario nunca abra la pestaña.
  */
-function useCierreDiario(fecha: string) {
+function useCierreDiario(fecha: string, empresaId?: number | null) {
   const [data, setData] = useState<CierreDiario | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -59,7 +59,7 @@ function useCierreDiario(fecha: string) {
       // Refresco SILENCIOSO: en los ciclos automáticos se conserva la data
       // previa para que la pantalla no parpadee cada minuto.
       if (!silencioso) setLoading(true)
-      const r = await getCierreDiario(fecha)
+      const r = await getCierreDiario(fecha, empresaId ?? null)
       if (!montado.current) return
       if (r.success && r.data) {
         setData(r.data)
@@ -70,7 +70,7 @@ function useCierreDiario(fecha: string) {
       }
       setLoading(false)
     },
-    [fecha],
+    [fecha, empresaId],
   )
 
   useEffect(() => {
@@ -95,8 +95,16 @@ const totalAlertas = (d: CierreDiario | null) =>
 // TIRA — siempre visible arriba del módulo
 // ---------------------------------------------------------------------------
 
-export function CierreDiarioTira({ onVerDetalle }: { onVerDetalle?: () => void }) {
-  const { data, loading } = useCierreDiario(hoyISO())
+export function CierreDiarioTira({
+  onVerDetalle,
+  empresaId,
+}: {
+  onVerDetalle?: () => void
+  /** Con proyecto, la tira muestra SOLO ese proyecto (el del selector del
+   *  módulo). Sin proyecto, suma todos los accesibles como antes. */
+  empresaId?: number | null
+}) {
+  const { data, loading } = useCierreDiario(hoyISO(), empresaId)
   const alertas = totalAlertas(data)
 
   if (loading && !data) {
@@ -210,9 +218,9 @@ function TablaAlerta({ titulo, bloque, explicacion }: { titulo: string; bloque: 
   )
 }
 
-export function CierreDiarioPanel() {
+export function CierreDiarioPanel({ empresaId }: { empresaId?: number | null } = {}) {
   const [fecha, setFecha] = useState(hoyISO())
-  const { data, loading, error, refrescar } = useCierreDiario(fecha)
+  const { data, loading, error, refrescar } = useCierreDiario(fecha, empresaId)
 
   return (
     <div className="space-y-4">
@@ -233,7 +241,15 @@ export function CierreDiarioPanel() {
             Refrescar
           </Button>
           <p className="text-xs text-muted-foreground">
-            Suma <strong>todos los proyectos</strong> a los que tienes acceso, sin depender del selector de arriba.
+            {empresaId ? (
+              <>
+                Muestra <strong>el proyecto elegido en el selector del módulo</strong>.
+              </>
+            ) : (
+              <>
+                Suma <strong>todos los proyectos</strong> a los que tienes acceso.
+              </>
+            )}
             {fecha === hoyISO() && " Se actualiza solo cada minuto."}
           </p>
         </CardContent>

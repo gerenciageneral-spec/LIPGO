@@ -6,7 +6,7 @@
 // lo "sin gestionar" (procesado sin facturar) y lo "sin tarifa". De aquí salen
 // los anexos por proyecto. Datos: lib/facturacion-control-actions.ts.
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react"
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useAuth } from "@/components/auth-provider"
 import { useToast } from "@/hooks/use-toast"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -49,6 +49,7 @@ import { getAccessibleEmpresesFromPermisos } from "@/lib/orders-actions"
 import { OP_PRODUCCION, OP_PRODUCCION_LABEL } from "@/lib/facturacion-produccion-conceptos"
 import { proyectoConReglaMedioPago } from "@/lib/facturacion-medio-pago"
 import { CierreDiarioPanel, CierreDiarioTira } from "@/components/cierre-diario"
+import { CierreFinanciero } from "@/components/cierre-financiero"
 
 const money = (n: number) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO")
 const ton = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { maximumFractionDigits: 2 })
@@ -247,6 +248,10 @@ export function CuadroControlFacturacion() {
   // Pestaña activa: controlada para que la tira del cierre pueda saltar a ella.
   const [tab, setTab] = useState("owner")
 
+  // ¿El usuario ya eligió proyecto A MANO en este módulo? Si sí, el selector
+  // global no se lo pisa.
+  const eleccionManual = useRef(false)
+
   useEffect(() => {
     getAccessibleEmpresesFromPermisos()
       .then((list) => {
@@ -256,6 +261,15 @@ export function CuadroControlFacturacion() {
       .catch(() => setEmpresas([]))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // El selector GLOBAL resuelve DESPUÉS del primer render (el perfil llega
+  // asíncrono), así que el efecto de arriba casi siempre lo encontraba en null
+  // y caía en la primera empresa por orden alfabético. Cuando el global
+  // resuelva (o cambie), el módulo lo adopta — salvo que el usuario ya haya
+  // elegido proyecto a mano aquí.
+  useEffect(() => {
+    if (selectedEmpresaId && !eleccionManual.current) setEmpresaId(Number(selectedEmpresaId))
+  }, [selectedEmpresaId])
 
   const cargar = useCallback(async () => {
     if (!empresaId) {
@@ -684,10 +698,11 @@ export function CuadroControlFacturacion() {
 
   return (
     <div className="space-y-4">
-      {/* Cierre del día, SIEMPRE visible y por encima de los filtros: es
-          cross-proyecto, así que no depende del selector ni de la pestaña
-          abierta. Su botón de alertas lleva a la pestaña del detalle. */}
-      <CierreDiarioTira onVerDetalle={() => setTab("cierre")} />
+      {/* Cierre del día, SIEMPRE visible y por encima de los filtros. Sigue el
+          selector DEL MÓDULO (pedido expreso de gerencia): muestra el proyecto
+          elegido; sin proyecto elegido, suma todos los accesibles. Su botón de
+          alertas lleva a la pestaña del detalle. */}
+      <CierreDiarioTira empresaId={empresaId} onVerDetalle={() => setTab("cierre")} />
 
       <Card>
         <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
@@ -699,7 +714,10 @@ export function CuadroControlFacturacion() {
               <select
                 className="h-9 rounded-md border border-input bg-background px-2 text-sm font-medium"
                 value={empresaId ?? ""}
-                onChange={(e) => setEmpresaId(e.target.value ? Number(e.target.value) : null)}
+                onChange={(e) => {
+                  eleccionManual.current = true
+                  setEmpresaId(e.target.value ? Number(e.target.value) : null)
+                }}
               >
                 <option value="">— elegir —</option>
                 {empresas.map((em) => (
@@ -831,16 +849,20 @@ export function CuadroControlFacturacion() {
       {/* El cierre es cross-proyecto, así que va FUERA de las guardas de abajo:
           si el proyecto seleccionado no tiene órdenes, el cierre del día debe
           seguir estando. Solo se muestra cuando su pestaña está activa. */}
-      {tab === "cierre" ? (
+      {tab === "cierre" || tab === "financiero" ? (
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList>
             <TabsTrigger value="owner">Resumen por owner</TabsTrigger>
             <TabsTrigger value="detalle">Detalle por orden</TabsTrigger>
             <TabsTrigger value="prefactura">Prefactura</TabsTrigger>
             <TabsTrigger value="cierre">Cierre de facturación</TabsTrigger>
+            <TabsTrigger value="financiero">Cierre Financiero</TabsTrigger>
           </TabsList>
           <TabsContent value="cierre" className="mt-4">
-            <CierreDiarioPanel />
+            <CierreDiarioPanel empresaId={empresaId} />
+          </TabsContent>
+          <TabsContent value="financiero" className="mt-4">
+            <CierreFinanciero empresaId={empresaId} />
           </TabsContent>
         </Tabs>
       ) : loading ? (
@@ -928,6 +950,7 @@ export function CuadroControlFacturacion() {
               <TabsTrigger value="detalle">Detalle por orden</TabsTrigger>
               <TabsTrigger value="prefactura">Prefactura</TabsTrigger>
               <TabsTrigger value="cierre">Cierre de facturación</TabsTrigger>
+              <TabsTrigger value="financiero">Cierre Financiero</TabsTrigger>
             </TabsList>
 
             <TabsContent value="owner">

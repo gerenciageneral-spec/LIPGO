@@ -1194,8 +1194,11 @@ export async function getControlFacturacion(
         owner: a.owner,
         transporte: a.r.transporte ?? null,
         mediopago: est?.mediopago ?? null,
-        medioPagoEsperado: medioPagoEsperado(idempresa, a.r.transporte),
-        medioPagoInconsistente: medioPagoInconsistente(idempresa, a.r.transporte, est?.mediopago),
+        medioPagoEsperado: medioPagoEsperado(idempresa, a.r.transporte, { placa: a.r.placa, operacion: a.op }),
+        medioPagoInconsistente: medioPagoInconsistente(idempresa, a.r.transporte, est?.mediopago, {
+          placa: a.r.placa,
+          operacion: a.op,
+        }),
         toneladas,
         fuente_peso: fuente,
         tarifa: a.sinTarifa || toneladas <= 0 ? null : Math.round(valor / toneladas),
