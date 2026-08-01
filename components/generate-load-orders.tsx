@@ -194,11 +194,11 @@ function GenerateLoadOrdersComponent() {
   useEffect(() => {
     const loadTransportesData = async () => {
       const transportesData = await getTransportes()
-      // Solo las transportadoras vigentes PARA ESTE PROYECTO
-      // (lib/transportes-cargue.ts): Susanita solo se ofrece en CEDI Medellín.
-      // El maestro conserva las demás para no alterar las órdenes históricas.
-      const orden = transportesCargue(selectedEmpresaId)
-      const vigentes = transportesData.filter((t) => transporteHabilitado(t.nombretransporte, selectedEmpresaId))
+      // Solo las transportadoras vigentes (lib/transportes-cargue.ts). Susanita
+      // NO está: es un CLIENTE, y quien transporta su carga es Zamudio, que sí
+      // está. El maestro conserva las demás para no alterar el histórico.
+      const orden = transportesCargue()
+      const vigentes = transportesData.filter((t) => transporteHabilitado(t.nombretransporte))
       // Se ordena como la lista declarada, no alfabéticamente: así el operador
       // siempre encuentra cada opción en el mismo sitio.
       vigentes.sort(
@@ -209,8 +209,7 @@ function GenerateLoadOrdersComponent() {
       setTransportes(vigentes)
     }
     loadTransportesData()
-    // Se recarga al cambiar de proyecto: la lista depende de él.
-  }, [selectedEmpresaId])
+  }, [])
 
   const loadOrders = async () => {
     setLoading(true)
@@ -380,9 +379,7 @@ function GenerateLoadOrdersComponent() {
       // la validación obligue a escoger: si se dejara el valor puesto, el
       // desplegable se vería en blanco (no hay opción que lo represente) pero
       // la orden se guardaría igual con esa transportadora, sin que nadie lo vea.
-      setTipoTransporte(
-        transporteHabilitado(selectedVehicle.transporte, selectedEmpresaId) ? selectedVehicle.transporte! : "",
-      )
+      setTipoTransporte(transporteHabilitado(selectedVehicle.transporte) ? selectedVehicle.transporte! : "")
     } else {
       setNombreConductor("")
       setPesoDisponible(0)

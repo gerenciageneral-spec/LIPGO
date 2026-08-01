@@ -1,46 +1,43 @@
 // TRANSPORTES HABILITADOS PARA GENERAR ÓRDENES DE CARGUE.
 //
 // La tabla `transportes` acumuló transportadoras que ya no operan (TTC, FULL
-// SERVICE, TRANSOLICAR, REDMAXX…), y cada una que sobra es una forma de
-// escribir mal el mismo dato. Aquí se declara la lista corta que el negocio
-// usa hoy; el desplegable de "Generación de órdenes de cargue" se limita a
-// ella. El maestro NO se toca: las órdenes históricas conservan su transporte
-// original y se siguen leyendo bien.
+// SERVICE, TRANSOLICAR, REDMAXX…) y un cliente colado como si fuera
+// transportadora (SUSANITA). Cada opción que sobra es una forma de escribir
+// mal un dato del que depende la facturación. Aquí se declara la lista corta
+// que el negocio usa hoy; el desplegable se limita a ella.
 //
-// OJO — este campo NO es cosmético: la facturación lo lee para decidir el
-// servicio y la tarifa (ver `servicioDe` y `tarifaDeServicio` en
-// lib/facturacion-control-actions.ts):
-//   · "TERCEROS" → el cliente recoge en bodega; en Medellín (id 4) además
-//     cambia la tarifa a la de DESCARGUE.
-//   · "SUSANITA" → tarifa especial de Susanita, con factura aparte. Es el
-//     ÚNICO identificador de ese cobro: en las 19 órdenes históricas el campo
-//     `cliente` viene vacío, así que si no se marca aquí, no hay forma de
-//     saber después que era Susanita.
-// Quitar un valor de aquí no rompe lo ya facturado, pero sí impide marcar
-// órdenes nuevas con ese servicio.
+// El maestro NO se toca: las órdenes históricas conservan su transporte
+// original y se siguen leyendo igual que siempre.
+//
+// SUSANITA NO VA AQUÍ, a propósito. Es un CLIENTE ("Tostaditos Susanita SAS",
+// que ya existe en el maestro de clientes para id 2 e id 4), no un
+// transportador. Su tarifa especial ($31.544 — Descargue/owner SUSANITA en
+// `tarifasoperacion`, solo para empresaid = 4) se dispara por el campo
+// CLIENTE, que es como ya vienen las órdenes correctas: cliente "Tostaditos
+// Susanita SAS" y transporte ZAMUDIO, el transportador real.
+//
+// La facturación clasifica por cualquiera de los dos campos:
+//   if (cliente.includes("SUSANITA") || transporte === "SUSANITA") -> Susanita
+// La segunda mitad de esa condición se mantiene por las 19 órdenes históricas
+// en las que Susanita se escribió en el transporte y el cliente quedó vacío:
+// sin ella se reclasificarían y cambiaría lo ya facturado.
+//
+// El otro valor con peso propio es "TERCEROS": marca que el cliente recoge en
+// bodega y, en Medellín (id 4), cambia la tarifa a la de DESCARGUE.
+// Ver `servicioDe` y `tarifaDeServicio` en lib/facturacion-control-actions.ts.
 
-/** Las que se ofrecen en todos los proyectos, en este orden. */
+/** Las transportadoras que se ofrecen, en este orden. */
 export const TRANSPORTES_CARGUE = ["AVIMOL", "INDUPAN", "MOLINOS", "ZAMUDIO", "TERCEROS"] as const
 
-/**
- * Susanita se atiende únicamente en CEDI Medellín (id 4), que es donde vive
- * ese cliente y donde su cobro sale en factura aparte. Ofrecerla en los demás
- * proyectos solo abre la puerta a marcarla por error, y ese error no se ve:
- * la orden se factura con la tarifa de Susanita sin que nada lo advierta.
- */
-export const TRANSPORTE_SUSANITA = "SUSANITA"
-export const SUSANITA_IDEMPRESA = 4
+const PERMITIDOS = new Set<string>(TRANSPORTES_CARGUE.map((t) => t.toUpperCase()))
 
-/** Transportadoras ofrecidas para un proyecto, en orden de presentación. */
-export function transportesCargue(idempresa?: number | null): string[] {
-  const base = [...TRANSPORTES_CARGUE] as string[]
-  if (Number(idempresa) === SUSANITA_IDEMPRESA) base.push(TRANSPORTE_SUSANITA)
-  return base
+/** Transportadoras ofrecidas, en orden de presentación. */
+export function transportesCargue(): string[] {
+  return [...TRANSPORTES_CARGUE]
 }
 
-/** ¿Este transporte se puede usar para una orden de cargue nueva del proyecto? */
-export function transporteHabilitado(nombre: unknown, idempresa?: number | null): boolean {
+/** ¿Este transporte se puede usar para una orden de cargue nueva? */
+export function transporteHabilitado(nombre: unknown): boolean {
   const n = String(nombre ?? "").trim().toUpperCase()
-  if (!n) return false
-  return transportesCargue(idempresa).some((t) => t.toUpperCase() === n)
+  return n !== "" && PERMITIDOS.has(n)
 }
