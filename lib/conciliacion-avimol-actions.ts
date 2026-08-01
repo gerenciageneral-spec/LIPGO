@@ -53,13 +53,16 @@ const ORIGEN_INGRESO_PRODUCCION = "%ingreso producci%"
 const PUESTOS_TURNO = ["Estibado PT", "Salvado"]
 
 /**
- * HORAS EXTRA FACTURABLES — regla del negocio (gerencia, 2026-08-01): a Avimol
- * SOLO se le cobran las horas extra de los puestos de PRODUCCIÓN — Estibado PT,
- * Salvado y Montacargas de producción. Los demás puestos cobran su TURNO por
- * solicitud aprobada; sus horas extra son costo del recurso, no un concepto
- * facturable aparte.
+ * HORAS EXTRA — regla del negocio (gerencia, 2026-08-01):
+ *   · Puestos de PRODUCCIÓN (Estibado PT, Salvado, Montacargas de producción):
+ *     sus horas extra SIEMPRE se cobran — hacen parte del servicio de
+ *     producción.
+ *   · Los demás puestos (turnos adicionales): cobran su TURNO por solicitud
+ *     aprobada, y sus extras se cobran SOLO SI el proyecto también las pidió
+ *     (solicitud aprobada tipo "Horas Extra"). Una extra ejecutada que nadie
+ *     pidió NO se cobra — y se reporta, porque es plata que se paga sin cobro.
  */
-const PUESTOS_HE_FACTURABLE = new Set(["ESTIBADO PT", "SALVADO", "MONTACARGAS DE PRODUCCION"])
+const PUESTOS_HE_PRODUCCION = new Set(["ESTIBADO PT", "SALVADO", "MONTACARGAS DE PRODUCCION"])
 
 /** Operaciones en tarifasoperacion (empresaid=2). */
 const OP_ESTIBADO = "Estibado PT"
@@ -186,12 +189,15 @@ export interface PersonaTurno {
 }
 
 /**
- * Horas extra facturables de un PUESTO en un día — SOLO los puestos de
- * producción (Estibado PT, Salvado, Montacargas de producción); las de los
- * demás puestos no se cobran. Se cobran TODAS las clases de hora
- * (hed+hedf+hen+hef+hn) a `tarifahoraextra`, y COMPLETAS: a diferencia de la
- * vista legacy `facturacionturnos`, aquí NO se resta el 0,66 (ese descuento
- * venía de la jornada de 7,3333 h y quedó obsoleto con la de 7 h).
+ * Horas extra de un PUESTO en un día. Cuándo se COBRAN (`cobro > 0`):
+ *   · puestos de producción (Estibado PT, Salvado, Montacargas de producción)
+ *     → siempre;
+ *   · turnos adicionales → solo si el proyecto las pidió (solicitud aprobada
+ *     tipo "Horas Extra"); sin solicitud, `cobro = 0` y se alerta.
+ * Se cobran TODAS las clases de hora (hed+hedf+hen+hef+hn) a `tarifahoraextra`,
+ * y COMPLETAS: a diferencia de la vista legacy `facturacionturnos`, aquí NO se
+ * resta el 0,66 (ese descuento venía de la jornada de 7,3333 h y quedó
+ * obsoleto con la de 7 h).
  */
 export interface HoraExtraPuesto {
   puesto: string
@@ -619,9 +625,10 @@ export async function getConciliacionAvimol(
       // que revision-nomina-actions.ts:280) para que base+extra+dom = total.
       const baseDia = Math.max(0, totalDia - valorExtra - dominical)
 
-      // Horas extra facturables: SOLO los puestos de producción (ver
-      // PUESTOS_HE_FACTURABLE). Las de los demás puestos no se cobran.
-      if (horasExtra > 0 && puesto && PUESTOS_HE_FACTURABLE.has(normalizarPuesto(puesto))) {
+      // Se acumulan las horas de TODOS los puestos; si se cobran o no se
+      // decide al valorizar (producción siempre; turnos adicionales solo con
+      // solicitud aprobada — ver PUESTOS_HE_PRODUCCION).
+      if (horasExtra > 0 && puesto) {
         const key = `${fecha}|${puesto.toUpperCase()}`
         if (!hePorFechaPuesto.has(key))
           hePorFechaPuesto.set(key, { fecha, puesto, hed: 0, hedf: 0, hen: 0, hef: 0, hn: 0, costo: 0 })
@@ -655,9 +662,9 @@ export async function getConciliacionAvimol(
       } else {
         // Puesto fuera del alcance de turnos conciliados por producción.
         if (valorExtra > 0) {
-          // Entra el COSTO de su hora extra. Desde la regla de 2026-08-01 esa
-          // hora NO se factura (solo se cobran las de producción), pero el
-          // costo es real: sin él el margen saldría inflado.
+          // Entra el COSTO de su hora extra. Esa hora solo se FACTURA si el
+          // proyecto la pidió (solicitud aprobada); el costo es real siempre:
+          // sin él el margen saldría inflado.
           dia.pagoHorasExtraOtros += valorExtra
           dia.pagoTotal += valorExtra
         }
@@ -680,15 +687,20 @@ export async function getConciliacionAvimol(
     }
 
     // 4b-bis) Valorizar las horas extra y cruzarlas contra lo solicitado.
+    //   · Producción (PUESTOS_HE_PRODUCCION): se cobran SIEMPRE.
+    //   · Turnos adicionales: se cobran SOLO si el proyecto las pidió
+    //     (solicitud aprobada); sin solicitud van en $0 y se reporta.
     const sinTarifaHE = new Set<string>()
     for (const acc of hePorFechaPuesto.values()) {
       const dia = getDia(acc.fecha)
       const horas = acc.hed + acc.hedf + acc.hen + acc.hef + acc.hn
       const tarifa = tarifaHoraExtraVigente(tarifasHE || [], acc.puesto, acc.fecha)
-      if (tarifa === 0 && horas > 0) sinTarifaHE.add(`${acc.puesto}|${acc.fecha}`)
-      // Horas COMPLETAS: sin la resta de 0,66 de la vista legacy.
-      const cobro = horas * tarifa
       const solicitadas = solicitadasPorFechaPuesto.get(`${acc.fecha}|${acc.puesto.toUpperCase()}`) || 0
+      const esProduccion = PUESTOS_HE_PRODUCCION.has(normalizarPuesto(acc.puesto))
+      const seCobra = esProduccion || solicitadas > 0
+      if (tarifa === 0 && horas > 0 && seCobra) sinTarifaHE.add(`${acc.puesto}|${acc.fecha}`)
+      // Horas COMPLETAS: sin la resta de 0,66 de la vista legacy.
+      const cobro = seCobra ? horas * tarifa : 0
 
       dia.detalleHorasExtra.push({
         puesto: acc.puesto,
@@ -711,7 +723,9 @@ export async function getConciliacionAvimol(
       if (solicitadas === 0 && horas > 0) {
         alertas.push({
           tipo: "sin_solicitud",
-          detalle: `${acc.puesto} · ${acc.fecha}: se ejecutaron ${horas.toFixed(2)} h extra y se facturan, pero NO hay solicitud aprobada del proyecto (Servicios Adicionales, tipo "Horas Extra").`,
+          detalle: esProduccion
+            ? `${acc.puesto} · ${acc.fecha}: se ejecutaron ${horas.toFixed(2)} h extra y se facturan (producción), pero NO hay solicitud aprobada del proyecto (Servicios Adicionales, tipo "Horas Extra").`
+            : `${acc.puesto} · ${acc.fecha}: se ejecutaron ${horas.toFixed(2)} h extra pero NO hay solicitud aprobada: NO se cobran (los turnos adicionales cobran extras solo si el proyecto las pide). Se pagaron $${Math.round(acc.costo).toLocaleString("es-CO")} sin cobro.`,
         })
       } else if (horas > solicitadas) {
         alertas.push({
