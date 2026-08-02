@@ -58,6 +58,86 @@ interface Props {
 }
 
 // ---------------------------------------------------------------------------
+// Resumen ejecutivo — el titular del período, automático para el alcance y
+// el período seleccionados (mes, quincena o año completo).
+// ---------------------------------------------------------------------------
+
+function ResumenEjecutivo({ data }: { data: AnalisisData }) {
+  const proyectos = data.proyectos
+  if (proyectos.length === 0) return null
+
+  const totalAFacturar = proyectos.reduce((s, p) => s + p.totalAFacturarAdicional, 0)
+  const tonAcordadas = proyectos.reduce((s, p) => s + p.tonAcordadas, 0)
+  const tonReales = proyectos.reduce((s, p) => s + p.tonReales, 0)
+  const cumplimiento = tonAcordadas > 0 ? Math.round((tonReales / tonAcordadas) * 100) : null
+  const margenTotal = proyectos.reduce((s, p) => s + p.margenReal, 0)
+
+  // Los 3 huecos más grandes del período, entre todos los proyectos.
+  const huecos = proyectos
+    .flatMap((p) => p.actividades.filter((a) => a.deficit > 0).map((a) => ({ ...a, proyecto: p.proyecto })))
+    .sort((a, b) => b.aFacturarAdicional - a.aFacturarAdicional)
+    .slice(0, 3)
+
+  return (
+    <Card className={totalAFacturar > 0 ? "border-amber-300 bg-amber-50/40 dark:bg-amber-950/10" : "border-emerald-300"}>
+      <CardContent className="space-y-3 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+              Resumen ejecutivo del período
+            </div>
+            <div className={`text-2xl font-bold tabular-nums ${totalAFacturar > 0 ? "text-amber-700 dark:text-amber-400" : "text-emerald-700"}`}>
+              {totalAFacturar > 0 ? `${money(totalAFacturar)} por facturar adicional` : "Volumen acordado cumplido"}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Cumplimiento global {cumplimiento !== null ? `${cumplimiento}%` : "—"} ({ton(tonReales)} t de {ton(tonAcordadas)} t
+              acordadas) · margen real del acuerdo {moneyS(margenTotal)}
+            </div>
+          </div>
+          {/* Chips por proyecto */}
+          <div className="flex flex-wrap gap-2">
+            {proyectos.map((p) => (
+              <div
+                key={p.idempresa}
+                className={`rounded-full border px-3 py-1 text-xs font-medium ${
+                  p.totalAFacturarAdicional > 0
+                    ? "border-amber-400 bg-amber-100 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+                    : "border-emerald-400 bg-emerald-100 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200"
+                }`}
+                title={`${p.proyecto}: ${ton(p.tonReales)} t de ${ton(p.tonAcordadas)} t`}
+              >
+                {p.proyecto}: {p.cumplimientoPct !== null ? `${p.cumplimientoPct}%` : "—"}
+                {p.totalAFacturarAdicional > 0 && ` · ${money(p.totalAFacturarAdicional)}`}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {huecos.length > 0 && (
+          <div className="rounded-md border border-amber-200 bg-background/60 p-2.5 dark:border-amber-900">
+            <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              Huecos principales del período
+            </div>
+            <ul className="space-y-0.5 text-xs">
+              {huecos.map((h) => (
+                <li key={`${h.proyecto}-${h.codigo}`} className="flex flex-wrap items-baseline gap-1.5">
+                  <span className="font-medium">{h.actividad}</span>
+                  <span className="text-muted-foreground">({h.proyecto})</span>
+                  <span className="text-red-600">
+                    {h.cumplimientoPct !== null ? `${h.cumplimientoPct}%` : "—"} · faltan {ton(h.deficit)} t ={" "}
+                    <span className="font-semibold">{money(h.aFacturarAdicional)}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Tarjeta de un proyecto
 // ---------------------------------------------------------------------------
 
@@ -445,7 +525,12 @@ export default function AnalisisFinanciero({ data, isLoading, error, periodoLabe
           </CardContent>
         </Card>
       ) : (
-        (data?.proyectos ?? []).map((p) => <ProyectoCard key={p.idempresa} p={p} meses={data?.meses ?? 1} />)
+        <>
+          {data && <ResumenEjecutivo data={data} />}
+          {(data?.proyectos ?? []).map((p) => (
+            <ProyectoCard key={p.idempresa} p={p} meses={data?.meses ?? 1} />
+          ))}
+        </>
       )}
     </div>
   )
