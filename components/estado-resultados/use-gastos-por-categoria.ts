@@ -20,7 +20,8 @@ export interface GastosResumen {
 }
 
 interface Args {
-  idEmpresa: number | null
+  /** Proyectos del alcance: uno solo, o todos los accesibles ("Todos LIP"). */
+  ids: number[]
   desde: string
   hasta: string
 }
@@ -36,14 +37,14 @@ interface Args {
  * agregamos en memoria (volumen esperado: decenas/cientos por mes, ok).
  */
 export function useGastosPorCategoria({
-  idEmpresa,
+  ids,
   desde,
   hasta,
 }: Args) {
   const swrKey =
-    idEmpresa == null
+    ids.length === 0
       ? null
-      : (["estado-resultados:gastos", idEmpresa, desde, hasta] as const)
+      : (["estado-resultados:gastos", ids.join(","), desde, hasta] as const)
 
   const { data, error, isLoading } = useSWR<GastosResumen>(
     swrKey,
@@ -51,7 +52,7 @@ export function useGastosPorCategoria({
       const { data: rows, error: err } = await supabase
         .from("gastos")
         .select("categoria, monto")
-        .eq("id_empresa", idEmpresa as number)
+        .in("id_empresa", ids)
         .gte("fecha", desde)
         .lte("fecha", hasta)
 
@@ -70,7 +71,7 @@ export function useGastosPorCategoria({
       const { data: fijosData, error: errFijos } = await supabase
         .from("cargos_fijos_generados")
         .select("valor")
-        .eq("idempresa", idEmpresa as number)
+        .in("idempresa", ids)
         .eq("tipo", "gasto")
         .gte("periodo", desde)
         .lte("periodo", hasta)

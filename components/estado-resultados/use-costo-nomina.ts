@@ -58,7 +58,8 @@ export interface CostoNominaData {
 }
 
 interface UseCostoNominaArgs {
-  idEmpresa: number | null | undefined
+  /** Proyectos del alcance: uno solo, o todos los accesibles ("Todos LIP"). */
+  ids: number[]
   desde: string
   hasta: string
 }
@@ -71,14 +72,14 @@ interface UseCostoNominaArgs {
  * con los porcentajes regulatorios definidos arriba.
  */
 export function useCostoNomina({
-  idEmpresa,
+  ids,
   desde,
   hasta,
 }: UseCostoNominaArgs) {
   const key =
-    idEmpresa == null
+    ids.length === 0
       ? null
-      : (["estado-resultados:nomina", idEmpresa, desde, hasta] as const)
+      : (["estado-resultados:nomina", ids.join(","), desde, hasta] as const)
 
   const { data, error, isLoading, mutate } = useSWR<CostoNominaData>(
     key,
@@ -104,9 +105,10 @@ export function useCostoNomina({
         total_liquidado_dia: number | null
       }> = []
       let offset = 0
-      // Tope defensivo: ~50k filas-dia por periodo es mas que suficiente
-      // y evita un loop infinito si algo raro pasa con el conteo.
-      const MAX_ROWS = 50_000
+      // Tope defensivo contra loops infinitos. Con el alcance "Todos los
+      // proyectos" + "Todo el anio" pueden ser ~150k filas-dia (4 proyectos
+      // x ~100 personas x 365 dias), asi que 300k da margen de sobra.
+      const MAX_ROWS = 300_000
 
       while (offset < MAX_ROWS) {
         // Filtramos por `idempresaliquidacion` (empresa contratante de la
@@ -117,7 +119,7 @@ export function useCostoNomina({
         const { data: page, error: pageError } = await supabase
           .from("pagonomina")
           .select("persona, fecha, bonif_prestacional, total_liquidado_dia")
-          .eq("idempresaliquidacion", idEmpresa as number)
+          .in("idempresaliquidacion", ids)
           .gte("fecha", desde)
           .lte("fecha", hasta)
           .range(offset, offset + PAGE_SIZE - 1)

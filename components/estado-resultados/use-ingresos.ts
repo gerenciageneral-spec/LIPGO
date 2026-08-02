@@ -2,212 +2,226 @@
 
 /**
  * Hook que calcula los INGRESOS del Estado de Resultados para el periodo
- * y la empresa indicados.
+ * y el ALCANCE indicado (uno o varios proyectos — `ids`).
  *
- * Fuentes:
- *  - Facturacion de toneladas: `public.facturacion`
- *      - filtro: idempresa = idEmpresa
- *      - rango : fechacargue (timestamp) en [desde, hastaExclusivo)
- *      - sumar : valor_a_facturar
- *
- *  - Facturacion de turnos: `public.facturacionturnos`
- *      - filtro: idempresa = idEmpresa
- *      - rango : fecha (date) en [desde, hasta] (inclusive)
- *      - sumar : facturacion_total
- *
- * Suma del lado del cliente para no depender de RPCs nuevos.
+ * Fuentes (cada una es una fila expandible en la seccion, con su detalle
+ * para drill-down):
+ *  - Facturacion de toneladas: `public.facturacion` (idempresa IN ids,
+ *    fechacargue en [desde, hastaExclusivo)) → detalle por operacion×owner.
+ *  - Facturacion de turnos (vista): `public.facturacionturnos` para los ids
+ *    DISTINTOS de 2 → detalle por puesto.
+ *  - Produccion, turnos y HE de AVIMOL: si `ids` incluye 2, va como fila
+ *    PROPIA desde getConciliacionAvimol (su facturacion real: produccion
+ *    aprobada + turnos solicitados/aprobados + horas extra) → detalle en 3
+ *    sublineas. La vista facturacionturnos NO se usa para id2 (cobraba por
+ *    ejecucion e ignoraba cobraturno).
+ *  - Cargos fijos: `cargos_fijos_generados` tipo='ingreso' → detalle por
+ *    concepto. Tolerante a que la tabla aun no exista.
  *
  * IMPORTANTE - paginacion obligatoria: Supabase/PostgREST corta toda
- * respuesta en 1000 filas aunque el `count` diga mas. `facturacion` supera
- * las 7.000 filas por empresa en un anio, asi que sumar sin `.range(...)`
- * truncaba el ingreso en silencio (68% del ingreso 2026 quedaba oculto)
- * mientras el costo de nomina SI paginaba: el P&L mostraba una perdida
- * inexistente. Mismo patron de bloques de 1000 que `use-costo-nomina.ts`.
+ * respuesta en 1000 filas. `facturacion` supera las 7.000 filas por empresa
+ * en un anio; sin `.range(...)` el ingreso se truncaba en silencio (68% del
+ * 2026 quedaba oculto). Mismo patron de bloques de 1000 que use-costo-nomina.
  */
 
 import useSWR from "swr"
 import { supabase } from "@/lib/supabase-client"
 import { getConciliacionAvimol } from "@/lib/conciliacion-avimol-actions"
 
+export interface DetalleIngreso {
+  nombre: string
+  valor: number
+  registros: number
+  /** Toneladas del grupo cuando aplica (detalle de la fila de toneladas). */
+  toneladas?: number
+}
+
 export interface IngresosTotales {
   toneladas: number
-  turnos: number
-  /** Cargos fijos mensuales reconocidos: $2M Manejo de Inventario (id1/id3),
-   *  600 ton fijas de Avimol, alquiler de montacargas facturado (id1/id3).
-   *  Ver lib/cargos-fijos-actions.ts. */
+  turnosVista: number
+  turnosConciliacion: number
   fijos: number
   total: number
   conteoToneladas: number
-  conteoTurnos: number
+  conteoTurnosVista: number
+  /** Dias con datos de la conciliacion (no filas). */
+  conteoConciliacion: number
   conteoFijos: number
-  /** De dónde salió el renglón de turnos: la vista `facturacionturnos` o la
-   *  Conciliación (Avimol, id 2), donde vive su facturación real. */
-  fuenteTurnos: "vista" | "conciliacion"
+  detalleToneladas: DetalleIngreso[]
+  detalleTurnosVista: DetalleIngreso[]
+  detalleConciliacion: DetalleIngreso[]
+  detalleFijos: DetalleIngreso[]
 }
 
 interface UseIngresosArgs {
-  idEmpresa: number | null | undefined
+  /** Proyectos del alcance: uno solo, o todos los accesibles ("Todos LIP"). */
+  ids: number[]
   desde: string
   hasta: string
   hastaExclusivo: string
 }
 
-// Suma una columna numerica de una vista paginando en bloques de 1000,
-// exactamente como `use-costo-nomina.ts`. Devuelve la suma y cuantas filas
-// se leyeron de verdad (no el `count` del servidor, que puede mentir menos
-// que una respuesta truncada).
-async function sumarPaginado(
+// Pagina en bloques de 1000 acumulando la suma de `columnaValor` y grupos
+// por `claveDe` (para el drill-down), sin queries extra.
+async function sumarYAgrupar(
   aplicarFiltros: (q: any) => any,
   tabla: string,
-  columna: string,
-): Promise<{ suma: number; filas: number }> {
+  select: string,
+  columnaValor: string,
+  claveDe: (r: Record<string, unknown>) => string,
+  toneladasDe?: (r: Record<string, unknown>) => number,
+): Promise<{ suma: number; filas: number; detalle: DetalleIngreso[] }> {
   const PAGE_SIZE = 1000
-  // Tope defensivo contra loops infinitos; ~100k filas cubre varios anios.
-  const MAX_ROWS = 100_000
+  const MAX_ROWS = 200_000 // tope defensivo; cubre varios anios de 4 proyectos
   let suma = 0
   let filas = 0
   let offset = 0
+  const grupos = new Map<string, { valor: number; registros: number; toneladas: number }>()
 
   while (offset < MAX_ROWS) {
-    const { data: page, error } = await aplicarFiltros(
-      supabase.from(tabla).select(columna),
-    ).range(offset, offset + PAGE_SIZE - 1)
-
-    if (error) {
-      throw new Error(`Error al leer ${tabla}: ${error.message}`)
-    }
+    const { data: page, error } = await aplicarFiltros(supabase.from(tabla).select(select)).range(
+      offset,
+      offset + PAGE_SIZE - 1,
+    )
+    if (error) throw new Error(`Error al leer ${tabla}: ${error.message}`)
     if (!page || page.length === 0) break
 
     for (const r of page as Array<Record<string, unknown>>) {
-      suma += Number(r[columna]) || 0
+      const v = Number(r[columnaValor]) || 0
+      suma += v
+      const k = claveDe(r)
+      const g = grupos.get(k) ?? { valor: 0, registros: 0, toneladas: 0 }
+      g.valor += v
+      g.registros += 1
+      if (toneladasDe) g.toneladas += toneladasDe(r)
+      grupos.set(k, g)
     }
     filas += page.length
     if (page.length < PAGE_SIZE) break
     offset += PAGE_SIZE
   }
 
-  return { suma, filas }
+  const detalle: DetalleIngreso[] = Array.from(grupos.entries())
+    .map(([nombre, g]) => ({
+      nombre,
+      valor: g.valor,
+      registros: g.registros,
+      ...(toneladasDe ? { toneladas: g.toneladas } : {}),
+    }))
+    .sort((a, b) => b.valor - a.valor)
+
+  return { suma, filas, detalle }
 }
 
-// Igual que sumarPaginado, pero TOLERANTE a que la tabla aun no exista —
-// usado solo para `cargos_fijos_generados`, que depende de migraciones
-// nuevas (scripts/create_cargos_fijos_*.sql) que pueden no haberse corrido
-// todavia. Sin esto, abrir el Estado de Resultados en cualquier proyecto
-// se rompía por completo hasta correr esas migraciones.
-async function sumarPaginadoTolerante(
+// Igual, pero TOLERANTE a que la tabla aun no exista (cargos fijos: depende
+// de migraciones nuevas). Sin esto, el P&L entero se caeria hasta correrlas.
+async function sumarYAgruparTolerante(
   aplicarFiltros: (q: any) => any,
   tabla: string,
-  columna: string,
-): Promise<{ suma: number; filas: number }> {
+  select: string,
+  columnaValor: string,
+  claveDe: (r: Record<string, unknown>) => string,
+): Promise<{ suma: number; filas: number; detalle: DetalleIngreso[] }> {
   try {
-    return await sumarPaginado(aplicarFiltros, tabla, columna)
+    return await sumarYAgrupar(aplicarFiltros, tabla, select, columnaValor, claveDe)
   } catch (e) {
     console.warn(`[estado-resultados] ${tabla} no disponible todavia (¿faltan migraciones?):`, e)
-    return { suma: 0, filas: 0 }
+    return { suma: 0, filas: 0, detalle: [] }
   }
 }
 
 async function fetchIngresos(
-  idEmpresa: number,
+  ids: number[],
   desde: string,
   hasta: string,
   hastaExclusivo: string,
 ): Promise<IngresosTotales> {
-  // Facturacion toneladas: la columna `fechacargue` es timestamp en este
-  // proyecto, asi que usamos gte/lt con el dia +1 exclusivo.
-  const tonsPromise = sumarPaginado(
-    (q) =>
-      q
-        .eq("idempresa", idEmpresa)
-        .gte("fechacargue", desde)
-        .lt("fechacargue", hastaExclusivo),
+  const idsVista = ids.filter((i) => i !== 2) // id2 va por conciliacion, no por la vista
+  const incluyeAvimol = ids.includes(2)
+
+  // Toneladas: `fechacargue` es timestamp → gte/lt con dia+1 exclusivo.
+  const tonsPromise = sumarYAgrupar(
+    (q) => q.in("idempresa", ids).gte("fechacargue", desde).lt("fechacargue", hastaExclusivo),
     "facturacion",
+    "valor_a_facturar, tipooperacion, owner, toneladas",
     "valor_a_facturar",
+    (r) => `${String(r.tipooperacion ?? "(sin operación)").trim()} · ${String(r.owner ?? "SIN OWNER").trim()}`,
+    (r) => Number(r.toneladas) || 0,
   )
 
-  // Cargos fijos reconocidos (ver lib/cargos-fijos-actions.ts): un registro
-  // por CONCEPTO x MES (columna `periodo` = primer dia del mes). Al filtrar
-  // por [desde,hasta] igual que facturacionturnos, un periodo que abarque el
-  // mes completo lo cuenta entero; si se consulta solo una quincena, el cargo
-  // cae en la quincena que contenga el dia 1 del mes (no se prorratea).
-  const fijosPromise = sumarPaginadoTolerante(
-    (q) =>
-      q
-        .eq("idempresa", idEmpresa)
-        .eq("tipo", "ingreso")
-        .gte("periodo", desde)
-        .lte("periodo", hasta),
+  // Turnos por la vista (todos los ids menos Avimol). `fecha` es DATE puro.
+  const turnosPromise =
+    idsVista.length > 0
+      ? sumarYAgrupar(
+          (q) => q.in("idempresa", idsVista).gte("fecha", desde).lte("fecha", hasta),
+          "facturacionturnos",
+          "facturacion_total, puesto",
+          "facturacion_total",
+          (r) => String(r.puesto ?? "(sin puesto)").trim(),
+        )
+      : Promise.resolve({ suma: 0, filas: 0, detalle: [] as DetalleIngreso[] })
+
+  // Avimol: su facturacion real de turnos/produccion/HE es la Conciliacion
+  // (mismo motor que la prefactura, para que ambos cuadren).
+  const concPromise = incluyeAvimol ? getConciliacionAvimol(desde, hasta) : Promise.resolve(null)
+
+  // Cargos fijos reconocidos ($2M id1/id3, 600 ton fijas id2, alquiler de
+  // montacargas facturado). `periodo` = primer dia del mes.
+  const fijosPromise = sumarYAgruparTolerante(
+    (q) => q.in("idempresa", ids).eq("tipo", "ingreso").gte("periodo", desde).lte("periodo", hasta),
     "cargos_fijos_generados",
+    "valor, concepto",
     "valor",
+    (r) => String(r.concepto ?? "(sin concepto)").trim(),
   )
 
-  // AVIMOL (id 2): su facturacion real de turnos NO es la vista — son los
-  // turnos SOLICITADOS Y APROBADOS + la produccion aprobada + las horas extra,
-  // que arma la Conciliacion. La vista facturacionturnos cobraba por ejecucion
-  // e ignoraba `cobraturno`, doble-contando la produccion (~$12M/mes). El P&L
-  // usa el mismo motor que la prefactura para que ambos cuadren.
-  if (idEmpresa === 2) {
-    const [tons, conc, fijos] = await Promise.all([
-      tonsPromise,
-      getConciliacionAvimol(desde, hasta),
-      fijosPromise,
-    ])
+  const [tons, turnos, conc, fijos] = await Promise.all([tonsPromise, turnosPromise, concPromise, fijosPromise])
+
+  let turnosConciliacion = 0
+  let conteoConciliacion = 0
+  let detalleConciliacion: DetalleIngreso[] = []
+  if (conc) {
     if (!conc.success || !conc.data) {
-      throw new Error(
-        `Error al leer la conciliacion de Avimol: ${conc.message || "desconocido"}`,
-      )
+      throw new Error(`Error al leer la conciliacion de Avimol: ${conc.message || "desconocido"}`)
     }
     const r = conc.data.resumen
-    return {
-      toneladas: tons.suma,
-      turnos: r.cobroTotal,
-      fijos: fijos.suma,
-      total: tons.suma + r.cobroTotal + fijos.suma,
-      conteoToneladas: tons.filas,
-      conteoTurnos: r.diasConDatos,
-      conteoFijos: fijos.filas,
-      fuenteTurnos: "conciliacion",
-    }
+    turnosConciliacion = r.cobroTotal
+    conteoConciliacion = r.diasConDatos
+    detalleConciliacion = [
+      {
+        nombre: "Producción aprobada (Estibado PT + Salvado)",
+        valor: r.cobroProduccion,
+        registros: r.diasConDatos,
+        toneladas: r.tonTotal,
+      },
+      { nombre: "Horas extra facturables", valor: r.cobroHorasExtra, registros: Math.round(r.horasExtraEjecutadas) },
+      { nombre: "Turnos solicitados y aprobados", valor: r.cobroTurnos, registros: r.turnosCobrados },
+    ].filter((d) => d.valor > 0 || d.registros > 0)
   }
-
-  // Facturacion turnos: la columna `fecha` es DATE puro, gte/lte inclusive.
-  const [tons, turnosRes, fijos] = await Promise.all([
-    tonsPromise,
-    sumarPaginado(
-      (q) =>
-        q.eq("idempresa", idEmpresa).gte("fecha", desde).lte("fecha", hasta),
-      "facturacionturnos",
-      "facturacion_total",
-    ),
-    fijosPromise,
-  ])
 
   return {
     toneladas: tons.suma,
-    turnos: turnosRes.suma,
+    turnosVista: turnos.suma,
+    turnosConciliacion,
     fijos: fijos.suma,
-    total: tons.suma + turnosRes.suma + fijos.suma,
+    total: tons.suma + turnos.suma + turnosConciliacion + fijos.suma,
     conteoToneladas: tons.filas,
-    conteoTurnos: turnosRes.filas,
+    conteoTurnosVista: turnos.filas,
+    conteoConciliacion,
     conteoFijos: fijos.filas,
-    fuenteTurnos: "vista",
+    detalleToneladas: tons.detalle,
+    detalleTurnosVista: turnos.detalle,
+    detalleConciliacion,
+    detalleFijos: fijos.detalle,
   }
 }
 
-export function useIngresos({
-  idEmpresa,
-  desde,
-  hasta,
-  hastaExclusivo,
-}: UseIngresosArgs) {
-  const key =
-    idEmpresa != null
-      ? (["estado-resultados:ingresos", idEmpresa, desde, hasta] as const)
-      : null
+export function useIngresos({ ids, desde, hasta, hastaExclusivo }: UseIngresosArgs) {
+  const key = ids.length > 0 ? (["estado-resultados:ingresos", ids.join(","), desde, hasta] as const) : null
 
   const { data, error, isLoading, mutate } = useSWR(
     key,
-    () => fetchIngresos(idEmpresa as number, desde, hasta, hastaExclusivo),
+    () => fetchIngresos(ids, desde, hasta, hastaExclusivo),
     {
       // El periodo cambia poco; no necesitamos refrescar con foco.
       revalidateOnFocus: false,

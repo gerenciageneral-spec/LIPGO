@@ -1,26 +1,25 @@
 "use client"
 
 /**
- * Estado de Resultados (Paso 1: shell + selector de periodo).
+ * Estado de Resultados — P&L por proyecto o de TODA la empresa (LIP).
  *
- * Modulo del subgrupo Facturacion que consolida en un P&L mensual:
- *   - Ingresos: facturacion de toneladas + facturacion de turnos.
- *   - Costo de nomina: total liquidado del mes + provisiones de
- *     prestaciones sociales + provisiones de seguridad social.
- *   - Utilidad bruta: ingresos - costo de nomina.
- *   - Gastos: agrupados por categoria desde el modulo de Dashboard Gastos.
- *   - Utilidad neta: utilidad bruta - total gastos (con valor y %).
+ * Consolida por periodo (quincena, mes o AÑO COMPLETO):
+ *   - Ingresos: toneladas + turnos (vista) + producción/turnos/HE de Avimol
+ *     (conciliación) + cargos fijos — cada fila con drill-down.
+ *   - Costo de nomina: total liquidado + provisiones.
+ *   - Utilidad bruta, gastos por categoria y utilidad neta.
  *
- * En este Paso 1 solo se cablean:
- *   - Header del modulo.
- *   - Selector de periodo (Mes/Año + Quincena toda/Q1/Q2).
- *   - Lectura del idEmpresa global (TopBar) y guard para cuando no hay
- *     empresa seleccionada.
- *   - Placeholders de las 5 secciones, listas para que cada paso siguiente
- *     las llene con su calculo real.
+ * El PROYECTO se elige con un selector PROPIO del modulo (arranca en el
+ * global pero no depende de el), con la opcion "Todos los proyectos (LIP)"
+ * para ver el total de la empresa — el selector global no permite eso.
+ *
+ * Pestaña "Análisis Financiero": acuerdos de volúmenes por proyecto
+ * (CONFIDENCIAL — vive solo en la BD), acordado vs real, déficit y $
+ * adicionales a facturar. Ver lib/analisis-financiero-actions.ts.
  */
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import useSWR from "swr"
 import {
   Card,
   CardContent,
@@ -39,8 +38,11 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from "@/components/ui/toggle-group"
-import { Building2, CalendarRange, BarChart3 } from "lucide-react"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Building2, CalendarRange, BarChart3, AlertTriangle } from "lucide-react"
 import { useAuth } from "@/components/auth-provider"
+import { getAccessibleEmpresesFromPermisos } from "@/lib/orders-actions"
+import { getAnalisisFinanciero } from "@/lib/analisis-financiero-actions"
 import { useIngresos } from "./use-ingresos"
 import SeccionIngresos from "./seccion-ingresos"
 import { useCostoNomina } from "./use-costo-nomina"
@@ -49,6 +51,7 @@ import SeccionUtilidadBruta from "./seccion-utilidad-bruta"
 import { useGastosPorCategoria } from "./use-gastos-por-categoria"
 import SeccionGastos from "./seccion-gastos"
 import SeccionUtilidadNeta from "./seccion-utilidad-neta"
+import AnalisisFinanciero from "./analisis-financiero"
 
 // -----------------------------------------------------------------------------
 // Catalogos del selector de periodo
@@ -71,18 +74,7 @@ const MESES = [
 
 type Quincena = "todo" | "q1" | "q2"
 
-/**
- * Calcula el rango de fechas (YYYY-MM-DD) que cubre el periodo elegido.
- * Q1 = dia 1 a 15, Q2 = dia 16 al ultimo dia del mes, "todo" = mes
- * completo.
- *
- * Devuelve:
- *  - `desde` (inclusive)        -> usar con `gte`
- *  - `hasta` (inclusive)        -> usar con `lte` cuando la columna es DATE
- *  - `hastaExclusivo` (dia +1)  -> usar con `lt` cuando la columna es
- *                                  TIMESTAMP (evita perder registros con
- *                                  hora > 00:00 del ultimo dia).
- */
+/** Mes 0 = "Todo el año". */
 export function getPeriodoRango(
   anio: number,
   mes: number,
@@ -92,18 +84,29 @@ export function getPeriodoRango(
   hasta: string
   hastaExclusivo: string
   label: string
+  /** Meses que cubre el periodo (0,5 quincena · 1 mes · 12 año). */
+  meses: number
 } {
-  const ultimoDia = new Date(anio, mes, 0).getDate()
   const pad = (n: number) => String(n).padStart(2, "0")
 
+  // AÑO COMPLETO
+  if (mes === 0) {
+    return {
+      desde: `${anio}-01-01`,
+      hasta: `${anio}-12-31`,
+      hastaExclusivo: `${anio + 1}-01-01`,
+      label: `${anio} (año completo)`,
+      meses: 12,
+    }
+  }
+
+  const ultimoDia = new Date(anio, mes, 0).getDate()
   const desdeDia = quincena === "q2" ? 16 : 1
   const hastaDia = quincena === "q1" ? 15 : ultimoDia
 
   const desde = `${anio}-${pad(mes)}-${pad(desdeDia)}`
   const hasta = `${anio}-${pad(mes)}-${pad(hastaDia)}`
 
-  // Siguiente dia despues de "hasta". Cruza meses/anios sin problema
-  // porque `new Date(y, m-1, d+1)` normaliza solo.
   const exclusivo = new Date(anio, mes - 1, hastaDia + 1)
   const hastaExclusivo = `${exclusivo.getFullYear()}-${pad(
     exclusivo.getMonth() + 1,
@@ -122,23 +125,57 @@ export function getPeriodoRango(
     hasta,
     hastaExclusivo,
     label: `${mesLabel} ${anio}${sufijo}`,
+    meses: quincena === "todo" ? 1 : 0.5,
   }
 }
+
+const money = (n: number) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO")
 
 // -----------------------------------------------------------------------------
 // Componente principal
 // -----------------------------------------------------------------------------
 
 export default function EstadoResultados() {
-  const { selectedEmpresaId, selectedEmpresaNombre } = useAuth()
+  const { selectedEmpresaId } = useAuth()
+
+  // ---------------------------------------------------------------------------
+  // Selector de PROYECTO propio del modulo. Arranca en el global cuando
+  // resuelve, pero no lo pisa si el usuario ya eligio a mano. La opcion
+  // "todos" suma todos los proyectos accesibles (total LIP).
+  // ---------------------------------------------------------------------------
+  const [empresas, setEmpresas] = useState<Array<{ id: number; nombre: string }>>([])
+  const [alcance, setAlcance] = useState<number | "todos" | null>(null)
+  const eleccionManual = useRef(false)
+
+  useEffect(() => {
+    getAccessibleEmpresesFromPermisos()
+      .then((list) => {
+        setEmpresas(list)
+        setAlcance((prev) => prev ?? selectedEmpresaId ?? list[0]?.id ?? null)
+      })
+      .catch(() => setEmpresas([]))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  useEffect(() => {
+    if (selectedEmpresaId && !eleccionManual.current) setAlcance(selectedEmpresaId)
+  }, [selectedEmpresaId])
+
+  const ids = useMemo(() => {
+    if (alcance === "todos") return empresas.map((e) => e.id)
+    return alcance ? [Number(alcance)] : []
+  }, [alcance, empresas])
+
+  const alcanceLabel =
+    alcance === "todos"
+      ? "Todos los proyectos (LIP)"
+      : (empresas.find((e) => e.id === alcance)?.nombre ?? (alcance ? `Empresa ${alcance}` : "—"))
 
   // Por defecto el periodo arranca en el mes actual completo.
   const hoy = useMemo(() => new Date(), [])
   const [anio, setAnio] = useState<number>(hoy.getFullYear())
-  const [mes, setMes] = useState<number>(hoy.getMonth() + 1)
+  const [mes, setMes] = useState<number>(hoy.getMonth() + 1) // 0 = año completo
   const [quincena, setQuincena] = useState<Quincena>("todo")
 
-  // Anios disponibles: ultimo 5 + actual + siguiente.
   const anios = useMemo(() => {
     const base = hoy.getFullYear()
     const list: number[] = []
@@ -151,34 +188,37 @@ export default function EstadoResultados() {
     [anio, mes, quincena],
   )
 
-  // Hook de ingresos: se rehidrata cuando cambia empresa o periodo.
-  // Si idEmpresa es null el hook no dispara fetch (key=null en SWR).
   const ingresos = useIngresos({
-    idEmpresa: selectedEmpresaId,
+    ids,
     desde: periodo.desde,
     hasta: periodo.hasta,
     hastaExclusivo: periodo.hastaExclusivo,
   })
 
-  // Hook de costo de nomina: total liquidado + provisiones de
-  // prestaciones sociales y seguridad social. `pagonomina.fecha` es DATE
-  // por lo que `hasta` inclusive con `lte` es suficiente.
   const costoNomina = useCostoNomina({
-    idEmpresa: selectedEmpresaId,
+    ids,
     desde: periodo.desde,
     hasta: periodo.hasta,
   })
 
-  // Hook de gastos: agrega por categoria en cliente. La tabla `gastos`
-  // usa `id_empresa` (snake_case) y `fecha` (DATE).
   const gastos = useGastosPorCategoria({
-    idEmpresa: selectedEmpresaId,
+    ids,
     desde: periodo.desde,
     hasta: periodo.hasta,
   })
 
-  // Si no hay empresa activa, no podemos consultar nada multi-tenant.
-  if (selectedEmpresaId == null) {
+  // Analisis financiero del periodo (acuerdos de volumenes): alimenta la
+  // pestaña 2 y el aviso de deficit en la pestaña 1.
+  const analisis = useSWR(
+    ids.length > 0 ? ["estado-resultados:analisis", ids.join(","), periodo.desde, periodo.hasta] : null,
+    () => getAnalisisFinanciero(ids, periodo.desde, periodo.hasta, periodo.meses),
+    { revalidateOnFocus: false, keepPreviousData: true },
+  )
+  const totalAFacturarAdicional = analisis.data?.success
+    ? (analisis.data.data?.proyectos ?? []).reduce((a, p) => a + p.totalAFacturarAdicional, 0)
+    : 0
+
+  if (ids.length === 0) {
     return (
       <Card>
         <CardHeader>
@@ -186,10 +226,7 @@ export default function EstadoResultados() {
             <BarChart3 className="h-5 w-5 text-primary" />
             Estado de Resultados
           </CardTitle>
-          <CardDescription>
-            Selecciona una empresa en la barra superior para ver su estado
-            de resultados.
-          </CardDescription>
+          <CardDescription>Cargando proyectos accesibles…</CardDescription>
         </CardHeader>
       </Card>
     )
@@ -197,9 +234,7 @@ export default function EstadoResultados() {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* ----------------------------------------------------------------- */}
-      {/* Header del modulo                                                  */}
-      {/* ----------------------------------------------------------------- */}
+      {/* Header + selectores */}
       <Card>
         <CardHeader className="gap-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -209,49 +244,48 @@ export default function EstadoResultados() {
                 Estado de Resultados
               </CardTitle>
               <CardDescription>
-                Consolida ingresos, costo de nomina con provisiones, gastos
-                por categoria y utilidad neta del periodo.
+                Consolida ingresos, costo de nomina con provisiones, gastos por
+                categoria y utilidad neta del periodo.
               </CardDescription>
             </div>
 
-            {/* Chip informativo de empresa activa */}
-            <div
-              className="flex items-center gap-2 self-start rounded-full border border-primary/20 bg-primary/5 px-3 py-1.5 text-xs"
-              title="Empresa activa (cambia desde la barra superior)"
-            >
-              <Building2 className="h-3.5 w-3.5 text-primary" aria-hidden />
-              <span className="font-semibold text-primary tabular-nums">
-                #{selectedEmpresaId}
-              </span>
-              {selectedEmpresaNombre && (
-                <>
-                  <span className="text-primary/40">|</span>
-                  <span className="max-w-[160px] truncate font-medium text-foreground/80">
-                    {selectedEmpresaNombre}
-                  </span>
-                </>
-              )}
+            {/* Selector de PROYECTO propio (independiente del global) */}
+            <div className="flex items-center gap-2 self-start">
+              <Building2 className="h-4 w-4 text-primary" aria-hidden />
+              <Select
+                value={alcance === null ? "" : String(alcance)}
+                onValueChange={(v) => {
+                  eleccionManual.current = true
+                  setAlcance(v === "todos" ? "todos" : Number(v))
+                }}
+              >
+                <SelectTrigger className="h-9 w-[240px] font-medium">
+                  <SelectValue placeholder="Proyecto" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos">Todos los proyectos (LIP)</SelectItem>
+                  {empresas.map((e) => (
+                    <SelectItem key={e.id} value={String(e.id)}>
+                      {e.nombre} (ID {e.id})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
         </CardHeader>
 
-        {/* ----------------------------------------------------------------- */}
-        {/* Selector de periodo: Mes + Anio + Quincena                        */}
-        {/* ----------------------------------------------------------------- */}
+        {/* Selector de periodo: Mes (o Año completo) + Año + Quincena */}
         <CardContent>
           <div className="flex flex-col gap-3 md:flex-row md:items-end md:gap-4">
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-muted-foreground">
-                Mes
-              </label>
-              <Select
-                value={String(mes)}
-                onValueChange={(v) => setMes(Number(v))}
-              >
-                <SelectTrigger className="h-9 w-[160px]">
+              <label className="text-xs font-medium text-muted-foreground">Mes</label>
+              <Select value={String(mes)} onValueChange={(v) => setMes(Number(v))}>
+                <SelectTrigger className="h-9 w-[170px]">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="0">Todo el año</SelectItem>
                   {MESES.map((m) => (
                     <SelectItem key={m.value} value={String(m.value)}>
                       {m.label}
@@ -262,13 +296,8 @@ export default function EstadoResultados() {
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-muted-foreground">
-                Año
-              </label>
-              <Select
-                value={String(anio)}
-                onValueChange={(v) => setAnio(Number(v))}
-              >
+              <label className="text-xs font-medium text-muted-foreground">Año</label>
+              <Select value={String(anio)} onValueChange={(v) => setAnio(Number(v))}>
                 <SelectTrigger className="h-9 w-[110px]">
                   <SelectValue />
                 </SelectTrigger>
@@ -282,93 +311,102 @@ export default function EstadoResultados() {
               </Select>
             </div>
 
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-muted-foreground">
-                Quincena
-              </label>
-              {/*
-                Toggle de 3 estados (todo / Q1 / Q2). Al ser obligatorio
-                un valor, si el usuario intenta deselectar caemos a "todo".
-              */}
-              <ToggleGroup
-                type="single"
-                value={quincena}
-                onValueChange={(v) =>
-                  setQuincena((v as Quincena) || "todo")
-                }
-                className="h-9"
-              >
-                <ToggleGroupItem value="todo" className="px-3 text-xs">
-                  Todo el mes
-                </ToggleGroupItem>
-                <ToggleGroupItem value="q1" className="px-3 text-xs">
-                  Q1 (1-15)
-                </ToggleGroupItem>
-                <ToggleGroupItem value="q2" className="px-3 text-xs">
-                  Q2 (16-fin)
-                </ToggleGroupItem>
-              </ToggleGroup>
-            </div>
+            {mes !== 0 && (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Quincena</label>
+                <ToggleGroup
+                  type="single"
+                  value={quincena}
+                  onValueChange={(v) => setQuincena((v as Quincena) || "todo")}
+                  className="h-9"
+                >
+                  <ToggleGroupItem value="todo" className="px-3 text-xs">
+                    Todo el mes
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="q1" className="px-3 text-xs">
+                    Q1 (1-15)
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="q2" className="px-3 text-xs">
+                    Q2 (16-fin)
+                  </ToggleGroupItem>
+                </ToggleGroup>
+              </div>
+            )}
 
             <div className="ml-auto flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
               <CalendarRange className="h-3.5 w-3.5" aria-hidden />
               <span>
-                Periodo:{" "}
-                <span className="font-semibold text-foreground tabular-nums">
-                  {periodo.desde}
-                </span>
+                {alcanceLabel} ·{" "}
+                <span className="font-semibold text-foreground tabular-nums">{periodo.desde}</span>
                 {" → "}
-                <span className="font-semibold text-foreground tabular-nums">
-                  {periodo.hasta}
-                </span>
+                <span className="font-semibold text-foreground tabular-nums">{periodo.hasta}</span>
               </span>
             </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* ----------------------------------------------------------------- */}
-      {/* Placeholders de las 5 secciones                                    */}
-      {/* En los pasos 2-5 estos cards se reemplazaran por contenido real.   */}
-      {/* ----------------------------------------------------------------- */}
-      <SeccionIngresos
-        data={ingresos.data}
-        isLoading={ingresos.isLoading}
-        error={ingresos.error}
-        periodoLabel={periodo.label}
-      />
-      <SeccionCostoNomina
-        data={costoNomina.data}
-        isLoading={costoNomina.isLoading}
-        error={costoNomina.error}
-        periodoLabel={periodo.label}
-      />
-      <SeccionUtilidadBruta
-        totalIngresos={ingresos.data?.total ?? 0}
-        costoTotalNomina={costoNomina.data?.costoTotal ?? 0}
-        // Loading "real": cualquiera de las dos fuentes en vuelo. Asi el
-        // usuario no ve un valor calculado a medias.
-        isLoading={ingresos.isLoading || costoNomina.isLoading}
-      />
-      <SeccionGastos
-        data={gastos.data}
-        isLoading={gastos.isLoading}
-        error={gastos.error}
-        periodoLabel={periodo.label}
-      />
-      <SeccionUtilidadNeta
-        totalIngresos={ingresos.data?.total ?? 0}
-        utilidadBruta={
-          (ingresos.data?.total ?? 0) -
-          (costoNomina.data?.costoTotal ?? 0)
-        }
-        totalGastos={gastos.data?.total ?? 0}
-        // Cualquiera de las 3 fuentes en vuelo => loading. Asi nunca
-        // mostramos un calculo final a medio cocinar.
-        isLoading={
-          ingresos.isLoading || costoNomina.isLoading || gastos.isLoading
-        }
-      />
+      <Tabs defaultValue="pyl">
+        <TabsList>
+          <TabsTrigger value="pyl">Estado de Resultados</TabsTrigger>
+          <TabsTrigger value="analisis">Análisis Financiero</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="pyl" className="mt-4 flex flex-col gap-4">
+          {/* Aviso de deficit de volumen: si hay que facturar algo adicional,
+              el P&L lo dice de frente — impacta directo la utilidad. */}
+          {totalAFacturarAdicional > 0 && (
+            <div className="flex items-start gap-2 rounded-md border border-amber-400 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950/40">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+              <span className="text-amber-900 dark:text-amber-200">
+                Volumen por debajo del acuerdo en este periodo:{" "}
+                <span className="font-semibold">{money(totalAFacturarAdicional)} por facturar al cliente</span>
+                {" — ver la pestaña Análisis Financiero."}
+              </span>
+            </div>
+          )}
+
+          <SeccionIngresos
+            data={ingresos.data}
+            isLoading={ingresos.isLoading}
+            error={ingresos.error}
+            periodoLabel={periodo.label}
+          />
+          <SeccionCostoNomina
+            data={costoNomina.data}
+            isLoading={costoNomina.isLoading}
+            error={costoNomina.error}
+            periodoLabel={periodo.label}
+          />
+          <SeccionUtilidadBruta
+            totalIngresos={ingresos.data?.total ?? 0}
+            costoTotalNomina={costoNomina.data?.costoTotal ?? 0}
+            isLoading={ingresos.isLoading || costoNomina.isLoading}
+          />
+          <SeccionGastos
+            data={gastos.data}
+            isLoading={gastos.isLoading}
+            error={gastos.error}
+            periodoLabel={periodo.label}
+          />
+          <SeccionUtilidadNeta
+            totalIngresos={ingresos.data?.total ?? 0}
+            utilidadBruta={(ingresos.data?.total ?? 0) - (costoNomina.data?.costoTotal ?? 0)}
+            totalGastos={gastos.data?.total ?? 0}
+            isLoading={ingresos.isLoading || costoNomina.isLoading || gastos.isLoading}
+          />
+        </TabsContent>
+
+        <TabsContent value="analisis" className="mt-4">
+          <AnalisisFinanciero
+            data={analisis.data?.success ? (analisis.data.data ?? null) : null}
+            error={analisis.data && !analisis.data.success ? analisis.data.message : undefined}
+            isLoading={analisis.isLoading}
+            periodoLabel={periodo.label}
+            refrescar={() => analisis.mutate()}
+          />
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

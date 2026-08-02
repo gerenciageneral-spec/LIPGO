@@ -3,18 +3,19 @@
 /**
  * Sección INGRESOS del Estado de Resultados.
  *
- * Renderiza cuatro filas:
- *  1. Facturacion de toneladas (suma de `facturacion.valor_a_facturar`).
- *  2. Facturacion de turnos    (suma de `facturacionturnos.facturacion_total`,
- *     o Conciliacion Avimol para id2).
- *  3. Cargos fijos             (suma de `cargos_fijos_generados.valor`).
- *  4. Total ingresos           (suma de las tres anteriores).
+ * Renderiza hasta cuatro filas EXPANDIBLES (drill-down: al tocar una fila se
+ * ven las operaciones facturadas que la componen) + el total:
+ *  1. Facturacion de toneladas → detalle por operación × owner.
+ *  2. Facturacion de turnos (vista) → detalle por puesto. (Solo proyectos ≠ Avimol.)
+ *  3. Produccion, turnos y HE — Avimol (conciliación) → 3 sublíneas. (Solo si el
+ *     alcance incluye id2.)
+ *  4. Cargos fijos → detalle por concepto.
  *
- * El componente NO conoce la fuente de datos: recibe el resultado del
- * hook `useIngresos` desde el padre, lo que mantiene la seccion 100%
- * presentacional y testeable.
+ * El componente NO conoce la fuente de datos: recibe el resultado del hook
+ * `useIngresos` desde el padre; sigue 100% presentacional.
  */
 
+import { useState } from "react"
 import {
   Card,
   CardContent,
@@ -23,14 +24,14 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
-import { TrendingUp, AlertCircle } from "lucide-react"
-import type { IngresosTotales } from "./use-ingresos"
+import { TrendingUp, AlertCircle, ChevronDown, ChevronRight } from "lucide-react"
+import type { DetalleIngreso, IngresosTotales } from "./use-ingresos"
 
 interface Props {
   data: IngresosTotales | undefined
   isLoading: boolean
   error?: Error
-  /** Texto del periodo seleccionado (ej. "Abril 2026" o "Abril 2026 (Q1: 1-15)"). */
+  /** Texto del periodo seleccionado (ej. "Abril 2026" o "2026 (año completo)"). */
   periodoLabel: string
 }
 
@@ -46,6 +47,12 @@ export default function SeccionIngresos({
   error,
   periodoLabel,
 }: Props) {
+  const totalRegistros =
+    (data?.conteoToneladas ?? 0) +
+    (data?.conteoTurnosVista ?? 0) +
+    (data?.conteoConciliacion ?? 0) +
+    (data?.conteoFijos ?? 0)
+
   return (
     <Card>
       <CardHeader>
@@ -56,7 +63,7 @@ export default function SeccionIngresos({
               Ingresos
             </CardTitle>
             <CardDescription>
-              Facturacion del periodo {periodoLabel}.
+              Facturacion del periodo {periodoLabel}. Toca una fila para ver su detalle.
             </CardDescription>
           </div>
         </div>
@@ -72,43 +79,47 @@ export default function SeccionIngresos({
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
-                  <th className="px-4 py-2 text-left font-medium">
-                    Concepto
-                  </th>
-                  <th className="px-4 py-2 text-right font-medium">
-                    Registros
-                  </th>
+                  <th className="px-4 py-2 text-left font-medium">Concepto</th>
+                  <th className="px-4 py-2 text-right font-medium">Registros</th>
                   <th className="px-4 py-2 text-right font-medium">Valor</th>
                 </tr>
               </thead>
               <tbody>
                 <FilaConcepto
                   label="Facturacion de toneladas"
-                  hint="public.facturacion · valor_a_facturar"
+                  hint="public.facturacion · valor_a_facturar · detalle por operación × owner"
                   registros={data?.conteoToneladas}
                   valor={data?.toneladas}
+                  detalle={data?.detalleToneladas}
+                  conToneladas
                   isLoading={isLoading}
                 />
-                <FilaConcepto
-                  label={
-                    data?.fuenteTurnos === "conciliacion"
-                      ? "Produccion, turnos y horas extra (Conciliacion Avimol)"
-                      : "Facturacion de turnos"
-                  }
-                  hint={
-                    data?.fuenteTurnos === "conciliacion"
-                      ? "getConciliacionAvimol · produccion aprobada + turnos aprobados + horas extra (registros = dias con datos)"
-                      : "public.facturacionturnos · facturacion_total"
-                  }
-                  registros={data?.conteoTurnos}
-                  valor={data?.turnos}
-                  isLoading={isLoading}
-                />
+                {(isLoading || (data?.turnosVista ?? 0) > 0 || (data?.conteoTurnosVista ?? 0) > 0) && (
+                  <FilaConcepto
+                    label="Facturacion de turnos"
+                    hint="public.facturacionturnos · facturacion_total · detalle por puesto"
+                    registros={data?.conteoTurnosVista}
+                    valor={data?.turnosVista}
+                    detalle={data?.detalleTurnosVista}
+                    isLoading={isLoading}
+                  />
+                )}
+                {(isLoading || (data?.turnosConciliacion ?? 0) > 0 || (data?.conteoConciliacion ?? 0) > 0) && (
+                  <FilaConcepto
+                    label="Produccion, turnos y horas extra — Avimol"
+                    hint="getConciliacionAvimol · produccion aprobada + turnos aprobados + horas extra (registros = dias con datos)"
+                    registros={data?.conteoConciliacion}
+                    valor={data?.turnosConciliacion}
+                    detalle={data?.detalleConciliacion}
+                    isLoading={isLoading}
+                  />
+                )}
                 <FilaConcepto
                   label="Cargos fijos"
                   hint="cargos_fijos_generados · $2M Manejo de Inventario (id1/id3), 600 ton fijas Avimol, alquiler de montacargas facturado"
                   registros={data?.conteoFijos}
                   valor={data?.fijos}
+                  detalle={data?.detalleFijos}
                   isLoading={isLoading}
                 />
                 <tr className="border-t-2 border-primary/30 bg-primary/5">
@@ -116,13 +127,7 @@ export default function SeccionIngresos({
                     Total ingresos
                   </td>
                   <td className="px-4 py-3 text-right text-xs text-muted-foreground tabular-nums">
-                    {isLoading ? (
-                      <Skeleton className="ml-auto h-4 w-10" />
-                    ) : (
-                      (data?.conteoToneladas ?? 0) +
-                      (data?.conteoTurnos ?? 0) +
-                      (data?.conteoFijos ?? 0)
-                    )}
+                    {isLoading ? <Skeleton className="ml-auto h-4 w-10" /> : totalRegistros.toLocaleString("es-CO")}
                   </td>
                   <td className="px-4 py-3 text-right font-semibold text-primary tabular-nums">
                     {isLoading ? (
@@ -148,34 +153,77 @@ function FilaConcepto({
   hint,
   registros,
   valor,
+  detalle,
+  conToneladas = false,
   isLoading,
 }: {
   label: string
   hint: string
   registros: number | undefined
   valor: number | undefined
+  detalle: DetalleIngreso[] | undefined
+  /** Muestra la columna de toneladas en el detalle (fila de toneladas). */
+  conToneladas?: boolean
   isLoading: boolean
 }) {
+  const [abierta, setAbierta] = useState(false)
+  const tieneDetalle = (detalle?.length ?? 0) > 0
+
   return (
-    <tr className="border-b last:border-0">
-      <td className="px-4 py-3">
-        <div className="font-medium text-foreground">{label}</div>
-        <div className="text-xs text-muted-foreground">{hint}</div>
-      </td>
-      <td className="px-4 py-3 text-right text-xs text-muted-foreground tabular-nums">
-        {isLoading ? (
-          <Skeleton className="ml-auto h-4 w-10" />
-        ) : (
-          (registros ?? 0).toLocaleString("es-CO")
-        )}
-      </td>
-      <td className="px-4 py-3 text-right tabular-nums">
-        {isLoading ? (
-          <Skeleton className="ml-auto h-4 w-28" />
-        ) : (
-          formatoCOP.format(valor ?? 0)
-        )}
-      </td>
-    </tr>
+    <>
+      <tr
+        className={`border-b last:border-0 ${tieneDetalle ? "cursor-pointer hover:bg-muted/40" : ""}`}
+        onClick={() => tieneDetalle && setAbierta((v) => !v)}
+      >
+        <td className="px-4 py-3">
+          <div className="flex items-start gap-1.5">
+            {tieneDetalle ? (
+              abierta ? (
+                <ChevronDown className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              )
+            ) : (
+              <span className="w-3.5 shrink-0" />
+            )}
+            <div>
+              <div className="font-medium text-foreground">{label}</div>
+              <div className="text-xs text-muted-foreground">{hint}</div>
+            </div>
+          </div>
+        </td>
+        <td className="px-4 py-3 text-right text-xs text-muted-foreground tabular-nums">
+          {isLoading ? (
+            <Skeleton className="ml-auto h-4 w-10" />
+          ) : (
+            (registros ?? 0).toLocaleString("es-CO")
+          )}
+        </td>
+        <td className="px-4 py-3 text-right tabular-nums">
+          {isLoading ? (
+            <Skeleton className="ml-auto h-4 w-28" />
+          ) : (
+            formatoCOP.format(valor ?? 0)
+          )}
+        </td>
+      </tr>
+      {abierta &&
+        (detalle ?? []).map((d) => (
+          <tr key={d.nombre} className="border-b bg-muted/20 last:border-0">
+            <td className="py-2 pl-12 pr-4 text-xs text-muted-foreground">
+              {d.nombre}
+              {conToneladas && d.toneladas !== undefined && (
+                <span className="ml-2 tabular-nums">
+                  · {d.toneladas.toLocaleString("es-CO", { maximumFractionDigits: 1 })} t
+                </span>
+              )}
+            </td>
+            <td className="px-4 py-2 text-right text-xs text-muted-foreground tabular-nums">
+              {d.registros.toLocaleString("es-CO")}
+            </td>
+            <td className="px-4 py-2 text-right text-xs tabular-nums">{formatoCOP.format(d.valor)}</td>
+          </tr>
+        ))}
+    </>
   )
 }
