@@ -9,7 +9,7 @@
 // es el paso siguiente y NO se cruza aquí.
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
-import { esPlacaDistribucion, cargarPlacasDistribucion } from "@/lib/distribucion-placas"
+import { esPlacaDistribucion, cargarPlacasDistribucion, ownerDeLinea } from "@/lib/distribucion-placas"
 import { PLACAS_EXCLUIDAS_FACTURAS } from "@/lib/facturas-exclusiones"
 import { getConciliacionAvimol } from "@/lib/conciliacion-avimol-actions"
 import {
@@ -715,7 +715,9 @@ export async function getPrefactura(
         if (soloProduccion) continue
         if (hayFiltroOps && servicio !== "Susanita" && !opSet.has(String(r.tipooperacion ?? "").trim().toLowerCase())) continue
         // Owner por el id_empresa del PRODUCTO (dueño real), incluido el propio.
-        const owner = String(r.owner || "SIN OWNER")
+        // SALVO en id4: el vehículo propio (LWY393) factura TODO su viaje al
+        // owner del proyecto sin importar el producto (ver ownerDeLinea).
+        const owner = ownerDeLinea(idempresa, r.placa, String(r.owner || "SIN OWNER"))
         const est = estadoPorOrden.get(on)
         const estadofactura = est?.estado ?? null
         const tServicio = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
@@ -1144,7 +1146,7 @@ export async function getControlFacturacion(
       if (esExcluida(r)) continue
       const servicio = servicioDe(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa)
       if (filtraOperacion(r, servicio)) continue
-      const owner = String(r.owner || "SIN OWNER")
+      const owner = ownerDeLinea(idempresa, r.placa, String(r.owner || "SIN OWNER"))
       const ton = num(r.toneladas)
       const tarifa = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
       const sinTarifa = tarifa <= 0
@@ -1438,7 +1440,7 @@ export async function getValoresNetosOrden(
         const placa = String(r.placa ?? "").trim().toUpperCase()
         const cl = String(r.cliente ?? "").toUpperCase()
         if (placasExcluidas.has(placa) && !cl.includes("SUSANITA")) continue // WMP446 salvo Susanita
-        const owner = String(r.owner || "SIN OWNER")
+        const owner = ownerDeLinea(idempresa, r.placa, String(r.owner || "SIN OWNER"))
         const ton = num(r.toneladas)
         const tarifa = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
         valorAcc.set(on, (valorAcc.get(on) || 0) + ton * tarifa)

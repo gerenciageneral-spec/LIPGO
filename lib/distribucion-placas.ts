@@ -85,3 +85,32 @@ export function esPlacaDistribucion(
 export function numeroOrdenDistribucion(ordenCargue: string): string {
   return `${ordenCargue}D`
 }
+
+/**
+ * Proyectos donde el vehículo PROPIO se factura ENTERO al owner del
+ * proyecto, sin importar el producto que lleve (confirmado 2026-08-02 para
+ * ID4/Molinos del Atlántico — LWY393 mezcla productos de Molinos y Avimol
+ * pero el viaje completo es un servicio que se le vende solo a Molinos).
+ * Los proyectos que NO estén aquí (Avimol/QHC437,QHQ434,GQV639 · Funza/LWY354)
+ * NO tienen esta regla: su vehículo propio sigue facturando por el owner
+ * real del producto, como siempre — ampliarla es una decisión aparte.
+ */
+export const OWNER_DE_PLACA_PROPIA: Record<number, string> = {
+  4: "Molinos del Atlántico",
+}
+
+/**
+ * Owner real de una línea de facturación. Si el proyecto tiene la regla de
+ * arriba y la placa es su vehículo propio, se IGNORA el owner del producto
+ * que trae la vista `facturacion` y se factura entero al owner del proyecto.
+ * En cualquier otro caso se respeta el owner tal como viene (de siempre).
+ */
+export function ownerDeLinea(
+  idempresa: number | null | undefined,
+  placa: string | null | undefined,
+  ownerDeLaVista: string,
+): string {
+  const ownerPropio = OWNER_DE_PLACA_PROPIA[Number(idempresa)]
+  if (ownerPropio && esPlacaDistribucion(idempresa, placa)) return ownerPropio
+  return ownerDeLaVista
+}
