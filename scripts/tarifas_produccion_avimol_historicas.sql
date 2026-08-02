@@ -25,6 +25,19 @@
 -- SOLO AFECTA AL ID 2. Idempotente: no duplica si ya existen.
 -- =====================================================================
 
+-- ---------------------------------------------------------------------
+-- PASO 0 · Resincronizar la secuencia del id de tarifasoperacion.
+-- Descubierto al correrlo (2026-08-02): la tabla tiene filas insertadas
+-- con id explícito y el contador automático quedó atrás — el insert
+-- intentaba asignar id=3, que ya existe (error 23505). Esto lo alinea al
+-- máximo actual y de paso sana la tabla para cualquier insert futuro
+-- (incluido el módulo de Tarifas de la app, que habría fallado igual).
+-- ---------------------------------------------------------------------
+select setval(
+  pg_get_serial_sequence('public.tarifasoperacion', 'id'),
+  (select max(id) from public.tarifasoperacion)
+);
+
 insert into public.tarifasoperacion
   (fechainicio, fechafin, empresaid, operacion, tarifa, descripcion, empresafactura, producto)
 select v.fechainicio, v.fechafin, v.empresaid, v.operacion, v.tarifa, v.descripcion, v.empresafactura, v.producto
