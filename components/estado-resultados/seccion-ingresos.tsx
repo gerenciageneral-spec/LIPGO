@@ -3,10 +3,12 @@
 /**
  * Sección INGRESOS del Estado de Resultados.
  *
- * Renderiza tres filas:
+ * Renderiza cuatro filas:
  *  1. Facturacion de toneladas (suma de `facturacion.valor_a_facturar`).
- *  2. Facturacion de turnos    (suma de `facturacionturnos.facturacion_total`).
- *  3. Total ingresos           (suma de las dos anteriores).
+ *  2. Facturacion de turnos    (suma de `facturacionturnos.facturacion_total`,
+ *     o Conciliacion Avimol para id2).
+ *  3. Cargos fijos             (suma de `cargos_fijos_generados.valor`).
+ *  4. Total ingresos           (suma de las tres anteriores).
  *
  * El componente NO conoce la fuente de datos: recibe el resultado del
  * hook `useIngresos` desde el padre, lo que mantiene la seccion 100%
@@ -102,6 +104,13 @@ export default function SeccionIngresos({
                   valor={data?.turnos}
                   isLoading={isLoading}
                 />
+                <FilaConcepto
+                  label="Cargos fijos"
+                  hint="cargos_fijos_generados · $2M Manejo de Inventario (id1/id3), 600 ton fijas Avimol, alquiler de montacargas facturado"
+                  registros={data?.conteoFijos}
+                  valor={data?.fijos}
+                  isLoading={isLoading}
+                />
                 <tr className="border-t-2 border-primary/30 bg-primary/5">
                   <td className="px-4 py-3 font-semibold text-foreground">
                     Total ingresos
@@ -111,7 +120,8 @@ export default function SeccionIngresos({
                       <Skeleton className="ml-auto h-4 w-10" />
                     ) : (
                       (data?.conteoToneladas ?? 0) +
-                      (data?.conteoTurnos ?? 0)
+                      (data?.conteoTurnos ?? 0) +
+                      (data?.conteoFijos ?? 0)
                     )}
                   </td>
                   <td className="px-4 py-3 text-right font-semibold text-primary tabular-nums">

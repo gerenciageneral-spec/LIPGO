@@ -559,9 +559,9 @@ async function cierreDeProyecto(
   const quincenaDe = (f: string) => `${f.slice(0, 7)}-${Number(f.slice(8, 10)) <= 15 ? "Q1" : "Q2"}`
 
   // Bono por persona+quincena: MAX(0, Σ bonif_prestacional) — el neteo canónico.
-  // SOLO DESDE JULIO 2026: el modelo base+bono arrancó con la nómina de julio;
+  // SOLO DESDE LA QUINCENA DEL 16-JUL-2026 (confirmado en el archivo plano):
   // antes la columna trae el excedente histórico que nunca se pagó como bono.
-  const BONO_DESDE = "2026-07-01"
+  const BONO_DESDE = "2026-07-16"
   const bonoQ = new Map<string, { bono: number; prodTotal: number }>()
   for (const r of filasNomina) {
     if (r.fecha < BONO_DESDE) continue

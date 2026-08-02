@@ -32,9 +32,14 @@ import { getConciliacionAvimol } from "@/lib/conciliacion-avimol-actions"
 export interface IngresosTotales {
   toneladas: number
   turnos: number
+  /** Cargos fijos mensuales reconocidos: $2M Manejo de Inventario (id1/id3),
+   *  600 ton fijas de Avimol, alquiler de montacargas facturado (id1/id3).
+   *  Ver lib/cargos-fijos-actions.ts. */
+  fijos: number
   total: number
   conteoToneladas: number
   conteoTurnos: number
+  conteoFijos: number
   /** De dónde salió el renglón de turnos: la vista `facturacionturnos` o la
    *  Conciliación (Avimol, id 2), donde vive su facturación real. */
   fuenteTurnos: "vista" | "conciliacion"
@@ -84,6 +89,24 @@ async function sumarPaginado(
   return { suma, filas }
 }
 
+// Igual que sumarPaginado, pero TOLERANTE a que la tabla aun no exista —
+// usado solo para `cargos_fijos_generados`, que depende de migraciones
+// nuevas (scripts/create_cargos_fijos_*.sql) que pueden no haberse corrido
+// todavia. Sin esto, abrir el Estado de Resultados en cualquier proyecto
+// se rompía por completo hasta correr esas migraciones.
+async function sumarPaginadoTolerante(
+  aplicarFiltros: (q: any) => any,
+  tabla: string,
+  columna: string,
+): Promise<{ suma: number; filas: number }> {
+  try {
+    return await sumarPaginado(aplicarFiltros, tabla, columna)
+  } catch (e) {
+    console.warn(`[estado-resultados] ${tabla} no disponible todavia (¿faltan migraciones?):`, e)
+    return { suma: 0, filas: 0 }
+  }
+}
+
 async function fetchIngresos(
   idEmpresa: number,
   desde: string,
@@ -102,15 +125,32 @@ async function fetchIngresos(
     "valor_a_facturar",
   )
 
+  // Cargos fijos reconocidos (ver lib/cargos-fijos-actions.ts): un registro
+  // por CONCEPTO x MES (columna `periodo` = primer dia del mes). Al filtrar
+  // por [desde,hasta] igual que facturacionturnos, un periodo que abarque el
+  // mes completo lo cuenta entero; si se consulta solo una quincena, el cargo
+  // cae en la quincena que contenga el dia 1 del mes (no se prorratea).
+  const fijosPromise = sumarPaginadoTolerante(
+    (q) =>
+      q
+        .eq("idempresa", idEmpresa)
+        .eq("tipo", "ingreso")
+        .gte("periodo", desde)
+        .lte("periodo", hasta),
+    "cargos_fijos_generados",
+    "valor",
+  )
+
   // AVIMOL (id 2): su facturacion real de turnos NO es la vista — son los
   // turnos SOLICITADOS Y APROBADOS + la produccion aprobada + las horas extra,
   // que arma la Conciliacion. La vista facturacionturnos cobraba por ejecucion
   // e ignoraba `cobraturno`, doble-contando la produccion (~$12M/mes). El P&L
   // usa el mismo motor que la prefactura para que ambos cuadren.
   if (idEmpresa === 2) {
-    const [tons, conc] = await Promise.all([
+    const [tons, conc, fijos] = await Promise.all([
       tonsPromise,
       getConciliacionAvimol(desde, hasta),
+      fijosPromise,
     ])
     if (!conc.success || !conc.data) {
       throw new Error(
@@ -121,15 +161,17 @@ async function fetchIngresos(
     return {
       toneladas: tons.suma,
       turnos: r.cobroTotal,
-      total: tons.suma + r.cobroTotal,
+      fijos: fijos.suma,
+      total: tons.suma + r.cobroTotal + fijos.suma,
       conteoToneladas: tons.filas,
       conteoTurnos: r.diasConDatos,
+      conteoFijos: fijos.filas,
       fuenteTurnos: "conciliacion",
     }
   }
 
   // Facturacion turnos: la columna `fecha` es DATE puro, gte/lte inclusive.
-  const [tons, turnosRes] = await Promise.all([
+  const [tons, turnosRes, fijos] = await Promise.all([
     tonsPromise,
     sumarPaginado(
       (q) =>
@@ -137,14 +179,17 @@ async function fetchIngresos(
       "facturacionturnos",
       "facturacion_total",
     ),
+    fijosPromise,
   ])
 
   return {
     toneladas: tons.suma,
     turnos: turnosRes.suma,
-    total: tons.suma + turnosRes.suma,
+    fijos: fijos.suma,
+    total: tons.suma + turnosRes.suma + fijos.suma,
     conteoToneladas: tons.filas,
     conteoTurnos: turnosRes.filas,
+    conteoFijos: fijos.filas,
     fuenteTurnos: "vista",
   }
 }

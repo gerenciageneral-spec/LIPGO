@@ -79,6 +79,8 @@ import { ViewPicking } from "@/components/view-picking" // Added import for View
 import { Tarifas } from "@/components/configuration/tarifas" // Added import for Tarifas component
 import { FacturacionProyectos } from "@/components/facturacion-proyectos" // Added import for Facturacion Proyectos component
 import { CuadroControlFacturacion } from "@/components/cuadro-control-facturacion"
+// Gestión Financiera: alquiler de montacargas facturado + cargos fijos ($2M, 600 ton).
+import CargosFijos from "@/components/cargos-fijos"
 import ConciliacionAvimol from "@/components/conciliacion-avimol"
 import PrefacturaProduccion from "@/components/prefactura-produccion"
 import { DashboardOperacionesLip } from "@/components/dashboard-operaciones-lip" // Dashboard Operaciones LIP
@@ -973,6 +975,10 @@ export function MainContent({
           ) : selectedModule === "Cuadro de Control Facturación" ? (
             <PermissionGuard moduleName="Cuadro de Control Facturación">
               <CuadroControlFacturacion />
+            </PermissionGuard>
+          ) : selectedModule === "Cargos Fijos" ? (
+            <PermissionGuard moduleName="Cargos Fijos">
+              <CargosFijos />
             </PermissionGuard>
           ) : selectedModule === "Conciliación Avimol" ? (
             <PermissionGuard moduleName="Conciliación Avimol">

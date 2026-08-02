@@ -57,6 +57,29 @@ export function useGastosPorCategoria({
 
       if (err) throw err
 
+      // Alquiler de montacargas: gasto FIJO calculado (no registrado a mano
+      // en `gastos`), ver lib/cargos-fijos-actions.ts. Aplica a id1/id2/id3
+      // (los tres pagan el alquiler; solo id1/id3 lo facturan aparte, pero
+      // el GASTO es el mismo en los tres). Mismo filtro de periodo que el
+      // resto del hook: `periodo` es el primer dia del mes.
+      //
+      // TOLERANTE a que la tabla aun no exista (migraciones nuevas,
+      // scripts/create_cargos_fijos_*.sql): sin esto, abrir el Estado de
+      // Resultados se rompía por completo hasta correrlas.
+      let fijosRows: Array<{ valor: number }> = []
+      const { data: fijosData, error: errFijos } = await supabase
+        .from("cargos_fijos_generados")
+        .select("valor")
+        .eq("idempresa", idEmpresa as number)
+        .eq("tipo", "gasto")
+        .gte("periodo", desde)
+        .lte("periodo", hasta)
+      if (errFijos) {
+        console.warn("[estado-resultados] cargos_fijos_generados no disponible todavia (¿faltan migraciones?):", errFijos)
+      } else {
+        fijosRows = fijosData ?? []
+      }
+
       // Agregamos por categoria en memoria. Usamos un Map para preservar
       // orden de insercion estable.
       const acc = new Map<string, { total: number; cantidad: number }>()
@@ -72,6 +95,13 @@ export function useGastosPorCategoria({
         acc.set(cat, cur)
         total += monto
         cantidadTotal += 1
+      }
+
+      const totalMontacargas = (fijosRows ?? []).reduce((a, r) => a + (Number(r.valor) || 0), 0)
+      if (totalMontacargas > 0) {
+        acc.set("Alquiler de montacargas", { total: totalMontacargas, cantidad: (fijosRows ?? []).length })
+        total += totalMontacargas
+        cantidadTotal += (fijosRows ?? []).length
       }
 
       const porCategoria: CategoriaRow[] = Array.from(acc.entries())

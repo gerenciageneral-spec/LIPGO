@@ -139,11 +139,13 @@ export function useCostoNomina({
       // piso 0 y todo prestacional. Se netea por bucket para no perder los dias bajos
       // ni inflar los altos — mismo criterio que parafiscales y el archivo plano.
       //
-      // SOLO DESDE JULIO 2026: el modelo base+bono arranco con la nomina de
-      // julio. Antes de esa fecha la columna trae el excedente historico
-      // (formula legacy de la vista) pero NO se pago como bono: sumarlo
-      // inflaria el costo de los meses viejos con plata que nunca salio.
-      const BONO_DESDE = "2026-07-01"
+      // SOLO DESDE LA QUINCENA DEL 16-JUL-2026: el modelo base+bono arranco
+      // ahi (confirmado en el archivo plano: la 1ra quincena de julio siguio
+      // con la formula vieja). Antes de esa fecha la columna trae el
+      // excedente historico (formula legacy) pero NO se pago como bono:
+      // sumarlo inflaria el costo de los meses/quincenas viejas con plata
+      // que nunca salio.
+      const BONO_DESDE = "2026-07-16"
       const excBucket = new Map<string, number>()
       for (const r of allRows) {
         const f = String((r as any).fecha || "")

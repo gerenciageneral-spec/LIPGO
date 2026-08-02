@@ -230,6 +230,9 @@ export const groups: Group[] = [
           { name: "Facturación Proyectos", icon: CreditCard },
           // Cruce órdenes procesadas vs facturado por owner + prefactura. Permiso propio.
           { name: "Cuadro de Control Facturación", icon: ClipboardCheck },
+          // Alquiler de montacargas facturado (id1/id3) + $2M Manejo de
+          // Inventario (id1/id3) + 600 ton fijas Avimol. Permiso propio.
+          { name: "Cargos Fijos", icon: CalendarClock },
           // Avimol: se cobra por producción (tolva × tarifa/ton) pero se paga por
           // turnos (Estibado PT / Salvado). Cruce día a día. Permiso propio.
           { name: "Conciliación Avimol", icon: Scale },

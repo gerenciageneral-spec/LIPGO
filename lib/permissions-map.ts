@@ -188,6 +188,9 @@ export interface UserPermissions {
   // Módulo "Gestión de Montacargas": maestro de equipos, QR, hoja de vida y
   // bitácora de mantenimiento. Un solo permiso cubre administrar y registrar.
   montacargas: boolean
+  // Módulo "Cargos Fijos" (Gestión Financiera): alquiler de montacargas
+  // facturado + $2M Manejo de Inventario (id1/id3) + 600 ton fijas Avimol.
+  cargos_fijos: boolean
   sst_comunicacion: boolean
   sst_gestion_cambio: boolean
   sst_actividades: boolean
@@ -314,6 +317,7 @@ export const MODULE_PERMISSION_MAP: Record<string, keyof UserPermissions> = {
   "Gestión de Facturas": "gestionfacturas",
   // Pestaña "Cuadro de Control" dentro de Gestión de Facturas; permiso propio.
   "Cuadro de Control Facturación": "cuadro_facturacion",
+  "Cargos Fijos": "cargos_fijos",
   // Conciliación Avimol (cobro por producción vs pago por turnos); permiso propio.
   "Conciliación Avimol": "conciliacion_avimol",
   // Prefactura de lo que se cobra por PRODUCCIÓN: Avimol (Salvado / Estibado PT
