@@ -443,6 +443,40 @@ async function cierreDeProyecto(
     } else {
       notas.push(`No se pudo calcular la producción de la conciliación: ${conc.message || "error desconocido"}.`)
     }
+  } else {
+    // TURNOS ADICIONALES fuera de Avimol (Indupan, Funza, Medellín): se
+    // facturan por la vista `facturacionturnos` (Distribución Turno, etc.),
+    // no por conciliación — esa es exclusiva de Avimol. Sin este bloque el
+    // costo del turno se veía en la nómina y su cobro nunca se buscaba: el
+    // proceso salía pagando sin facturar nada.
+    let filasHT: Array<{ fecha: string; puesto: string; total: number }> = []
+    for (let off = 0; ; off += 1000) {
+      const { data, error } = await sb
+        .from("facturacionturnos")
+        .select("fecha, puesto, facturacion_total")
+        .eq("idempresa", idempresa)
+        .gte("fecha", desde)
+        .lte("fecha", fecha)
+        .range(off, off + 999)
+      if (error) {
+        notas.push(`No se pudo leer la facturación de turnos: ${error.message}.`)
+        break
+      }
+      if (!data || data.length === 0) break
+      for (const r of data) {
+        filasHT.push({ fecha: String(r.fecha).slice(0, 10), puesto: String(r.puesto ?? "").trim(), total: num(r.facturacion_total) })
+      }
+      if (data.length < 1000) break
+    }
+    for (const r of filasHT) {
+      if (r.total <= 0) continue
+      const esDia = r.fecha === fecha
+      const bt = bucket("turnos")
+      bt.cobroMes += r.total
+      if (esDia) bt.cobroDia += r.total
+      alDetalleMes(detalleDe(bt, r.puesto || "(sin puesto)"), esDia, r.total)
+      punto(r.fecha).cobro += r.total
+    }
   }
 
   // -------------------------------------------------------------------------
