@@ -862,7 +862,10 @@ export function CuadroControlFacturacion() {
             <CierreDiarioPanel empresaId={empresaId} />
           </TabsContent>
           <TabsContent value="financiero" className="mt-4">
-            <CierreFinanciero empresaId={empresaId} />
+            {/* Sincroniza con el filtro Desde/Hasta del Cuadro (el que ordena
+                Resumen por owner/Detalle/Prefactura), para no tener dos
+                fechas distintas dentro del mismo módulo sin relación. */}
+            <CierreFinanciero empresaId={empresaId} filtroFecha={filtros.hasta || filtros.desde || null} />
           </TabsContent>
         </Tabs>
       ) : loading ? (

@@ -515,13 +515,31 @@ function TablaProyectos({ data }: { data: CierreData }) {
 // La pestaña
 // ---------------------------------------------------------------------------
 
-export function CierreFinanciero({ empresaId }: { empresaId: number | null }) {
-  const [fecha, setFecha] = useState(hoyISO())
+export function CierreFinanciero({
+  empresaId,
+  filtroFecha,
+}: {
+  empresaId: number | null
+  /** Fecha del filtro Desde/Hasta del Cuadro (el que ordena Resumen por
+   *  owner/Detalle/Prefactura). Sin esto, esta pestaña tenía su PROPIA fecha
+   *  desconectada del resto del módulo — arrancaba siempre en "hoy" aunque
+   *  arriba se hubiera filtrado otro día, y parecía no cuadrar. */
+  filtroFecha?: string | null
+}) {
+  const [fecha, setFecha] = useState(filtroFecha || hoyISO())
   const [alcance, setAlcance] = useState<"proyecto" | "todos">("proyecto")
   const [data, setData] = useState<CierreData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const montado = useRef(true)
+  // Si el usuario cambia la fecha A MANO dentro de esta pestaña, esa
+  // elección manda — el filtro del Cuadro no la vuelve a pisar después.
+  const eleccionManual = useRef(false)
+
+  useEffect(() => {
+    if (filtroFecha && !eleccionManual.current) setFecha(filtroFecha)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtroFecha])
 
   const cargar = useCallback(
     async (silencioso: boolean) => {
@@ -568,7 +586,10 @@ export function CierreFinanciero({ empresaId }: { empresaId: number | null }) {
             className="h-8 w-[150px] text-xs"
             value={fecha}
             max={hoyISO()}
-            onChange={(e) => setFecha(e.target.value || hoyISO())}
+            onChange={(e) => {
+              eleccionManual.current = true
+              setFecha(e.target.value || hoyISO())
+            }}
           />
         </div>
         <div className="grid gap-1">
@@ -597,6 +618,11 @@ export function CierreFinanciero({ empresaId }: { empresaId: number | null }) {
         </Button>
         {data?.esHoy && (
           <span className="text-[11px] text-muted-foreground">Se actualiza solo cada minuto mientras sea hoy.</span>
+        )}
+        {filtroFecha && !eleccionManual.current && (
+          <span className="text-[11px] text-muted-foreground">
+            Sigue el filtro Hasta del Cuadro ({filtroFecha}) — cámbiala aquí para verla aparte.
+          </span>
         )}
       </div>
 
