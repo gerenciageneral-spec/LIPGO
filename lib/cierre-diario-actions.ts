@@ -25,7 +25,12 @@
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getValoresNetosOrden } from "@/lib/facturacion-control-actions"
 import { getAccessibleEmpresesFromPermisos } from "@/lib/orders-actions"
-import { medioPagoEsperado, medioPagoInconsistente, type MedioPago } from "@/lib/facturacion-medio-pago"
+import {
+  medioPagoEsperado,
+  medioPagoEsperadoSinAmbiguedad,
+  medioPagoInconsistente,
+  type MedioPago,
+} from "@/lib/facturacion-medio-pago"
 
 const num = (v: any) => {
   const n = Number(String(v ?? "").replace(/,/g, ""))
@@ -235,16 +240,18 @@ export async function getCierreDiario(
       const transporte = String(o.transporte ?? "").trim() || "(sin transporte)"
 
       // Condición de pago: manda el DATO registrado; si falta, manda la REGLA
-      // del proyecto (Indupan y Funza: todo crédito al owner — ahí no existe
-      // "sin definir"). Solo queda "sin definir" cuando NI el dato NI la regla
-      // lo determinan (ej. un descargue de Medellín sin medio registrado).
+      // SOLO cuando es incondicional para ese ID (Indupan/Funza: todo crédito;
+      // Avimol-TERCEROS/resto: fijo por transporte). Cada ID tiene su propia
+      // lógica: en Avimol-ZAMUDIO la regla depende de la PLACA (12 excepciones
+      // de contado), así que sin el dato NO se rellena a ciegas — sigue "sin
+      // definir" y alerta, para que se confirme en vez de asumir.
       const ctxPago = { placa: o.placa, operacion: o.tipooperacion }
       const mp = norm(o.mediopago)
       const cond: CondicionPago = mp.startsWith("CR")
         ? "Crédito"
         : mp.startsWith("CONT")
           ? "Contado"
-          : (medioPagoEsperado(id, o.transporte, ctxPago) ?? "sin definir")
+          : (medioPagoEsperadoSinAmbiguedad(id, o.transporte, ctxPago) ?? "sin definir")
 
       const p = porProy.get(id) || {
         idempresa: id, proyecto, ordenes: 0, cobro: 0, contado: 0, credito: 0, sinDefinir: 0,

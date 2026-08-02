@@ -34,7 +34,7 @@ import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getValoresNetosOrden } from "@/lib/facturacion-control-actions"
 import { getConciliacionAvimol } from "@/lib/conciliacion-avimol-actions"
 import { getAccessibleEmpresesFromPermisos } from "@/lib/orders-actions"
-import { medioPagoEsperado, medioPagoInconsistente } from "@/lib/facturacion-medio-pago"
+import { medioPagoEsperado, medioPagoEsperadoSinAmbiguedad, medioPagoInconsistente } from "@/lib/facturacion-medio-pago"
 import { produccionDelProyecto } from "@/lib/facturacion-produccion-conceptos"
 import {
   ETIQUETA_PROCESO,
@@ -379,10 +379,11 @@ async function cierreDeProyecto(
         `${on} · ${String(o.placa ?? "").trim() || "sin placa"} · ${String(o.transporte ?? "").trim()} debe ser ${medioPagoEsperado(idempresa, o.transporte, ctx)} y quedó ${String(o.mediopago).trim()}`,
       )
     }
-    // "Sin medio de pago" SOLO cuando ni el dato ni la regla lo definen: en
-    // Indupan/Funza todo es crédito al owner por regla, así que un campo vacío
-    // ahí no es un pendiente — la regla ya responde.
-    if (!medioPagoEsperado(idempresa, o.transporte, ctx) && String(o.mediopago ?? "").trim() === "") {
+    // "Sin medio de pago" SOLO cuando ni el dato ni la regla INCONDICIONAL lo
+    // definen. Indupan/Funza y el resto de Avimol son fijos por regla, así que
+    // un campo vacío ahí no es un pendiente. Avimol-Zamudio SÍ depende de la
+    // placa (12 excepciones): sin el dato, no se asume — sigue como pendiente.
+    if (!medioPagoEsperadoSinAmbiguedad(idempresa, o.transporte, ctx) && String(o.mediopago ?? "").trim() === "") {
       valorSinMedio += valor
       detalleSinMedio.push(`${on} · ${f} · sin medio de pago registrado y sin regla que lo defina`)
     }

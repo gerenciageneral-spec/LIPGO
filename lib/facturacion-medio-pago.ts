@@ -101,6 +101,25 @@ export function medioPagoEsperado(
 }
 
 /**
+ * RELLENA el medio de pago SOLO EN ID1 (Indupan) cuando la orden no trae el
+ * dato — que es el único proyecto donde se pidió corregir esto ("me sale la
+ * tarjeta de cierre día en Indupan con vehículos sin definir, si Indupan todo
+ * es crédito"). CADA ID ES UN CLIENTE DISTINTO CON SU PROPIA LÓGICA: id2, id3
+ * e id4 NO estaban pedidos y se dejan exactamente como siempre — un campo de
+ * pago vacío sigue siendo "sin definir" ahí, sin excepción. Ampliar este
+ * relleno a otro ID es una decisión aparte que se toma cuando se pida, no un
+ * efecto colateral de tocar la función compartida.
+ */
+export function medioPagoEsperadoSinAmbiguedad(
+  idempresa: number | null | undefined,
+  transporte: unknown,
+  ctx?: MedioPagoContexto,
+): MedioPago | null {
+  if (Number(idempresa) !== 1) return null
+  return medioPagoEsperado(idempresa, transporte, ctx)
+}
+
+/**
  * ¿El medio de pago registrado contradice la regla? Solo cuenta como
  * incumplimiento si HAY regla y HAY dato: una orden todavía sin medio de pago
  * está pendiente de gestionar, que es otra cosa distinta a estar mal.
