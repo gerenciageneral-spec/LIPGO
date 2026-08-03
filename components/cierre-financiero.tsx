@@ -49,6 +49,7 @@ import {
   type CierreProyecto,
   type LineaProceso,
 } from "@/lib/cierre-financiero-actions"
+import { GESTION_LIPGO_DESDE } from "@/lib/facturacion-constantes"
 
 const money = (n: number) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO")
 const moneyS = (n: number) =>
@@ -264,10 +265,11 @@ function GestionFacturas({ vista }: { vista: CierreProyecto }) {
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm">Gestión de facturas — facturado vs pendiente (últimos 90 días)</CardTitle>
+        <CardTitle className="text-sm">Gestión de facturas — facturado vs pendiente (últimos 90 días, no antes de {GESTION_LIPGO_DESDE})</CardTitle>
         <p className="text-xs text-muted-foreground">
           Facturado = con factura Siigo cargada, el mismo criterio del Cuadro. Todo lo demás está pendiente y envejece
-          desde el día del cargue.
+          desde el día del cargue. Lo anterior a {GESTION_LIPGO_DESDE} ya se facturó en Siigo manualmente y queda
+          fuera de esta ventana.
         </p>
       </CardHeader>
       <CardContent className="space-y-3">

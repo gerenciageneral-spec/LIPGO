@@ -43,6 +43,7 @@ import {
   procesoDeActividad,
   type ProcesoCierre,
 } from "@/lib/cierre-financiero-procesos"
+import { GESTION_LIPGO_DESDE } from "@/lib/facturacion-constantes"
 
 const num = (v: any) => {
   const n = Number(String(v ?? "").replace(/,/g, ""))
@@ -291,8 +292,11 @@ async function cierreDeProyecto(
   // -------------------------------------------------------------------------
   // 1) ÓRDENES: del mes para el cobro, y 90 días hacia atrás para el estado de
   //    facturación (la cartera pendiente no se corta en el día 1 del mes).
+  //    Piso GESTION_LIPGO_DESDE: lo anterior a jul-2026 ya se facturó en Siigo
+  //    manualmente (confirmado por gerencia) — no debe seguir apareciendo como
+  //    "sin gestionar" solo porque los 90 días rodantes alcanzan a tocarlo.
   // -------------------------------------------------------------------------
-  const desde90 = restarDias(fecha, 90)
+  const desde90 = restarDias(fecha, 90) > GESTION_LIPGO_DESDE ? restarDias(fecha, 90) : GESTION_LIPGO_DESDE
   const ordenes: any[] = []
   for (let off = 0; ; off += 1000) {
     const { data, error } = await sb
