@@ -1,10 +1,12 @@
-// Regla de negocio confirmada por gerencia (2026-08-02): en Avimol (id2) el
-// Cargue/Descargue/Distribución variable por tonelada NO se factura a Avimol —
-// se factura a la TRANSPORTADORA (Zamudio/Terceros), que es quien realmente
-// contrata el transporte de la carga. Las placas PROPIAS de Avimol (transporte
-// "AVIMOL") no se facturan por tonelada: van cubiertas por el fijo de 600
-// ton/mes (300 cargue + 300 descargue, la distribución con placa propia
-// también entra ahí) de Cargos Fijos (`lib/cargos-fijos-actions.ts`,
+// Regla de negocio confirmada por gerencia (2026-08-02, RE-CONFIRMADA el
+// mismo día tras un intento de revertir por error): en Avimol (id2) el
+// Cargue/Descargue variable por tonelada NO se factura a Avimol — CADA
+// TRANSPORTADORA PAGA SU PROPIO CARGUE: transporte ZAMUDIO → se factura a
+// Zamudio; transporte TERCEROS → se factura a Terceros. Avimol como owner
+// SOLO factura por sus propios vehículos (transporte "AVIMOL"), y esa porción
+// tampoco se factura por tonelada — se cruza contra el fijo de 600 ton/mes
+// (300 cargue + 300 descargue, la distribución con placa propia también
+// entra ahí) de Cargos Fijos (`lib/cargos-fijos-actions.ts`,
 // `montacargas_alquiler`/`cargos_fijos_proyecto`, ~$15.869.700/mes).
 //
 // Producción (Estibado PT/Salvado + festivos), turnos y novedades adicionales
