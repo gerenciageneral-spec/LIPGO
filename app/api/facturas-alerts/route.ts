@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { GESTION_LIPGO_DESDE } from "@/lib/facturacion-constantes"
 
 export async function GET(request: NextRequest) {
   try {
@@ -12,13 +13,16 @@ export async function GET(request: NextRequest) {
 
     const supabase = await createClient()
 
-    // Get count of all pending orders (estadofactura is null means "Pendiente por procesar")
+    // Get count of pending orders (estadofactura is null means "Pendiente por procesar").
+    // Piso GESTION_LIPGO_DESDE: lo anterior ya se facturó manual fuera de LIPgo
+    // (confirmado por gerencia) — no es una alarma abierta real.
     const { count, error: countError } = await supabase
       .from("cabeceraoc")
       .select("id", { count: "exact", head: true })
       .eq("idempresa", parseInt(empresaId, 10))
       .is("estadofactura", null)
       .neq("tipooperacion", "proyeccion")
+      .gte("fechaorden", GESTION_LIPGO_DESDE)
 
     if (countError) {
       console.error("[v0] Error counting pending facturas:", countError)
@@ -32,6 +36,7 @@ export async function GET(request: NextRequest) {
       .eq("idempresa", parseInt(empresaId, 10))
       .is("estadofactura", null)
       .neq("tipooperacion", "proyeccion")
+      .gte("fechaorden", GESTION_LIPGO_DESDE)
       .order("id", { ascending: false })
       .limit(5)
 

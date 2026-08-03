@@ -50,6 +50,7 @@ import { OP_PRODUCCION, OP_PRODUCCION_LABEL } from "@/lib/facturacion-produccion
 import { proyectoConReglaMedioPago } from "@/lib/facturacion-medio-pago"
 import { CierreDiarioPanel, CierreDiarioTira } from "@/components/cierre-diario"
 import { CierreFinanciero } from "@/components/cierre-financiero"
+import { GESTION_LIPGO_DESDE } from "@/lib/facturacion-constantes"
 
 const money = (n: number) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO")
 const ton = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { maximumFractionDigits: 2 })
@@ -223,13 +224,21 @@ const emptyFiltros = (): FiltrosControl => ({
   placa: "",
 })
 
+// Vista inicial al abrir el módulo: piso GESTION_LIPGO_DESDE — el backlog
+// anterior ya se facturó manual fuera de LIPgo (ver lib/facturacion-constantes.ts),
+// así que no debe alarmar como "sin gestionar" al cargar. "Limpiar filtros"
+// sigue yendo a emptyFiltros() (sin piso) para quien de verdad quiera ver todo
+// el histórico a propósito — no se quita ninguna funcionalidad, solo cambia el
+// punto de partida.
+const defaultFiltros = (): FiltrosControl => ({ ...emptyFiltros(), desde: GESTION_LIPGO_DESDE })
+
 export function CuadroControlFacturacion() {
   const { selectedEmpresaId, user } = useAuth() as any
   const { toast } = useToast()
   const [data, setData] = useState<ControlFacturacion | null>(null)
   const [loading, setLoading] = useState(true)
-  const [pending, setPending] = useState<FiltrosControl>(emptyFiltros())
-  const [filtros, setFiltros] = useState<FiltrosControl>(emptyFiltros())
+  const [pending, setPending] = useState<FiltrosControl>(defaultFiltros())
+  const [filtros, setFiltros] = useState<FiltrosControl>(defaultFiltros())
   // Selector propio de PROYECTO/EMPRESA: la facturación es por ID. Arranca en la
   // empresa del selector global, pero se puede cambiar acá para facturar otro proyecto.
   const [empresas, setEmpresas] = useState<Array<{ id: number; nombre: string }>>([])
@@ -742,6 +751,8 @@ export function CuadroControlFacturacion() {
             Fuente de verdad: <strong>órdenes de servicio procesadas</strong> del proyecto seleccionado, cruzadas con
             lo facturado. En <span className="font-semibold text-red-600">rojo</span> lo que quedó{" "}
             <strong>sin gestionar</strong> (procesado sin facturar) o <strong>sin tarifa</strong>.
+            {" "}Vista inicial desde {GESTION_LIPGO_DESDE} (lo anterior ya se facturó manual) — cambia "Desde" para
+            ver el histórico completo.
           </p>
 
           {/* Filtros */}

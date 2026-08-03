@@ -17,6 +17,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { useAuth } from "@/components/auth-provider"
 import { getValoresNetosOrden } from "@/lib/facturacion-control-actions"
+import { GESTION_LIPGO_DESDE } from "@/lib/facturacion-constantes"
 
 interface GestionFacturasProps {
   onBack?: () => void
@@ -85,10 +86,13 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
   const [totalCount, setTotalCount] = useState(0)
   const pageSize = 50
 
-  // Filter states
+  // Filter states. fechaCargueDesde arranca en GESTION_LIPGO_DESDE: el backlog
+  // anterior ya se facturó manual fuera de LIPgo (ver lib/facturacion-constantes.ts)
+  // — "Limpiar filtros" (handleClearFilters) lo sigue dejando en blanco para
+  // quien de verdad quiera ver todo el histórico a propósito.
   const [filters, setFilters] = useState({
     orden: "",
-    fechaCargueDesde: "",
+    fechaCargueDesde: GESTION_LIPGO_DESDE,
     fechaCargueHasta: "",
     placa: "",
     transporte: "",
@@ -1224,6 +1228,10 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
             <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
               <Filter className="h-4 w-4" />
               Filtros
+              <span className="font-normal text-xs">
+                — vista inicial desde {GESTION_LIPGO_DESDE} (lo anterior ya se facturó manual); quita la fecha para
+                ver el histórico completo.
+              </span>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
               <div className="space-y-1">

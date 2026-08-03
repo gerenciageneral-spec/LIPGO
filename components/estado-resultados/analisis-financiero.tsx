@@ -36,6 +36,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  History,
   Loader2,
   Pencil,
   Scale,
@@ -50,6 +51,7 @@ import {
   type AnalisisFinanciero as AnalisisData,
   type ProyectoAnalisis,
 } from "@/lib/analisis-financiero-actions"
+import { GESTION_LIPGO_DESDE } from "@/lib/facturacion-constantes"
 
 const money = (n: number) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO")
 const moneyS = (n: number) =>
@@ -79,6 +81,12 @@ function ResumenEjecutivo({ data }: { data: AnalisisData }) {
   const cumplimiento = tonAcordadas > 0 ? Math.round((tonReales / tonAcordadas) * 100) : null
   const margenTotal = proyectos.reduce((s, p) => s + p.margenReal, 0)
 
+  // Antes de jul-2026 los cuadros de acuerdo apenas se estaban montando: ese
+  // déficit YA SE FACTURÓ MANUAL fuera de LIPgo (confirmado por gerencia) — no
+  // es una alarma abierta. Desde jul-2026 sí es una acción pendiente real.
+  const esHistorico = data.hasta < GESTION_LIPGO_DESDE
+  const incluyeHistorico = !esHistorico && data.desde < GESTION_LIPGO_DESDE
+
   // Los 3 huecos más grandes del período, entre todos los proyectos.
   const huecos = proyectos
     .flatMap((p) => p.actividades.filter((a) => a.deficit > 0).map((a) => ({ ...a, proyecto: p.proyecto })))
@@ -86,20 +94,58 @@ function ResumenEjecutivo({ data }: { data: AnalisisData }) {
     .slice(0, 3)
 
   return (
-    <Card className={totalAFacturar > 0 ? "border-amber-300 bg-amber-50/40 dark:bg-amber-950/10" : "border-emerald-300"}>
+    <Card
+      className={
+        esHistorico
+          ? "border-muted-foreground/20"
+          : totalAFacturar > 0
+            ? "border-amber-300 bg-amber-50/40 dark:bg-amber-950/10"
+            : "border-emerald-300"
+      }
+    >
       <CardContent className="space-y-3 p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
               Resumen ejecutivo del período
             </div>
-            <div className={`text-2xl font-bold tabular-nums ${totalAFacturar > 0 ? "text-amber-700 dark:text-amber-400" : "text-emerald-700"}`}>
-              {totalAFacturar > 0 ? `${money(totalAFacturar)} por facturar adicional` : "Volumen acordado cumplido"}
+            <div
+              className={`text-2xl font-bold tabular-nums ${
+                esHistorico
+                  ? "text-muted-foreground"
+                  : totalAFacturar > 0
+                    ? "text-amber-700 dark:text-amber-400"
+                    : "text-emerald-700"
+              }`}
+            >
+              {esHistorico
+                ? `${money(totalAFacturar)} ya facturado manual (histórico)`
+                : totalAFacturar > 0
+                  ? `${money(totalAFacturar)} por facturar adicional`
+                  : "Volumen acordado cumplido"}
             </div>
             <div className="text-xs text-muted-foreground">
               Cumplimiento global {cumplimiento !== null ? `${cumplimiento}%` : "—"} ({ton(tonReales)} t de {ton(tonAcordadas)} t
               acordadas) · margen real (tarifa vigente) {moneyS(margenTotal)}
             </div>
+            {esHistorico && (
+              <div className="mt-1.5 flex items-start gap-1.5 text-xs text-muted-foreground">
+                <History className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>
+                  Período anterior a jul-2026: los cuadros de acuerdo se estaban montando — este déficit ya se
+                  facturó manualmente fuera de LIPgo, no requiere acción.
+                </span>
+              </div>
+            )}
+            {incluyeHistorico && (
+              <div className="mt-1.5 flex items-start gap-1.5 text-xs text-muted-foreground">
+                <History className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>
+                  Este total incluye meses anteriores a jul-2026 ya facturados manualmente fuera de LIPgo; desde
+                  jul-2026 en adelante es lo que sí queda pendiente por gestionar aquí.
+                </span>
+              </div>
+            )}
           </div>
           {/* Chips por proyecto */}
           <div className="flex flex-wrap gap-2">
@@ -148,25 +194,39 @@ function ResumenEjecutivo({ data }: { data: AnalisisData }) {
 // Tarjeta de un proyecto
 // ---------------------------------------------------------------------------
 
-function ProyectoCard({ p, meses }: { p: ProyectoAnalisis; meses: number }) {
+function ProyectoCard({ p, meses, esHistorico }: { p: ProyectoAnalisis; meses: number; esHistorico: boolean }) {
   const [verEstructura, setVerEstructura] = useState(false)
   const deficitTotal = p.totalAFacturarAdicional
   const cumple = deficitTotal <= 0
 
   return (
-    <Card className={cumple ? "" : "border-amber-300"}>
+    <Card className={esHistorico ? "" : cumple ? "" : "border-amber-300"}>
       <CardHeader className="pb-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <CardTitle className="text-base">{p.proyecto}</CardTitle>
           <div
             className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${
-              cumple
-                ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
-                : "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+              esHistorico
+                ? "bg-muted text-muted-foreground"
+                : cumple
+                  ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
+                  : "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
             }`}
           >
-            {cumple ? <CheckCircle2 className="h-3.5 w-3.5" /> : <AlertTriangle className="h-3.5 w-3.5" />}
-            {cumple ? "Cumple el volumen acordado" : `${money(deficitTotal)} por facturar al cliente`}
+            {esHistorico ? (
+              <History className="h-3.5 w-3.5" />
+            ) : cumple ? (
+              <CheckCircle2 className="h-3.5 w-3.5" />
+            ) : (
+              <AlertTriangle className="h-3.5 w-3.5" />
+            )}
+            {esHistorico
+              ? cumple
+                ? "Histórico — cumple el volumen acordado"
+                : `Histórico — ${money(deficitTotal)} ya facturado manual`
+              : cumple
+                ? "Cumple el volumen acordado"
+                : `${money(deficitTotal)} por facturar al cliente`}
           </div>
         </div>
       </CardHeader>
@@ -539,7 +599,12 @@ export default function AnalisisFinanciero({ data, isLoading, error, periodoLabe
         <>
           {data && <ResumenEjecutivo data={data} />}
           {(data?.proyectos ?? []).map((p) => (
-            <ProyectoCard key={p.idempresa} p={p} meses={data?.meses ?? 1} />
+            <ProyectoCard
+              key={p.idempresa}
+              p={p}
+              meses={data?.meses ?? 1}
+              esHistorico={!!data && data.hasta < GESTION_LIPGO_DESDE}
+            />
           ))}
         </>
       )}

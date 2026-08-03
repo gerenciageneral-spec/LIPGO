@@ -39,10 +39,11 @@ import {
   ToggleGroupItem,
 } from "@/components/ui/toggle-group"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Building2, CalendarRange, BarChart3, AlertTriangle } from "lucide-react"
+import { Building2, CalendarRange, BarChart3, AlertTriangle, History } from "lucide-react"
 import { useAuth } from "@/components/auth-provider"
 import { getAccessibleEmpresesFromPermisos } from "@/lib/orders-actions"
 import { getAnalisisFinanciero } from "@/lib/analisis-financiero-actions"
+import { GESTION_LIPGO_DESDE } from "@/lib/facturacion-constantes"
 import { useIngresos } from "./use-ingresos"
 import SeccionIngresos from "./seccion-ingresos"
 import { useCostoNomina } from "./use-costo-nomina"
@@ -354,17 +355,30 @@ export default function EstadoResultados() {
 
         <TabsContent value="pyl" className="mt-4 flex flex-col gap-4">
           {/* Aviso de deficit de volumen: si hay que facturar algo adicional,
-              el P&L lo dice de frente — impacta directo la utilidad. */}
-          {totalAFacturarAdicional > 0 && (
-            <div className="flex items-start gap-2 rounded-md border border-amber-400 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950/40">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-              <span className="text-amber-900 dark:text-amber-200">
-                Volumen por debajo del acuerdo en este periodo:{" "}
-                <span className="font-semibold">{money(totalAFacturarAdicional)} por facturar al cliente</span>
-                {" — ver la pestaña Análisis Financiero."}
-              </span>
-            </div>
-          )}
+              el P&L lo dice de frente — impacta directo la utilidad. Antes de
+              jul-2026 los cuadros de acuerdo apenas se estaban montando: ese
+              déficit ya se facturó manual fuera de LIPgo, no es alarma abierta. */}
+          {totalAFacturarAdicional > 0 &&
+            (periodo.hasta < GESTION_LIPGO_DESDE ? (
+              <div className="flex items-start gap-2 rounded-md border p-3 text-sm text-muted-foreground">
+                <History className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>
+                  Período histórico (antes de jul-2026): {money(totalAFacturarAdicional)} de déficit de volumen ya
+                  se facturaron manualmente fuera de LIPgo — no requiere acción.
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-start gap-2 rounded-md border border-amber-400 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950/40">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                <span className="text-amber-900 dark:text-amber-200">
+                  Volumen por debajo del acuerdo en este periodo:{" "}
+                  <span className="font-semibold">{money(totalAFacturarAdicional)} por facturar al cliente</span>
+                  {" — ver la pestaña Análisis Financiero."}
+                  {periodo.desde < GESTION_LIPGO_DESDE &&
+                    " Incluye meses anteriores a jul-2026 ya facturados manual; solo lo de jul-2026 en adelante queda pendiente."}
+                </span>
+              </div>
+            ))}
 
           <SeccionIngresos
             data={ingresos.data}
