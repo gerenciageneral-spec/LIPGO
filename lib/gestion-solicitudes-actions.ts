@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase-client"
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getCurrentEmpresaIdForInsert } from "@/lib/user-context"
 import { numeroALetrasPesos, formatearPesos } from "@/lib/numero-a-letras"
+import { getColombiaDate } from "@/lib/date-utils"
 
 /**
  * Registro de solicitud_trabajadores con datos del colaborador (JOIN headcount).
@@ -153,15 +154,21 @@ export async function getSolicitudesTrabajadores(
 /**
  * Aprueba una solicitud (anticipo o permiso). El empleado debera firmar en el portal
  * para que la solicitud pase a `completada`.
+ *
+ * `fecha_aprobacion` queda registrada aqui: es la fecha que usa la vista
+ * `archivoplano` para calcular la quincena del anticipo (novedad
+ * "56-Dcto. Anticipo de Nomina-Deduccion" en Siigo), no `fecha_solicitud`
+ * (alguien puede pedir el 14 y aprobarse el 17, cambiando de quincena).
  */
 export async function aprobarSolicitud(
   id: string,
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const supabase = await createClient()
+    const fechaAprobacion = await getColombiaDate()
     const { error } = await supabase
       .from("solicitudes_trabajadores")
-      .update({ estado: "aprobada", motivo_rechazo: null })
+      .update({ estado: "aprobada", motivo_rechazo: null, fecha_aprobacion: fechaAprobacion })
       .eq("id", id)
     if (error) return { success: false, error: error.message }
     return { success: true }

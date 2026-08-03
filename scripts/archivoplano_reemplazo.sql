@@ -24,6 +24,15 @@
 --     la 1ª quincena de julio sigue saliendo como '71-Bonificación Ajuste
 --     Toneladas-Ingreso', porque esos planos ya se enviaron a Siigo con ese
 --     código. Cambia SOLO la etiqueta: el cálculo es el mismo en ambas ramas.
+--   · ANTICIPO DE NÓMINA (Gestión de Solicitudes › Anticipo): rama propia al
+--     final que lee `solicitudes_trabajadores` DIRECTO (mismo patrón que
+--     bonos_nomina — cédula como llave natural, no el nombre frágil de
+--     pagonomina). Solo tipo='anticipo' y estado 'aprobada'/'completada' (la
+--     firma del empleado en el portal es posterior a la aprobación y no debe
+--     hacer desaparecer el descuento). Quincena por `fecha_aprobacion`
+--     (cuándo se aprobó, no cuándo se pidió). Novedad única:
+--     "56-Dcto. Anticipo de Nomina-Deducción". Requiere
+--     scripts/add_fecha_aprobacion_solicitudes.sql.
 --   · NOMBRE DEL EMPLEADO (`nombreempleado`, columna 5): Siigo lo exige justo
 --     después de la cédula. Sale de `headcount.nombre` — que es la misma llave
 --     con la que esta vista une contra pagonomina (h.nombre = p.persona), así
@@ -416,6 +425,39 @@ UNION ALL
   GROUP BY to_char(make_date(a.anio_aplica, a.mes_aplica, 1), 'MM'::text),
     a.quincena_aplica, a.idempresa, a.identificacion, h.contratosiigo, a.novedad_siigo
  HAVING (round(abs(sum(a.valor_ajuste))) > (0)::numeric)
+UNION ALL
+-- ANTICIPO DE NÓMINA (Gestión de Solicitudes › Anticipo). Se lee
+-- `solicitudes_trabajadores` DIRECTO (no vía pagonomina), mismo patrón que
+-- bonos_nomina/ajustes_proyeccion: la cédula (vía headcount.id =
+-- colaborador_id) es la llave natural, no el nombre frágil de pagonomina.
+-- Solo 'aprobada'/'completada' (completada = ya firmó, sigue siendo un
+-- anticipo aprobado — no debe desaparecer del plano). Quincena por
+-- `fecha_aprobacion`, no por `fecha_solicitud`. Un solo concepto fijo:
+-- no hay ingreso/deducción que distinguir aquí, siempre es deducción.
+ SELECT to_char((s.fecha_aprobacion)::timestamp with time zone, 'MM'::text) AS mes,
+        CASE
+            WHEN (EXTRACT(day FROM s.fecha_aprobacion) <= (15)::numeric) THEN 1
+            ELSE 2
+        END AS quincena,
+    h.idempresa,
+    h.identificacion AS identificacionempleado,
+    h.nombre AS nombreempleado,
+    h.contratosiigo AS contratoempleado,
+    '56-Dcto. Anticipo de Nomina-Deducción'::text AS nombrenovedad,
+    'Valor'::text AS tiponovedad,
+    round(s.monto) AS cantidadvalor,
+    round(COALESCE(h.salario, (1750905)::numeric) / (2)::numeric)::integer AS nominaproyectada,
+    NULL::text AS fechainicio,
+    NULL::text AS fechafin,
+    0 AS diasnohabiles
+   FROM (solicitudes_trabajadores s
+     LEFT JOIN headcount h ON (h.id = s.colaborador_id))
+  WHERE (s.tipo = 'anticipo'::text
+         AND s.estado = ANY (ARRAY['aprobada'::text, 'completada'::text])
+         AND s.fecha_aprobacion IS NOT NULL
+         AND s.monto IS NOT NULL
+         AND s.monto > (0)::numeric
+         AND (lower(COALESCE(h.estado, 'activo'::text)) <> 'inactivo'::text))
   -- ORDER BY POSICIONAL: 1 = mes, 2 = quincena, 4 = identificacionempleado.
   -- `nombreempleado` entró en la 5, así que las posiciones 1, 2 y 4 no se
   -- movieron y este ORDER BY sigue significando lo mismo.
