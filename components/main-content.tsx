@@ -79,6 +79,7 @@ import { ViewPicking } from "@/components/view-picking" // Added import for View
 import { Tarifas } from "@/components/configuration/tarifas" // Added import for Tarifas component
 import { FacturacionProyectos } from "@/components/facturacion-proyectos" // Added import for Facturacion Proyectos component
 import { CuadroControlFacturacion } from "@/components/cuadro-control-facturacion"
+import ResumenFacturacionProyecto from "@/components/resumen-facturacion-proyecto"
 import { ClaveFinancieraGuard } from "@/components/clave-financiera-guard"
 // Gestión Financiera: alquiler de montacargas facturado + cargos fijos ($2M, 600 ton).
 import CargosFijos from "@/components/cargos-fijos"
@@ -983,6 +984,12 @@ export function MainContent({
             <PermissionGuard moduleName="Cuadro de Control Facturación">
               <ClaveFinancieraGuard>
                 <CuadroControlFacturacion />
+              </ClaveFinancieraGuard>
+            </PermissionGuard>
+          ) : selectedModule === "Resumen de Facturación por Proyecto" ? (
+            <PermissionGuard moduleName="Resumen de Facturación por Proyecto">
+              <ClaveFinancieraGuard>
+                <ResumenFacturacionProyecto />
               </ClaveFinancieraGuard>
             </PermissionGuard>
           ) : selectedModule === "Cargos Fijos" ? (

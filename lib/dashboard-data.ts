@@ -230,6 +230,9 @@ export const groups: Group[] = [
           { name: "Facturación Proyectos", icon: CreditCard },
           // Cruce órdenes procesadas vs facturado por owner + prefactura. Permiso propio.
           { name: "Cuadro de Control Facturación", icon: ClipboardCheck },
+          // Consulta por proyecto: esperado (acuerdo) vs a quién se factura de
+          // verdad. Solo lectura. Mismo permiso que Cuadro de Control.
+          { name: "Resumen de Facturación por Proyecto", icon: ClipboardList },
           // Alquiler de montacargas facturado (id1/id3) + $2M Manejo de
           // Inventario (id1/id3) + 600 ton fijas Avimol. Permiso propio.
           { name: "Cargos Fijos", icon: CalendarClock },

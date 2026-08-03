@@ -317,6 +317,9 @@ export const MODULE_PERMISSION_MAP: Record<string, keyof UserPermissions> = {
   "Gestión de Facturas": "gestionfacturas",
   // Pestaña "Cuadro de Control" dentro de Gestión de Facturas; permiso propio.
   "Cuadro de Control Facturación": "cuadro_facturacion",
+  // Consulta por proyecto (solo lectura): comparte el permiso de Cuadro de
+  // Control (misma audiencia, sin migración nueva).
+  "Resumen de Facturación por Proyecto": "cuadro_facturacion",
   "Cargos Fijos": "cargos_fijos",
   // Conciliación Avimol (cobro por producción vs pago por turnos); permiso propio.
   "Conciliación Avimol": "conciliacion_avimol",
