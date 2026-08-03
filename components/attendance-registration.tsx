@@ -121,11 +121,12 @@ export default function AttendanceRegistration() {
     setMessage(null)
 
     try {
-      // First, check if person exists and is active
+      // First, check if person exists and is active (y si ya tiene una
+      // novedad registrada hoy, que bloquea la marcacion).
       const checkResponse = await fetch("/api/attendance/check", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ identificacion: identificacion.trim() }),
+        body: JSON.stringify({ identificacion: identificacion.trim(), idempresa: selectedEmpresaId }),
       })
 
       const checkData = await checkResponse.json()

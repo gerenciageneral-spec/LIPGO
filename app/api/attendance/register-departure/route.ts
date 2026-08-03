@@ -2,6 +2,12 @@ import { NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase-server"
 import { subirFotoAsistencia } from "@/lib/asistencia-foto"
 
+// "" y NULL se usan indistintamente en registroasistencia.asistencia segun el
+// flujo que escribio la fila; ambos significan "sin novedad".
+function hasValue(v: string | null | undefined): boolean {
+  return typeof v === "string" && v.trim() !== ""
+}
+
 /**
  * POST /api/attendance/register-departure
  *
@@ -59,7 +65,7 @@ export async function POST(request: Request) {
     //   3) Existe sin `horasalida` -> seguimos al UPDATE.
     const { data: existing, error: lookupError } = await supabase
       .from("registroasistencia")
-      .select("id, horasalida")
+      .select("id, horasalida, asistencia")
       .eq("idempresa", idempresa)
       .eq("identificacion", identificacion.trim())
       .eq("fecha", fecha)
@@ -81,6 +87,18 @@ export async function POST(request: Request) {
             "No se encontro registro de ingreso para esta identificacion el dia de hoy",
         },
         { status: 404 },
+      )
+    }
+
+    // Novedad registrada hoy (p.ej. asignada DESPUES del ingreso): no se
+    // permite registrar salida de asistencia normal el mismo dia.
+    if (hasValue(existing[0].asistencia)) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: `Este documento tiene una novedad registrada hoy ("${existing[0].asistencia}") y no puede marcar salida`,
+        },
+        { status: 409 },
       )
     }
 

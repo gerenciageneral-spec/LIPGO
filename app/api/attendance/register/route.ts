@@ -2,6 +2,12 @@ import { NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase-server"
 import { subirFotoAsistencia } from "@/lib/asistencia-foto"
 
+// "" y NULL se usan indistintamente en registroasistencia.asistencia segun el
+// flujo que escribio la fila; ambos significan "sin novedad".
+function hasValue(v: string | null | undefined): boolean {
+  return typeof v === "string" && v.trim() !== ""
+}
+
 export async function POST(request: Request) {
   try {
     const { identificacion, idempresa, foto } = await request.json()
@@ -40,6 +46,31 @@ export async function POST(request: Request) {
     const minute = timeParts.find((p) => p.type === "minute")?.value
     const second = timeParts.find((p) => p.type === "second")?.value
     const hora = `${hour}:${minute}:${second}`
+
+    // Bloqueo por NOVEDAD del dia (incapacidad, licencia, vacaciones, etc. en
+    // registroasistencia.asistencia). Defensa adicional: el cliente ya corta
+    // el flujo en /api/attendance/check, pero este endpoint es la fuente de
+    // verdad del INSERT y no debe confiar solo en el paso previo del cliente.
+    const { data: novedadHoy, error: novedadError } = await supabase
+      .from("registroasistencia")
+      .select("asistencia")
+      .eq("idempresa", idempresa)
+      .eq("identificacion", identificacion)
+      .eq("fecha", fecha)
+      .limit(1)
+      .maybeSingle()
+
+    if (novedadError) {
+      console.error("[v0] Error checking novedad del dia:", novedadError)
+    } else if (novedadHoy && hasValue(novedadHoy.asistencia)) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: `Este documento tiene una novedad registrada hoy ("${novedadHoy.asistencia}") y no puede marcar asistencia`,
+        },
+        { status: 409 },
+      )
+    }
 
     // Idempotencia diaria: una persona solo puede registrar UNA entrada
     // por dia. Antes del INSERT consultamos si ya existe registro
