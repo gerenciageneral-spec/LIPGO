@@ -43,6 +43,13 @@ interface ClienteGroup {
   products: LotAllocation[]
 }
 
+// Comparador de texto tolerante a NULL. saldoinvdetalle puede traer
+// codproducto/lote/location vacios y detalleoc puede traer cliente vacio: la
+// base no lo impide aunque los tipos los declaren `string`. Sin esto,
+// `null.localeCompare(...)` lanza y tumba el render completo del modulo.
+const compararTexto = (a: string | null | undefined, b: string | null | undefined) =>
+  (a ?? "").localeCompare(b ?? "")
+
 export function BatchApproval() {
   const [loadOrders, setLoadOrders] = useState<LoadOrder[]>([])
   const [selectedOrderId, setSelectedOrderId] = useState<string>("")
@@ -249,9 +256,9 @@ export function BatchApproval() {
     })
 
     return Array.from(summaryMap.values()).sort((a, b) => {
-      if (a.codproducto !== b.codproducto) return a.codproducto.localeCompare(b.codproducto)
-      if (a.lote !== b.lote) return a.lote.localeCompare(b.lote)
-      return a.location.localeCompare(b.location)
+      if (a.codproducto !== b.codproducto) return compararTexto(a.codproducto, b.codproducto)
+      if (a.lote !== b.lote) return compararTexto(a.lote, b.lote)
+      return compararTexto(a.location, b.location)
     })
   }
 
@@ -288,16 +295,16 @@ export function BatchApproval() {
 
     const globalInventoryUsage = new Map<string, number>()
 
-    const sortedAllocations = [...newAllocations].sort((a, b) => a.cliente.localeCompare(b.cliente))
+    const sortedAllocations = [...newAllocations].sort((a, b) => compararTexto(a.cliente, b.cliente))
 
     sortedAllocations.forEach((allocation) => {
       let remainingToAllocate = allocation.orderQuantity
 
       const sortedInventory = [...allocation.allocations].sort((a, b) => {
         if (a.lote !== b.lote) {
-          return a.lote.localeCompare(b.lote)
+          return compararTexto(a.lote, b.lote)
         }
-        return a.location.localeCompare(b.location)
+        return compararTexto(a.location, b.location)
       })
 
       for (const inv of sortedInventory) {
