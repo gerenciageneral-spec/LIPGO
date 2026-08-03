@@ -387,6 +387,9 @@ export interface SoporteLinea {
   valor: number
   /** "h" en las horas extra. Ausente = toneladas (soportes anteriores). */
   unidad?: UnidadCobro
+  /** Tiquete de báscula. Ausente en producción (no nace de una orden) y en
+   *  soportes guardados antes de agregarse este campo. */
+  tiquete?: string | null
 }
 export interface PrefacturaGuardada {
   id: number

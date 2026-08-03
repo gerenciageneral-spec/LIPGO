@@ -129,6 +129,7 @@ function SoporteAnexo({ lineas }: { lineas: SoporteLinea[] }) {
                 <tr className="border-b bg-muted/40 text-left text-muted-foreground">
                   <th className="py-1 pl-2 font-medium">Fecha</th>
                   <th className="py-1 font-medium">Orden</th>
+                  <th className="py-1 font-medium">Tiquete</th>
                   <th className="py-1 font-medium">Placa</th>
                   <th className="py-1 font-medium">Cliente</th>
                   <th className="py-1 font-medium">Producto</th>
@@ -142,6 +143,7 @@ function SoporteAnexo({ lineas }: { lineas: SoporteLinea[] }) {
                   <tr key={`${l.numeroorden}-${i}`} className="border-b last:border-0">
                     <td className="py-1 pl-2 tabular-nums">{l.fecha ?? "-"}</td>
                     <td className="py-1">{l.numeroorden}</td>
+                    <td className="py-1">{l.tiquete ?? "-"}</td>
                     <td className="py-1">{l.placa ?? "-"}</td>
                     <td className="py-1">{l.cliente ?? "-"}</td>
                     <td className="py-1">{l.producto ?? "-"}</td>
@@ -153,7 +155,7 @@ function SoporteAnexo({ lineas }: { lineas: SoporteLinea[] }) {
                   </tr>
                 ))}
                 <tr className="border-t bg-muted/30 font-semibold">
-                  <td className="py-1 pl-2" colSpan={5}>
+                  <td className="py-1 pl-2" colSpan={6}>
                     Subtotal {g.owner} · {g.operacion}
                   </td>
                   <td className="py-1 text-right tabular-nums">{ton(g.ton)}</td>
@@ -191,6 +193,7 @@ function exportarSoporteExcel(lineas: SoporteLinea[], nombre: string) {
     const rows = g.lineas.map((l) => ({
       Fecha: l.fecha ?? "",
       Orden: l.numeroorden,
+      Tiquete: l.tiquete ?? "",
       Placa: l.placa ?? "",
       Cliente: l.cliente ?? "",
       Producto: l.producto ?? "",
@@ -201,7 +204,7 @@ function exportarSoporteExcel(lineas: SoporteLinea[], nombre: string) {
       Valor: Math.round(Number(l.valor) || 0),
     }))
     rows.push({
-      Fecha: "", Orden: "", Placa: "", Cliente: "", Producto: "", Servicio: "SUBTOTAL",
+      Fecha: "", Orden: "", Tiquete: "", Placa: "", Cliente: "", Producto: "", Servicio: "SUBTOTAL",
       Cantidad: Number(g.ton.toFixed(3)), Unidad: uLabel(g.lineas[0]?.unidad),
       Tarifa: "" as any, Valor: Math.round(g.valor),
     })
@@ -474,6 +477,7 @@ export function CuadroControlFacturacion() {
         tarifa: l.tarifaServicio,
         valor: Math.round(l.valorServicio),
         unidad: "t" as const,
+        tiquete: l.tiquete,
       }))
     const deProduccion = (pref.soporteProduccion || []).filter((l) => prefSel.keys.has(keyRes(l.owner, l.operacion)))
     return [...deOrdenes, ...deProduccion]
@@ -1436,6 +1440,7 @@ export function CuadroControlFacturacion() {
                                                     <th className="py-1 pl-2 font-medium">Factura</th>
                                                     <th className="py-1 font-medium">Fecha</th>
                                                     <th className="py-1 font-medium">Orden</th>
+                                                    <th className="py-1 font-medium">Tiquete</th>
                                                     <th className="py-1 font-medium">Placa</th>
                                                     <th className="py-1 font-medium">Cliente</th>
                                                     <th className="py-1 font-medium">Producto</th>
@@ -1448,6 +1453,7 @@ export function CuadroControlFacturacion() {
                                                       <td className="py-1 pl-2"><Semaforo c={l.categoria} /></td>
                                                       <td className="py-1 tabular-nums">{l.fechacargue ?? "-"}</td>
                                                       <td className="py-1">{l.numeroorden}</td>
+                                                      <td className="py-1">{l.tiquete ?? "-"}</td>
                                                       <td className="py-1">{l.placa ?? "-"}</td>
                                                       <td className="py-1">{l.cliente ?? "-"}</td>
                                                       <td className="py-1">{l.producto ?? "-"}</td>
@@ -1456,7 +1462,7 @@ export function CuadroControlFacturacion() {
                                                   ))}
                                                   {det.length === 0 && (
                                                     <tr>
-                                                      <td colSpan={7} className="py-2 text-center text-muted-foreground">Sin líneas.</td>
+                                                      <td colSpan={8} className="py-2 text-center text-muted-foreground">Sin líneas.</td>
                                                     </tr>
                                                   )}
                                                 </tbody>
