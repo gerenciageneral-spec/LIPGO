@@ -79,6 +79,7 @@ import { ViewPicking } from "@/components/view-picking" // Added import for View
 import { Tarifas } from "@/components/configuration/tarifas" // Added import for Tarifas component
 import { FacturacionProyectos } from "@/components/facturacion-proyectos" // Added import for Facturacion Proyectos component
 import { CuadroControlFacturacion } from "@/components/cuadro-control-facturacion"
+import { ClaveFinancieraGuard } from "@/components/clave-financiera-guard"
 // Gestión Financiera: alquiler de montacargas facturado + cargos fijos ($2M, 600 ton).
 import CargosFijos from "@/components/cargos-fijos"
 import ConciliacionAvimol from "@/components/conciliacion-avimol"
@@ -958,7 +959,9 @@ export function MainContent({
             </PermissionGuard>
           ) : selectedModule === "Tarifas" ? (
             <PermissionGuard moduleName="Tarifas">
-              <Tarifas />
+              <ClaveFinancieraGuard>
+                <Tarifas />
+              </ClaveFinancieraGuard>
             </PermissionGuard>
 ) : selectedModule === "Servicios Adicionales" ? (
   <PermissionGuard moduleName="Servicios Adicionales">
@@ -966,27 +969,39 @@ export function MainContent({
   </PermissionGuard>
         ) : selectedModule === "Indicador de Facturación por Proyectos" ? (
           <PermissionGuard moduleName="Indicador de Facturación por Proyectos">
-            <FacturacionProyectosIndicador />
+            <ClaveFinancieraGuard>
+              <FacturacionProyectosIndicador />
+            </ClaveFinancieraGuard>
           </PermissionGuard>
         ) : selectedModule === "Facturación Proyectos" ? (
           <PermissionGuard moduleName="Facturación Proyectos">
-            <FacturacionProyectos />
+            <ClaveFinancieraGuard>
+              <FacturacionProyectos />
+            </ClaveFinancieraGuard>
           </PermissionGuard>
           ) : selectedModule === "Cuadro de Control Facturación" ? (
             <PermissionGuard moduleName="Cuadro de Control Facturación">
-              <CuadroControlFacturacion />
+              <ClaveFinancieraGuard>
+                <CuadroControlFacturacion />
+              </ClaveFinancieraGuard>
             </PermissionGuard>
           ) : selectedModule === "Cargos Fijos" ? (
             <PermissionGuard moduleName="Cargos Fijos">
-              <CargosFijos />
+              <ClaveFinancieraGuard>
+                <CargosFijos />
+              </ClaveFinancieraGuard>
             </PermissionGuard>
           ) : selectedModule === "Conciliación Avimol" ? (
             <PermissionGuard moduleName="Conciliación Avimol">
-              <ConciliacionAvimol />
+              <ClaveFinancieraGuard>
+                <ConciliacionAvimol />
+              </ClaveFinancieraGuard>
             </PermissionGuard>
           ) : selectedModule === "Prefactura de Producción" ? (
             <PermissionGuard moduleName="Prefactura de Producción">
-              <PrefacturaProduccion />
+              <ClaveFinancieraGuard>
+                <PrefacturaProduccion />
+              </ClaveFinancieraGuard>
             </PermissionGuard>
           ) : selectedModule === "Gestión de Facturas" ? (
             <PermissionGuard moduleName="Gestión de Facturas">
@@ -1014,15 +1029,21 @@ export function MainContent({
             </PermissionGuard>
           ) : selectedModule === "Registrar Gasto" ? (
             <PermissionGuard moduleName="Registrar Gasto">
-              <FormularioRegistroGasto />
+              <ClaveFinancieraGuard>
+                <FormularioRegistroGasto />
+              </ClaveFinancieraGuard>
             </PermissionGuard>
           ) : selectedModule === "Dashboard Gastos" ? (
             <PermissionGuard moduleName="Dashboard Gastos">
-              <DashboardGastos />
+              <ClaveFinancieraGuard>
+                <DashboardGastos />
+              </ClaveFinancieraGuard>
             </PermissionGuard>
           ) : selectedModule === "Estado de Resultados" ? (
             <PermissionGuard moduleName="Estado de Resultados">
-              <EstadoResultados />
+              <ClaveFinancieraGuard>
+                <EstadoResultados />
+              </ClaveFinancieraGuard>
             </PermissionGuard>
           ) : selectedModule === "Centro de Evidencia ISO 9001" ? (
             <PermissionGuard moduleName="Centro de Evidencia ISO 9001">
