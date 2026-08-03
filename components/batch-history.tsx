@@ -35,6 +35,7 @@ export function BatchHistory() {
   const [filteredRecords, setFilteredRecords] = useState<BatchHistoryRecord[]>([])
   const [clientes, setClientes] = useState<string[]>([])
   const [productos, setProductos] = useState<string[]>([])
+  const [placas, setPlacas] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [processing, setProcessing] = useState(false)
   const { toast } = useToast()
@@ -48,6 +49,7 @@ export function BatchHistory() {
   const [selectedCliente, setSelectedCliente] = useState<string>("all")
   const [clienteComboOpen, setClienteComboOpen] = useState(false)
   const [selectedProducto, setSelectedProducto] = useState<string>("all")
+  const [selectedPlaca, setSelectedPlaca] = useState<string>("all")
   const [fechaDesde, setFechaDesde] = useState<string | null>(null)
   const [fechaHasta, setFechaHasta] = useState<string | null>(null)
 
@@ -61,7 +63,7 @@ export function BatchHistory() {
 
   useEffect(() => {
     applyFilters()
-  }, [records, selectedCliente, selectedProducto, fechaDesde, fechaHasta])
+  }, [records, selectedCliente, selectedProducto, selectedPlaca, fechaDesde, fechaHasta])
 
   const loadData = async () => {
     setLoading(true)
@@ -73,6 +75,7 @@ export function BatchHistory() {
     setRecords(historyData)
     setClientes(filtersData.clientes)
     setProductos(filtersData.productos)
+    setPlacas(filtersData.placas)
     setLoading(false)
   }
 
@@ -146,6 +149,11 @@ export function BatchHistory() {
       filtered = filtered.filter((record) => record.producto === selectedProducto)
     }
 
+    // Filter by placa
+    if (selectedPlaca !== "all") {
+      filtered = filtered.filter((record) => record.placa === selectedPlaca)
+    }
+
     // Filter by date range
     if (fechaDesde) {
       filtered = filtered.filter((record) => record.fecha >= fechaDesde)
@@ -177,6 +185,7 @@ export function BatchHistory() {
       Location: record.location,
       Cantidad: record.cantidad,
       "Orden de Cargue": record.ordendecargue,
+      Placa: record.placa,
     }))
 
     const ws = XLSX.utils.json_to_sheet(exportData)
@@ -239,7 +248,7 @@ export function BatchHistory() {
             </div>
 
             {/* Select Filters */}
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
               <div>
                 <label className="text-sm font-medium mb-2 block">Cliente</label>
                 <Popover open={clienteComboOpen} onOpenChange={setClienteComboOpen}>
@@ -307,6 +316,22 @@ export function BatchHistory() {
                   </SelectContent>
                 </Select>
               </div>
+              <div>
+                <label className="text-sm font-medium mb-2 block">Placa</label>
+                <Select value={selectedPlaca} onValueChange={setSelectedPlaca}>
+                  <SelectTrigger className="min-w-[200px]">
+                    <SelectValue placeholder="Todas" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todas</SelectItem>
+                    {placas.map((placa) => (
+                      <SelectItem key={placa} value={placa}>
+                        {placa}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             {/* Action Buttons */}
@@ -334,19 +359,20 @@ export function BatchHistory() {
                   <TableHead>Location</TableHead>
                   <TableHead className="text-right">Cantidad</TableHead>
                   <TableHead>Orden de Cargue</TableHead>
+                  <TableHead>Placa</TableHead>
                   <TableHead className="text-right">PDF</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
                       Cargando...
                     </TableCell>
                   </TableRow>
                 ) : paginatedRecords.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
                       No hay registros disponibles
                     </TableCell>
                   </TableRow>
@@ -360,6 +386,7 @@ export function BatchHistory() {
                       <TableCell>{record.location}</TableCell>
                       <TableCell className="text-right">{record.cantidad}</TableCell>
                       <TableCell>{record.ordendecargue}</TableCell>
+                      <TableCell>{record.placa ?? "-"}</TableCell>
                       <TableCell className="text-right">
                         <Button
                           variant="ghost"

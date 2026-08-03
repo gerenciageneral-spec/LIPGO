@@ -51,6 +51,7 @@ export interface BatchHistoryRecord {
   cantidad: number
   ordendecargue: string
   pdf: string | null // Added pdf field
+  placa: string | null // Placa del vehiculo al que se le hizo la aprobacion de lotes
 }
 
 export interface UpdateBatchHistoryData {
@@ -61,6 +62,7 @@ export interface UpdateBatchHistoryData {
   location: string
   cantidad: number
   ordendecargue: string
+  placa: string | null
 }
 
 export async function getAvailableLoadOrders(selectedEmpresaId?: number | null): Promise<LoadOrder[]> {
@@ -186,6 +188,17 @@ export async function approveBatchAllocation(data: BatchApprovalData, selectedEm
     // Get current date
     const currentDate = await getColombiaDate()
 
+    // Placa del vehiculo al que se le hace esta aprobacion de lotes. Se
+    // consulta de nuevo aqui (no se confia en el state del cliente) contra
+    // cabeceraoc, que es la misma fuente que ya usa getAvailableLoadOrders.
+    const { data: ordenData } = await supabase
+      .from("cabeceraoc")
+      .select("placa")
+      .eq("ordendecargue", data.ordendecargue)
+      .eq("idempresa", currentEmpresaId)
+      .maybeSingle()
+    const placaOrden: string | null = ordenData?.placa ?? null
+
     // Prepare records to insert
     const recordsToInsert = data.allocations.map((allocation, index) => ({
       id: nextId + index,
@@ -198,6 +211,7 @@ export async function approveBatchAllocation(data: BatchApprovalData, selectedEm
       ordendecargue: data.ordendecargue,
       fecha: currentDate,
       aprobadopor: currentUsuario,
+      placa: placaOrden,
     }))
 
     // Insert all records
@@ -411,7 +425,7 @@ export async function getBatchHistory(selectedEmpresaId?: number | null): Promis
     for (let offset = 0; offset < maxRecords; offset += batchSize) {
       const { data, error } = await supabase
         .from("historicolotes")
-        .select("id, fecha, cliente, producto, lote, location, cantidad, ordendecargue, pdf")
+        .select("id, fecha, cliente, producto, lote, location, cantidad, ordendecargue, pdf, placa")
         .eq("idempresa", currentEmpresaId)
         .order("fecha", { ascending: false })
         .order("id", { ascending: false })
@@ -464,18 +478,28 @@ export async function getBatchHistoryFilters(selectedEmpresaId?: number | null) 
       .eq("idempresa", currentEmpresaId)
       .order("producto")
 
+    // Get unique placas - filter by empresa
+    const { data: placasData } = await supabase
+      .from("historicolotes")
+      .select("placa")
+      .eq("idempresa", currentEmpresaId)
+      .order("placa")
+
     const clientes = (clientesData?.map((item) => item.nombre).filter(Boolean) || []) as string[]
     const productos = Array.from(new Set(productosData?.map((item) => item.producto).filter(Boolean))) as string[]
+    const placas = Array.from(new Set(placasData?.map((item) => item.placa).filter(Boolean))) as string[]
 
     return {
       clientes,
       productos,
+      placas,
     }
   } catch (error) {
     console.error("[v0] Error fetching batch history filters:", error)
     return {
       clientes: [],
       productos: [],
+      placas: [],
     }
   }
 }
@@ -493,6 +517,7 @@ export async function updateBatchHistoryRecord(data: UpdateBatchHistoryData) {
         location: data.location,
         cantidad: data.cantidad,
         ordendecargue: data.ordendecargue,
+        placa: data.placa,
       })
       .eq("id", data.id)
 
