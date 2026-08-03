@@ -27,6 +27,7 @@ import {
   type MedioPago,
 } from "@/lib/facturacion-medio-pago"
 import { cargueSoloPlacaPropia, esCargueFiltrable } from "@/lib/facturacion-cargue-propio"
+import { facturadoAOwner } from "@/lib/facturacion-billed-party"
 
 export type CategoriaFactura = "facturado" | "en_proceso" | "sin_gestionar"
 
@@ -1186,6 +1187,12 @@ export async function getControlFacturacion(
           fuente = "bascula"
         }
       }
+      // Avimol (id2): Cargue/Descargue/Distribución con placa propia (transporte
+      // AVIMOL) no se factura por tonelada — va cubierto por el fijo de 600
+      // ton/mes; con transporte Zamudio/Terceros se factura a esa transportadora,
+      // no a Avimol. Ver lib/facturacion-billed-party.ts.
+      const fa = facturadoAOwner(idempresa, a.owner, a.op, a.r.transporte)
+      if (fa.cubiertoPorFijo) valor = 0
       filasMap.set(k, {
         numeroorden: a.on,
         fecha: a.r.fechacargue ?? a.r.fechaorden ?? null,
@@ -1193,7 +1200,7 @@ export async function getControlFacturacion(
         tiquete: a.r.tiquetebascula ?? null,
         tipooperacion: a.op || null,
         cliente: a.r.cliente ?? null,
-        owner: a.owner,
+        owner: fa.owner,
         transporte: a.r.transporte ?? null,
         mediopago: est?.mediopago ?? null,
         medioPagoEsperado: medioPagoEsperado(idempresa, a.r.transporte, { placa: a.r.placa, operacion: a.op }),
@@ -1203,7 +1210,7 @@ export async function getControlFacturacion(
         }),
         toneladas,
         fuente_peso: fuente,
-        tarifa: a.sinTarifa || toneladas <= 0 ? null : Math.round(valor / toneladas),
+        tarifa: a.sinTarifa || toneladas <= 0 || fa.cubiertoPorFijo ? null : Math.round(valor / toneladas),
         valor_a_facturar: valor,
         sin_tarifa: a.sinTarifa,
         estadofactura: est?.estado ?? null,
@@ -1443,7 +1450,11 @@ export async function getValoresNetosOrden(
         const owner = ownerDeLinea(idempresa, r.placa, String(r.owner || "SIN OWNER"))
         const ton = num(r.toneladas)
         const tarifa = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
-        valorAcc.set(on, (valorAcc.get(on) || 0) + ton * tarifa)
+        // Avimol (id2) placa propia: cubierto por el fijo, no se factura por
+        // tonelada — pero SÍ cuenta en totalDet (denominador del prorrateo de
+        // báscula de la orden). Ver lib/facturacion-billed-party.ts.
+        const fa = facturadoAOwner(idempresa, owner, r.tipooperacion, r.transporte)
+        valorAcc.set(on, (valorAcc.get(on) || 0) + (fa.cubiertoPorFijo ? 0 : ton * tarifa))
         totalDet.set(on, (totalDet.get(on) || 0) + ton)
       }
     }

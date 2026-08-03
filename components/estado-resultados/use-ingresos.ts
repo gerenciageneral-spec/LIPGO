@@ -27,6 +27,7 @@
 import useSWR from "swr"
 import { supabase } from "@/lib/supabase-client"
 import { getConciliacionAvimol } from "@/lib/conciliacion-avimol-actions"
+import { facturadoAOwner } from "@/lib/facturacion-billed-party"
 
 export interface DetalleIngreso {
   nombre: string
@@ -113,6 +114,65 @@ async function sumarYAgrupar(
   return { suma, filas, detalle }
 }
 
+// Toneladas: variante de sumarYAgrupar que aplica la regla de "a quién se
+// factura" de Avimol (id2, confirmada por gerencia 2026-08-02) — Cargue/
+// Descargue/Distribución con transporte Zamudio/Terceros se factura a esa
+// transportadora, no a Avimol; con placa propia (transporte Avimol) va
+// cubierto por el fijo de 600 ton/mes (Cargos Fijos), valor=0 aquí para no
+// duplicar. Mismo criterio que getControlFacturacion (Cuadro de Control,
+// la fuente canónica) — ver lib/facturacion-billed-party.ts. Para los demás
+// proyectos (idempresa !== 2) no cambia nada.
+async function sumarYAgruparToneladas(
+  ids: number[],
+  desde: string,
+  hastaExclusivo: string,
+): Promise<{ suma: number; filas: number; detalle: DetalleIngreso[] }> {
+  const PAGE_SIZE = 1000
+  const MAX_ROWS = 200_000
+  let suma = 0
+  let filas = 0
+  let offset = 0
+  const grupos = new Map<string, { valor: number; registros: number; toneladas: number }>()
+
+  while (offset < MAX_ROWS) {
+    const { data: page, error } = await supabase
+      .from("facturacion")
+      .select("valor_a_facturar, tipooperacion, owner, toneladas, transporte, idempresa")
+      .in("idempresa", ids)
+      .gte("fechacargue", desde)
+      .lt("fechacargue", hastaExclusivo)
+      .range(offset, offset + PAGE_SIZE - 1)
+    if (error) throw new Error(`Error al leer facturacion: ${error.message}`)
+    if (!page || page.length === 0) break
+
+    for (const r of page as Array<Record<string, unknown>>) {
+      const fa = facturadoAOwner(
+        Number(r.idempresa),
+        String(r.owner ?? "SIN OWNER").trim(),
+        String(r.tipooperacion ?? ""),
+        (r.transporte as string | null) ?? null,
+      )
+      const v = fa.cubiertoPorFijo ? 0 : Number(r.valor_a_facturar) || 0
+      suma += v
+      const k = `${String(r.tipooperacion ?? "(sin operación)").trim()} · ${fa.owner}`
+      const g = grupos.get(k) ?? { valor: 0, registros: 0, toneladas: 0 }
+      g.valor += v
+      g.registros += 1
+      g.toneladas += Number(r.toneladas) || 0
+      grupos.set(k, g)
+    }
+    filas += page.length
+    if (page.length < PAGE_SIZE) break
+    offset += PAGE_SIZE
+  }
+
+  const detalle: DetalleIngreso[] = Array.from(grupos.entries())
+    .map(([nombre, g]) => ({ nombre, valor: g.valor, registros: g.registros, toneladas: g.toneladas }))
+    .sort((a, b) => b.valor - a.valor)
+
+  return { suma, filas, detalle }
+}
+
 // Igual, pero TOLERANTE a que la tabla aun no exista (cargos fijos: depende
 // de migraciones nuevas). Sin esto, el P&L entero se caeria hasta correrlas.
 async function sumarYAgruparTolerante(
@@ -140,14 +200,7 @@ async function fetchIngresos(
   const incluyeAvimol = ids.includes(2)
 
   // Toneladas: `fechacargue` es timestamp → gte/lt con dia+1 exclusivo.
-  const tonsPromise = sumarYAgrupar(
-    (q) => q.in("idempresa", ids).gte("fechacargue", desde).lt("fechacargue", hastaExclusivo),
-    "facturacion",
-    "valor_a_facturar, tipooperacion, owner, toneladas",
-    "valor_a_facturar",
-    (r) => `${String(r.tipooperacion ?? "(sin operación)").trim()} · ${String(r.owner ?? "SIN OWNER").trim()}`,
-    (r) => Number(r.toneladas) || 0,
-  )
+  const tonsPromise = sumarYAgruparToneladas(ids, desde, hastaExclusivo)
 
   // Turnos por la vista (todos los ids menos Avimol). `fecha` es DATE puro.
   const turnosPromise =

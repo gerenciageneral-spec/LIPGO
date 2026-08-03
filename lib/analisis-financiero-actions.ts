@@ -40,6 +40,7 @@ import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getConciliacionAvimol } from "@/lib/conciliacion-avimol-actions"
 import { esPlacaDistribucion, ownerDeLinea, cargarPlacasDistribucion } from "@/lib/distribucion-placas"
 import { PLACAS_EXCLUIDAS_FACTURAS } from "@/lib/facturas-exclusiones"
+import { facturadoAOwner } from "@/lib/facturacion-billed-party"
 
 const num = (v: any) => {
   const n = Number(String(v ?? "").replace(/,/g, ""))
@@ -332,10 +333,16 @@ async function realPorCodigo(
 
     const owner = ownerDeLinea(idempresa, r.placa, String(r.owner || "SIN OWNER"))
     const tarifa = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
+    // Avimol (id2) placa propia: cubierto por el fijo de 600 ton/mes, no se
+    // factura por tonelada aquí (ya está en Cargos Fijos, no se duplica). Con
+    // transporte Zamudio/Terceros SÍ se factura (a esa transportadora, no a
+    // Avimol) — para el margen del PROYECTO Avimol esa plata sigue contando.
+    // Mismo criterio que getControlFacturacion — ver lib/facturacion-billed-party.ts.
+    const fa = facturadoAOwner(idempresa, owner, r.tipooperacion, r.transporte)
     const k = `${on}|||${codigo}`
     const a = accMap.get(k) || { on, codigo, op, tonDet: 0, valorDet: 0 }
     a.tonDet += ton
-    a.valorDet += ton * tarifa
+    a.valorDet += fa.cubiertoPorFijo ? 0 : ton * tarifa
     accMap.set(k, a)
   }
 
