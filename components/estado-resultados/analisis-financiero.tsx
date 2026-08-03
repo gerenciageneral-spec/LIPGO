@@ -13,6 +13,13 @@
  *
  * Los datos vienen del padre (mismo alcance/período del P&L): esta vista es
  * presentacional + edición ligera de los acuerdos (reajustes anuales).
+ *
+ * OJO — dos tarifas distintas conviven aquí (no son la misma columna dos veces):
+ * "Factura acordada" usa la tarifa del CUADRO de gerencia (lo que se aspira a
+ * facturar); "Factura real" y "Margen real" usan la tarifa VIGENTE del sistema
+ * (la misma que ya factura el Cierre Financiero/Cuadro de Control), que puede
+ * diferir por ajustes de tarifa a mitad de año. El déficit siempre se valora a
+ * la tarifa ACORDADA (es lo que hay que facturar para cumplir el mínimo).
  */
 
 import { useCallback, useEffect, useState } from "react"
@@ -91,7 +98,7 @@ function ResumenEjecutivo({ data }: { data: AnalisisData }) {
             </div>
             <div className="text-xs text-muted-foreground">
               Cumplimiento global {cumplimiento !== null ? `${cumplimiento}%` : "—"} ({ton(tonReales)} t de {ton(tonAcordadas)} t
-              acordadas) · margen real del acuerdo {moneyS(margenTotal)}
+              acordadas) · margen real (tarifa vigente) {moneyS(margenTotal)}
             </div>
           </div>
           {/* Chips por proyecto */}
@@ -183,9 +190,9 @@ function ProyectoCard({ p, meses }: { p: ProyectoAnalisis; meses: number }) {
             variant={cumple ? "success" : "danger"}
           />
           <KpiCard
-            label="Margen real del acuerdo"
+            label="Margen real (tarifa vigente)"
             value={moneyS(p.margenReal)}
-            subtext={`facturado ${money(p.totalFacturaReal)} − nómina ${money(p.costoNomina)}${
+            subtext={`facturado real ${money(p.totalFacturaReal)} − nómina ${money(p.costoNomina)}${
               p.margenPorTon !== null ? ` · ${moneyS(p.margenPorTon)}/t` : ""
             }`}
             icon={TrendingUp}
@@ -212,14 +219,18 @@ function ProyectoCard({ p, meses }: { p: ProyectoAnalisis; meses: number }) {
             <TableHeader>
               <TableRow className="text-[11px]">
                 <TableHead>Actividad</TableHead>
-                <TableHead className="text-right">Tarifa</TableHead>
+                <TableHead className="text-right">Tarifa acordada</TableHead>
                 <TableHead className="text-right">Acordado{meses !== 1 ? " (período)" : " (mes)"}</TableHead>
                 <TableHead className="text-right">Real</TableHead>
                 <TableHead className="text-right">Cumpl.</TableHead>
                 <TableHead className="text-right">Déficit</TableHead>
                 <TableHead className="text-right">$ a facturar adicional</TableHead>
-                <TableHead className="text-right">Factura acordada</TableHead>
-                <TableHead className="text-right">Factura real</TableHead>
+                <TableHead className="text-right" title="Volumen real × tarifa del cuadro de gerencia (aspiracional)">
+                  Factura acordada
+                </TableHead>
+                <TableHead className="text-right" title="Volumen real × tarifa vigente del sistema (lo que hoy factura el Cuadro/Cierre Financiero)">
+                  Factura real
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
