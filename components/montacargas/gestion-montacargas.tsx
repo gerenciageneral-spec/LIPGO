@@ -43,6 +43,7 @@ import {
   type HojaDeVida,
 } from "@/lib/montacargas-actions"
 import { RegistroActividad, ETIQUETA_TIPO } from "@/components/montacargas/registro-actividad"
+import { SelectorEquipoQR } from "@/components/montacargas/selector-equipo-qr"
 import { QrEtiquetas } from "@/components/montacargas/qr-etiquetas"
 
 const money = (n: number) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO")
@@ -86,6 +87,40 @@ export function GestionMontacargas() {
 
   const [registrarEn, setRegistrarEn] = useState<number | null>(null)
   const [cerrarActividadId, setCerrarActividadId] = useState<{ id: number; equipoId: number } | null>(null)
+
+  /**
+   * Equipo ya identificado por QR dentro del dialogo abierto.
+   *
+   * Desde el escritorio ya no basta con elegir el montacarga de la lista: hay
+   * que leer su QR (o digitar el codigo de la etiqueta) para confirmar que
+   * quien registra esta frente a la maquina. Mientras esto sea null, el dialogo
+   * muestra la compuerta en vez del formulario.
+   */
+  const [equipoConfirmado, setEquipoConfirmado] = useState<Montacarga | null>(null)
+
+  /**
+   * Datos del equipo contra el que se debe validar el QR leido.
+   *
+   * Si el equipo no esta en la lista cargada — pasa con un pendiente de un
+   * equipo inactivo o de otro proyecto — igual se valida por id, solo que sin
+   * nombre bonito. Lo que NO puede pasar es que se deje de validar: devolver
+   * undefined haria que el selector aceptara cualquier QR.
+   */
+  const equipoDe = useCallback(
+    (id: number | null | undefined) => {
+      if (id == null) return undefined
+      const e = equipos.find((x) => x.id === id)
+      return { id, identificacion: e?.identificacion ?? `equipo #${id}` }
+    },
+    [equipos],
+  )
+
+  /** Cierra cualquiera de los dos dialogos y descarta la identificacion previa. */
+  const cerrarDialogos = useCallback(() => {
+    setRegistrarEn(null)
+    setCerrarActividadId(null)
+    setEquipoConfirmado(null)
+  }, [])
 
   const cargar = useCallback(async () => {
     if (!selectedEmpresaId) {
@@ -637,36 +672,54 @@ export function GestionMontacargas() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={registrarEn != null} onOpenChange={(o) => !o && setRegistrarEn(null)}>
+      <Dialog open={registrarEn != null} onOpenChange={(o) => !o && cerrarDialogos()}>
         <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Registrar actividad</DialogTitle>
           </DialogHeader>
-          {registrarEn != null && (
+          {registrarEn != null && !equipoConfirmado && (
+            <SelectorEquipoQR
+              equipoEsperado={equipoDe(registrarEn)}
+              onConfirmado={setEquipoConfirmado}
+              onCancelar={cerrarDialogos}
+            />
+          )}
+          {registrarEn != null && equipoConfirmado && (
             <RegistroActividad
-              idempresa={selectedEmpresaId}
-              equipoId={registrarEn}
+              // Se usa el proyecto DEL EQUIPO identificado, no el del selector
+              // superior: el QR viene de la maquina y manda sobre el filtro.
+              idempresa={equipoConfirmado.idempresa}
+              equipoId={equipoConfirmado.id}
               modo="registrar"
-              onListo={() => { setRegistrarEn(null); cargar(); if (seleccionado) cargarHoja(seleccionado) }}
-              onCancelar={() => setRegistrarEn(null)}
+              onListo={() => { cerrarDialogos(); cargar(); if (seleccionado) cargarHoja(seleccionado) }}
+              onCancelar={cerrarDialogos}
             />
           )}
         </DialogContent>
       </Dialog>
 
-      <Dialog open={cerrarActividadId != null} onOpenChange={(o) => !o && setCerrarActividadId(null)}>
+      <Dialog open={cerrarActividadId != null} onOpenChange={(o) => !o && cerrarDialogos()}>
         <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Cerrar pendiente</DialogTitle>
           </DialogHeader>
-          {cerrarActividadId && (
+          {/* Cerrar un pendiente tambien escribe en la bitacora y supone haber
+              intervenido la maquina, asi que pide el QR igual que el registro. */}
+          {cerrarActividadId && !equipoConfirmado && (
+            <SelectorEquipoQR
+              equipoEsperado={equipoDe(cerrarActividadId.equipoId)}
+              onConfirmado={setEquipoConfirmado}
+              onCancelar={cerrarDialogos}
+            />
+          )}
+          {cerrarActividadId && equipoConfirmado && (
             <RegistroActividad
-              idempresa={selectedEmpresaId}
-              equipoId={cerrarActividadId.equipoId}
+              idempresa={equipoConfirmado.idempresa}
+              equipoId={equipoConfirmado.id}
               actividadId={cerrarActividadId.id}
               modo="cerrar"
-              onListo={() => { setCerrarActividadId(null); cargar(); if (seleccionado) cargarHoja(seleccionado) }}
-              onCancelar={() => setCerrarActividadId(null)}
+              onListo={() => { cerrarDialogos(); cargar(); if (seleccionado) cargarHoja(seleccionado) }}
+              onCancelar={cerrarDialogos}
             />
           )}
         </DialogContent>
