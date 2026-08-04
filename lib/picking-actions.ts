@@ -56,8 +56,8 @@ export interface PickingItem {
   codproducto?: string
   /**
    * true cuando ese producto/lote/location tiene existencias en estibas con QR.
-   * En ese caso la linea DEBE verificarse escaneando: descontarla a mano
-   * dejaria la salida sin `qrestiba` y el stock intacto en la estiba.
+   * Solo alimenta un AVISO en la UI: descontar sin escanear deja la salida sin
+   * `qrestiba` y el stock intacto en la estiba, pero no se impide.
    */
   tieneStockQR?: boolean
 }
@@ -643,9 +643,8 @@ export async function getPickingItems(ordenCargue: string) {
   const alternosWithStock = await Promise.all(alternoRows.map(withStock))
 
   // `tieneStockQR`: esa combinacion producto/lote/location tiene existencias en
-  // estibas identificadas. La UI lo usa para forzar la verificacion por QR y no
-  // dejar descontar a mano algo que vive en una estiba (ver `clavesConStockQR`).
-  // El bloqueo real igual se revalida en `confirmPicking`.
+  // estibas identificadas. La UI lo usa solo para AVISAR: el picking sin QR
+  // sigue permitido (ver `clavesConStockQR` y la nota en `confirmPicking`).
   const conQR = await clavesConStockQR(supabase, [...itemsWithStock, ...alternosWithStock])
   const marcar = (item: any) => ({
     ...item,
@@ -934,52 +933,15 @@ export async function confirmPicking(
   }
 
   try {
-    // -----------------------------------------------------------------------
-    // BLOQUEO: no dejar descontar SIN QR un stock que vive en estibas con QR.
+    // NOTA: aqui existio un BLOQUEO que rechazaba la confirmacion cuando una
+    // linea se descontaba sin QR y su stock vivia en estibas identificadas. Se
+    // retiro por decision de operacion: el picking sin QR vuelve a permitirse
+    // aunque el producto tenga estibas con QR.
     //
-    // Si se aprueba la linea a mano, la salida queda sin `qrestiba` y el
-    // inventario por estiba no se mueve: la estiba conserva un stock que ya
-    // salio fisicamente. Se valida ANTES de tocar nada — `confirmPicking` no
-    // corre en una transaccion, asi que abortar a mitad dejaria el picking
-    // partido.
-    // -----------------------------------------------------------------------
-    const idsSinQR: number[] = []
-    for (const item of items) {
-      const conNormal = !!(item.qrScans && item.qrScans.length > 0)
-      const conAlternoQR = !!(item.alternoScans && item.alternoScans.length > 0)
-      // La linea principal solo genera una salida sin QR cuando no se escaneo
-      // nada: con alterno-QR la fila original se elimina y la cubre el alterno.
-      if (!conNormal && !conAlternoQR) idsSinQR.push(item.id)
-      for (const sel of item.alternoSimple || []) idsSinQR.push(sel.alternoId)
-    }
-
-    if (idsSinQR.length > 0) {
-      const { data: filas, error: errFilas } = await supabase
-        .from("invtrans")
-        .select("id, codproducto, nombreproducto, lote, location")
-        .in("id", idsSinQR)
-
-      if (errFilas) {
-        // Falla-abierto, igual que `clavesConStockQR`: se registra y se sigue.
-        console.error("[v0] Error leyendo lineas para validar stock por QR:", errFilas)
-      } else {
-        const conQR = await clavesConStockQR(supabase, filas || [])
-        const bloqueadas = (filas || []).filter((f: any) =>
-          conQR.has(claveQR(f.codproducto, f.lote, f.location)),
-        )
-        if (bloqueadas.length > 0) {
-          const detalle = bloqueadas
-            .map((f: any) => `${f.nombreproducto} (lote ${f.lote} · ${f.location})`)
-            .join("; ")
-          return {
-            success: false,
-            message:
-              `Estos productos tienen inventario en estibas con QR y deben descontarse escaneando: ${detalle}. ` +
-              "Cambia esas líneas a verificación por QR.",
-          }
-        }
-      }
-    }
+    // El riesgo que cubria sigue existiendo: esa salida queda sin `qrestiba` y
+    // el inventario por estiba no se mueve, asi que la estiba conserva un stock
+    // que fisicamente ya salio. Lo que queda es el AVISO en la UI
+    // (`tieneStockQR`), que informa pero no impide.
 
     for (const item of items) {
       const hasNormal = !!(item.qrScans && item.qrScans.length > 0)
