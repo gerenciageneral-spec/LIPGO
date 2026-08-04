@@ -24,7 +24,7 @@
  * derecho ve la programacion ya guardada y puede eliminar registros.
  */
 
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useCallback } from "react"
 import { useAuth } from "@/components/auth-provider"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -337,6 +337,54 @@ export default function ProgramacionTurnos() {
     return m
   }, [existing])
 
+  /**
+   * UNICA fuente de verdad de "esta persona ya no se puede programar".
+   *
+   * Una persona queda bloqueada cuando ya tiene una fila de jornada unica
+   * (turno = null) ese dia, o cuando el puesto elegido es Auxiliar Mixto y ya
+   * tiene ocupados los DOS turnos.
+   *
+   * Vive aqui porque la usan tanto la fila (para deshabilitar el checkbox)
+   * como "Seleccionar todos". Antes cada una tenia su propia version y
+   * divergian: "Seleccionar todos" solo miraba la jornada unica, asi que
+   * marcaba a los Auxiliar Mixto con ambos turnos ocupados — y como su
+   * checkbox esta deshabilitado, quedaban seleccionados SIN posibilidad de
+   * desmarcarlos.
+   */
+  const estaBloqueada = useCallback(
+    (identificacion: string, puesto: string) => {
+      if (idsYaProgramadas.has(identificacion)) return true
+      if (puesto !== AUXILIAR_MIXTO) return false
+      const turnos = turnosOcupadosPorIdentificacion.get(identificacion)
+      return !!turnos && turnos.has("1") && turnos.has("2")
+    },
+    [idsYaProgramadas, turnosOcupadosPorIdentificacion],
+  )
+
+  // Red de seguridad: si alguien queda BLOQUEADO mientras estaba seleccionado
+  // (al recargar la programacion existente, o porque lo programaron desde otra
+  // pantalla), se deselecciona solo. Sin esto quedaria marcado y con el
+  // checkbox deshabilitado, o sea imposible de quitar.
+  //
+  // Se usa el updater funcional y se devuelve `prev` cuando no hubo cambios
+  // para no re-renderizar en bucle.
+  useEffect(() => {
+    setSelection((prev) => {
+      let cambio = false
+      const next = new Map(prev)
+      for (const [id, s] of next.entries()) {
+        if (!s.selected) continue
+        const persona = people.find((p) => p.id === id)
+        if (!persona) continue
+        if (estaBloqueada(persona.identificacion, s.puesto)) {
+          next.set(id, { ...s, selected: false })
+          cambio = true
+        }
+      }
+      return cambio ? next : prev
+    })
+  }, [people, estaBloqueada])
+
   // Personas filtradas por el buscador (nombre/cedula).
   const filteredPeople = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -401,8 +449,11 @@ export default function ProgramacionTurnos() {
   function selectAllVisible() {
     updateSelection((m) => {
       for (const p of filteredPeople) {
-        if (idsYaProgramadas.has(p.identificacion)) continue
         const cur = getOrInit(p.id, m)
+        // Se evalua con el puesto que la fila tiene en ese momento, igual que
+        // lo hace el checkbox, para no marcar a alguien que no se podria
+        // desmarcar.
+        if (estaBloqueada(p.identificacion, cur.puesto)) continue
         m.set(p.id, { ...cur, selected: true })
       }
     })
@@ -838,12 +889,10 @@ export default function ProgramacionTurnos() {
                         const esAuxiliarMixto = state.puesto === AUXILIAR_MIXTO
                         const turnosOcupados =
                           turnosOcupadosPorIdentificacion.get(p.identificacion) ?? new Set<string>()
-                        // Bloqueado por completo si ya tiene una fila de jornada
-                        // unica (turno=null) hoy, o si es Auxiliar Mixto y ya
-                        // tiene AMBOS turnos (1 y 2) ocupados.
-                        const ya =
-                          idsYaProgramadas.has(p.identificacion) ||
-                          (esAuxiliarMixto && turnosOcupados.has("1") && turnosOcupados.has("2"))
+                        // Misma regla que usa "Seleccionar todos" (ver
+                        // `estaBloqueada`): jornada unica ya programada, o
+                        // Auxiliar Mixto con los DOS turnos ocupados.
+                        const ya = estaBloqueada(p.identificacion, state.puesto)
                         const esEspecialidad = especialidadByPuesto.get(state.puesto)
                         // Cuando la persona tiene novedad seleccionada
                         // la programacion se persistira como NOVEDAD —
