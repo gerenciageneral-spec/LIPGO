@@ -4,6 +4,28 @@ import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getCurrentEmpresaData } from "@/lib/user-context"
 import { resolverOwnerPorNombre } from "@/lib/owner-utils"
 
+/**
+ * Recorta `texto` para que quepa en `anchoMm` con el tamaño de fuente ACTUAL
+ * del documento, agregando "…" cuando sobra.
+ *
+ * Se mide con `getTextWidth` en vez de cortar por numero de caracteres: un
+ * corte por caracteres no sabe cuanto ocupa el texto en la hoja, asi que un
+ * nombre largo o con muchas mayusculas se salia de su columna y se montaba
+ * sobre la siguiente.
+ *
+ * No se exporta: en un archivo "use server" solo los EXPORTS deben ser async.
+ */
+function recortarAAncho(doc: any, texto: string, anchoMm: number): string {
+  const t = String(texto ?? "")
+  if (!t) return ""
+  if (doc.getTextWidth(t) <= anchoMm) return t
+  let out = t
+  while (out.length > 1 && doc.getTextWidth(out + "…") > anchoMm) {
+    out = out.slice(0, -1)
+  }
+  return out + "…"
+}
+
 async function imageUrlToBase64(url: string): Promise<string> {
   try {
     const response = await fetch(url)
@@ -562,6 +584,32 @@ export async function generateAndUploadLoadOrderPDF(orderData: any, ordenCargueI
     doc.rect(100, 42, 95, 6, "F")
     doc.text(ordenCargueCode, 105, 46)
 
+    // Cliente(s) de la orden, en el mismo formato de banda que las dos filas de
+    // arriba. Una orden puede traer VARIOS clientes (en los cedis se mezclan en
+    // un mismo vehiculo), asi que se listan separados por coma; el recorte por
+    // ancho real garantiza que el texto no se salga de su celda.
+    const clientesOrden = Array.from(
+      new Set(
+        ((orderData.products || []) as any[])
+          .map((p) => String(p?.cliente ?? "").trim())
+          .filter(Boolean),
+      ),
+    )
+    const clienteTexto = clientesOrden.length > 0 ? clientesOrden.join(", ") : "N/A"
+
+    doc.setFillColor(44, 82, 130)
+    doc.setTextColor(255, 255, 255)
+    doc.rect(15, 49, 85, 6, "F")
+    doc.setFontSize(10)
+    doc.text("Cliente", 20, 53)
+
+    doc.setFillColor(224, 224, 224)
+    doc.setTextColor(0, 0, 0)
+    doc.rect(100, 49, 95, 6, "F")
+    // La celda va de x=100 a x=195 y el texto arranca en 105: quedan 88 mm
+    // utiles dejando 2 mm de aire al borde derecho.
+    doc.text(recortarAAncho(doc, clienteTexto, 88), 105, 53)
+
     // --- Tabla de productos AGRUPADA por Cliente -> Owner, con subtotales. ---
     // El OWNER (razón social dueña del producto) se resuelve por id_empresa desde el
     // maestro `productos` — MISMA fuente y etiquetas que la facturación, para que
@@ -582,7 +630,8 @@ export async function generateAndUploadLoadOrderPDF(orderData: any, ordenCargueI
       owns.get(own)!.push(p)
     }
 
-    let yPos = 52
+    // Arranca en 59 (antes 52) porque el encabezado gano la fila de Cliente.
+    let yPos = 59
     const pageBottom = 250
     const ensure = (need: number) => {
       if (yPos + need > pageBottom) {
@@ -613,7 +662,8 @@ export async function generateAndUploadLoadOrderPDF(orderData: any, ordenCargueI
       doc.rect(15, yPos, 180, 6, "F")
       doc.setFontSize(8)
       doc.setFont(undefined as any, "bold")
-      doc.text(`Cliente: ${cli}`.substring(0, 70), 20, yPos + 4)
+      // Banda completa (15..195) sin cifras a la derecha: 173 mm utiles.
+      doc.text(recortarAAncho(doc, `Cliente: ${cli}`, 173), 20, yPos + 4)
       yPos += 6
 
       let cliUnd = 0
@@ -626,7 +676,7 @@ export async function generateAndUploadLoadOrderPDF(orderData: any, ordenCargueI
         doc.rect(15, yPos, 180, 5, "F")
         doc.setFontSize(7)
         doc.setFont(undefined as any, "bold")
-        doc.text(`Owner: ${own}`, 22, yPos + 3.5)
+        doc.text(recortarAAncho(doc, `Owner: ${own}`, 171), 22, yPos + 3.5)
         yPos += 5
 
         let ownUnd = 0
@@ -639,11 +689,15 @@ export async function generateAndUploadLoadOrderPDF(orderData: any, ordenCargueI
           doc.rect(120, yPos, 30, 5, "S")
           doc.rect(150, yPos, 18, 5, "S")
           doc.rect(168, yPos, 27, 5, "S")
+          // Producto: celda 15..120, texto desde 17 -> 100 mm utiles, dejando
+          // 3 mm de aire antes del borde de Destino. Antes el limite era 103,
+          // que terminaba justo SOBRE la linea divisoria.
           doc.setFontSize(5.5)
-          const prodTxt = doc.splitTextToSize(String(p.producto ?? ""), 103)
-          doc.text(prodTxt[0] || "", 17, yPos + 3.5)
+          doc.text(recortarAAncho(doc, String(p.producto ?? ""), 100), 17, yPos + 3.5)
+          // Destino: celda 120..150, texto desde 122 -> 26 mm utiles. Se recorta
+          // por ancho y no a 14 caracteres, que no garantizaba nada.
           doc.setFontSize(6)
-          doc.text(String(p.destino ?? "").substring(0, 14), 122, yPos + 3.5)
+          doc.text(recortarAAncho(doc, String(p.destino ?? ""), 26), 122, yPos + 3.5)
           const und = Number(p.cantidad) || 0
           const ton = (Number(p.pesoKgs) || 0) / 1000
           doc.text(String(und), 159, yPos + 3.5, { align: "center" })
@@ -659,7 +713,9 @@ export async function generateAndUploadLoadOrderPDF(orderData: any, ordenCargueI
         doc.rect(15, yPos, 180, 5, "FD")
         doc.setFont(undefined as any, "bold")
         doc.setFontSize(6.5)
-        doc.text(`Subtotal ${own}`.substring(0, 60), 20, yPos + 3.5)
+        // Estas filas SI llevan cifras: la de Und. arranca cerca de x=154, asi
+        // que el rotulo se corta a 130 mm (20..150) para no montarse encima.
+        doc.text(recortarAAncho(doc, `Subtotal ${own}`, 130), 20, yPos + 3.5)
         doc.text(String(ownUnd), 159, yPos + 3.5, { align: "center" })
         doc.text(ownTon.toFixed(3), 181, yPos + 3.5, { align: "center" })
         yPos += 5
@@ -674,7 +730,7 @@ export async function generateAndUploadLoadOrderPDF(orderData: any, ordenCargueI
       doc.setFont(undefined as any, "bold")
       doc.setFontSize(7)
       doc.setTextColor(0, 0, 0)
-      doc.text(`Subtotal Cliente ${cli}`.substring(0, 55), 20, yPos + 3.5)
+      doc.text(recortarAAncho(doc, `Subtotal Cliente ${cli}`, 130), 20, yPos + 3.5)
       doc.text(String(cliUnd), 159, yPos + 3.5, { align: "center" })
       doc.text(cliTon.toFixed(3), 181, yPos + 3.5, { align: "center" })
       yPos += 5
