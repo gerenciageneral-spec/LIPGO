@@ -10,8 +10,12 @@ import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { toast } from "@/hooks/use-toast"
-import { Loader2, ClipboardCheck, History, Eye, ChevronLeft, ChevronRight, Pen, Eraser, FileSignature, Download, BarChart3, AlertTriangle, CheckCircle, XCircle, Calendar, Truck } from "lucide-react"
+import { Loader2, ClipboardCheck, History, Eye, ChevronLeft, ChevronRight, Pen, Eraser, FileSignature, Download, BarChart3, AlertTriangle, CheckCircle, XCircle, Calendar, Truck, Check, ChevronsUpDown } from "lucide-react"
 import { savePreoperacional, getPreoperacionalHistory, getPreoperacionalDashboardData } from "@/lib/preoperacional-actions"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
+import { getColaboradoresLite, type ColaboradorLite } from "@/lib/headcount-actions"
+import { cn } from "@/lib/utils"
 import { Progress } from "@/components/ui/progress"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -103,6 +107,9 @@ interface FormState {
   referencia_montacargas: string
   placa: string
   nombre_operador: string
+  // Cedula de la persona seleccionada en el combobox de headcount. Es lo que
+  // permite cruzar la inspeccion contra su marcacion de entrada del dia.
+  identificacion_operador: string
   desviacion_identificada: string
   [key: string]: string | boolean
 }
@@ -114,6 +121,9 @@ interface HistoryRecord {
   referencia_montacargas: string
   placa: string
   nombre_operador: string
+  identificacion_operador: string | null
+  // Hora de entrada del operador ese dia (de `asistencia`). Null si nunca marco.
+  hora_entrada_operador: string | null
   desviacion_identificada: string
   created_at: string
   firma: string | null
@@ -128,10 +138,15 @@ export function RegistroPreoperacional() {
     referencia_montacargas: "",
     placa: "",
     nombre_operador: "",
+    identificacion_operador: "",
     desviacion_identificada: "",
     ...buildInitialBoolState(BOOL_FIELDS_OPERADOR),
     ...buildInitialBoolState(BOOL_FIELDS_INSPECCION),
   })
+
+  // Personal del headcount para el combobox de operador.
+  const [colaboradores, setColaboradores] = useState<ColaboradorLite[]>([])
+  const [operadorComboOpen, setOperadorComboOpen] = useState(false)
 
   const [saving, setSaving] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
@@ -225,6 +240,27 @@ export function RegistroPreoperacional() {
     initCanvas()
   }, [])
 
+  // Personal del headcount de la empresa seleccionada. Se listan TODOS (no se
+  // filtra por estado) porque el preoperacional lo puede diligenciar cualquier
+  // persona, no solo un operador de montacargas activo.
+  useEffect(() => {
+    let cancelado = false
+    const cargarColaboradores = async () => {
+      try {
+        const data = await getColaboradoresLite(selectedEmpresaId)
+        if (!cancelado) setColaboradores(data)
+      } catch (error) {
+        console.error("[v0] Error cargando personal del headcount:", error)
+      }
+    }
+    cargarColaboradores()
+    // Al cambiar de empresa el operador elegido deja de ser valido.
+    setFormData((prev) => ({ ...prev, nombre_operador: "", identificacion_operador: "" }))
+    return () => {
+      cancelado = true
+    }
+  }, [selectedEmpresaId])
+
 const loadHistory = async () => {
   setLoadingHistory(true)
   try {
@@ -279,10 +315,12 @@ const loadHistory = async () => {
   }, [showDashboard, selectedEmpresaId, dashboardDateRange])
 
   const handleSubmit = async () => {
-    if (!formData.nombre_operador || !formData.placa) {
+    // Se exige la identificacion, no solo el nombre: sin cedula no se puede
+    // cruzar la inspeccion contra la marcacion de entrada del dia.
+    if (!formData.identificacion_operador || !formData.placa) {
       toast({
         title: "Campos requeridos",
-        description: "Por favor completa Nombre del Operador y Placa antes de guardar.",
+        description: "Por favor selecciona el Operador y completa la Placa antes de guardar.",
         variant: "destructive",
       })
       return
@@ -385,6 +423,7 @@ const loadHistory = async () => {
         referencia_montacargas: "",
         placa: "",
         nombre_operador: "",
+        identificacion_operador: "",
         desviacion_identificada: "",
         ...buildInitialBoolState(BOOL_FIELDS_OPERADOR),
         ...buildInitialBoolState(BOOL_FIELDS_INSPECCION),
@@ -420,6 +459,62 @@ const loadHistory = async () => {
     } catch {
       return "-"
     }
+  }
+
+  /**
+   * Minutos desde medianoche de la hora de entrada ("HH:MM:SS", hora Colombia).
+   * Devuelve null si no hay marcacion o el formato no es reconocible.
+   */
+  const minutosHoraEntrada = (hora: string | null): number | null => {
+    if (!hora) return null
+    const m = String(hora).match(/^(\d{1,2}):(\d{2})/)
+    if (!m) return null
+    return Number(m[1]) * 60 + Number(m[2])
+  }
+
+  /** Minutos desde medianoche del `created_at` del registro, en hora Colombia. */
+  const minutosDiligenciamiento = (createdAt: string): number | null => {
+    if (!createdAt) return null
+    const fecha = new Date(createdAt)
+    if (Number.isNaN(fecha.getTime())) return null
+    const partes = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "America/Bogota",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(fecha)
+    const h = Number(partes.find((p) => p.type === "hour")?.value)
+    const mi = Number(partes.find((p) => p.type === "minute")?.value)
+    if (Number.isNaN(h) || Number.isNaN(mi)) return null
+    return h * 60 + mi
+  }
+
+  /** "HH:MM" a partir de la hora de entrada cruda. */
+  const formatHoraEntrada = (hora: string | null) => {
+    const min = minutosHoraEntrada(hora)
+    if (min === null) return null
+    return `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`
+  }
+
+  /**
+   * Diferencia entre el diligenciamiento del preoperacional y la entrada de la
+   * persona. Positiva = diligencio DESPUES de entrar (lo normal). Negativa =
+   * diligencio ANTES de marcar entrada, que es justo lo que se quiere detectar.
+   */
+  const diferenciaEntradaVsRegistro = (record: HistoryRecord): number | null => {
+    const entrada = minutosHoraEntrada(record.hora_entrada_operador)
+    const registro = minutosDiligenciamiento(record.created_at)
+    if (entrada === null || registro === null) return null
+    return registro - entrada
+  }
+
+  /** Formatea una diferencia en minutos como "1h 20m" / "45m" / "-15m". */
+  const formatDiferencia = (minutos: number) => {
+    const signo = minutos < 0 ? "-" : ""
+    const abs = Math.abs(minutos)
+    const h = Math.floor(abs / 60)
+    const m = abs % 60
+    return h > 0 ? `${signo}${h}h ${m}m` : `${signo}${m}m`
   }
 
   const openDetail = (record: HistoryRecord) => {
@@ -1148,7 +1243,9 @@ const loadHistory = async () => {
                     <TableHeader>
                       <TableRow>
                         <TableHead className="whitespace-nowrap">Fecha</TableHead>
-                        <TableHead className="whitespace-nowrap">Hora</TableHead>
+                        <TableHead className="whitespace-nowrap">Hora registro</TableHead>
+                        <TableHead className="whitespace-nowrap">Hora entrada</TableHead>
+                        <TableHead className="whitespace-nowrap">Diferencia</TableHead>
                         <TableHead className="whitespace-nowrap">Turno</TableHead>
                         <TableHead className="whitespace-nowrap">Placa</TableHead>
                         <TableHead className="whitespace-nowrap">Operador</TableHead>
@@ -1163,6 +1260,29 @@ const loadHistory = async () => {
                         <TableRow key={record.id}>
                           <TableCell className="text-sm">{formatDate(record.fecha)}</TableCell>
                           <TableCell className="text-sm">{formatTime(record.created_at)}</TableCell>
+                          <TableCell className="text-sm">
+                            {formatHoraEntrada(record.hora_entrada_operador) ?? (
+                              <span className="text-xs text-muted-foreground">Sin marcacion</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            {(() => {
+                              const diff = diferenciaEntradaVsRegistro(record)
+                              if (diff === null) return <span className="text-muted-foreground">-</span>
+                              // Negativa = diligencio el preoperacional ANTES de
+                              // marcar entrada. Se resalta porque es la anomalia.
+                              return (
+                                <span
+                                  className={cn(
+                                    "whitespace-nowrap",
+                                    diff < 0 ? "font-medium text-red-600" : "text-muted-foreground",
+                                  )}
+                                >
+                                  {formatDiferencia(diff)}
+                                </span>
+                              )
+                            })()}
+                          </TableCell>
                           <TableCell className="text-sm">{record.turno || "-"}</TableCell>
                           <TableCell className="text-sm font-medium">{record.placa || "-"}</TableCell>
                           <TableCell className="text-sm">{record.nombre_operador || "-"}</TableCell>
@@ -1299,15 +1419,76 @@ const loadHistory = async () => {
                   />
                 </div>
                 <div className="space-y-1 md:col-span-2">
-                  <Label htmlFor="nombre_operador">Nombre operador</Label>
-                  <Input
-                    id="nombre_operador"
-                    name="nombre_operador"
-                    type="text"
-                    placeholder="Nombre completo del operador"
-                    value={formData.nombre_operador as string}
-                    onChange={(e) => setTextField("nombre_operador", e.target.value)}
-                  />
+                  <Label htmlFor="nombre_operador">Operador</Label>
+                  <Popover open={operadorComboOpen} onOpenChange={setOperadorComboOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        id="nombre_operador"
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={operadorComboOpen}
+                        className="w-full justify-between font-normal"
+                      >
+                        {formData.identificacion_operador ? (
+                          <span className="truncate">
+                            {formData.nombre_operador as string}
+                            <span className="ml-2 text-muted-foreground">
+                              ({formData.identificacion_operador as string})
+                            </span>
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">Selecciona una persona del personal</span>
+                        )}
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                      <Command>
+                        <CommandInput placeholder="Buscar por nombre o cedula..." />
+                        <CommandList>
+                          <CommandEmpty>No se encontro personal.</CommandEmpty>
+                          <CommandGroup>
+                            {colaboradores.map((persona) => (
+                              <CommandItem
+                                key={persona.identificacion}
+                                // El value alimenta el buscador del Command: se
+                                // incluye la cedula para poder filtrar por ella.
+                                value={`${persona.nombre} ${persona.identificacion}`}
+                                onSelect={() => {
+                                  setFormData((prev) => ({
+                                    ...prev,
+                                    nombre_operador: persona.nombre,
+                                    identificacion_operador: persona.identificacion,
+                                  }))
+                                  setOperadorComboOpen(false)
+                                }}
+                              >
+                                <Check
+                                  className={cn(
+                                    "mr-2 h-4 w-4 shrink-0",
+                                    formData.identificacion_operador === persona.identificacion
+                                      ? "opacity-100"
+                                      : "opacity-0",
+                                  )}
+                                />
+                                <span className="flex min-w-0 flex-col">
+                                  <span className="truncate">{persona.nombre}</span>
+                                  <span className="text-xs text-muted-foreground">
+                                    {persona.identificacion}
+                                    {persona.cargo ? ` · ${persona.cargo}` : ""}
+                                  </span>
+                                </span>
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                  <p className="text-xs text-muted-foreground">
+                    Al guardar se captura la hora de entrada de esta persona para comparar contra la
+                    hora de diligenciamiento.
+                  </p>
                 </div>
               </div>
             </CardContent>

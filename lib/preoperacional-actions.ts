@@ -3,6 +3,74 @@
 import { createClient } from "@/lib/supabase/server"
 import { getCurrentEmpresaId } from "@/lib/company-filter"
 
+/**
+ * Normaliza a "HH:MM:SS" lo que devuelva `asistencia.hora`.
+ *
+ * /api/attendance/register escribe esa columna como string "HH:MM:SS", pero el
+ * script de creacion la declara TIMESTAMPTZ, asi que segun como haya quedado el
+ * tipo real en produccion puede volver como "14:30:00" o como un timestamp
+ * completo. Se soportan ambos en vez de asumir uno.
+ */
+function normalizarHora(valor: unknown): string | null {
+  if (valor === null || valor === undefined) return null
+  const texto = String(valor).trim()
+  if (!texto) return null
+
+  // Ya viene como hora suelta: "14:30" o "14:30:00".
+  const soloHora = texto.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/)
+  if (soloHora) {
+    const [, h, m, s] = soloHora
+    return `${h.padStart(2, "0")}:${m}:${s ?? "00"}`
+  }
+
+  // Timestamp completo: se lee en hora de Colombia, que es la zona en la que
+  // se captura la marcacion.
+  const fecha = new Date(texto)
+  if (!Number.isNaN(fecha.getTime())) {
+    return fecha.toLocaleTimeString("en-GB", {
+      timeZone: "America/Bogota",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    })
+  }
+
+  return null
+}
+
+/** Fecha comparable "YYYY-MM-DD" a partir de un date o timestamp. */
+function soloFecha(valor: unknown): string {
+  return String(valor ?? "").slice(0, 10)
+}
+
+/**
+ * Hora de entrada del dia de una persona. `asistencia` es la fuente de verdad
+ * del ingreso diario (una fila por persona/dia); se consulta con la misma forma
+ * de query que usa /api/attendance/register.
+ */
+async function buscarHoraEntrada(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  empresaId: number | null | undefined,
+  identificacion: string,
+  fecha: string,
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("asistencia")
+    .select("hora")
+    .eq("idempresa", empresaId)
+    .eq("identificacion", identificacion)
+    .eq("fecha", fecha)
+    .limit(1)
+
+  if (error) {
+    console.error("[v0] Error consultando hora de entrada en asistencia:", error)
+    return null
+  }
+
+  return normalizarHora(data?.[0]?.hora)
+}
+
 export async function savePreoperacional(formData: Record<string, unknown>, selectedEmpresaId?: number | null) {
   try {
     const supabase = await createClient()
@@ -23,8 +91,19 @@ export async function savePreoperacional(formData: Record<string, unknown>, sele
       firmaIn ? String(firmaIn).length : 0,
     )
 
+    // Hora de entrada del operador: FOTO tomada al guardar. Si la persona
+    // todavia no ha marcado entrada queda null (caso valido y relevante para el
+    // negocio: diligencio el preoperacional sin marcar). El Historial resuelve
+    // esos nulos al leer, por si la marcacion llega despues.
+    const identificacionOperador = String((formData as any).identificacion_operador ?? "").trim()
+    const horaEntrada = identificacionOperador
+      ? await buscarHoraEntrada(supabase, empresaId, identificacionOperador, colombiaDate)
+      : null
+
     const payload = {
       ...formData,
+      identificacion_operador: identificacionOperador || null,
+      hora_entrada_operador: horaEntrada,
       fecha: colombiaDate,
       idempresa: empresaId,
     }
@@ -68,7 +147,43 @@ export async function getPreoperacionalHistory(selectedEmpresaId?: number | null
       return { success: false, error: error.message, data: [] }
     }
 
-    return { success: true, data: data || [] }
+    const registros = data || []
+
+    // Resolver la hora de entrada que quedo en null al guardar. Pasa cuando el
+    // preoperacional se diligencio ANTES de que la persona marcara entrada: la
+    // foto salio vacia, pero la marcacion ya existe. Se resuelve al leer para
+    // que el Historial no muestre un hueco permanente.
+    const porResolver = registros.filter(
+      (r: any) => r.identificacion_operador && !r.hora_entrada_operador,
+    )
+
+    if (porResolver.length > 0) {
+      const identificaciones = [...new Set(porResolver.map((r: any) => r.identificacion_operador))]
+      const fechas = [...new Set(porResolver.map((r: any) => r.fecha))]
+
+      const { data: marcaciones, error: errorAsistencia } = await supabase
+        .from("asistencia")
+        .select("identificacion, fecha, hora")
+        .eq("idempresa", empresaId)
+        .in("identificacion", identificaciones)
+        .in("fecha", fechas)
+
+      if (errorAsistencia) {
+        // No bloquea el historial: se muestra sin la hora de entrada.
+        console.error("[v0] Error resolviendo horas de entrada del historial:", errorAsistencia)
+      } else {
+        const porClave = new Map<string, string | null>()
+        for (const m of marcaciones ?? []) {
+          porClave.set(`${m.identificacion}|${soloFecha(m.fecha)}`, normalizarHora(m.hora))
+        }
+        for (const r of porResolver) {
+          const hora = porClave.get(`${(r as any).identificacion_operador}|${soloFecha((r as any).fecha)}`)
+          if (hora) (r as any).hora_entrada_operador = hora
+        }
+      }
+    }
+
+    return { success: true, data: registros }
   } catch (error) {
     console.error("[v0] Unexpected error in getPreoperacionalHistory:", error)
     return { success: false, error: "Error al cargar historial", data: [] }
