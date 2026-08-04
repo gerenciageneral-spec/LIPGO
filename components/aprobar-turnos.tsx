@@ -36,6 +36,10 @@ interface SolicitudTurno {
 interface PersonaHeadcount {
   id: number
   nombre: string
+  // Cedula. Se conserva (antes se descartaba al mapear la respuesta de
+  // /api/headcount) porque es la llave con la que se programan las horas
+  // extra por persona y se cruzan luego contra `registroasistencia`.
+  identificacion: string
 }
 
 export function AprobarTurnos() {
@@ -121,7 +125,13 @@ export function AprobarTurnos() {
       const response = await fetch(`/api/headcount?empresaId=${selectedEmpresaId}`)
       if (response.ok) {
         const data = await response.json()
-        setAvailablePersonnel(data.map((p: { id: number; nombre: string }) => ({ id: p.id, nombre: p.nombre })))
+        setAvailablePersonnel(
+          data.map((p: { id: number; nombre: string; identificacion?: string | null }) => ({
+            id: p.id,
+            nombre: p.nombre,
+            identificacion: String(p.identificacion ?? ""),
+          })),
+        )
       }
     } catch (error) {
       console.error("[v0] Error loading personnel:", error)
@@ -349,14 +359,35 @@ export function AprobarTurnos() {
       // Build personal string (comma separated)
       const personalString = selectedPersonnel.length > 0 ? selectedPersonnel.join(", ") : undefined
 
+      // Mismo personal pero con cedula, para programar las horas extra por
+      // persona. `selectedPersonnel` guarda solo nombres (los usa el PDF y el
+      // detalle), asi que la cedula se resuelve contra el listado de headcount.
+      const personalDetalle = selectedPersonnel.map((nombre) => ({
+        nombre,
+        identificacion: availablePersonnel.find((p) => p.nombre === nombre)?.identificacion ?? "",
+      }))
+
       const result = await aprobarSolicitudes({
         ids: selectedIds,
         nombreaprobo: nombreAprobador.trim(),
         firmaaprobo: firmaUrl,
         personal: personalString,
+        personalDetalle,
       })
 
       if (result.success) {
+        // La aprobacion pudo quedar registrada pero SIN programar las horas
+        // extra por persona (o sin personal asignado). Se avisa en pantalla en
+        // vez de dejarlo solo en el log: si no se programan, el modulo de
+        // Aprobacion de horas extra las mostrara como "no programadas".
+        for (const advertencia of result.advertencias ?? []) {
+          toast({
+            title: "Horas extra sin programar",
+            description: advertencia,
+            variant: "destructive",
+          })
+        }
+
         // Generate PDF
         const aprobadas = solicitudes.filter(s => selectedIds.includes(s.id))
         const pdfResult = await generatePDF(aprobadas, firmaUrl, selectedPersonnel)

@@ -119,11 +119,43 @@ export async function getSolicitudesPendientes(selectedEmpresaId?: number | null
   }
 }
 
+/** Persona asignada por el coordinador a una solicitud. */
+export interface PersonaAsignada {
+  nombre: string
+  /** Cedula. Es la llave del cruce contra `registroasistencia`. */
+  identificacion: string
+}
+
 interface AprobarSolicitudesParams {
   ids: number[]
   nombreaprobo: string
   firmaaprobo: string | null
-  personal?: string // Lista de personas separadas por coma
+  personal?: string // Lista de personas separadas por coma (columna `personal`)
+  /**
+   * Mismo personal que `personal`, pero con la cedula de cada uno. Es lo que
+   * permite programar las horas extra por persona. Se mantiene `personal`
+   * aparte porque el PDF y el detalle de la solicitud ya leen esa columna.
+   */
+  personalDetalle?: PersonaAsignada[]
+}
+
+/** Normaliza para comparar (sin tildes, minusculas, espacios colapsados). */
+function normalizarTexto(valor: unknown): string {
+  return String(valor ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+}
+
+/**
+ * Una solicitud es de horas extra cuando su `tipo` es "Horas Extra". El valor
+ * por defecto de la UI es "Turnos", asi que un `tipo` vacio NO es horas extra.
+ * Mismo criterio que usa la vista `solicitud_horas_extras`.
+ */
+function esHorasExtra(tipo: unknown): boolean {
+  return normalizarTexto(tipo || "Turnos") === "horas extra"
 }
 
 export async function aprobarSolicitudes(params: AprobarSolicitudesParams) {
@@ -147,6 +179,17 @@ export async function aprobarSolicitudes(params: AprobarSolicitudesParams) {
       updateData.personal = params.personal
     }
 
+    // Cedulas del personal asignado, en el MISMO orden que `personal`. La
+    // vista `solicitud_horas_extras` las alinea por posicion para exponer
+    // `identificacion_empleado`, que es con lo que el modulo de horas extra
+    // cruza contra `registroasistencia` (el cruce por nombre queda de
+    // respaldo para lo aprobado antes de este cambio).
+    if (params.personalDetalle && params.personalDetalle.length > 0) {
+      updateData.personal_identificaciones = params.personalDetalle
+        .map((p) => (p.identificacion || "").trim())
+        .join(", ")
+    }
+
     const { data, error } = await supabase
       .from("solicitudesturnos")
       .update(updateData)
@@ -158,7 +201,26 @@ export async function aprobarSolicitudes(params: AprobarSolicitudesParams) {
       return { success: false, message: error.message }
     }
 
-    return { success: true, data }
+    // El reparto de las horas entre el personal NO se hace aqui: lo resuelve la
+    // vista `solicitud_horas_extras` a partir de `personal` y `cantidad` (ver
+    // scripts/create_solicitud_horas_extras.sql). Hacerlo en la vista corrige
+    // ademas, de forma retroactiva, todas las solicitudes ya aprobadas.
+    //
+    // Lo unico que se advierte aqui es el caso en que unas horas extra se
+    // aprueben SIN personal asignado: la vista no puede repartir entre nadie,
+    // asi que esa solicitud no llega al modulo de horas extra.
+    const advertencias: string[] = []
+    const sinPersonal =
+      (params.personalDetalle?.length ?? 0) === 0 &&
+      (data ?? []).some((s: any) => esHorasExtra(s.tipo))
+
+    if (sinPersonal) {
+      advertencias.push(
+        "Se aprobaron solicitudes de horas extra sin personal asignado, asi que no quedaran programadas por persona.",
+      )
+    }
+
+    return { success: true, data, advertencias }
   } catch (error) {
     console.error("[v0] Unexpected error:", error)
     return { success: false, message: "Error inesperado al aprobar las solicitudes" }

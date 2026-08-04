@@ -81,10 +81,12 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Error al obtener registros" }, { status: 500 })
     }
 
-    // 2) Programación de horas extra para esa empresa/fecha.
+    // 2) Programación de horas extra para esa empresa/fecha. Cada fila es UNA
+    // persona con las horas que le tocaron del reparto que hizo la aprobación
+    // del coordinador (ver lib/solicitud-turnos-actions.ts).
     const { data: solicitudes, error: solicitudesError } = await supabase
       .from("solicitud_horas_extras")
-      .select("fecharequerida, idempresa, nombre_empleado, cantidad")
+      .select("fecharequerida, idempresa, nombre_empleado, identificacion_empleado, cantidad")
       .eq("fecharequerida", fecha)
       .eq("idempresa", empresaId)
 
@@ -95,13 +97,21 @@ export async function GET(request: Request) {
       console.error("[v0] Error fetching solicitud_horas_extras:", solicitudesError)
     }
 
-    // Indexamos las solicitudes por nombre normalizado para un cruce O(1).
+    // Indexamos la programación para un cruce O(1). Se indexa por CEDULA y,
+    // como respaldo, por nombre normalizado: la cédula es la llave confiable,
+    // pero las filas creadas antes de que se empezara a guardar no la tienen.
+    const programadasPorCedula = new Map<string, number>()
     const programadasPorNombre = new Map<string, number>()
     for (const s of solicitudes || []) {
-      const key = normalizar((s as any).nombre_empleado)
       const cantidad = Number((s as any).cantidad) || 0
       // Si hay varias solicitudes para el mismo empleado, acumulamos.
-      programadasPorNombre.set(key, (programadasPorNombre.get(key) || 0) + cantidad)
+      const cedula = normalizar((s as any).identificacion_empleado)
+      if (cedula) {
+        programadasPorCedula.set(cedula, (programadasPorCedula.get(cedula) || 0) + cantidad)
+      } else {
+        const nombre = normalizar((s as any).nombre_empleado)
+        programadasPorNombre.set(nombre, (programadasPorNombre.get(nombre) || 0) + cantidad)
+      }
     }
 
     // 3) Filtramos para quedarnos solo con registros donde AL MENOS uno
@@ -125,13 +135,18 @@ export async function GET(request: Request) {
         (Number(r.hef) || 0) +
         (Number(r.hn) || 0)
 
-      const key = normalizar(r.nombre)
-      const tieneSolicitud = programadasPorNombre.has(key)
-      const cantidadProgramada = tieneSolicitud ? programadasPorNombre.get(key)! : 0
+      // Cruce por cédula primero (llave confiable); si esa persona no aparece
+      // por cédula, se intenta por nombre para no perder la programación
+      // creada antes de que se guardara la cédula.
+      const cedula = normalizar(r.identificacion)
+      const nombre = normalizar(r.nombre)
+      const porCedula = cedula ? programadasPorCedula.get(cedula) : undefined
+      const porNombre = programadasPorNombre.get(nombre)
+      const cantidadProgramada = porCedula ?? porNombre ?? 0
 
       // "Hora extra no programada": el empleado ejecutó horas extra pero
       // no existe una solicitud programada que lo respalde.
-      const programada = tieneSolicitud
+      const programada = porCedula !== undefined || porNombre !== undefined
 
       return {
         ...r,
