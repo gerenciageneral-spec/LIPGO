@@ -17,6 +17,7 @@ import {
   Layers,
   ShieldCheck,
   Banknote,
+  GraduationCap,
 } from "lucide-react"
 import Image from "next/image"
 import type { GroupKey, Module, Subgroup } from "@/lib/dashboard-data"
@@ -293,7 +294,11 @@ export function Sidebar({
         // (`permissionsLoaded` false) para evitar parpadeos.
         // Grupos exentos del filtro de modulo protegido: contienen solo
         // modulos no protegidos que deben verse para todos (Fase 1).
-        const GRUPOS_SIN_FILTRO_PROTEGIDO: GroupKey[] = ["certificaciones_lip"]
+        // "aprendizaje" es la guia de usuario: su unico modulo no esta
+        // protegido a proposito (debe verlo todo el mundo), asi que sin esta
+        // exencion el filtro de "al menos un modulo protegido permitido"
+        // ocultaria el grupo entero para todos.
+        const GRUPOS_SIN_FILTRO_PROTEGIDO: GroupKey[] = ["certificaciones_lip", "aprendizaje"]
         if (permissionsLoaded && !GRUPOS_SIN_FILTRO_PROTEGIDO.includes(group.key)) {
           const allModulesInGroup = [
             ...(filteredModules ?? []),
@@ -337,6 +342,8 @@ export function Sidebar({
     { key: "certificaciones_lip" as GroupKey, label: "Certificaciones · SIG", icon: BadgeCheck },
     { key: "sst" as GroupKey, label: "Seguridad y Salud (SST)", icon: ShieldCheck },
     { key: "configuracion" as GroupKey, label: "Configuración", icon: Settings },
+    // Guia de usuario: va de ultimo porque es soporte, no operacion.
+    { key: "aprendizaje" as GroupKey, label: "Aprendizaje", icon: GraduationCap },
   ]
 
   // Filtra los items del menu superior para ocultar los grupos cuyos
@@ -362,6 +369,7 @@ export function Sidebar({
     certificaciones_lip: "#f0876a",
     sst: "#e0564e",
     configuracion: "#9aa6b3",
+    aprendizaje: "#7fb2f0",
   }
 
   // Color del héroe = tinte del área activa (o cian de marca en Inicio). Alimenta

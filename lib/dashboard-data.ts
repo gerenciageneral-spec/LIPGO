@@ -22,6 +22,12 @@ export interface Group {
 }
 
 export type GroupKey =
+  // Guia de usuario. Es el UNICO grupo cuyo modulo no esta protegido por
+  // permisos a proposito: "Aprendizaje" debe verlo todo el mundo. Lo que se
+  // filtra por permisos es su CONTENIDO, no el acceso al modulo. Por eso
+  // tambien esta exento del filtro de grupo en `components/sidebar.tsx`
+  // (GRUPOS_SIN_FILTRO_PROTEGIDO).
+  | "aprendizaje"
   | "pedidos"
   | "inventarios"
   | "produccion"
@@ -35,6 +41,18 @@ export type GroupKey =
   | "despachos"
   | "mrp"
   | "financiera"
+
+/**
+ * Modulo "Aprendizaje" (guia de usuario): EN CONSTRUCCION, oculto del menu.
+ *
+ * El catalogo (lib/aprendizaje-content.ts), el componente
+ * (components/aprendizaje.tsx) y el chequeo de cobertura
+ * (scripts/check-aprendizaje.mjs) ya existen y funcionan, pero el modulo no se
+ * muestra todavia. Poner en `true` para publicarlo: el sidebar lo toma solo de
+ * aqui (el item del menu superior se filtra contra los grupos visibles), asi
+ * que esta constante es el unico interruptor.
+ */
+const APRENDIZAJE_HABILITADO = false
 
 export const groups: Group[] = [
   {
@@ -530,4 +548,19 @@ export const groups: Group[] = [
       { name: "Saldos de materia prima", icon: Package2 },
     ],
   },
+  // Guia de usuario. Universal a proposito: "Aprendizaje" NO se registra en
+  // MODULE_PERMISSION_MAP, asi que cuando se habilite el sidebar lo mostrara a
+  // todos. El modulo filtra internamente su contenido contra /api/user-modules
+  // para que cada usuario solo lea la guia de los modulos que si puede abrir.
+  // Mientras `APRENDIZAJE_HABILITADO` sea false, el grupo no entra al menu.
+  ...(APRENDIZAJE_HABILITADO
+    ? [
+        {
+          key: "aprendizaje" as GroupKey,
+          title: "Aprendizaje",
+          icon: GraduationCap,
+          modules: [{ name: "Aprendizaje", icon: BookOpen }],
+        },
+      ]
+    : []),
 ]

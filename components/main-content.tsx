@@ -46,6 +46,7 @@ import { Picking } from "@/components/picking"
 import { Packing } from "@/components/packing"
 import DashboardOperacion from "@/components/dashboard-operacion"
 import { BatchHistory } from "@/components/batch-history"
+import { Aprendizaje } from "@/components/aprendizaje" // Guia de usuario (modulo universal, sin permiso)
 import { ProductionEntriesView } from "@/components/production-entries-view"
 import InventoryAudit from "@/components/inventory-audit"
 import { SanitaryInspectionHistory } from "@/components/sanitary-inspection-history"
@@ -1073,6 +1074,11 @@ export function MainContent({
                 <AsistenteIA onNavigate={onNavigateModule} onOpenGroup={onOpenGroup} />
               </div>
             </PermissionGuard>
+          ) : selectedModule === "Aprendizaje" ? (
+            // Guia de usuario: universal a proposito, SIN PermissionGuard. El
+            // filtrado por permisos ocurre dentro del modulo, sobre el
+            // contenido (solo se documenta lo que el usuario puede abrir).
+            <Aprendizaje />
           ) : configDef ? (
             <PermissionGuard moduleName={selectedModule || "Configuración"}>
               <GenericCrudTable moduleDef={configDef} />
