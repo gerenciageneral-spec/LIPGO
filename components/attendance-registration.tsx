@@ -49,13 +49,20 @@ export default function AttendanceRegistration() {
     return () => clearInterval(id)
   }, [])
 
-  // CÁMARA SIEMPRE ACTIVA: se enciende al entrar al módulo y captura una foto
-  // automáticamente en cada marcación (ingreso y salida). Falla-segura: si el
-  // navegador niega el permiso o no hay cámara, la marcación funciona igual sin foto.
+  // CÁMARA OBLIGATORIA: se enciende al entrar al módulo y captura una foto en
+  // cada marcación. Si no hay cámara, no hay permiso, o la foto no se puede
+  // tomar, NO se permite marcar. (Antes era falla-segura y registraba sin foto.)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  // Ultima foto capturada. Sirve para detectar una camara CONGELADA: si el
+  // frame nuevo sale byte a byte identico al anterior, el video no esta
+  // avanzando (autoplay bloqueado, pestaña en segundo plano, equipo
+  // suspendido) y todas las personas terminarian con la MISMA foto.
+  const ultimaFotoRef = useRef<string | null>(null)
   const [camaraOk, setCamaraOk] = useState(false)
+  const [camaraError, setCamaraError] = useState<string | null>(null)
+
   useEffect(() => {
     let cancelado = false
     ;(async () => {
@@ -71,36 +78,110 @@ export default function AttendanceRegistration() {
         streamRef.current = stream
         if (videoRef.current) {
           videoRef.current.srcObject = stream
-          await videoRef.current.play().catch(() => {})
+          // El error de play() ya NO se traga en silencio: si el autoplay
+          // queda bloqueado el video se congela y esa era justamente la causa
+          // de que varias personas salieran con la misma foto.
+          await videoRef.current.play().catch((err) => {
+            console.warn("[v0] video.play() fallo en asistencia:", err)
+          })
         }
         setCamaraOk(true)
-      } catch (e) {
+        setCamaraError(null)
+      } catch (e: any) {
         console.warn("[v0] Cámara no disponible para asistencia:", e)
         setCamaraOk(false)
+        setCamaraError(
+          e?.name === "NotAllowedError" || e?.name === "SecurityError"
+            ? "Permiso de cámara denegado. Habilítelo en el navegador para poder marcar."
+            : "No se detectó ninguna cámara disponible en este equipo.",
+        )
       }
     })()
+
+    // En un kiosko la pestaña puede quedar en segundo plano o el equipo
+    // suspenderse; al volver, el <video> queda pausado en el ultimo frame. Se
+    // reanuda para que la siguiente foto no sea la misma de antes.
+    const alVolverAlFrente = () => {
+      if (document.visibilityState !== "visible") return
+      const v = videoRef.current
+      if (v && v.paused) v.play().catch(() => {})
+    }
+    document.addEventListener("visibilitychange", alVolverAlFrente)
+
     return () => {
       cancelado = true
+      document.removeEventListener("visibilitychange", alVolverAlFrente)
       streamRef.current?.getTracks().forEach((t) => t.stop())
       streamRef.current = null
     }
   }, [])
 
-  // Captura un frame del video como JPEG comprimido (dataURL). null si no hay cámara.
-  const capturarFoto = (): string | null => {
+  type ResultadoFoto = { ok: true; dataUrl: string } | { ok: false; motivo: string }
+
+  /**
+   * Captura un frame del video como JPEG comprimido.
+   *
+   * Antes de capturar verifica que la camara este VIVA, y despues verifica que
+   * el frame no sea identico al anterior. Sin esas dos comprobaciones un video
+   * congelado devolvia la misma imagen una y otra vez, que es el bug de
+   * "varias personas con exactamente la misma foto".
+   */
+  const capturarFoto = async (): Promise<ResultadoFoto> => {
     const video = videoRef.current
     const canvas = canvasRef.current
-    if (!video || !canvas || !video.videoWidth) return null
+    if (!video || !canvas) return { ok: false, motivo: "La cámara no está inicializada." }
+
+    const track = streamRef.current?.getVideoTracks()?.[0]
+    if (!track || track.readyState !== "live") {
+      return { ok: false, motivo: "La cámara se desconectó. Recargue la página." }
+    }
+    if (track.muted) {
+      return {
+        ok: false,
+        motivo: "La cámara está en pausa. Verifique que no la esté usando otra aplicación.",
+      }
+    }
+
+    // Si el video quedo pausado, se intenta reanudar antes de darlo por perdido.
+    if (video.paused) {
+      await video.play().catch(() => {})
+    }
+
+    // readyState < 2 (HAVE_CURRENT_DATA) = todavia no hay un frame disponible.
+    if (video.paused || video.readyState < 2 || !video.videoWidth) {
+      return {
+        ok: false,
+        motivo: "La cámara aún no está lista. Espere un momento e intente de nuevo.",
+      }
+    }
+
     canvas.width = video.videoWidth
     canvas.height = video.videoHeight
     const ctx = canvas.getContext("2d")
-    if (!ctx) return null
+    if (!ctx) return { ok: false, motivo: "No se pudo procesar la imagen de la cámara." }
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+
+    let dataUrl: string
     try {
-      return canvas.toDataURL("image/jpeg", 0.6)
+      dataUrl = canvas.toDataURL("image/jpeg", 0.6)
     } catch {
-      return null
+      return { ok: false, motivo: "No se pudo procesar la imagen de la cámara." }
     }
+    if (!dataUrl.startsWith("data:image")) {
+      return { ok: false, motivo: "No se pudo procesar la imagen de la cámara." }
+    }
+
+    // Camara congelada: dos frames de una camara real nunca salen byte a byte
+    // iguales (siempre hay ruido de sensor). Si coinciden, el video no avanza.
+    if (ultimaFotoRef.current === dataUrl) {
+      return {
+        ok: false,
+        motivo: "La imagen de la cámara está congelada. Recargue la página antes de volver a marcar.",
+      }
+    }
+
+    ultimaFotoRef.current = dataUrl
+    return { ok: true, dataUrl }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -121,6 +202,14 @@ export default function AttendanceRegistration() {
     setMessage(null)
 
     try {
+      // La foto es REQUISITO: se captura ANTES de consultar al servidor para
+      // fallar rapido y no gastar el viaje si igual no se va a poder marcar.
+      const foto = await capturarFoto()
+      if (!foto.ok) {
+        setMessage({ type: "error", text: `No se puede marcar sin foto. ${foto.motivo}` })
+        return
+      }
+
       // First, check if person exists and is active (y si ya tiene una
       // novedad registrada hoy, que bloquea la marcacion).
       const checkResponse = await fetch("/api/attendance/check", {
@@ -146,7 +235,7 @@ export default function AttendanceRegistration() {
         body: JSON.stringify({
           identificacion: identificacion.trim(),
           idempresa: selectedEmpresaId,
-          foto: capturarFoto(),
+          foto: foto.dataUrl,
         }),
       })
 
@@ -198,13 +287,20 @@ export default function AttendanceRegistration() {
     setMessage(null)
 
     try {
+      // Misma regla que en la entrada: sin foto valida no se registra salida.
+      const foto = await capturarFoto()
+      if (!foto.ok) {
+        setMessage({ type: "error", text: `No se puede marcar sin foto. ${foto.motivo}` })
+        return
+      }
+
       const response = await fetch("/api/attendance/register-departure", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           identificacion: identificacion.trim(),
           idempresa: selectedEmpresaId,
-          foto: capturarFoto(),
+          foto: foto.dataUrl,
         }),
       })
 
@@ -304,15 +400,33 @@ export default function AttendanceRegistration() {
                   className="h-full w-full object-cover"
                 />
                 {!camaraOk && (
-                  <div className="absolute inset-0 flex items-center justify-center px-2 text-center text-[10px] text-white/80">
-                    Cámara no disponible (la marcación funciona igual)
+                  <div className="absolute inset-0 flex items-center justify-center px-2 text-center text-[10px] font-medium text-white">
+                    Cámara no disponible — no se puede marcar
                   </div>
                 )}
               </div>
-              <span className="mt-2 flex items-center gap-1 text-[11px] text-muted-foreground">
-                <span className={cn("h-2 w-2 rounded-full", camaraOk ? "bg-green-500 animate-pulse" : "bg-muted-foreground/40")} />
+              <span
+                className={cn(
+                  "mt-2 flex items-center gap-1 text-[11px]",
+                  camaraOk ? "text-muted-foreground" : "text-destructive font-medium",
+                )}
+              >
+                <span
+                  className={cn(
+                    "h-2 w-2 rounded-full",
+                    camaraOk ? "bg-green-500 animate-pulse" : "bg-destructive",
+                  )}
+                />
                 {camaraOk ? "Cámara activa — se tomará foto al marcar" : "Sin cámara"}
               </span>
+              {/* La foto es obligatoria: si la camara no esta disponible se
+                  explica QUE hacer, en vez de dejar los botones muertos sin
+                  motivo aparente. */}
+              {!camaraOk && camaraError && (
+                <p className="mt-1 max-w-xs text-center text-[11px] text-destructive">
+                  {camaraError}
+                </p>
+              )}
               <canvas ref={canvasRef} className="hidden" />
             </div>
 
@@ -357,7 +471,8 @@ export default function AttendanceRegistration() {
                 {/* ENTRADA - verde */}
                 <Button
                   type="submit"
-                  disabled={loading || !docOk}
+                  // Sin camara no se puede marcar: la foto es obligatoria.
+                  disabled={loading || !docOk || !camaraOk}
                   className={cn(
                     "group relative h-32 sm:h-36 rounded-2xl border-2 transition-all",
                     "flex flex-col items-center justify-center gap-2",
@@ -398,7 +513,8 @@ export default function AttendanceRegistration() {
                 {/* SALIDA - rojo */}
                 <Button
                   type="button"
-                  disabled={loading || !docOk}
+                  // Sin camara no se puede marcar: la foto es obligatoria.
+                  disabled={loading || !docOk || !camaraOk}
                   onClick={handleRegisterDeparture}
                   className={cn(
                     "group relative h-32 sm:h-36 rounded-2xl border-2 transition-all",

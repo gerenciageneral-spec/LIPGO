@@ -16,6 +16,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Datos incompletos" }, { status: 400 })
     }
 
+    // La FOTO es obligatoria para marcar. El cliente ya lo valida, pero este
+    // endpoint es la frontera real: sin esta comprobacion se podria registrar
+    // asistencia sin foto llamandolo directamente.
+    if (typeof foto !== "string" || !foto.startsWith("data:image")) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "No se puede registrar la asistencia sin la foto de la cámara.",
+        },
+        { status: 400 },
+      )
+    }
+
     const supabase = createServerClient()
 
     const now = new Date()

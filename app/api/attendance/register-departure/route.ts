@@ -36,6 +36,15 @@ export async function POST(request: Request) {
       )
     }
 
+    // Misma regla que en la entrada: la foto es obligatoria para marcar y este
+    // endpoint es la frontera real, no el cliente.
+    if (typeof foto !== "string" || !foto.startsWith("data:image")) {
+      return NextResponse.json(
+        { success: false, message: "No se puede registrar la salida sin la foto de la cámara." },
+        { status: 400 },
+      )
+    }
+
     const supabase = createServerClient()
 
     // Fecha y hora actuales en zona horaria de Colombia. Usamos `en-CA`
