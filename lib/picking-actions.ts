@@ -54,6 +54,12 @@ export interface PickingItem {
   stock_restante?: number
   status?: string
   codproducto?: string
+  /**
+   * true cuando ese producto/lote/location tiene existencias en estibas con QR.
+   * En ese caso la linea DEBE verificarse escaneando: descontarla a mano
+   * dejaria la salida sin `qrestiba` y el stock intacto en la estiba.
+   */
+  tieneStockQR?: boolean
 }
 
 export interface QRPalletInfo {
@@ -63,6 +69,58 @@ export interface QRPalletInfo {
   lote: string
   location: string
   stock_total: number
+}
+
+// ---------------------------------------------------------------------------
+// Inventario en estibas con QR
+// ---------------------------------------------------------------------------
+
+/** Clave normalizada producto|lote|location para cruzar contra las estibas. */
+function claveQR(cod: unknown, lote: unknown, loc: unknown): string {
+  return [cod, lote, loc]
+    .map((v) => String(v ?? "").trim().toLowerCase())
+    .join("|")
+}
+
+/**
+ * Devuelve las claves producto|lote|location que TIENEN stock en estibas
+ * identificadas con QR.
+ *
+ * Para que sirve: si el stock de una linea de picking vive en estibas con QR y
+ * se descuenta SIN escanear, la salida queda sin `qrestiba` y el inventario por
+ * estiba no se mueve — o sea, la estiba conserva un stock que fisicamente ya
+ * salio. Ese descuadre es el que este chequeo evita.
+ *
+ * FALLA-ABIERTO a proposito: si la consulta a la vista falla, se devuelve un
+ * set vacio y el picking NO se bloquea. Bloquear toda la operacion por un fallo
+ * de lectura seria peor que el descuadre que se intenta prevenir; queda el log
+ * para diagnosticarlo.
+ */
+async function clavesConStockQR(
+  supabase: any,
+  filas: { codproducto?: string | null; lote?: string | null; location?: string | null }[],
+): Promise<Set<string>> {
+  const codigos = Array.from(
+    new Set(filas.map((f) => String(f.codproducto ?? "").trim()).filter(Boolean)),
+  )
+  if (codigos.length === 0) return new Set()
+
+  const { data, error } = await supabase
+    .from("view_inventario_por_estiba")
+    .select("codproducto, lote, location, stock_total")
+    .in("codproducto", codigos)
+
+  if (error) {
+    console.error("[v0] Error consultando inventario por estiba:", error)
+    return new Set()
+  }
+
+  const claves = new Set<string>()
+  for (const r of data || []) {
+    if ((Number(r.stock_total) || 0) <= 0) continue
+    claves.add(claveQR(r.codproducto, r.lote, r.location))
+  }
+  return claves
 }
 
 export async function searchPalletByQR(qrCode: string) {
@@ -584,10 +642,20 @@ export async function getPickingItems(ordenCargue: string) {
   const itemsWithStock = await Promise.all(normalRows.map(withStock))
   const alternosWithStock = await Promise.all(alternoRows.map(withStock))
 
+  // `tieneStockQR`: esa combinacion producto/lote/location tiene existencias en
+  // estibas identificadas. La UI lo usa para forzar la verificacion por QR y no
+  // dejar descontar a mano algo que vive en una estiba (ver `clavesConStockQR`).
+  // El bloqueo real igual se revalida en `confirmPicking`.
+  const conQR = await clavesConStockQR(supabase, [...itemsWithStock, ...alternosWithStock])
+  const marcar = (item: any) => ({
+    ...item,
+    tieneStockQR: conQR.has(claveQR(item.codproducto, item.lote, item.location)),
+  })
+
   return {
     success: true,
-    data: itemsWithStock,
-    alternos: alternosWithStock,
+    data: itemsWithStock.map(marcar),
+    alternos: alternosWithStock.map(marcar),
     message: "Productos cargados exitosamente",
   }
 }
@@ -866,6 +934,53 @@ export async function confirmPicking(
   }
 
   try {
+    // -----------------------------------------------------------------------
+    // BLOQUEO: no dejar descontar SIN QR un stock que vive en estibas con QR.
+    //
+    // Si se aprueba la linea a mano, la salida queda sin `qrestiba` y el
+    // inventario por estiba no se mueve: la estiba conserva un stock que ya
+    // salio fisicamente. Se valida ANTES de tocar nada — `confirmPicking` no
+    // corre en una transaccion, asi que abortar a mitad dejaria el picking
+    // partido.
+    // -----------------------------------------------------------------------
+    const idsSinQR: number[] = []
+    for (const item of items) {
+      const conNormal = !!(item.qrScans && item.qrScans.length > 0)
+      const conAlternoQR = !!(item.alternoScans && item.alternoScans.length > 0)
+      // La linea principal solo genera una salida sin QR cuando no se escaneo
+      // nada: con alterno-QR la fila original se elimina y la cubre el alterno.
+      if (!conNormal && !conAlternoQR) idsSinQR.push(item.id)
+      for (const sel of item.alternoSimple || []) idsSinQR.push(sel.alternoId)
+    }
+
+    if (idsSinQR.length > 0) {
+      const { data: filas, error: errFilas } = await supabase
+        .from("invtrans")
+        .select("id, codproducto, nombreproducto, lote, location")
+        .in("id", idsSinQR)
+
+      if (errFilas) {
+        // Falla-abierto, igual que `clavesConStockQR`: se registra y se sigue.
+        console.error("[v0] Error leyendo lineas para validar stock por QR:", errFilas)
+      } else {
+        const conQR = await clavesConStockQR(supabase, filas || [])
+        const bloqueadas = (filas || []).filter((f: any) =>
+          conQR.has(claveQR(f.codproducto, f.lote, f.location)),
+        )
+        if (bloqueadas.length > 0) {
+          const detalle = bloqueadas
+            .map((f: any) => `${f.nombreproducto} (lote ${f.lote} · ${f.location})`)
+            .join("; ")
+          return {
+            success: false,
+            message:
+              `Estos productos tienen inventario en estibas con QR y deben descontarse escaneando: ${detalle}. ` +
+              "Cambia esas líneas a verificación por QR.",
+          }
+        }
+      }
+    }
+
     for (const item of items) {
       const hasNormal = !!(item.qrScans && item.qrScans.length > 0)
       const hasQRAlterno = !!(item.alternoScans && item.alternoScans.length > 0)

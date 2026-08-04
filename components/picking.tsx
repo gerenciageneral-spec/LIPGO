@@ -327,7 +327,25 @@ const loadOrders = async () => {
     setAssigningPersonnel(false)
   }
 
+  /**
+   * Modo de verificacion EFECTIVO de una linea.
+   *
+   * Las lineas cuyo stock vive en estibas con QR arrancan en "qr": para ellas
+   * "Sin QR" no es una opcion valida, porque descontar a mano dejaria la salida
+   * sin estiba y el inventario de la estiba sin mover. El resto arranca en
+   * "simple", como siempre.
+   */
+  const modoDeItem = (item: ExtendedPickingItem): "simple" | "qr" =>
+    qrPickingMode.get(item.id) ?? (item.tieneStockQR ? "qr" : "simple")
+
   const handleVerificationModeChange = (itemId: number, mode: "simple" | "qr") => {
+    // Defensa: el radio ya viene deshabilitado, pero no se acepta pasar a
+    // "simple" una linea que debe ir por QR.
+    if (mode === "simple") {
+      const item = pickingItems.find((i) => i.id === itemId)
+      if (item?.tieneStockQR) return
+    }
+
     setQRPickingMode((prev) => {
       const newMap = new Map(prev)
       newMap.set(itemId, mode)
@@ -883,7 +901,7 @@ const loadOrders = async () => {
       // cantidad de salida + averías) y, si aplica, las estibas de lote
       // alterno (con su fila de origen alternoId) para que el backend divida
       // ambas líneas y registre las averías como entradas.
-      const mode = qrPickingMode.get(item.id)
+      const mode = modoDeItem(item)
       if (mode === "qr") {
         const scans = qrScannedPallets.get(item.id) || []
         const altScans = alternoScannedPallets.get(item.id) || []
@@ -929,7 +947,7 @@ const loadOrders = async () => {
     }> = []
 
     pickingItems.forEach((item) => {
-      const mode = qrPickingMode.get(item.id)
+      const mode = modoDeItem(item)
       if (mode === "qr") {
         const scans = [...(qrScannedPallets.get(item.id) || []), ...(alternoScannedPallets.get(item.id) || [])]
         scans.forEach((scan) => {
@@ -1493,7 +1511,7 @@ const loadOrders = async () => {
                         const currentQuantity = editedQuantities.get(item.id) ?? item.cantidad
                         const isVerified = verifiedItems.has(item.id)
                         const stockRestante = (item.stock_disp || 0) - currentQuantity
-                        const verificationMode = qrPickingMode.get(item.id) || "simple"
+                        const verificationMode = modoDeItem(item)
                         const qrScans = qrScannedPallets.get(item.id) || []
                         const qrAccumulated = qrAccumulatedQuantities.get(item.id) || 0
 
@@ -1529,6 +1547,11 @@ const loadOrders = async () => {
                                 renderSimpleVerified(item as any, currentQuantity)
                               ) : (
                                 <>
+                                  {/* Si el stock de esta linea vive en estibas
+                                      con QR, "Sin QR" se deshabilita: descontar
+                                      a mano dejaria la salida sin estiba y el
+                                      inventario de la estiba sin mover. El
+                                      servidor lo revalida al confirmar. */}
                                   <RadioGroup
                                     value={verificationMode}
                                     onValueChange={(value) =>
@@ -1537,8 +1560,19 @@ const loadOrders = async () => {
                                     disabled={isVerified}
                                   >
                                     <div className="flex items-center space-x-2 mb-2">
-                                      <RadioGroupItem value="simple" id={`simple-${item.id}`} />
-                                      <Label htmlFor={`simple-${item.id}`} className="text-xs cursor-pointer">
+                                      <RadioGroupItem
+                                        value="simple"
+                                        id={`simple-${item.id}`}
+                                        disabled={item.tieneStockQR}
+                                      />
+                                      <Label
+                                        htmlFor={`simple-${item.id}`}
+                                        className={`text-xs ${
+                                          item.tieneStockQR
+                                            ? "cursor-not-allowed text-muted-foreground"
+                                            : "cursor-pointer"
+                                        }`}
+                                      >
                                         Sin QR
                                       </Label>
                                     </div>
@@ -1549,6 +1583,13 @@ const loadOrders = async () => {
                                       </Label>
                                     </div>
                                   </RadioGroup>
+
+                                  {item.tieneStockQR && (
+                                    <p className="mb-2 text-[10px] leading-tight text-amber-700">
+                                      Este inventario está en estibas con QR: debe descontarse
+                                      escaneando.
+                                    </p>
+                                  )}
 
                                   {verificationMode === "simple" && !isVerified &&
                                     renderSimpleArea(item as any, currentQuantity)}
@@ -1580,7 +1621,7 @@ const loadOrders = async () => {
                     const currentQuantity = editedQuantities.get(item.id) ?? item.cantidad
                     const isVerified = verifiedItems.has(item.id)
                     const stockRestante = (item.stock_disp || 0) - currentQuantity
-                    const verificationMode = qrPickingMode.get(item.id) || "simple"
+                    const verificationMode = modoDeItem(item)
                     const qrScans = qrScannedPallets.get(item.id) || []
                     const qrAccumulated = qrAccumulatedQuantities.get(item.id) || 0
 
@@ -1639,6 +1680,11 @@ const loadOrders = async () => {
                             ) : (
                               <>
                                 <div className="text-xs font-medium text-muted-foreground">Tipo de Verificación</div>
+                                {item.tieneStockQR && (
+                                  <p className="text-[11px] leading-tight text-amber-700">
+                                    Este inventario está en estibas con QR: debe descontarse escaneando.
+                                  </p>
+                                )}
                                 <RadioGroup
                                   value={verificationMode}
                                   onValueChange={(value) =>
@@ -1647,8 +1693,19 @@ const loadOrders = async () => {
                                   disabled={isVerified}
                                 >
                                   <div className="flex items-center space-x-2">
-                                    <RadioGroupItem value="simple" id={`simple-m-${item.id}`} />
-                                    <Label htmlFor={`simple-m-${item.id}`} className="text-sm cursor-pointer">
+                                    <RadioGroupItem
+                                      value="simple"
+                                      id={`simple-m-${item.id}`}
+                                      disabled={item.tieneStockQR}
+                                    />
+                                    <Label
+                                      htmlFor={`simple-m-${item.id}`}
+                                      className={`text-sm ${
+                                        item.tieneStockQR
+                                          ? "cursor-not-allowed text-muted-foreground"
+                                          : "cursor-pointer"
+                                      }`}
+                                    >
                                       Sin QR
                                     </Label>
                                   </div>
