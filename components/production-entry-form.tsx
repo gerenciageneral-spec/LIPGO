@@ -29,6 +29,11 @@ interface ProductLine {
   observaciones: string
   fechavencimiento: string
   fechaproduccion: string
+  // Hora REAL de produccion del lote ("HH:MM"). Es lo que usa Liquidación
+  // Tolva para repartir las toneladas entre Turno 1 y Turno 2. No se deduce de
+  // la hora de registro: si la produccion de un dia se registra al dia
+  // siguiente, esa hora no tiene nada que ver con el turno que la produjo.
+  horaproduccion: string
 }
 
 export function ProductionEntryForm() {
@@ -53,6 +58,7 @@ export function ProductionEntryForm() {
     observaciones: "",
     fechavencimiento: "",
     fechaproduccion: "",
+    horaproduccion: "",
   })
 
   useEffect(() => {
@@ -131,6 +137,7 @@ export function ProductionEntryForm() {
       observaciones: currentLine.observaciones,
       fechavencimiento: currentLine.fechavencimiento,
       fechaproduccion: currentLine.fechaproduccion,
+      horaproduccion: currentLine.horaproduccion,
     }
 
     setProductLines([...productLines, newLine])
@@ -145,6 +152,7 @@ export function ProductionEntryForm() {
       observaciones: "",
       fechavencimiento: "",
       fechaproduccion: "",
+      horaproduccion: "",
     })
 
     if (loteInputMode === "date") {
@@ -199,6 +207,7 @@ export function ProductionEntryForm() {
       observaciones: line.observaciones,
       fechavencimiento: line.fechavencimiento || null,
       fechaproduccion: line.fechaproduccion || null,
+      horaproduccion: line.horaproduccion || null,
     }))
 
     // Pasar el id de empresa del filtro dinamico para que el ingreso quede asociado a la empresa correcta
@@ -233,6 +242,7 @@ export function ProductionEntryForm() {
         observaciones: "",
         fechavencimiento: "",
         fechaproduccion: "",
+        horaproduccion: "",
       })
 
       if (loteInputMode === "date") {
@@ -420,6 +430,27 @@ export function ProductionEntryForm() {
                   className="h-8 md:h-9 text-xs md:text-sm"
                 />
               </div>
+
+              {/* Hora REAL de produccion. Es lo que Liquidación Tolva usa para
+                  saber si el lote es de Turno 1 o Turno 2. NO se autocompleta
+                  con la hora actual a proposito: cuando la produccion de ayer
+                  se registra hoy, la hora actual no tiene relacion con el turno
+                  que la produjo, y un valor puesto solo pasaria inadvertido. */}
+              <div className="space-y-2">
+                <Label htmlFor="horaproduccion" className="text-xs md:text-sm">
+                  Hora de Producción
+                </Label>
+                <Input
+                  id="horaproduccion"
+                  type="time"
+                  value={currentLine.horaproduccion}
+                  onChange={(e) => setCurrentLine({ ...currentLine, horaproduccion: e.target.value })}
+                  className="h-8 md:h-9 text-xs md:text-sm"
+                />
+                <p className="text-[10px] leading-tight text-muted-foreground">
+                  Define el turno en Liquidación Tolva.
+                </p>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 gap-3 md:gap-4">
@@ -462,6 +493,7 @@ export function ProductionEntryForm() {
                         <TableHead className="text-xs md:text-sm">Lote</TableHead>
                         <TableHead className="text-right text-xs md:text-sm">Cantidad</TableHead>
                         <TableHead className="text-xs md:text-sm">Fecha Prod.</TableHead>
+                        <TableHead className="text-xs md:text-sm">Hora Prod.</TableHead>
                         <TableHead className="text-xs md:text-sm">Fecha Venc.</TableHead>
                         <TableHead className="text-xs md:text-sm">Observaciones</TableHead>
                         <TableHead className="w-[50px]"></TableHead>
@@ -476,6 +508,9 @@ export function ProductionEntryForm() {
                           <TableCell className="text-right text-xs md:text-sm">{line.cantidad}</TableCell>
                           <TableCell className="text-xs md:text-sm">
                             {line.fechaproduccion ? new Date(line.fechaproduccion).toLocaleDateString("es-CO") : "-"}
+                          </TableCell>
+                          <TableCell className="text-xs md:text-sm">
+                            {line.horaproduccion || "-"}
                           </TableCell>
                           <TableCell className="text-xs md:text-sm">
                             {line.fechavencimiento ? new Date(line.fechavencimiento).toLocaleDateString("es-CO") : "-"}

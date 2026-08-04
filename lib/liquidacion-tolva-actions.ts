@@ -19,18 +19,22 @@
  * Reglas de agrupación (confirmadas con el negocio):
  *  - Solo entran ingresos YA APROBADOS (status='Aprobado').
  *  - El DÍA de un ingreso = invtrans.fechaprod (fecha real de producción).
- *  - Dentro de ese día, el TURNO se determina por la hora de `creado`
- *    (hora de Bogotá) cayendo en la ventana [horaInicio, horaFin) del
- *    Turno 1 o Turno 2 configurados en `horario_tolva` (botón "Horario de
- *    Tolva" en Programación de turnos) — ventana COMPARTIDA por día+empresa,
+ *  - Dentro de ese día, el TURNO se determina por `invtrans.horaprod` — la
+ *    HORA REAL DE PRODUCCIÓN, capturada en el formulario de Ingreso de
+ *    Producción — cayendo en la ventana [horaInicio, horaFin) del Turno 1 o
+ *    Turno 2 configurados en `horario_tolva` (botón "Horario de Tolva" en
+ *    Programación de turnos) — ventana COMPARTIDA por día+empresa,
  *    independiente del horaentradaprogramada/horasalidaprogramada normal de
  *    cada persona (que sigue siendo para asistencia/horas extra).
- *  - Si `creado` cae en una fecha distinta a `fechaprod` (aprobación
- *    atrasada), el ingreso queda "atrasado" y NO se asigna automáticamente
- *    a ningún turno — requiere revisión manual.
- *  - Si `creado` cae fuera de ambas ventanas (o no hay horario_tolva
- *    configurado ese día), el ingreso queda "sin turno" — también requiere
- *    revisión.
+ *  - La fecha en que se REGISTRÓ el ingreso (`creado`) ya NO influye. Antes
+ *    sí: si `creado` caía en otro día que `fechaprod` el ingreso se marcaba
+ *    "atrasado" y no se asignaba a ningún turno, así que la producción de un
+ *    día registrada al día siguiente desaparecía de la liquidación y la
+ *    pantalla exigía una "revisión manual" que no ofrecía cómo resolver.
+ *  - Los ingresos anteriores a `horaprod` no la tienen; para esos se cae a la
+ *    hora de `creado` (ya sin mirar la fecha) y se marcan como hora ESTIMADA.
+ *  - Si la hora cae fuera de ambas ventanas (o no hay horario_tolva
+ *    configurado ese día), el ingreso queda "sin turno" — requiere revisión.
  *  - `ordentolva IS NULL` excluye ingresos que YA se metieron a una Tolva
  *    (a mano o por este módulo), evitando duplicar si se vuelve a abrir
  *    la pantalla.
@@ -70,7 +74,16 @@ export interface IngresoPendienteRevision {
   cantidad: number
   creado: string
   fechaprod: string
-  motivo: "atrasado" | "sin_turno"
+  /**
+   * Ya no existe el motivo "atrasado": que el ingreso se haya REGISTRADO otro
+   * dia dejo de descartarlo, porque el turno se decide con la hora real de
+   * produccion (`horaprod`) y no con la de registro.
+   */
+  motivo: "sin_turno"
+  /** Hora que se uso para intentar ubicarlo, "HH:MM". */
+  horaUsada: string
+  /** true cuando la hora salio de `creado` porque el ingreso no tiene `horaprod`. */
+  horaEstimada: boolean
 }
 
 export interface TurnoPreview {
@@ -122,6 +135,13 @@ function horaAMinutos(t: string | null | undefined): number | null {
   const m = String(t).match(/^(\d{1,2}):(\d{2})/)
   if (!m) return null
   return Number(m[1]) * 60 + Number(m[2])
+}
+
+/** Inverso de `horaAMinutos`: 485 -> "08:05". Para mostrar la hora usada. */
+function minutosAHora(minutos: number): string {
+  const h = Math.floor(minutos / 60)
+  const m = minutos % 60
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`
 }
 
 /** ¿`minutos` cae dentro de [inicio,fin)? Soporta ventanas que cruzan medianoche. */
@@ -182,7 +202,7 @@ export async function getLiquidacionTolvaDia(
     // 2) Ingresos APROBADOS de ese día (fechaprod=fecha) sin Tolva asignada.
     const { data: ingresos, error: errIng } = await admin
       .from("invtrans")
-      .select("id, idproducto, codproducto, nombreproducto, cantidad, creado, fechaprod")
+      .select("id, idproducto, codproducto, nombreproducto, cantidad, creado, fechaprod, horaprod")
       .eq("tipomov", "Entrada")
       .eq("status", "Aprobado")
       .eq("idempresa", idempresa)
@@ -202,7 +222,7 @@ export async function getLiquidacionTolvaDia(
       for (const p of productos || []) pesoPorProducto.set(Number(p.id), Number(p.peso_unitkg) || 0)
     }
 
-    // 4) Clasificar cada ingreso: atrasado / sin_turno / turno 1 / turno 2.
+    // 4) Clasificar cada ingreso: turno 1 / turno 2 / sin_turno.
     const pendientes: IngresoPendienteRevision[] = []
     const porTurno = new Map<number, { lineas: Map<string, LineaProducto>; ids: number[] }>([
       [1, { lineas: new Map(), ids: [] }],
@@ -210,20 +230,22 @@ export async function getLiquidacionTolvaDia(
     ])
 
     for (const r of ingresos || []) {
-      const { fecha: fechaCreado, minutos } = bogotaParts(r.creado)
       const cantidad = Number(r.cantidad) || 0
-      if (fechaCreado !== fecha) {
-        pendientes.push({
-          id: r.id,
-          codproducto: r.codproducto,
-          nombreproducto: r.nombreproducto,
-          cantidad,
-          creado: r.creado,
-          fechaprod: r.fechaprod,
-          motivo: "atrasado",
-        })
-        continue
-      }
+
+      // El turno se decide con la HORA REAL DE PRODUCCION (`horaprod`), que se
+      // captura en el formulario de Ingreso de Producción. La fecha en que se
+      // REGISTRO el ingreso ya no importa: antes, si `creado` caia en otro dia
+      // que `fechaprod`, el ingreso se marcaba "atrasado" y desaparecia de la
+      // liquidacion — la produccion de un dia registrada al dia siguiente no
+      // se podia liquidar y la pantalla no ofrecia como resolverlo.
+      //
+      // Los ingresos anteriores a este cambio no tienen `horaprod`; para esos
+      // se cae a la hora de `creado` (ya sin mirar la fecha) y se marcan como
+      // hora ESTIMADA, para que se puedan verificar en vez de bloquear.
+      const minutosProd = horaAMinutos(r.horaprod)
+      const horaEstimada = minutosProd == null
+      const minutos = horaEstimada ? bogotaParts(r.creado).minutos : minutosProd!
+
       let turnoAsignado: number | null = null
       for (const t of [1, 2]) {
         const v = ventanas.get(t)!
@@ -244,6 +266,8 @@ export async function getLiquidacionTolvaDia(
           creado: r.creado,
           fechaprod: r.fechaprod,
           motivo: "sin_turno",
+          horaUsada: minutosAHora(minutos),
+          horaEstimada,
         })
         continue
       }
@@ -317,7 +341,7 @@ export async function registrarTolvaTurno(
     if (preview.data.pendientes.length > 0) {
       return {
         success: false,
-        message: `Hay ${preview.data.pendientes.length} ingreso(s) atrasado(s)/sin turno pendientes de revisión manual — resuélvelos antes de registrar.`,
+        message: `Hay ${preview.data.pendientes.length} ingreso(s) cuya hora no cae en ninguna ventana de turno — resuélvelos antes de registrar.`,
       }
     }
     const turnoData = preview.data.turnos.find((t) => t.turno === turno)

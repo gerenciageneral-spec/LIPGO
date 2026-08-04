@@ -1217,6 +1217,11 @@ export interface ProductionEntry {
   observaciones?: string
   fechavencimiento?: string | null
   fechaproduccion?: string | null
+  // Hora real de produccion ("HH:MM"). Junto con `fechaproduccion` es lo que
+  // Liquidación Tolva usa para repartir las toneladas entre Turno 1 y Turno 2.
+  // NO se deriva de `creado`: esa es la hora de REGISTRO, que puede ser de otro
+  // dia si la produccion se captura despues.
+  horaproduccion?: string | null
 }
 
 // Alias for backward compatibility.
@@ -1308,6 +1313,7 @@ const registerMultipleProductionEntries = async (
       observaciones: entry.observaciones || null,
       fechavencimiento: entry.fechavencimiento || null,
       fechaprod: entry.fechaproduccion || null,
+      horaprod: entry.horaproduccion || null,
     }))
 
     console.log("[v0] Insert data for multiple entries:", insertData)
@@ -1381,6 +1387,7 @@ export async function registerProductionEntry(entry: ProductionEntry) {
       observaciones: entry.observaciones || null,
       fechavencimiento: entry.fechavencimiento || null,
       fechaprod: entry.fechaproduccion || null,
+      horaprod: entry.horaproduccion || null,
     }
 
     console.log("[v0] Insert data with idempresa:", insertData.idempresa)

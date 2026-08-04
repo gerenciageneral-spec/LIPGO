@@ -138,10 +138,11 @@ function LiquidacionDelDia() {
                 <ul className="mt-1 list-disc space-y-0.5 pl-5">
                   {data.pendientes.map((p) => (
                     <li key={p.id}>
-                      {p.nombreproducto} · {p.cantidad} und ·{" "}
-                      {p.motivo === "atrasado"
-                        ? `aprobación atrasada (creado ${String(p.creado).slice(0, 10)} vs producción ${p.fechaprod})`
-                        : "fuera de la ventana de Turno 1/Turno 2 (sin turno programado que la cubra)"}
+                      {p.nombreproducto} · {p.cantidad} und · hora {p.horaUsada} fuera de la ventana
+                      de Turno 1/Turno 2
+                      {p.horaEstimada
+                        ? " — este ingreso no tiene hora de producción, se usó la de registro. Regístrala en Ingreso de Producción o ajusta el Horario de Tolva."
+                        : " — revisa el Horario de Tolva de ese día."}
                     </li>
                   ))}
                 </ul>
@@ -387,7 +388,7 @@ function AuditoriaTolvaTab() {
               <p className="mt-2 text-xs text-muted-foreground">
                 <strong>Entrega</strong> = toneladas aprobadas en producción (invtrans). <strong>Facturado</strong> =
                 toneladas de las órdenes de Tolva/Tolva f (mismas que valorizan el cobro). Deben coincidir al 100% —
-                una diferencia indica ingresos "atrasados"/"sin turno" sin resolver, o una Tolva creada a mano con
+                una diferencia indica ingresos "sin turno" sin resolver, o una Tolva creada a mano con
                 otra cantidad. Pago = $0 con entrega/cobro mayor a 0 señala un turno registrado sin personal.
               </p>
             </CardContent>
