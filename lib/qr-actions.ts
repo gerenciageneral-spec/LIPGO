@@ -1,6 +1,7 @@
 "use server"
 
 import { createClient } from "@/lib/supabase-client"
+import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { generateAndUploadProductionEntryPDF } from "@/lib/pdf-actions"
 import { getCurrentEmpresaIdForInsert, getCurrentUsuarioForInsert } from "@/lib/user-context"
 
@@ -694,5 +695,148 @@ export async function registerPalletTransfer(params: {
   } catch (error) {
     console.error("[v0] Unexpected error in registerPalletTransfer:", error)
     return { success: false, message: "Error inesperado al registrar el traslado entre estibas", labels: [] }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Produccion propia de HARINERA
+// ---------------------------------------------------------------------------
+//
+// El registro por QR lo hace un servicio EXTERNO que inserta en
+// `public.produccion`; el trigger `trg_produccion_after_insert` copia esa fila
+// a `invtrans` (con `qrestiba = produccion.id`) y de ahi el ingreso sigue hacia
+// Aprobacion y Liquidacion Tolva, que lo factura.
+//
+// Ni el servicio ni el trigger se tocan: el trigger es lo que garantiza que la
+// produccion subida desde el LOGO llegue a `invtrans` sin depender de LIPgo.
+// Por eso la marca de "esto es de Harinera" se aplica DESPUES, y solo desde
+// LIPgo, que es el unico que conoce la eleccion del operador.
+
+/**
+ * Mayor id de `produccion` en este momento.
+ *
+ * Se lee ANTES de mandar el registro al servicio externo para poder ubicar
+ * despues la fila recien creada. No se usa el id que devuelve el servicio
+ * porque su forma no es confiable: el cliente prueba cuatro nombres distintos
+ * (`id`, `id_generado`, `idqr`, `registro_id`) y cae a "—".
+ */
+export async function getMaxProduccionId(): Promise<{ success: boolean; maxId: number; error?: string }> {
+  try {
+    const admin: any = await getSupabaseAdmin()
+    const { data, error } = await admin
+      .from("produccion")
+      .select("id")
+      .order("id", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (error) {
+      console.error("[v0] Error leyendo max(id) de produccion:", error)
+      return { success: false, maxId: 0, error: error.message }
+    }
+    return { success: true, maxId: Number(data?.id) || 0 }
+  } catch (e: any) {
+    console.error("[v0] Excepcion en getMaxProduccionId:", e)
+    return { success: false, maxId: 0, error: e?.message || "Error inesperado" }
+  }
+}
+
+/**
+ * Marca como HARINERA el registro de produccion recien creado.
+ *
+ * Hace dos cosas sobre la fila que acaba de nacer:
+ *  1. `invtrans.tipo_produccion = 'Harinera'` (por `qrestiba = produccion.id`),
+ *     que es lo que la excluye de Liquidacion Tolva y de todo camino de cobro.
+ *  2. `produccion.bultos_procesados = 0`, para que Control Piso no la cuente
+ *     como produccion de LIP. La cantidad REAL no se pierde: queda en
+ *     `invtrans` y se recupera por ese mismo `qrestiba`.
+ *
+ * Poner la fila de produccion en 0 es seguro porque el trigger es AFTER INSERT
+ * unicamente: un UPDATE posterior no vuelve a sincronizar ni duplica nada.
+ */
+export async function marcarProduccionHarinera(params: {
+  maxIdPrevio: number
+  producto: number
+  bodega: number
+  localizacion: number
+  lote: number
+  bultos: number
+}): Promise<{ success: boolean; produccionId?: number; error?: string }> {
+  try {
+    const admin: any = await getSupabaseAdmin()
+
+    // Fila nueva: la mas reciente por encima del max previo que coincida con lo
+    // que se acaba de enviar. El cruce por los cinco campos evita agarrar el
+    // registro de otro operador que haya entrado en el mismo instante.
+    const { data: filas, error: errBusqueda } = await admin
+      .from("produccion")
+      .select("id, bultos_procesados")
+      .gt("id", params.maxIdPrevio)
+      .eq("producto", params.producto)
+      .eq("bodega", params.bodega)
+      .eq("localizacion", params.localizacion)
+      .eq("lote", params.lote)
+      .eq("bultos_procesados", params.bultos)
+      .order("id", { ascending: false })
+      .limit(1)
+
+    if (errBusqueda) {
+      console.error("[v0] Error ubicando la fila de produccion a marcar:", errBusqueda)
+      return { success: false, error: errBusqueda.message }
+    }
+
+    const fila = filas?.[0]
+    if (!fila) {
+      return {
+        success: false,
+        error:
+          "No se encontró el registro recién creado en producción, así que no se pudo marcar como Harinera.",
+      }
+    }
+
+    const produccionId = Number(fila.id)
+
+    // 1) La marca en invtrans es lo que de verdad bloquea la facturacion, asi
+    //    que va PRIMERO: si fallara el paso 2, al menos el ingreso ya quedo
+    //    aislado del cobro.
+    // Se acota a la fila de INGRESO DE PRODUCCION. `qrestiba` no es exclusivo
+    // del trigger: picking y los traslados entre estibas tambien lo escriben
+    // con el mismo id de estiba. Sin estos dos filtros, marcar por `qrestiba` a
+    // secas podria alcanzar una salida de picking de esa misma estiba.
+    const { error: errInv } = await admin
+      .from("invtrans")
+      .update({ tipo_produccion: "Harinera" })
+      .eq("qrestiba", produccionId)
+      .eq("tipomov", "Entrada")
+      .ilike("origen", "%ingreso producci%")
+
+    if (errInv) {
+      console.error("[v0] Error marcando invtrans como Harinera:", errInv)
+      return { success: false, produccionId, error: errInv.message }
+    }
+
+    // 2) Neutralizar el conteo en Control Piso.
+    const { error: errProd } = await admin
+      .from("produccion")
+      .update({ bultos_procesados: 0 })
+      .eq("id", produccionId)
+
+    if (errProd) {
+      // No es critico para la facturacion (el paso 1 ya cerro esa puerta), pero
+      // si para los indicadores de produccion, asi que se reporta.
+      console.error("[v0] Error poniendo en 0 la fila de produccion:", errProd)
+      return {
+        success: false,
+        produccionId,
+        error:
+          `El ingreso quedó marcado como Harinera, pero no se pudo poner en 0 la fila de producción ` +
+          `(id ${produccionId}); contará como producción de LIP en Control Piso.`,
+      }
+    }
+
+    return { success: true, produccionId }
+  } catch (e: any) {
+    console.error("[v0] Excepcion en marcarProduccionHarinera:", e)
+    return { success: false, error: e?.message || "Error inesperado al marcar la producción" }
   }
 }

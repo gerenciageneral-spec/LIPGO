@@ -54,6 +54,18 @@ export function ProductionEntriesView() {
     lote: "",
   })
 
+  // Filtro por tipo de produccion. Se resuelve en el CLIENTE (no viaja al
+  // server action) porque `getAllInventoryTransactions` recibe un contrato de
+  // filtros fijo y esto no justifica ampliarlo.
+  const [filtroTipo, setFiltroTipo] = useState<"todos" | "LIP" | "Harinera">("todos")
+
+  // `null` = LIP (historico y lo que sube el LOGO).
+  const transaccionesVisibles = transactions.filter((t) => {
+    if (filtroTipo === "todos") return true
+    const esHarinera = t.tipo_produccion === "Harinera"
+    return filtroTipo === "Harinera" ? esHarinera : !esHarinera
+  })
+
   // Modo de seleccion masiva para crear una orden de Tolva a partir de
   // ingresos de produccion seleccionados. Cuando `selectionMode` es true se
   // muestra una columna de checkboxes y una barra de acciones.
@@ -125,13 +137,15 @@ export function ProductionEntriesView() {
   }
 
   const exportToExcel = () => {
-    const exportData = transactions.map((transaction) => ({
+    // Lo VISIBLE, para que el archivo coincida con lo que se ve en pantalla.
+    const exportData = transaccionesVisibles.map((transaction) => ({
       ID: transaction.id,
       Código: transaction.codproducto,
       Producto: transaction.nombreproducto,
       Lote: transaction.lote,
       Localización: transaction.location,
       Cantidad: transaction.cantidad,
+      Tipo: transaction.tipo_produccion === "Harinera" ? "Harinera" : "LIP",
       "Orden Tolva": transaction.ordentolva || "",
       "Creado por": transaction.creadopor,
       Fecha: new Date(transaction.creado).toLocaleDateString(),
@@ -267,10 +281,13 @@ export function ProductionEntriesView() {
   }
 
   const toggleSelectAll = () => {
-    if (selectedIds.size === transactions.length) {
+    // Sobre lo VISIBLE, no sobre todo: si no, con el filtro en "LIP" se
+    // seleccionarían tambien las de Harinera que estan ocultas, y luego el
+    // envio a Tolva se bloquearía por unas filas que el usuario no ve.
+    if (selectedIds.size === transaccionesVisibles.length) {
       setSelectedIds(new Set())
     } else {
-      setSelectedIds(new Set(transactions.map((t) => t.id)))
+      setSelectedIds(new Set(transaccionesVisibles.map((t) => t.id)))
     }
   }
 
@@ -283,6 +300,23 @@ export function ProductionEntriesView() {
       })
       return
     }
+    // La produccion PROPIA de Harinera no se liquida ni se factura. Este es el
+    // camino MANUAL hacia cabeceraoc: si solo se filtrara Liquidación Tolva,
+    // quedaría abierto justamente por aquí.
+    const harinera = transactions.filter(
+      (t) => selectedIds.has(t.id) && (t as any).tipo_produccion === "Harinera",
+    )
+    if (harinera.length > 0) {
+      toast({
+        title: "Hay producción de Harinera seleccionada",
+        description:
+          `${harinera.length} línea(s) son producción propia de Harinera y no pueden llevarse a Tolva: ` +
+          `generan inventario pero no se facturan. Quítalas de la selección para continuar.`,
+        variant: "destructive",
+      })
+      return
+    }
+
     // Consolidar por producto: sumar cantidades cuando un mismo producto
     // aparece en varios ingresos seleccionados.
     const bucket = new Map<string, PrefilledTolvaLine>()
@@ -481,6 +515,21 @@ export function ProductionEntriesView() {
                 />
               </div>
 
+              {/* Filtro en cliente: no requiere volver a consultar. */}
+              <div className="space-y-2">
+                <Label>Tipo de producción</Label>
+                <Select value={filtroTipo} onValueChange={(v) => setFiltroTipo(v as typeof filtroTipo)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todos">Todos</SelectItem>
+                    <SelectItem value="LIP">LIP</SelectItem>
+                    <SelectItem value="Harinera">Harinera</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
               <div className="flex items-end gap-2">
                 <Button onClick={applyFilters} className="flex-1">
                   <Search className="h-4 w-4 mr-2" />
@@ -501,7 +550,8 @@ export function ProductionEntriesView() {
                     <TableHead className="w-10">
                       <Checkbox
                         checked={
-                          transactions.length > 0 && selectedIds.size === transactions.length
+                          transaccionesVisibles.length > 0 &&
+                          selectedIds.size === transaccionesVisibles.length
                         }
                         onCheckedChange={toggleSelectAll}
                         aria-label="Seleccionar todo"
@@ -514,6 +564,7 @@ export function ProductionEntriesView() {
                   <TableHead>Lote</TableHead>
                   <TableHead>Localización</TableHead>
                   <TableHead>Cantidad</TableHead>
+                  <TableHead>Tipo</TableHead>
                   <TableHead>Orden Tolva</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Creado por</TableHead>
@@ -522,17 +573,17 @@ export function ProductionEntriesView() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {transactions.length === 0 ? (
+                {transaccionesVisibles.length === 0 ? (
                   <TableRow>
                     <TableCell
-                      colSpan={selectionMode ? 12 : 11}
+                      colSpan={selectionMode ? 13 : 12}
                       className="text-center text-muted-foreground"
                     >
                       No hay ingresos de producción registrados
                     </TableCell>
                   </TableRow>
                 ) : (
-                  transactions.map((transaction) => (
+                  transaccionesVisibles.map((transaction) => (
                     <TableRow
                       key={transaction.id}
                       data-state={selectedIds.has(transaction.id) ? "selected" : undefined}
@@ -552,6 +603,17 @@ export function ProductionEntriesView() {
                       <TableCell>{transaction.lote}</TableCell>
                       <TableCell>{transaction.location}</TableCell>
                       <TableCell>{transaction.cantidad}</TableCell>
+                      {/* `null` = LIP: es el valor de todo lo historico y de lo
+                          que sube el LOGO, asi que se muestra como LIP. */}
+                      <TableCell>
+                        {transaction.tipo_produccion === "Harinera" ? (
+                          <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-800">
+                            Harinera
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">LIP</span>
+                        )}
+                      </TableCell>
                       <TableCell>{transaction.ordentolva || "-"}</TableCell>
                       <TableCell>
                         {transaction.status || <span className="text-amber-600 font-medium">Pendiente aprobar</span>}

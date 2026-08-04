@@ -245,6 +245,7 @@ export function ProductionApproval() {
                   <TableHead>Fecha</TableHead>
                   <TableHead>Creado por</TableHead>
                   <TableHead>Origen</TableHead>
+                  <TableHead>Tipo</TableHead>
                   <TableHead className="text-right">Acciones</TableHead>
                 </TableRow>
               </TableHeader>
@@ -322,6 +323,17 @@ export function ProductionApproval() {
                     <TableCell className="text-sm">{formatCreadoExacto(entry.creado)}</TableCell>
                     <TableCell className="text-sm">{entry.creadopor}</TableCell>
                     <TableCell className="text-sm">{entry.origen || "N/A"}</TableCell>
+                    {/* `null` = LIP: valor de todo lo historico y de lo que sube
+                        el LOGO. Harinera se resalta porque no se facturará. */}
+                    <TableCell className="text-sm">
+                      {(entry as any).tipo_produccion === "Harinera" ? (
+                        <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-800">
+                          Harinera
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">LIP</span>
+                      )}
+                    </TableCell>
                     <TableCell>
                       <div className="flex items-center justify-end gap-2">
                         {approvingId === entry.id ? (

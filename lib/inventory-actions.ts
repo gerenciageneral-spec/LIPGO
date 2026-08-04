@@ -1441,7 +1441,7 @@ export async function getPendingProductionEntries(
     const { data, error } = await supabase
       .from("invtrans")
       .select(
-        "id, idproducto, codproducto, nombreproducto, lote, location, almacen, qrestiba, cantidad, creado, creadopor, observaciones, origen",
+        "id, idproducto, codproducto, nombreproducto, lote, location, almacen, qrestiba, cantidad, creado, creadopor, observaciones, origen, tipo_produccion",
       )
       .eq("tipomov", "Entrada")
       .eq("idempresa", empresaId) // Filter by empresa ID from session
@@ -1581,6 +1581,12 @@ export interface InventoryTransactionRecord {
   almacen?: string // Added almacen field to InventoryTransactionRecord interface
   ordentolva?: string | null // Orden de tolva asociada al ingreso de produccion
   cod_movimiento?: string | null // Código de nomenclatura del movimiento (101/601/311/701/702/551)
+  /**
+   * De quien es la produccion. `null` = LIP (todo lo historico y todo lo que
+   * sube el LOGO); `"Harinera"` = produccion propia de Harinera, que genera
+   * inventario pero nunca llega a cabeceraoc ni a facturacion.
+   */
+  tipo_produccion?: string | null
 }
 
 export async function getAllInventoryTransactions(filters?: {
@@ -1598,7 +1604,7 @@ export async function getAllInventoryTransactions(filters?: {
     let query = supabase
       .from("invtrans")
       .select(
-        "id, idempresa, idproducto, codproducto, nombreproducto, lote, location, cantidad, tipomov, status, origen, creadopor, creado, pdf, observaciones, fechavencimiento, fechaprod, almacen, ordentolva, cod_movimiento",
+        "id, idempresa, idproducto, codproducto, nombreproducto, lote, location, cantidad, tipomov, status, origen, creadopor, creado, pdf, observaciones, fechavencimiento, fechaprod, almacen, ordentolva, cod_movimiento, tipo_produccion",
       )
 
     // Filter by empresa_id if provided

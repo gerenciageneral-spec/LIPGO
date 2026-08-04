@@ -49,6 +49,14 @@ const AVIMOL_IDEMPRESA = 2
 /** Mismo comodín que liquidacion-tolva-actions.ts:45 — tolera la tilde de "producción". */
 const ORIGEN_INGRESO_PRODUCCION = "%ingreso producci%"
 
+/**
+ * Excluye la produccion PROPIA de Harinera, que genera inventario pero no se
+ * cobra. Misma forma que en liquidacion-tolva-actions.ts: el `is.null` explicito
+ * es obligatorio porque `<> 'Harinera'` da NULL para las filas nulas y las
+ * dejaría fuera — y NULL es el valor de todo lo historico.
+ */
+const EXCLUIR_HARINERA = "tipo_produccion.is.null,tipo_produccion.neq.Harinera"
+
 /** Puestos de turno que se pagan y que este módulo concilia. */
 const PUESTOS_TURNO = ["Estibado PT", "Salvado"]
 
@@ -368,6 +376,11 @@ export async function getConciliacionAvimol(
         .eq("tipomov", "Entrada")
         .eq("status", "Aprobado")
         .ilike("origen", ORIGEN_INGRESO_PRODUCCION)
+        // La produccion PROPIA de Harinera nunca se cobra. Aqui aplica poco
+        // (este cuadre es de Avimol, empresa 2), pero esta ruta factura leyendo
+        // `invtrans` DIRECTAMENTE, sin pasar por cabeceraoc, asi que se cierra
+        // igual. NULL = LIP.
+        .or(EXCLUIR_HARINERA)
         .gte("lote", loteDesde)
         .lte("lote", loteHasta)
         .range(off, off + 999)
@@ -388,6 +401,7 @@ export async function getConciliacionAvimol(
         .eq("tipomov", "Entrada")
         .eq("status", "Aprobado")
         .ilike("origen", ORIGEN_INGRESO_PRODUCCION)
+        .or(EXCLUIR_HARINERA)
         .gte("fechaprod", desde)
         .lte("fechaprod", hasta)
         .range(0, 999)

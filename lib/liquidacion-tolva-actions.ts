@@ -47,6 +47,17 @@ import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getHorarioTolva } from "@/lib/horario-tolva-actions"
 
 const ORIGEN_INGRESO_PRODUCCION = "%ingreso producci%"
+
+/**
+ * Excluye la produccion PROPIA de Harinera (genera inventario pero no se
+ * liquida ni se factura).
+ *
+ * OJO con la forma: en Postgres `tipo_produccion <> 'Harinera'` es NULL para
+ * las filas nulas, que quedarían EXCLUIDAS por error — y NULL es justamente el
+ * valor de todo lo historico y de todo lo que sube el LOGO. Por eso el `is.null`
+ * explicito.
+ */
+const EXCLUIR_HARINERA = "tipo_produccion.is.null,tipo_produccion.neq.Harinera"
 const PUESTO_AUXILIAR_MIXTO = "Auxiliar Mixto"
 
 // ---------------------------------------------------------------------------
@@ -209,6 +220,9 @@ export async function getLiquidacionTolvaDia(
       .eq("fechaprod", fecha)
       .ilike("origen", ORIGEN_INGRESO_PRODUCCION)
       .is("ordentolva", null)
+      // La produccion PROPIA de Harinera genera inventario pero no se liquida
+      // ni se factura. NULL = LIP (historico y lo que sube el LOGO).
+      .or(EXCLUIR_HARINERA)
     if (errIng) return { success: false, message: errIng.message }
 
     // 3) Pesos por producto (peso_unitkg) para la conversión bultos->toneladas
@@ -463,6 +477,10 @@ export async function getAuditoriaTolva(
       .gte("fechaprod", desde)
       .lte("fechaprod", hasta)
       .ilike("origen", ORIGEN_INGRESO_PRODUCCION)
+      // Misma exclusion que el preview. Sin esto la produccion de Harinera
+      // aparecería para siempre como diferencia entre lo aprobado y lo
+      // facturado, porque nunca va a tener una orden de Tolva.
+      .or(EXCLUIR_HARINERA)
     if (errIng) return { success: false, data: [], message: errIng.message }
 
     const idsProducto = Array.from(

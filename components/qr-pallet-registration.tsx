@@ -13,8 +13,20 @@ import { Printer, Loader2, CheckCircle2, AlertCircle, Factory, Check, ChevronsUp
 import { toast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
 import { getProductsWithCodes, getAlmacenes, getLocationsWithId } from "@/lib/inventory-actions"
+import { getMaxProduccionId, marcarProduccionHarinera } from "@/lib/qr-actions"
 
 const API_URL = "https://duct-dose-gentleman.ngrok-free.dev/api/registro-manual"
+
+/**
+ * De quién es la producción que se está registrando.
+ *
+ *  - LIP      : servicio que presta LIP. Flujo normal: llega a invtrans, se
+ *               aprueba, se liquida en Tolva y se factura.
+ *  - Harinera : producción propia de Harinera. Genera inventario y pasa por
+ *               aprobación, pero NUNCA llega a cabeceraoc ni a facturación, y
+ *               no cuenta como producción de LIP en Control Piso.
+ */
+type TipoProduccion = "LIP" | "Harinera"
 
 interface FormState {
   producto: string
@@ -23,6 +35,7 @@ interface FormState {
   lote: string
   bultos_procesados: string
   tipo_empaque: string
+  tipo_produccion: TipoProduccion
 }
 
 const INITIAL_STATE: FormState = {
@@ -32,6 +45,9 @@ const INITIAL_STATE: FormState = {
   lote: "",
   bultos_procesados: "",
   tipo_empaque: "Arrume",
+  // LIP por defecto: es el comportamiento de siempre, y marcar Harinera por
+  // descuido sacaría esa produccion de la facturacion sin que nadie lo note.
+  tipo_produccion: "LIP",
 }
 
 interface ProductOption {
@@ -55,6 +71,14 @@ export default function QRPalletRegistration() {
   const [lastResult, setLastResult] = useState<
     { type: "success"; id: string | number } | { type: "error"; message: string } | null
   >(null)
+
+  /**
+   * Aviso PERSISTENTE de que un registro de Harinera no se pudo marcar.
+   *
+   * No es un toast: si se pierde, esa producción queda como LIP y termina
+   * facturada. Se queda en pantalla hasta que el operador la cierre.
+   */
+  const [avisoSinMarcar, setAvisoSinMarcar] = useState<string | null>(null)
 
   // Datos de las tablas
   const [products, setProducts] = useState<ProductOption[]>([])
@@ -130,8 +154,29 @@ export default function QRPalletRegistration() {
       tipo_empaque: formData.tipo_empaque,
     }
 
+    const esHarinera = formData.tipo_produccion === "Harinera"
+
     setSubmitting(true)
     try {
+      // Para Harinera hay que ubicar despues la fila que va a crear el servicio
+      // externo. Se toma el max(id) ANTES del POST porque el id que devuelve el
+      // servicio no es confiable (mas abajo se prueban cuatro nombres distintos
+      // y se cae a "—").
+      let maxIdPrevio = 0
+      if (esHarinera) {
+        const previo = await getMaxProduccionId()
+        if (!previo.success) {
+          setSubmitting(false)
+          const msg =
+            "No se pudo preparar el registro de Harinera (no se leyó el consecutivo de producción). " +
+            "No se registró nada; intenta de nuevo."
+          setLastResult({ type: "error", message: msg })
+          toast({ title: "Registro no realizado", description: msg, variant: "destructive" })
+          return
+        }
+        maxIdPrevio = previo.maxId
+      }
+
       const response = await fetch(API_URL, {
         method: "POST",
         headers: {
@@ -151,6 +196,31 @@ export default function QRPalletRegistration() {
         generatedId = data?.id ?? data?.id_generado ?? data?.idqr ?? data?.registro_id ?? "—"
       } catch {
         // El backend pudo no devolver JSON; mantenemos el placeholder.
+      }
+
+      // La etiqueta ya se imprimió y la fila ya existe en producción (y, por el
+      // trigger, en invtrans). Solo falta marcarla cuando es de Harinera.
+      if (esHarinera) {
+        const marcado = await marcarProduccionHarinera({
+          maxIdPrevio,
+          producto: payload.producto,
+          bodega: payload.bodega,
+          localizacion: payload.localizacion,
+          lote: payload.lote,
+          bultos: payload.bultos_procesados,
+        })
+
+        if (!marcado.success) {
+          setAvisoSinMarcar(
+            `El registro se creó y la etiqueta se imprimió, pero NO se pudo marcar como Harinera: ` +
+              `${marcado.error ?? "motivo desconocido"}. ` +
+              `Quedó como producción de LIP y SE FACTURARÁ si no se corrige. ` +
+              `Datos para ubicarlo — producto: ${selectedProductName ?? payload.producto}, ` +
+              `lote: ${payload.lote}, bultos: ${payload.bultos_procesados}` +
+              (marcado.produccionId ? `, id de producción: ${marcado.produccionId}` : "") +
+              `. Repórtalo para corregirlo.`,
+          )
+        }
       }
 
       setLastResult({ type: "success", id: generatedId })
@@ -399,7 +469,53 @@ export default function QRPalletRegistration() {
                     </SelectContent>
                   </Select>
                 </div>
+
+                {/* Tipo de produccion: decide si esto se factura o no. */}
+                <div className="space-y-2">
+                  <Label htmlFor="tipo_produccion">Tipo de Producción</Label>
+                  <Select
+                    value={formData.tipo_produccion}
+                    onValueChange={(value) => handleChange("tipo_produccion", value as TipoProduccion)}
+                  >
+                    <SelectTrigger id="tipo_produccion">
+                      <SelectValue placeholder="Seleccione tipo" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="LIP">LIP</SelectItem>
+                      <SelectItem value="Harinera">Harinera</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {formData.tipo_produccion === "Harinera" && (
+                    <p className="text-[11px] leading-tight text-amber-700">
+                      Generará inventario y pasará por aprobación, pero no se liquidará en Tolva ni
+                      se facturará.
+                    </p>
+                  )}
+                </div>
               </div>
+
+              {/* Aviso PERSISTENTE: si esto se pierde, esa producción se
+                  factura. No se auto-cierra; el operador tiene que cerrarlo. */}
+              {avisoSinMarcar && (
+                <div className="flex items-start gap-3 rounded-lg border-2 border-destructive bg-destructive/10 p-3 text-sm">
+                  <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+                  <div className="min-w-0 flex-1">
+                    <p className="font-semibold text-destructive">
+                      Quedó registrado como LIP — requiere corrección
+                    </p>
+                    <p className="mt-1 text-foreground">{avisoSinMarcar}</p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="mt-2 h-8"
+                      onClick={() => setAvisoSinMarcar(null)}
+                    >
+                      Entendido, ya lo reporté
+                    </Button>
+                  </div>
+                </div>
+              )}
 
               {lastResult?.type === "success" && (
                 <div className="flex items-start gap-3 rounded-lg border border-[var(--chart-3)]/30 bg-[var(--chart-3)]/10 p-3 text-sm text-[var(--chart-3)]">
