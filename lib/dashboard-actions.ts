@@ -212,6 +212,51 @@ function extractIsoDate(value: string | null | undefined): string | null {
   return m ? m[1] : null
 }
 
+/** Campos que el dashboard necesita de la vista. Compartido entre la consulta
+ *  del día y la de los descargues pendientes, para que no puedan divergir. */
+const CAMPOS_OPERACIONES =
+  "cliente, ordendecargue, placa, tipooperacion, pesoorden, fechacargue, horavehiculo, horasanitario, horaorden, horalote, pesajeinicial, iniciocargue, fincargue, pesajefinal, tiempo_en_proceso, estado"
+
+/**
+ * Códigos de las órdenes de DESCARGUE del día que todavía NO tienen `fechacargue`.
+ *
+ * Un descargue nacido de un traslado entre bodegas (`lib/transfer-actions.ts`, que
+ * ni siquiera escribe la columna) o del clon automático a un CEDI
+ * (`lib/orders-actions.tsx`, que la pone en null a proposito porque nace
+ * pendiente) no tiene esa fecha. Como el dashboard filtra el día por ella, esos
+ * descargues quedaban INVISIBLES: solo se veian los creados desde "Generar
+ * Órdenes de Descargue", que si la guardan.
+ *
+ * Se ubican por `fechaorden` contra `cabeceraoc` y NO contra la vista: la vista
+ * `dashboardoperaciones` no expone `fechaorden`, asi que el rango de fechas se
+ * resuelve aqui y despues se le piden las filas por codigo.
+ */
+async function codigosDescarguePendientes(
+  supabase: any,
+  empresaId: number | null,
+  desde: string,
+  hasta: string,
+): Promise<string[]> {
+  if (!empresaId) return []
+  const { data, error } = await supabase
+    .from("cabeceraoc")
+    .select("ordendecargue")
+    .eq("idempresa", empresaId)
+    .eq("tipooperacion", "Descargue")
+    .is("fechacargue", null)
+    .gte("fechaorden", desde)
+    .lt("fechaorden", hasta)
+
+  if (error) {
+    // Falla-abierto: el dashboard sigue mostrando lo de siempre.
+    console.error("[v0] Error buscando descargues sin fechacargue:", error)
+    return []
+  }
+  return Array.from(
+    new Set((data ?? []).map((r: any) => String(r.ordendecargue ?? "").trim()).filter(Boolean)),
+  )
+}
+
 export async function getDashboardOperacionesData(
   selectedEmpresaId?: number,
   /**
@@ -239,9 +284,7 @@ export async function getDashboardOperacionesData(
 
     const { data, error } = await supabase
       .from("dashboardoperaciones")
-      .select(
-        "cliente, ordendecargue, placa, tipooperacion, pesoorden, fechacargue, horavehiculo, horasanitario, horaorden, horalote, pesajeinicial, iniciocargue, fincargue, pesajefinal, tiempo_en_proceso, estado",
-      )
+      .select(CAMPOS_OPERACIONES)
       .eq("idempresa", empresaId)
       .neq("tipooperacion", "Tolva")
       .gte("fechacargue", fechaFiltro)
@@ -257,6 +300,36 @@ export async function getDashboardOperacionesData(
       const iso = extractIsoDate(row.fechacargue)
       return iso === fechaFiltro
     })
+
+    // DESCARGUES PENDIENTES: los que aún no tienen `fechacargue` no los pudo
+    // traer la consulta de arriba (ver `codigosDescarguePendientes`). Se agregan
+    // aqui, ANTES del respaldo de cliente, para que tambien se les resuelva el
+    // cliente desde `detalleoc`.
+    const codigosPendientes = await codigosDescarguePendientes(
+      supabase,
+      empresaId,
+      fechaFiltro,
+      diaSiguienteTabla,
+    )
+    if (codigosPendientes.length > 0) {
+      const yaPresentes = new Set(filtered.map((r: any) => r.ordendecargue))
+      const faltantes = codigosPendientes.filter((c) => !yaPresentes.has(c))
+      if (faltantes.length > 0) {
+        const { data: extra, error: errExtra } = await supabase
+          .from("dashboardoperaciones")
+          .select(CAMPOS_OPERACIONES)
+          .eq("idempresa", empresaId)
+          .in("ordendecargue", faltantes)
+        if (errExtra) console.error("[v0] Error trayendo descargues pendientes:", errExtra)
+        else for (const r of extra ?? []) filtered.push(r as any)
+      }
+    }
+
+    // Se reordena porque los pendientes se anexaron al final y el `.order()` de
+    // la consulta ya no aplica al conjunto completo.
+    filtered.sort((a: any, b: any) =>
+      String(b.ordendecargue ?? "").localeCompare(String(a.ordendecargue ?? "")),
+    )
 
     // RESPALDO DE CLIENTE. El view `dashboardoperaciones` toma el cliente del
     // PEDIDO (por `ocargue`, que se asigna al crear la orden en Gestionar Orden
@@ -351,6 +424,26 @@ export async function getDashboardOperacionesStats(
       const iso = extractIsoDate(row.fechacargue)
       return iso === fechaFiltro
     })
+
+    // Mismos descargues pendientes que agrega la tabla, para que las tarjetas
+    // cuenten lo mismo que se ve abajo. No mueven las toneladas CARGADAS /
+    // DESCARGADAS (esas solo suman con estado finalizado, y un pendiente no lo
+    // esta), pero si las PROGRAMADAS y los conteos de ordenes.
+    const codigosPendientesStats = await codigosDescarguePendientes(
+      supabase,
+      empresaId,
+      fechaFiltro,
+      diaSiguienteStats,
+    )
+    if (codigosPendientesStats.length > 0) {
+      const { data: extra, error: errExtra } = await supabase
+        .from("dashboardoperaciones")
+        .select("pesoorden, tipooperacion, fincargue, placa, estado, fechacargue")
+        .eq("idempresa", empresaId)
+        .in("ordendecargue", codigosPendientesStats)
+      if (errExtra) console.error("[v0] Error trayendo descargues pendientes (stats):", errExtra)
+      else for (const r of extra ?? []) data.push(r as any)
+    }
 
     // Calculate tonnage stats based on tipooperacion and estado filters
     // Only sum when estado is "Fin Operación" or "Finalizado LIP"
