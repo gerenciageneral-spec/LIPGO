@@ -54,7 +54,8 @@ const REGLAS: Record<number, ReglasProyecto> = {
     ],
     aQuienSeFactura: [
       "En Cargue, Descargue y Distribución cada transportadora paga su propio cargue: ZAMUDIO se factura a Zamudio y TERCEROS a Terceros — no a Avimol.",
-      "Los vehículos de AVIMOL sí son de Avimol, pero esa porción NO se cobra por tonelada: está cubierta por el fijo de 600 ton/mes de Cargos Fijos, así que la línea cuenta en toneladas con valor 0.",
+      "Los vehículos de AVIMOL sí son de Avimol, pero esa porción NO se cobra por tonelada: la cubre el fijo mensual de 600 toneladas de DISTRIBUCIÓN (dos tramos de 300 a tarifa distinta), así que la línea cuenta en toneladas con valor 0.",
+      "Ese valor 0 aplica a cargue, descargue y distribución con placa propia, y NO tiene tope: si en el mes se mueven más de 600 toneladas, el fijo mensual sigue siendo el mismo.",
       "Producción, turnos y novedades adicionales sí se facturan a Avimol con normalidad: no nacen de una orden, así que no pasan por esa regla.",
     ],
     particularidades: [],
