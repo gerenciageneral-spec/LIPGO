@@ -49,6 +49,7 @@ import { getAccessibleEmpresesFromPermisos } from "@/lib/orders-actions"
 import { OP_PRODUCCION, OP_PRODUCCION_LABEL } from "@/lib/facturacion-produccion-conceptos"
 import { proyectoConReglaMedioPago } from "@/lib/facturacion-medio-pago"
 import { CierreDiarioPanel, CierreDiarioTira } from "@/components/cierre-diario"
+import { FacturacionReglasHeader } from "@/components/facturacion-reglas-header"
 import { CierreFinanciero } from "@/components/cierre-financiero"
 import { GESTION_LIPGO_DESDE } from "@/lib/facturacion-constantes"
 
@@ -716,6 +717,11 @@ export function CuadroControlFacturacion() {
           elegido; sin proyecto elegido, suma todos los accesibles. Su botón de
           alertas lleva a la pestaña del detalle. */}
       <CierreDiarioTira empresaId={empresaId} onVerDetalle={() => setTab("cierre")} />
+
+      {/* Reglas de facturacion del proyecto seleccionado. Va ARRIBA de los
+          filtros: quien revisa una prefactura necesita saber que entra y bajo
+          que criterio ANTES de leer los numeros. */}
+      <FacturacionReglasHeader empresaId={empresaId} />
 
       <Card>
         <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
