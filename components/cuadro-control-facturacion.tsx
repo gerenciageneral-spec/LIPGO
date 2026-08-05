@@ -1223,6 +1223,47 @@ export function CuadroControlFacturacion() {
                           </li>
                         ))}
                       </ul>
+
+                      {/* Desglose POR ORDEN. Sin esto solo se veía el total por
+                          transportadora, y no había forma de saber QUÉ órdenes
+                          eran ni de cruzarlas contra lo que cada una debe pagar. */}
+                      {pref.exclusionCarguePlaca.lineas?.length > 0 && (
+                        <details className="mt-2">
+                          <summary className="cursor-pointer select-none font-medium">
+                            Ver el detalle por orden ({pref.exclusionCarguePlaca.lineas.length})
+                          </summary>
+                          <div className="mt-2 max-h-72 overflow-auto rounded border bg-background">
+                            <table className="w-full text-[11px]">
+                              <thead className="sticky top-0 bg-muted">
+                                <tr>
+                                  <th className="px-2 py-1 text-left font-medium">Transporte</th>
+                                  <th className="px-2 py-1 text-left font-medium">Orden</th>
+                                  <th className="px-2 py-1 text-left font-medium">Fecha</th>
+                                  <th className="px-2 py-1 text-left font-medium">Placa</th>
+                                  <th className="px-2 py-1 text-left font-medium">Tiquete</th>
+                                  <th className="px-2 py-1 text-left font-medium">Cliente</th>
+                                  <th className="px-2 py-1 text-right font-medium">Ton</th>
+                                  <th className="px-2 py-1 text-right font-medium">Valor</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {pref.exclusionCarguePlaca.lineas.map((l) => (
+                                  <tr key={l.numeroorden} className="border-t">
+                                    <td className="px-2 py-1">{l.transporte || "-"}</td>
+                                    <td className="px-2 py-1 font-mono">{l.numeroorden}</td>
+                                    <td className="px-2 py-1">{l.fecha ? String(l.fecha).slice(0, 10) : "-"}</td>
+                                    <td className="px-2 py-1 font-mono">{l.placa || "-"}</td>
+                                    <td className="px-2 py-1">{l.tiquete || "-"}</td>
+                                    <td className="px-2 py-1">{l.cliente || "-"}</td>
+                                    <td className="px-2 py-1 text-right">{ton(l.toneladas)}</td>
+                                    <td className="px-2 py-1 text-right">{money(l.valor)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </details>
+                      )}
                     </div>
                   )}
 

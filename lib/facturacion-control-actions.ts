@@ -357,6 +357,19 @@ export interface Prefactura {
     toneladas: number
     valor: number
     porTransporte: Array<{ transporte: string; ordenes: number; valor: number }>
+    /** Desglose POR ORDEN de lo que quedó fuera. Antes solo se reportaba el
+     *  agregado por transportadora, así que no había forma de saber QUÉ órdenes
+     *  eran ni de cruzarlas contra lo que cada transportadora debe pagar. */
+    lineas: Array<{
+      numeroorden: string
+      fecha: string | null
+      placa: string | null
+      tiquete: string | null
+      transporte: string | null
+      cliente: string | null
+      toneladas: number
+      valor: number
+    }>
   } | null
 }
 
@@ -967,6 +980,41 @@ export async function getPrefactura(
         ton += l.toneladas
         ordenes.add(l.numeroorden)
       }
+      // Desglose POR ORDEN: una linea de `excluidasCargue` es por PRODUCTO, asi
+      // que se consolidan por numero de orden sumando toneladas y valor.
+      const porOrden = new Map<
+        string,
+        {
+          numeroorden: string
+          fecha: string | null
+          placa: string | null
+          tiquete: string | null
+          transporte: string | null
+          cliente: string | null
+          toneladas: number
+          valor: number
+        }
+      >()
+      for (const l of excluidasCargue) {
+        const on = String(l.numeroorden ?? "").trim()
+        const g = porOrden.get(on)
+        if (g) {
+          g.toneladas += l.toneladas
+          g.valor += l.valorServicio
+        } else {
+          porOrden.set(on, {
+            numeroorden: on,
+            fecha: l.fechacargue ?? l.fechaorden ?? null,
+            placa: l.placa ?? null,
+            tiquete: l.tiquete ?? null,
+            transporte: l.transporte ?? null,
+            cliente: l.cliente ?? null,
+            toneladas: l.toneladas,
+            valor: l.valorServicio,
+          })
+        }
+      }
+
       exclusionCargue = {
         nota: cfgCargue.nota,
         ordenes: ordenes.size,
@@ -975,6 +1023,15 @@ export async function getPrefactura(
         porTransporte: Array.from(porTr.entries())
           .map(([transporte, g]) => ({ transporte, ordenes: g.ordenes.size, valor: Math.round(g.valor) }))
           .sort((a, b) => b.valor - a.valor),
+        lineas: Array.from(porOrden.values())
+          .map((g) => ({ ...g, toneladas: Number(g.toneladas.toFixed(3)), valor: Math.round(g.valor) }))
+          // Por transportadora y, dentro de ella, por orden: asi queda agrupado
+          // igual que el resumen de arriba y es facil cruzarlo.
+          .sort(
+            (a, b) =>
+              String(a.transporte ?? "").localeCompare(String(b.transporte ?? "")) ||
+              String(a.numeroorden).localeCompare(String(b.numeroorden)),
+          ),
       }
     }
 
@@ -1069,7 +1126,12 @@ export async function getControlFacturacion(
           .eq("idempresa", idempresa)
         if (filtros.desde) q = q.gte("fechacargue", filtros.desde)
         if (filtros.hasta) q = q.lte("fechacargue", filtros.hasta)
-        if (filtros.owner) q = q.eq("owner", filtros.owner)
+        // El filtro de OWNER NO va en SQL. La vista `facturacion` trae el owner
+        // del PRODUCTO, pero el que se muestra —y el que ofrece el desplegable—
+        // puede estar reasignado: en Avimol una linea de Zamudio se factura a
+        // "Zamudio" y una de terceros a "Terceros" (ver `facturadoAOwner`), y
+        // esos valores NO existen en la vista. Filtrar aqui devolvia CERO filas
+        // al elegirlos. Se filtra mas abajo, sobre el owner ya resuelto.
         if (filtros.placa) q = q.ilike("placa", `%${filtros.placa}%`)
         if (filtros.cliente) q = q.ilike("cliente", `%${filtros.cliente}%`)
         const { data, error } = await q.range(offset, offset + pageSize - 1)
@@ -1116,7 +1178,9 @@ export async function getControlFacturacion(
     // -> inflaría el peso/valor del owner filtrado en plantas id1/2. Cuando hay filtro se
     // relee el detalle completo (mismo empresa+rango) SOLO para el denominador; la
     // presentación (accMap/filas) sigue filtrada. NO afecta getPrefactura (lo que se factura).
-    const hayFiltroDetalle = !!(filtros.owner || filtros.placa || filtros.cliente)
+    // `filtros.owner` ya no entra aqui: al filtrarse sobre el owner resuelto (y no
+    // en SQL), `facturas` llega COMPLETO y el denominador no queda parcial.
+    const hayFiltroDetalle = !!(filtros.placa || filtros.cliente)
     let detalleParaDenominador = facturas
     if (hayFiltroDetalle) {
       detalleParaDenominador = []
@@ -1196,6 +1260,11 @@ export async function getControlFacturacion(
       // no a Avimol. Ver lib/facturacion-billed-party.ts.
       const fa = facturadoAOwner(idempresa, a.owner, a.op, a.r.transporte)
       if (fa.cubiertoPorFijo) valor = 0
+      // Filtro de OWNER sobre el owner YA RESUELTO (`fa.owner`), que es el que
+      // se muestra en pantalla y el que alimenta el desplegable. Antes se
+      // filtraba en SQL contra el owner del producto, asi que elegir "Terceros"
+      // o "Zamudio" no devolvia nada.
+      if (filtros.owner && ownerKey(fa.owner) !== ownerKey(filtros.owner)) continue
       filasMap.set(k, {
         numeroorden: a.on,
         fecha: a.r.fechacargue ?? a.r.fechaorden ?? null,
