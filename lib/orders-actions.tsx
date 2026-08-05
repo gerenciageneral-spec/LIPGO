@@ -3190,9 +3190,12 @@ export async function updateTolva(
 // a Producción → "Aprobación de ingreso" como PENDIENTE por aprobar:
 //   - `invtrans` tipomov="Entrada", status=null (idéntico a un ingreso manual, así el
 //     submódulo lo lista solo). Una fila por producto+lote+cantidad.
-//   - LOTE: si el descargue viene de planta id1/id2 (`ordenorigen`), se trae del cargue
-//     madre (`historicolotes` por producto+cliente). Si viene de otra empresa, nace SIN
-//     lote y se completa manual (como hoy), porque el producto trae su propio lote.
+//   - LOTE: se conserva el de la bodega ORIGEN. Dos fuentes, en este orden:
+//     1) TRASLADO entre bodegas -> `despachotraslados` por `ocargue = ordenorigen`,
+//        cruzando por producto. Es lo que realmente salio de la bodega.
+//     2) Descargue de planta id1/id2 -> el cargue madre (`historicolotes` por
+//        producto+cliente).
+//     Solo si ninguna aplica nace sin lote y se completa manual.
 //   - `origen`/`ocargue` = código del descargue → trazabilidad + IDEMPOTENCIA (no duplica).
 // A futuro, el QR de la estiba se engancha a ESTA fila (campo `qrestiba`) — NO crea un
 // ingreso nuevo, así el producto entra al inventario UNA sola vez.
@@ -3229,6 +3232,32 @@ async function generarIngresoProduccionDesdeDescargue(supabase: any, orderId: nu
       }
     }
 
+    // TRASLADO ENTRE BODEGAS: los lotes salen de `despachotraslados`, cruzando
+    // SOLO por producto.
+    //
+    // El mapa de `historicolotes` de arriba nunca casa en este flujo: su clave
+    // incluye el cliente, y `generateUnloadOrder` escribe el literal
+    // "Transferencia interna" en `detalleoc.cliente` (lib/transfer-actions.ts),
+    // mientras que `historicolotes.cliente` guarda el cliente real de la
+    // asignacion de lotes. Por eso el ingreso nacia siempre sin lote.
+    //
+    // No se filtra por empresa a proposito: en esa vista la columna `id` hace de
+    // idempresa y corresponde a la empresa ORIGEN, mientras que `oh.idempresa` es
+    // la RECEPTORA (3 o 4). Filtrar por la receptora no traeria nada. El
+    // `ocargue` ya identifica el despacho de forma univoca.
+    const lotesPorProducto = new Map<string, { lote: string; cantidad: number }[]>()
+    if (oh.ordenorigen) {
+      const { data: dt } = await supabase
+        .from("despachotraslados").select("nombreproducto, lote, cantidad").eq("ocargue", oh.ordenorigen)
+      for (const r of dt ?? []) {
+        const lote = String(r.lote ?? "").trim()
+        if (!lote) continue
+        const k = norm(r.nombreproducto)
+        if (!lotesPorProducto.has(k)) lotesPorProducto.set(k, [])
+        lotesPorProducto.get(k)!.push({ lote, cantidad: Number(r.cantidad) || 0 })
+      }
+    }
+
     // Nombre de producto -> productos (idproducto, codproducto) para la forma estándar.
     const nombres = [...new Set(det.map((d: any) => d.producto).filter(Boolean))]
     const prodByNombre = new Map<string, { id: number; codigo: string }>()
@@ -3255,12 +3284,27 @@ async function generarIngresoProduccionDesdeDescargue(supabase: any, orderId: nu
         creado,
         creadopor: "Auto (descargue PT)",
       }
-      const lotes = lotesPorLinea.get(norm(d.producto) + "|" + norm(d.cliente))
+      // Orden de preferencia: el despacho del traslado manda sobre el cargue
+      // madre, porque es el registro de lo que REALMENTE salio de la bodega.
+      const lotes =
+        lotesPorProducto.get(norm(d.producto)) ??
+        lotesPorLinea.get(norm(d.producto) + "|" + norm(d.cliente))
+
       if (lotes && lotes.length) {
-        // Un ingreso por lote (según la asignación de lotes del cargue madre).
+        // Un ingreso por lote, con su cantidad.
+        const sumaLotes = lotes.reduce((s, l) => s + l.cantidad, 0)
+        if (sumaLotes !== cant) {
+          // Se conservan las cantidades por lote (son el dato real) y se avisa:
+          // un descuadre aqui significa que el despacho y el detalle de la orden
+          // no cuentan lo mismo, y eso hay que mirarlo.
+          console.warn(
+            `[ingreso-descargue] ${oh.ordendecargue}: "${d.producto}" suma ${sumaLotes} por lote ` +
+              `pero el detalle dice ${cant}. Se usan las cantidades por lote.`,
+          )
+        }
         for (const l of lotes) filas.push({ ...base, lote: l.lote, cantidad: l.cantidad })
       } else {
-        // Sin lote (producto de otra empresa): se completa manual en el submódulo.
+        // Sin lote: se completa manual en el submódulo.
         filas.push({ ...base, lote: null, cantidad: cant })
       }
     }
