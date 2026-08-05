@@ -210,20 +210,53 @@ export async function getLiquidacionTolvaDia(
       if (nombre && !v.personas.includes(nombre)) v.personas.push(nombre)
     }
 
-    // 2) Ingresos APROBADOS de ese día (fechaprod=fecha) sin Tolva asignada.
-    const { data: ingresos, error: errIng } = await admin
+    // 2) Ingresos APROBADOS de ese día sin Tolva asignada.
+    //
+    // Se aceptan DOS formas de pertenecer al día:
+    //   a) `fechaprod = fecha` — lo normal.
+    //   b) `fechaprod IS NULL` pero `creado` cae dentro del día en hora Colombia.
+    //
+    // El (b) existe porque la produccion que sube el LOGO nacia SIN `fechaprod`:
+    // el trigger `fn_sync_produccion_to_invtrans` no escribia esa columna (ver
+    // scripts/fix_trigger_produccion_fechaprod.sql, que ya lo corrige de raiz).
+    // Sin este respaldo, toda la produccion historica del LOGO queda invisible
+    // aqui aunque este aprobada.
+    //
+    // El rango de `creado` va en UTC: un dia de Colombia (UTC-5) es
+    // [fecha 05:00Z, fecha+1 05:00Z). Acotarlo evita arrastrar todo el historico
+    // de filas con `fechaprod` nulo.
+    const finDia = new Date(`${fecha}T00:00:00Z`)
+    finDia.setUTCDate(finDia.getUTCDate() + 1)
+    const diaSiguiente = finDia.toISOString().slice(0, 10)
+    const creadoDesde = `${fecha}T05:00:00Z`
+    const creadoHasta = `${diaSiguiente}T05:00:00Z`
+
+    // Un solo `.or()` en la consulta: dos llamadas generan parametros `or=`
+    // repetidos y PostgREST los resuelve de forma ambigua. El `or` se reserva
+    // para la FECHA —que es lo que acota el volumen— y la exclusion de Harinera
+    // se aplica abajo en JS, donde ademas se lee mas claro.
+    const { data: crudos, error: errIng } = await admin
       .from("invtrans")
-      .select("id, idproducto, codproducto, nombreproducto, cantidad, creado, fechaprod, horaprod")
+      .select("id, idproducto, codproducto, nombreproducto, cantidad, creado, fechaprod, horaprod, tipo_produccion")
       .eq("tipomov", "Entrada")
       .eq("status", "Aprobado")
       .eq("idempresa", idempresa)
-      .eq("fechaprod", fecha)
+      .or(
+        `fechaprod.eq.${fecha},and(fechaprod.is.null,creado.gte.${creadoDesde},creado.lt.${creadoHasta})`,
+      )
       .ilike("origen", ORIGEN_INGRESO_PRODUCCION)
       .is("ordentolva", null)
-      // La produccion PROPIA de Harinera genera inventario pero no se liquida
-      // ni se factura. NULL = LIP (historico y lo que sube el LOGO).
-      .or(EXCLUIR_HARINERA)
     if (errIng) return { success: false, message: errIng.message }
+
+    // La produccion PROPIA de Harinera genera inventario pero no se liquida ni
+    // se factura. `null` = LIP (todo lo historico y lo que sube el LOGO).
+    // Ademas, red de seguridad para la rama (b): que la fecha Colombia de
+    // `creado` sea de verdad la del dia pedido.
+    const ingresos = (crudos ?? []).filter((r: any) => {
+      if (r.tipo_produccion === "Harinera") return false
+      if (r.fechaprod) return true
+      return bogotaParts(r.creado).fecha === fecha
+    })
 
     // 3) Pesos por producto (peso_unitkg) para la conversión bultos->toneladas
     //    (misma fórmula exacta que saveTolva: cantidad × peso_unitkg / 1000).
