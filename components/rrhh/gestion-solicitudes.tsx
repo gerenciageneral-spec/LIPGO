@@ -1387,8 +1387,37 @@ function formatDate(iso: string): string {
   }
 }
 
+/**
+ * Formatea una FECHA DE CALENDARIO (sin hora): las de permiso
+ * (`fecha_inicio_permiso` / `fecha_fin_permiso`), que llegan como "YYYY-MM-DD".
+ *
+ * EL BUG QUE CORRIGE — un día de menos: `new Date("2026-08-10")` NO es el 10 a
+ * medianoche local. El estándar manda que la forma "solo fecha" se interprete
+ * como UTC, así que en Colombia (UTC-5) ese instante es el 9 a las 19:00 y
+ * `toLocaleDateString` mostraba "09 ago". El trabajador pedía el 10, veía el 10
+ * en su portal —que sí construye la fecha en hora local— y la empresa veía el 9.
+ *
+ * Una fecha de calendario no tiene zona horaria: no es un instante. Por eso se
+ * arma en UTC y se formatea en UTC, de modo que los dígitos que se muestran sean
+ * exactamente los guardados, mire quien mire y desde donde mire.
+ *
+ * Si el valor SÍ trae hora (no debería en estos campos) se formatea como antes,
+ * en la zona del navegador, que es lo correcto para un instante real.
+ */
 function formatDateShort(iso: string): string {
   try {
+    const soloFecha = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso ?? "").trim())
+    if (soloFecha) {
+      const fecha = new Date(
+        Date.UTC(Number(soloFecha[1]), Number(soloFecha[2]) - 1, Number(soloFecha[3])),
+      )
+      return fecha.toLocaleDateString("es-CO", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        timeZone: "UTC",
+      })
+    }
     return new Date(iso).toLocaleDateString("es-CO", {
       day: "2-digit",
       month: "short",
