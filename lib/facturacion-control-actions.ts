@@ -9,7 +9,7 @@
 // es el paso siguiente y NO se cruza aquí.
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
-import { esPlacaDistribucion, cargarPlacasDistribucion, ownerDeLinea } from "@/lib/distribucion-placas"
+import { esPlacaDistribucion, cargarPlacasDistribucion, ownerDeLinea, OWNER_DE_PLACA_PROPIA } from "@/lib/distribucion-placas"
 import { PLACAS_EXCLUIDAS_FACTURAS } from "@/lib/facturas-exclusiones"
 import { getConciliacionAvimol } from "@/lib/conciliacion-avimol-actions"
 import {
@@ -296,6 +296,12 @@ export interface PrefacturaLinea {
   idempresa: number
   transporte: string | null
   tipooperacion: string | null
+  /** Agrupador del RESUMEN (y su detalle). Igual a `tipooperacion`, SALVO en el
+   *  vehículo propio con owner forzado (ver OWNER_DE_PLACA_PROPIA/esPlacaDistribucion):
+   *  su Cargue y su Distribución se unifican en un solo grupo, porque se facturan
+   *  juntos a un único cliente con tarifa propia — el resto de cargues (ej. "cliente
+   *  recoge", terceros) NO entra aquí y sigue por operación como siempre. */
+  grupoResumen: string
   tarifa: string | number | null
   valor_a_facturar: number
   servicio: string
@@ -718,6 +724,19 @@ export async function getPrefactura(
         // en toneladas pero sale en 0 — igual que en el cuadro.
         const fa = facturadoAOwner(idempresa, owner, r.tipooperacion, r.transporte)
         const tarifaFacturada = fa.cubiertoPorFijo ? 0 : tServicio
+        // Unifica Cargue+Distribución del vehículo propio con owner forzado (hoy
+        // solo id4/LWY393) en un mismo grupo de resumen — se factura junto, a un
+        // único cliente, con su propia tarifa. Otros cargues (ej. "cliente
+        // recoge"/terceros) NO entran aquí y siguen por operación, aunque el
+        // owner del producto también sea Molinos: tienen tarifa distinta.
+        const opNorm = String(r.tipooperacion ?? "").trim().toLowerCase()
+        const esVehiculoPropioConRegla =
+          !!OWNER_DE_PLACA_PROPIA[idempresa] &&
+          esPlacaDistribucion(idempresa, r.placa) &&
+          (opNorm === "cargue" || opNorm === "distribucion")
+        const grupoResumen = esVehiculoPropioConRegla
+          ? "Cargue + Distribución (vehículo propio)"
+          : r.tipooperacion || "(sin operación)"
         const linea: PrefacturaLinea = {
           fechaorden: r.fechaorden ?? null,
           fechacargue: r.fechacargue ?? null,
@@ -733,6 +752,7 @@ export async function getPrefactura(
           idempresa: Number(r.idempresa),
           transporte: r.transporte ?? null,
           tipooperacion: r.tipooperacion ?? null,
+          grupoResumen,
           tarifa: r.tarifa ?? null,
           valor_a_facturar: num(r.valor_a_facturar),
           servicio,
@@ -789,7 +809,7 @@ export async function getPrefactura(
     const map = new Map<string, PrefacturaResumen>()
     let totalToneladas = 0
     for (const l of origen) {
-      const op = l.tipooperacion || "(sin operación)"
+      const op = l.grupoResumen
       const k = `${l.owner}|||${op}`
       const r =
         map.get(k) ||

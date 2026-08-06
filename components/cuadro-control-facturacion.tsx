@@ -464,10 +464,10 @@ export function CuadroControlFacturacion() {
     if (!pref || !prefSel) return []
     const deOrdenes = pref.origen
       // solo lo seleccionado y POR FACTURAR (sin factura Siigo) — igual que lo que se factura
-      .filter((l) => prefSel.keys.has(keyRes(l.owner, l.tipooperacion || "(sin operación)")) && l.categoria !== "facturado")
+      .filter((l) => prefSel.keys.has(keyRes(l.owner, l.grupoResumen)) && l.categoria !== "facturado")
       .map((l) => ({
         owner: l.owner,
-        operacion: l.tipooperacion || "",
+        operacion: l.grupoResumen || "",
         servicio: l.servicio,
         fecha: l.fechacargue,
         numeroorden: l.numeroorden,
@@ -522,7 +522,7 @@ export function CuadroControlFacturacion() {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), "PREFACTURA")
     // TABLA ORIGEN de lo SELECCIONADO (soporte).
     const origen = pref.origen
-      .filter((l) => prefSel.keys.has(keyRes(l.owner, l.tipooperacion || "(sin operación)")))
+      .filter((l) => prefSel.keys.has(keyRes(l.owner, l.grupoResumen)))
       .map((l) => ({
         "Fecha Orden": l.fechaorden ?? "",
         "Fecha Cargue": l.fechacargue ?? "",
@@ -650,7 +650,7 @@ export function CuadroControlFacturacion() {
 
   // Órdenes (líneas origen) detrás de un owner×servicio, para navegar el detalle.
   const detalleDe = (owner: string, operacion: string) =>
-    (pref?.origen || []).filter((l) => l.owner === owner && (l.tipooperacion || "(sin operación)") === operacion)
+    (pref?.origen || []).filter((l) => l.owner === owner && l.grupoResumen === operacion)
 
   const proyectoNombre = empresas.find((e) => e.id === empresaId)?.nombre || `Empresa ${empresaId}`
 
