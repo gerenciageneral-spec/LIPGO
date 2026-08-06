@@ -26,7 +26,7 @@ import {
   proyectoConReglaMedioPago,
   type MedioPago,
 } from "@/lib/facturacion-medio-pago"
-import { cargueSoloPlacaPropia, esCargueFiltrable } from "@/lib/facturacion-cargue-propio"
+import { cargueSoloPlacaPropia } from "@/lib/facturacion-cargue-propio"
 import { facturadoAOwner } from "@/lib/facturacion-billed-party"
 
 export type CategoriaFactura = "facturado" | "en_proceso" | "sin_gestionar"
@@ -349,28 +349,13 @@ export interface Prefactura {
   produccionDesde: string | null
   /** Si el período facturado cae dentro de esa vigencia. */
   produccionVigencia: "si" | "no" | "parcial"
-  /** Cargue que NO se le factura a este proyecto porque la placa no es suya.
-   *  Se reporta —no se omite en silencio— para poder auditar el documento. */
-  exclusionCarguePlaca: {
-    nota: string
-    ordenes: number
-    toneladas: number
-    valor: number
-    porTransporte: Array<{ transporte: string; ordenes: number; valor: number }>
-    /** Desglose POR ORDEN de lo que quedó fuera. Antes solo se reportaba el
-     *  agregado por transportadora, así que no había forma de saber QUÉ órdenes
-     *  eran ni de cruzarlas contra lo que cada transportadora debe pagar. */
-    lineas: Array<{
-      numeroorden: string
-      fecha: string | null
-      placa: string | null
-      tiquete: string | null
-      transporte: string | null
-      cliente: string | null
-      toneladas: number
-      valor: number
-    }>
-  } | null
+  /** Regla de a quién se le factura cada línea en este proyecto (Avimol: cada
+   *  transportadora paga lo suyo). null en los proyectos donde no aplica.
+   *
+   *  Reemplaza a `exclusionCarguePlaca`, que reportaba al margen —y solo en
+   *  agregado— el cargue de Zamudio/Terceros. Ahora esas líneas están DENTRO del
+   *  documento, a nombre de quien las paga y con su detalle orden por orden. */
+  notaFacturadoA: string | null
 }
 
 // ---------- Prefacturas GUARDADAS (borrador/aprobada) ----------
@@ -502,26 +487,6 @@ export async function eliminarPrefactura(id: number): Promise<{ success: boolean
     return { success: true }
   } catch (e: any) {
     return { success: false, message: e?.message || "Error al eliminar." }
-  }
-}
-
-/**
- * Placas ACTIVAS del proyecto, leídas de `distribucion_placas` en el momento.
- * No usa el caché ni el seed de lib/distribucion-placas.ts: ese seed incluye
- * placas dadas de baja y facturar contra él sería cobrar por una lista que
- * nadie revisó. `ok:false` = no se pudo leer -> no se filtra y se avisa.
- */
-async function placasPropiasActivas(sb: any, idempresa: number): Promise<{ placas: Set<string>; ok: boolean }> {
-  try {
-    const { data, error } = await sb
-      .from("distribucion_placas")
-      .select("placa")
-      .eq("idempresa", idempresa)
-      .eq("activo", true)
-    if (error) return { placas: new Set(), ok: false }
-    return { placas: new Set((data || []).map((r: any) => String(r.placa ?? "").trim().toUpperCase())), ok: true }
-  } catch {
-    return { placas: new Set(), ok: false }
   }
 }
 
@@ -669,12 +634,21 @@ export async function getPrefactura(
     // Placas que NO atiende LIP (excepto cuando cargan a Susanita). Ej. WMP446 en id 4.
     const placasExcluidas = new Set((PLACAS_EXCLUIDAS_FACTURAS[idempresa] || []).map((p) => p.toUpperCase()))
 
-    // CARGUE SOLO DE PLACA PROPIA (Avimol): el cargue de vehículos de terceros y
-    // de Zamudio no se le factura al proyecto, se le cobra a ellos. Se lee la
-    // lista real de la tabla; si no se puede, NO se filtra y se avisa.
+    // A QUIÉN SE LE FACTURA CADA LÍNEA (Avimol): el cargue/descargue/distribución
+    // de vehículos de TERCEROS y de ZAMUDIO no se le factura al proyecto, se le
+    // cobra a ellos; el de placa propia va cubierto por el fijo mensual (valor 0).
+    //
+    // Antes eso se resolvía APARTANDO las líneas de cargue cuya placa no fuera de
+    // Avimol y reportándolas como un agregado al margen del documento. El efecto
+    // era que Zamudio y Terceros NO existían como owners en la prefactura —solo
+    // salía Avimol— y no había forma de ver su detalle orden por orden ni de
+    // exportarlo, aunque el CUADRO sí los mostraba: los dos módulos leían las
+    // mismas líneas y reportaban owners distintos.
+    //
+    // Ahora se usa `facturadoAOwner`, el mismo criterio del cuadro y del análisis
+    // financiero (ver lib/facturacion-billed-party.ts), así que cada línea queda a
+    // nombre de quien la paga y arrastra su detalle completo.
     const cfgCargue = cargueSoloPlacaPropia(idempresa)
-    const propias = cfgCargue ? await placasPropiasActivas(sb, idempresa) : { placas: new Set<string>(), ok: true }
-    const excluidasCargue: PrefacturaLinea[] = []
 
     // Filtro multi-operación (vacío = todas). "Producción" viaja como un chip
     // más pero no es un tipooperacion, así que se separa de las operaciones.
@@ -738,6 +712,12 @@ export async function getPrefactura(
         const est = estadoPorOrden.get(on)
         const estadofactura = est?.estado ?? null
         const tServicio = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
+        // Quién PAGA esta línea. La tarifa se busca con el owner del PRODUCTO
+        // (que es como está montada `tarifasoperacion`); la reasignación es de
+        // destinatario, no de tarifa. Con `cubiertoPorFijo` el movimiento cuenta
+        // en toneladas pero sale en 0 — igual que en el cuadro.
+        const fa = facturadoAOwner(idempresa, owner, r.tipooperacion, r.transporte)
+        const tarifaFacturada = fa.cubiertoPorFijo ? 0 : tServicio
         const linea: PrefacturaLinea = {
           fechaorden: r.fechaorden ?? null,
           fechacargue: r.fechacargue ?? null,
@@ -748,7 +728,7 @@ export async function getPrefactura(
           producto: r.producto ?? null,
           pesobascula: num(r.pesobascula),
           toneladas: num(r.toneladas),
-          owner,
+          owner: fa.owner,
           subcategoria: r.subcategoria ?? null,
           idempresa: Number(r.idempresa),
           transporte: r.transporte ?? null,
@@ -756,17 +736,10 @@ export async function getPrefactura(
           tarifa: r.tarifa ?? null,
           valor_a_facturar: num(r.valor_a_facturar),
           servicio,
-          tarifaServicio: tServicio,
-          valorServicio: num(r.toneladas) * tServicio,
+          tarifaServicio: tarifaFacturada,
+          valorServicio: num(r.toneladas) * tarifaFacturada,
           estadofactura,
           categoria: categoriaDeFactura(est?.facturasiigo, estadofactura),
-        }
-        // A este proyecto solo se le factura el cargue de SUS vehículos; el de
-        // terceros y el de Zamudio se les cobra a ellos. La línea no se pierde:
-        // se aparta para poder reportar exactamente qué quedó fuera y por qué.
-        if (cfgCargue && propias.ok && esCargueFiltrable(idempresa, r.tipooperacion) && !propias.placas.has(placa)) {
-          excluidasCargue.push(linea)
-          continue
         }
         origen.push(linea)
       }
@@ -777,10 +750,10 @@ export async function getPrefactura(
     // prorrateado entre owners por su participación en el detalle. Se escala toneladas
     // y valor de cada línea por (pesovascula / Σ detalle de la orden). Σ por owner = báscula.
     if (idempresa === 1 || idempresa === 2) {
-      // Las apartadas se prorratean igual: si no, el valor que se reporta como
-      // "no facturado a este proyecto" saldría con el peso del detalle en vez
-      // del de báscula y no cuadraría con el cuadro.
-      const todas = [...origen, ...excluidasCargue]
+      // Todas las líneas van en `origen`, incluidas las de Zamudio/Terceros: el
+      // prorrateo por báscula tiene que verlas juntas o el reparto por owner no
+      // sumaría el peso del tiquete.
+      const todas = origen
       const totalDetOrden = new Map<string, number>()
       for (const l of todas) totalDetOrden.set(l.numeroorden, (totalDetOrden.get(l.numeroorden) || 0) + l.toneladas)
       for (const l of todas) {
@@ -957,83 +930,11 @@ export async function getPrefactura(
       resumen.sort((a, b) => a.owner.localeCompare(b.owner) || a.operacion.localeCompare(b.operacion))
     }
 
-    // Resumen de lo que quedó fuera del documento, agrupado por transporte
-    // (que es quien lo paga). Se reporta siempre que haya algo, para que el
-    // hueco entre lo procesado y lo facturado nunca sea invisible.
-    let exclusionCargue: Prefactura["exclusionCarguePlaca"] = null
-    if (cfgCargue && !propias.ok) {
-      produccionAlertas.push(
-        "No se pudo leer la lista de placas propias (Configuración → Placas de Distribución), así que NO se " +
-          "aplicó el filtro de cargue: este documento puede incluir cargues de terceros o de Zamudio que no se " +
-          "le facturan al proyecto. Vuelve a generar antes de emitir.",
-      )
-    } else if (cfgCargue && excluidasCargue.length > 0) {
-      const porTr = new Map<string, { ordenes: Set<string>; valor: number }>()
-      let ton = 0
-      const ordenes = new Set<string>()
-      for (const l of excluidasCargue) {
-        const tr = String(l.transporte ?? "").trim() || "(sin transporte)"
-        const g = porTr.get(tr) || { ordenes: new Set<string>(), valor: 0 }
-        g.ordenes.add(l.numeroorden)
-        g.valor += l.valorServicio
-        porTr.set(tr, g)
-        ton += l.toneladas
-        ordenes.add(l.numeroorden)
-      }
-      // Desglose POR ORDEN: una linea de `excluidasCargue` es por PRODUCTO, asi
-      // que se consolidan por numero de orden sumando toneladas y valor.
-      const porOrden = new Map<
-        string,
-        {
-          numeroorden: string
-          fecha: string | null
-          placa: string | null
-          tiquete: string | null
-          transporte: string | null
-          cliente: string | null
-          toneladas: number
-          valor: number
-        }
-      >()
-      for (const l of excluidasCargue) {
-        const on = String(l.numeroorden ?? "").trim()
-        const g = porOrden.get(on)
-        if (g) {
-          g.toneladas += l.toneladas
-          g.valor += l.valorServicio
-        } else {
-          porOrden.set(on, {
-            numeroorden: on,
-            fecha: l.fechacargue ?? l.fechaorden ?? null,
-            placa: l.placa ?? null,
-            tiquete: l.tiquete ?? null,
-            transporte: l.transporte ?? null,
-            cliente: l.cliente ?? null,
-            toneladas: l.toneladas,
-            valor: l.valorServicio,
-          })
-        }
-      }
-
-      exclusionCargue = {
-        nota: cfgCargue.nota,
-        ordenes: ordenes.size,
-        toneladas: Number(ton.toFixed(3)),
-        valor: Math.round(excluidasCargue.reduce((s, l) => s + l.valorServicio, 0)),
-        porTransporte: Array.from(porTr.entries())
-          .map(([transporte, g]) => ({ transporte, ordenes: g.ordenes.size, valor: Math.round(g.valor) }))
-          .sort((a, b) => b.valor - a.valor),
-        lineas: Array.from(porOrden.values())
-          .map((g) => ({ ...g, toneladas: Number(g.toneladas.toFixed(3)), valor: Math.round(g.valor) }))
-          // Por transportadora y, dentro de ella, por orden: asi queda agrupado
-          // igual que el resumen de arriba y es facil cruzarlo.
-          .sort(
-            (a, b) =>
-              String(a.transporte ?? "").localeCompare(String(b.transporte ?? "")) ||
-              String(a.numeroorden).localeCompare(String(b.numeroorden)),
-          ),
-      }
-    }
+    // Nota de a quién se le factura cada línea. Ya no hace falta reportar un
+    // agregado "de lo que quedó fuera": nada queda fuera. Zamudio y Terceros son
+    // owners del documento —con su detalle orden por orden y su subtotal— y lo de
+    // placa propia aparece en toneladas con valor 0.
+    const notaFacturadoA = cfgCargue ? cfgCargue.nota : null
 
     return {
       success: true,
@@ -1047,7 +948,7 @@ export async function getPrefactura(
         produccionAlertas,
         produccionDesde: cfg?.desde ?? null,
         produccionVigencia: vigencia,
-        exclusionCarguePlaca: exclusionCargue,
+        notaFacturadoA,
       },
     }
   } catch (e: any) {

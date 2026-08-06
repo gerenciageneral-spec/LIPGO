@@ -183,9 +183,9 @@ export function FacturacionReglasHeader({ empresaId }: { empresaId: number | nul
                   )}
                 </Bloque>
 
-                {/* --- Cargue por placa propia: nota de la constante --- */}
+                {/* --- A quién se le factura cada movimiento: nota de la constante --- */}
                 {cargue && (
-                  <Bloque titulo={`${cargue.operacion} — solo vehículos propios`}>
+                  <Bloque titulo="A quién se le factura cada movimiento">
                     <p className="text-muted-foreground">{cargue.nota}</p>
                   </Bloque>
                 )}

@@ -1205,65 +1205,22 @@ export function CuadroControlFacturacion() {
                     </div>
                   </div>
 
-                  {/* Cargue que NO entra en este documento porque la placa no es del
-                      proyecto. Va arriba y con el monto, porque es la diferencia
-                      entre lo procesado y lo facturado: si no se ve, parece un faltante. */}
-                  {pref?.exclusionCarguePlaca && (
+                  {/* A quién se le factura cada línea en este proyecto. Zamudio y
+                      Terceros salen como owners del documento —con su detalle orden
+                      por orden y su subtotal, igual que cualquier otro—, así que aquí
+                      solo va la regla; el desglose ya no vive en una caja aparte. */}
+                  {pref?.notaFacturadoA && (
                     <div className="rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900/40">
                       <div className="mb-1 flex items-center gap-1.5 font-semibold">
-                        <FileText className="h-3.5 w-3.5" />
-                        Cargue que no se le factura a {proyectoNombre}: {pref.exclusionCarguePlaca.ordenes} órdenes ·{" "}
-                        {ton(pref.exclusionCarguePlaca.toneladas)} t · {money(pref.exclusionCarguePlaca.valor)}
+                        <FileText className="h-3.5 w-3.5" />A quién se le factura cada movimiento
                       </div>
-                      <p className="text-muted-foreground">{pref.exclusionCarguePlaca.nota}</p>
-                      <ul className="mt-1 ml-4 list-disc">
-                        {pref.exclusionCarguePlaca.porTransporte.map((x) => (
-                          <li key={x.transporte}>
-                            <strong>{x.transporte}</strong>: {x.ordenes} órdenes · {money(x.valor)}
-                          </li>
-                        ))}
-                      </ul>
-
-                      {/* Desglose POR ORDEN. Sin esto solo se veía el total por
-                          transportadora, y no había forma de saber QUÉ órdenes
-                          eran ni de cruzarlas contra lo que cada una debe pagar. */}
-                      {pref.exclusionCarguePlaca.lineas?.length > 0 && (
-                        <details className="mt-2">
-                          <summary className="cursor-pointer select-none font-medium">
-                            Ver el detalle por orden ({pref.exclusionCarguePlaca.lineas.length})
-                          </summary>
-                          <div className="mt-2 max-h-72 overflow-auto rounded border bg-background">
-                            <table className="w-full text-[11px]">
-                              <thead className="sticky top-0 bg-muted">
-                                <tr>
-                                  <th className="px-2 py-1 text-left font-medium">Transporte</th>
-                                  <th className="px-2 py-1 text-left font-medium">Orden</th>
-                                  <th className="px-2 py-1 text-left font-medium">Fecha</th>
-                                  <th className="px-2 py-1 text-left font-medium">Placa</th>
-                                  <th className="px-2 py-1 text-left font-medium">Tiquete</th>
-                                  <th className="px-2 py-1 text-left font-medium">Cliente</th>
-                                  <th className="px-2 py-1 text-right font-medium">Ton</th>
-                                  <th className="px-2 py-1 text-right font-medium">Valor</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {pref.exclusionCarguePlaca.lineas.map((l) => (
-                                  <tr key={l.numeroorden} className="border-t">
-                                    <td className="px-2 py-1">{l.transporte || "-"}</td>
-                                    <td className="px-2 py-1 font-mono">{l.numeroorden}</td>
-                                    <td className="px-2 py-1">{l.fecha ? String(l.fecha).slice(0, 10) : "-"}</td>
-                                    <td className="px-2 py-1 font-mono">{l.placa || "-"}</td>
-                                    <td className="px-2 py-1">{l.tiquete || "-"}</td>
-                                    <td className="px-2 py-1">{l.cliente || "-"}</td>
-                                    <td className="px-2 py-1 text-right">{ton(l.toneladas)}</td>
-                                    <td className="px-2 py-1 text-right">{money(l.valor)}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        </details>
-                      )}
+                      <p className="text-muted-foreground">{pref.notaFacturadoA}</p>
+                      <p className="mt-1 text-muted-foreground">
+                        Por eso <strong>Zamudio</strong> y <strong>Terceros</strong> aparecen abajo como owners con
+                        su propio detalle: son facturas distintas, no parte de la de {proyectoNombre}. Lo movido con
+                        vehículos propios se lista en toneladas con valor <strong>$0</strong> porque lo cubre el
+                        cargo fijo mensual.
+                      </p>
                     </div>
                   )}
 

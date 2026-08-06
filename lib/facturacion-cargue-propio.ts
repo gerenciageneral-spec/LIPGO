@@ -10,35 +10,28 @@
 // (Ver lib/facturacion-medio-pago.ts para la condición de pago de los dos
 // primeros; aquí solo se resuelve QUIÉN entra en la prefactura del proyecto.)
 //
-// La lista de placas propias sale de `distribucion_placas` con `activo = true`,
-// que es el submódulo Configuración → Placas de Distribución. Se lee de la
-// tabla en cada cálculo, NO del seed de lib/distribucion-placas.ts: ese seed es
-// un fallback para que la automatización de distribución nunca se caiga, e
-// incluye placas dadas de baja (GQV639). Facturar contra un fallback sería
-// cobrar por una lista que nadie revisó.
+// CÓMO SE APLICA (cambió): antes la prefactura APARTABA por placa las líneas de
+// cargue que no fueran de Avimol y las reportaba en un recuadro al margen. El
+// efecto era que Zamudio y Terceros no existían como owners del documento —solo
+// salía Avimol— y no había forma de ver su detalle orden por orden.
 //
-// REGLA DE SEGURIDAD: si la lista no se puede leer, NO se filtra nada y se
-// avisa. Es preferible una prefactura de más —que un humano revisa antes de
-// emitir— a una de menos que se emite sin que nadie note lo que falta.
+// Hoy el reparto lo hace `facturadoAOwner` (lib/facturacion-billed-party.ts) por
+// TRANSPORTE, que es el mismo criterio que ya usaban el cuadro y el análisis
+// financiero. Cada línea queda a nombre de quien la paga y arrastra su detalle;
+// nada se aparta. Este archivo ya solo aporta el TEXTO de la regla para el
+// encabezado y la prefactura.
 
-/** Proyectos donde el cargue solo se le factura al dueño de la placa. */
+/** Proyectos donde el cargue no se le factura completo al proyecto. */
 export const CARGUE_SOLO_PLACA_PROPIA: Record<number, { operacion: string; nota: string }> = {
   2: {
     operacion: "Cargue",
     nota:
-      "A Avimol solo se le factura el cargue de los vehículos a su nombre (Configuración → Placas de " +
-      "Distribución, activas). El cargue de vehículos de TERCEROS se le cobra al tercero de contado y el de " +
-      "ZAMUDIO a Zamudio a crédito, así que no entran en este documento.",
+      "En Avimol cada transportadora paga lo suyo: el cargue de vehículos de TERCEROS se le cobra al tercero " +
+      "de contado y el de ZAMUDIO a Zamudio a crédito. Lo movido con vehículos propios de Avimol no se cobra " +
+      "por tonelada — lo cubre el cargo fijo mensual —, así que se lista con valor 0.",
   },
 }
 
 export function cargueSoloPlacaPropia(idempresa?: number | null): { operacion: string; nota: string } | null {
   return CARGUE_SOLO_PLACA_PROPIA[Number(idempresa)] ?? null
-}
-
-/** ¿La línea es un cargue que debe filtrarse por placa propia en este proyecto? */
-export function esCargueFiltrable(idempresa: number | null | undefined, tipooperacion: unknown): boolean {
-  const cfg = cargueSoloPlacaPropia(idempresa)
-  if (!cfg) return false
-  return String(tipooperacion ?? "").trim().toUpperCase() === cfg.operacion.toUpperCase()
 }
