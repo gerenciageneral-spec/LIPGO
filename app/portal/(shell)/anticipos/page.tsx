@@ -135,12 +135,25 @@ export default function PortalAnticiposPage() {
   }, [colaborador?.colaborador_id])
 
   /**
-   * Solicitud del mes actual: cualquier registro de anticipo creado dentro
-   * del mes corriente, sin importar su estado. Se usa para bloquear el
-   * formulario y mostrar el Alert con la politica mensual.
+   * Solicitud del mes actual que CONSUME el cupo mensual: un anticipo creado
+   * dentro del mes corriente que no haya sido rechazado. Se usa para bloquear
+   * el formulario y mostrar el Alert con la politica mensual.
+   *
+   * Las RECHAZADAS no cuentan. La politica es una solicitud atendida por mes,
+   * no un intento por mes: si a alguien le niegan el anticipo, quedaba sin
+   * poder volver a pedirlo hasta el mes siguiente aunque nunca hubiera
+   * recibido un peso. Las pendientes SI bloquean —hay uno en curso— y las
+   * aprobadas/completadas tambien, que es el caso que la politica cubre.
    */
   const solicitudDelMes = useMemo(
-    () => anticipos.find((a) => esDelMesActual(a.created_at)),
+    () => anticipos.find((a) => a.estado !== "rechazada" && esDelMesActual(a.created_at)),
+    [anticipos],
+  )
+
+  /** Rechazada de este mes: solo para explicar por que el formulario sigue
+   *  disponible. Antes bloqueaba, asi que sin esta nota parece un error. */
+  const rechazadaDelMes = useMemo(
+    () => anticipos.find((a) => a.estado === "rechazada" && esDelMesActual(a.created_at)),
     [anticipos],
   )
 
@@ -152,7 +165,7 @@ export default function PortalAnticiposPage() {
       toast({
         title: "Solicitud bloqueada",
         description:
-          "Ya existe una solicitud de anticipo este mes. Solo se permite una mensual.",
+          "Ya tienes una solicitud de anticipo en curso o aprobada este mes. Solo se permite una mensual.",
         variant: "destructive",
       })
       return
@@ -213,8 +226,9 @@ export default function PortalAnticiposPage() {
             Ya tienes una solicitud este mes
           </AlertTitle>
           <AlertDescription className="text-amber-800">
-            Ya has realizado una solicitud de anticipo este mes. Solo se permite una
-            solicitud mensual segun las politicas de la empresa.
+            {solicitudDelMes.estado === "pendiente"
+              ? "Tienes una solicitud de anticipo en revisión este mes. Espera la respuesta antes de enviar otra: solo se permite una solicitud mensual según las políticas de la empresa."
+              : "Ya tienes un anticipo aprobado este mes. Solo se permite una solicitud mensual según las políticas de la empresa."}
           </AlertDescription>
         </Alert>
       ) : (
@@ -238,6 +252,13 @@ export default function PortalAnticiposPage() {
             </div>
           </CardHeader>
           <CardContent>
+            {rechazadaDelMes && (
+              <p className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                Tu solicitud anterior de este mes fue rechazada, así que{" "}
+                <strong>puedes volver a solicitar</strong>: una solicitud rechazada no consume
+                el cupo mensual.
+              </p>
+            )}
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
               <div className="space-y-1.5">
                 <Label htmlFor="monto">Monto a solicitar (COP)</Label>
