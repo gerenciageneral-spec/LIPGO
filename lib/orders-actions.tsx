@@ -2043,6 +2043,61 @@ export async function closePendingOrder(idpedido: number, password: string, obse
   }
 }
 
+// Si se borra una orden de CARGUE (madre), sus clones automáticos (descargue
+// en el CEDI destino + distribución "+D") deben borrarse con ella — si no,
+// quedan huérfanos apuntando a una madre que ya no existe (exactamente el caso
+// real encontrado: MED202608037573 con `ordenorigen = AVI202608037572` y esa
+// madre ya no está en cabeceraoc).
+//
+// Si algún clon YA fue procesado (tiene `iniciocargue`, o ya generó
+// movimientos en `invtrans`), NO se borra nada — se bloquea la eliminación de
+// la madre y se avisa, porque eso significaría hacer desaparecer un
+// movimiento de inventario real sin más contexto.
+async function eliminarClonesDeCargue(
+  supabase: any,
+  ordenDeCargueMadre: string,
+): Promise<{ success: boolean; message?: string }> {
+  const { data: clonesDescargue } = await supabase
+    .from("cabeceraoc")
+    .select("id, ordendecargue, iniciocargue")
+    .eq("ordenorigen", ordenDeCargueMadre)
+    .eq("tipooperacion", "Descargue")
+
+  const distCode = numeroOrdenDistribucion(ordenDeCargueMadre)
+  const { data: clonDistribucion } = await supabase
+    .from("cabeceraoc")
+    .select("id, ordendecargue, iniciocargue")
+    .eq("ordendecargue", distCode)
+    .eq("tipooperacion", "Distribucion")
+    .maybeSingle()
+
+  const candidatos = [...(clonesDescargue ?? []), ...(clonDistribucion ? [clonDistribucion] : [])]
+  if (candidatos.length === 0) return { success: true }
+
+  for (const clon of candidatos) {
+    if (clon.iniciocargue) {
+      return {
+        success: false,
+        message: `No se pudo eliminar: la orden clon ${clon.ordendecargue} ya fue iniciada. Elimínala primero manualmente si corresponde.`,
+      }
+    }
+    const { data: ingresos } = await supabase.from("invtrans").select("id").eq("ocargue", clon.ordendecargue).limit(1)
+    if (ingresos && ingresos.length > 0) {
+      return {
+        success: false,
+        message: `No se pudo eliminar: la orden clon ${clon.ordendecargue} ya generó movimientos de inventario. Elimínala primero manualmente si corresponde.`,
+      }
+    }
+  }
+
+  for (const clon of candidatos) {
+    await supabase.from("detalleoc").delete().eq("idorden", clon.id)
+    await supabase.from("cabeceraoc").delete().eq("id", clon.id)
+    console.log("[v0] Clon eliminado en cascada junto con su madre:", clon.ordendecargue)
+  }
+  return { success: true }
+}
+
 export async function deleteLoadOrder(orderId: number) {
   const supabase = await createClient()
   try {
@@ -2051,7 +2106,7 @@ export async function deleteLoadOrder(orderId: number) {
     // Step 1: Get the order to be deleted to get ordendecargue
     const { data: orderToDelete, error: fetchError } = await supabase
       .from("cabeceraoc")
-      .select("ordendecargue")
+      .select("ordendecargue, tipooperacion")
       .eq("id", orderId)
       .single()
 
@@ -2066,6 +2121,16 @@ export async function deleteLoadOrder(orderId: number) {
 
     const ordenDeCargue = orderToDelete.ordendecargue
     console.log("[v0] Order to delete has ordendecargue:", ordenDeCargue)
+
+    // Si es una orden de Cargue (madre), borra primero sus clones automáticos
+    // (o bloquea si alguno ya fue procesado). Los demás tipos (Descargue,
+    // Distribucion, Tolva...) no disparan esta cascada.
+    if (orderToDelete.tipooperacion === "Cargue") {
+      const cascada = await eliminarClonesDeCargue(supabase, ordenDeCargue)
+      if (!cascada.success) {
+        return cascada
+      }
+    }
 
     // Step 2: Delete all associated lines in detalleoc where idorden = orderId
     const { error: detailsDeleteError } = await supabase.from("detalleoc").delete().eq("idorden", orderId)
