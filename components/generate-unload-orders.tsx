@@ -34,6 +34,7 @@ interface Product {
 interface UnloadOrderLine {
   id: string
   producto: Product | null
+  lote: string
   cantidad: number
   pesoUnitkg: number
   pesoTotal: number
@@ -149,6 +150,7 @@ console.log("[v0] selectedEmpresaId:", selectedEmpresaId)
     const newLine: UnloadOrderLine = {
       id: Math.random().toString(36).substr(2, 9),
       producto: null,
+      lote: "",
       cantidad: 0,
       pesoUnitkg: 0,
       pesoTotal: 0,
@@ -189,6 +191,13 @@ console.log("[v0] selectedEmpresaId:", selectedEmpresaId)
         }
         return line
       }),
+    }))
+  }
+
+  const updateLote = (lineId: string, lote: string) => {
+    setOrderData((prev) => ({
+      ...prev,
+      lineas: prev.lineas.map((line) => (line.id === lineId ? { ...line, lote } : line)),
     }))
   }
 
@@ -271,6 +280,7 @@ console.log("[v0] selectedEmpresaId:", selectedEmpresaId)
         lineas: lineasConProducto.map((line) => ({
           id: line.id,
           producto: line.producto as any,
+          lote: line.lote?.trim() || null,
           cantidad: line.cantidad,
           pesoBrutoTotal: line.pesoBrutoTotal,
         })),
@@ -473,6 +483,7 @@ console.log("[v0] selectedEmpresaId:", selectedEmpresaId)
                   <TableHeader>
                     <TableRow>
                       <TableHead>Producto</TableHead>
+                      <TableHead className="w-32">Lote</TableHead>
                       <TableHead className="w-24">Cantidad</TableHead>
                       <TableHead className="w-24">Peso Unit. (kg)</TableHead>
                       <TableHead className="w-28">Peso Total (kg)</TableHead>
@@ -537,6 +548,15 @@ console.log("[v0] selectedEmpresaId:", selectedEmpresaId)
                               </Command>
                             </PopoverContent>
                           </Popover>
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            type="text"
+                            placeholder="Lote"
+                            value={line.lote}
+                            onChange={(e) => updateLote(line.id, e.target.value)}
+                            className="w-full"
+                          />
                         </TableCell>
                         <TableCell>
                           <Input

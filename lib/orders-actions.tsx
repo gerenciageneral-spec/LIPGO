@@ -2319,6 +2319,7 @@ export async function generateUnloadOrder(orderData: {
   lineas: Array<{
     id: string
     producto?: { id: number; nombre: string; peso_unitkg: number; pesobruto?: number }
+    lote?: string | null
     cantidad: number
     pesoBrutoTotal?: number
   }>
@@ -2441,6 +2442,7 @@ export async function generateUnloadOrder(orderData: {
         cantidad: line.cantidad,
         toneladas: (line.cantidad * line.producto!.peso_unitkg) / 1000,
         cliente: "",
+        lote: line.lote || null,
       }))
 
     console.log("[v0] Inserting", detailsToInsert.length, "detail records")
@@ -3338,11 +3340,15 @@ export async function updateTolva(
 // a Producción → "Aprobación de ingreso" como PENDIENTE por aprobar:
 //   - `invtrans` tipomov="Entrada", status=null (idéntico a un ingreso manual, así el
 //     submódulo lo lista solo). Una fila por producto+lote+cantidad.
-//   - LOTE: se conserva el de la bodega ORIGEN. Dos fuentes, en este orden:
+//   - LOTE: se conserva el de la bodega ORIGEN. Tres fuentes, en este orden:
 //     1) TRASLADO entre bodegas -> `despachotraslados` por `ocargue = ordenorigen`,
 //        cruzando por producto. Es lo que realmente salio de la bodega.
 //     2) Descargue de planta id1/id2 -> el cargue madre (`historicolotes` por
 //        producto+cliente).
+//     3) `detalleoc.lote` de la PROPIA linea del descargue — lo captura quien
+//        genera la orden a mano en "Generar Orden de Descargue" cuando NO viene
+//        de un cargue madre en LIPgo (recepciones de terceros, ej. Molinos: sin
+//        `ordenorigen`, las dos fuentes anteriores no aplican).
 //     Solo si ninguna aplica nace sin lote y se completa manual.
 //   - `origen`/`ocargue` = código del descargue → trazabilidad + IDEMPOTENCIA (no duplica).
 // A futuro, el QR de la estiba se engancha a ESTA fila (campo `qrestiba`) — NO crea un
@@ -3363,7 +3369,7 @@ async function generarIngresoProduccionDesdeDescargue(supabase: any, orderId: nu
       .from("invtrans").select("id").eq("tipomov", "Entrada").eq("ocargue", oh.ordendecargue).limit(1).maybeSingle()
     if (ya) return
 
-    const { data: det } = await supabase.from("detalleoc").select("producto, cantidad, cliente").eq("idorden", orderId)
+    const { data: det } = await supabase.from("detalleoc").select("producto, cantidad, cliente, lote").eq("idorden", orderId)
     if (!det || det.length === 0) return
 
     const norm = (s: any) => String(s ?? "").trim().toUpperCase()
@@ -3452,8 +3458,10 @@ async function generarIngresoProduccionDesdeDescargue(supabase: any, orderId: nu
         }
         for (const l of lotes) filas.push({ ...base, lote: l.lote, cantidad: l.cantidad })
       } else {
-        // Sin lote: se completa manual en el submódulo.
-        filas.push({ ...base, lote: null, cantidad: cant })
+        // Sin traslado ni cargue madre: el lote propio de la línea (capturado a
+        // mano al generar la orden), si lo hay. Si tampoco, sin lote (manual).
+        const loteLinea = String(d.lote ?? "").trim()
+        filas.push({ ...base, lote: loteLinea || null, cantidad: cant })
       }
     }
     if (!filas.length) return
