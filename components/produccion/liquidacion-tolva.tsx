@@ -135,11 +135,12 @@ function LiquidacionDelDia() {
       {data && (
         <>
           {data.pendientes.length > 0 && (
-            <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+            <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
               <div>
-                <strong>{data.pendientes.length}</strong> ingreso(s) requieren revisión manual antes de poder
-                registrar la Tolva:
+                <strong>{data.pendientes.length}</strong> ingreso(s) con hora fuera de la ventana de Turno 1/Turno 2
+                — quedan fuera de esta liquidación hasta que se revisen, pero no impiden registrar los turnos que sí
+                están verificados:
                 <ul className="mt-1 list-disc space-y-0.5 pl-5">
                   {data.pendientes.map((p) => (
                     <li key={p.id}>
@@ -213,9 +214,7 @@ function LiquidacionDelDia() {
 
                   <Button
                     onClick={() => registrar(t.turno)}
-                    disabled={
-                      !data.puedeRegistrar || t.lineas.length === 0 || registrando === t.turno
-                    }
+                    disabled={t.lineas.length === 0 || registrando === t.turno}
                     className="w-full gap-2"
                   >
                     {registrando === t.turno ? (

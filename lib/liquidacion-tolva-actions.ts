@@ -139,7 +139,6 @@ export interface LiquidacionTolvaDia {
   tipoOperacion: "Tolva" | "Tolva f"
   turnos: TurnoPreview[]
   pendientes: IngresoPendienteRevision[]
-  puedeRegistrar: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -411,7 +410,6 @@ export async function getLiquidacionTolvaDia(
         tipoOperacion: tipoOperacionTolva(fecha),
         turnos,
         pendientes,
-        puedeRegistrar: pendientes.length === 0,
       },
     }
   } catch (e: any) {
@@ -434,14 +432,13 @@ export async function registrarTolvaTurno(
 
     // Recalcula el preview (no confía en lo que el cliente tenía en pantalla,
     // para evitar condiciones de carrera con nuevas aprobaciones/turnos).
+    //
+    // Los "pendientes" (ingresos cuya hora cae fuera de ambas ventanas de
+    // turno) YA NO bloquean el registro: quedan fuera de este turno y de
+    // este día hasta que se revisen aparte, pero no deben impedir liquidar
+    // la producción que sí está verificada y sí cayó en su ventana.
     const preview = await getLiquidacionTolvaDia(fecha, idempresa)
     if (!preview.success || !preview.data) return { success: false, message: preview.message }
-    if (preview.data.pendientes.length > 0) {
-      return {
-        success: false,
-        message: `Hay ${preview.data.pendientes.length} ingreso(s) cuya hora no cae en ninguna ventana de turno — resuélvelos antes de registrar.`,
-      }
-    }
     const turnoData = preview.data.turnos.find((t) => t.turno === turno)
     if (!turnoData || turnoData.lineas.length === 0) {
       return { success: false, message: "No hay ingresos aprobados para este turno." }
