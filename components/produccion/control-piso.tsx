@@ -166,8 +166,19 @@ const PIE_COLORS = [
 // "hoy" porque mostramos la hora literal del timestamptz (en UTC), de
 // modo que el limite del dia coincida con los digitos que se ven.
 function utcDateStr() {
+  // OJO: el dia de "hoy" se toma en hora de COLOMBIA, no en UTC.
+  //
+  // Antes se formateaba en UTC y, a partir de las 19:00 hora de Colombia, ya era
+  // el dia siguiente en UTC: el filtro por defecto se ADELANTABA UN DIA y el
+  // tablero salia vacio el resto de la tarde-noche.
+  //
+  // No es contradictorio con el resto del modulo: los RANGOS de consulta si se
+  // arman con los digitos literales (…T00:00:00Z), porque `fecha_hora` guarda la
+  // hora de pared de Colombia etiquetada como UTC. Justamente por eso el limite
+  // del dia tiene que ser el dia calendario COLOMBIANO: asi los digitos del
+  // rango coinciden con los digitos almacenados.
   return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "UTC",
+    timeZone: "America/Bogota",
     year: "numeric",
     month: "2-digit",
     day: "2-digit",

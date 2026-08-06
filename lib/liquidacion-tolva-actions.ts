@@ -120,6 +120,23 @@ export interface LiquidacionTolvaDia {
 // Helpers de fecha/hora (America/Bogota)
 // ---------------------------------------------------------------------------
 
+/**
+ * Fecha y minutos LITERALES de un timestamp: los digitos tal como vienen, sin
+ * convertir de zona.
+ *
+ * Es lo que hay que usar con `produccion.fecha_hora` —y con el `creado` que el
+ * trigger copia de ahi—, porque esa columna NO guarda UTC real sino la HORA DE
+ * PARED DE COLOMBIA ETIQUETADA COMO UTC: `2026-08-05 13:25:40+00` significa la
+ * 1:25 de la tarde en Colombia, no las 8:25. Convertirla restaria cinco horas
+ * que nunca tuvo. Ver `bogotaWallAsUtcMs` en components/produccion/control-piso.tsx,
+ * el modulo construido sobre esa tabla, que aplica el mismo criterio.
+ */
+function partesLiterales(iso: string): { fecha: string; minutos: number } | null {
+  const m = String(iso ?? "").match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})/)
+  if (!m) return null
+  return { fecha: m[1], minutos: Number(m[2]) * 60 + Number(m[3]) }
+}
+
 /** Fecha (YYYY-MM-DD) y minutos-desde-medianoche de un ISO timestamp, en hora de Bogotá. */
 function bogotaParts(iso: string): { fecha: string; minutos: number } {
   const d = new Date(iso)
@@ -222,14 +239,17 @@ export async function getLiquidacionTolvaDia(
     // Sin este respaldo, toda la produccion historica del LOGO queda invisible
     // aqui aunque este aprobada.
     //
-    // El rango de `creado` va en UTC: un dia de Colombia (UTC-5) es
-    // [fecha 05:00Z, fecha+1 05:00Z). Acotarlo evita arrastrar todo el historico
-    // de filas con `fechaprod` nulo.
+    // El rango de `creado` se arma con los digitos LITERALES del timestamp, sin
+    // desfase de zona. Las filas del LOGO llegan con `creado = produccion.fecha_hora`,
+    // que NO guarda UTC real sino la HORA DE PARED DE COLOMBIA ETIQUETADA COMO UTC
+    // (documentado en components/produccion/control-piso.tsx, ver
+    // `bogotaWallAsUtcMs`). Restarle 5 horas mandaria la produccion al turno
+    // equivocado y, la de antes de las 05:00, al dia anterior.
     const finDia = new Date(`${fecha}T00:00:00Z`)
     finDia.setUTCDate(finDia.getUTCDate() + 1)
     const diaSiguiente = finDia.toISOString().slice(0, 10)
-    const creadoDesde = `${fecha}T05:00:00Z`
-    const creadoHasta = `${diaSiguiente}T05:00:00Z`
+    const creadoDesde = `${fecha}T00:00:00Z`
+    const creadoHasta = `${diaSiguiente}T00:00:00Z`
 
     // Un solo `.or()` en la consulta: dos llamadas generan parametros `or=`
     // repetidos y PostgREST los resuelve de forma ambigua. El `or` se reserva
@@ -250,12 +270,12 @@ export async function getLiquidacionTolvaDia(
 
     // La produccion PROPIA de Harinera genera inventario pero no se liquida ni
     // se factura. `null` = LIP (todo lo historico y lo que sube el LOGO).
-    // Ademas, red de seguridad para la rama (b): que la fecha Colombia de
-    // `creado` sea de verdad la del dia pedido.
+    // Ademas, red de seguridad para la rama (b): que la fecha LITERAL de
+    // `creado` sea de verdad la del dia pedido (ver `partesLiterales`).
     const ingresos = (crudos ?? []).filter((r: any) => {
       if (r.tipo_produccion === "Harinera") return false
       if (r.fechaprod) return true
-      return bogotaParts(r.creado).fecha === fecha
+      return partesLiterales(r.creado)?.fecha === fecha
     })
 
     // 3) Pesos por producto (peso_unitkg) para la conversión bultos->toneladas
@@ -291,7 +311,9 @@ export async function getLiquidacionTolvaDia(
       // hora ESTIMADA, para que se puedan verificar en vez de bloquear.
       const minutosProd = horaAMinutos(r.horaprod)
       const horaEstimada = minutosProd == null
-      const minutos = horaEstimada ? bogotaParts(r.creado).minutos : minutosProd!
+      // La hora de respaldo se lee LITERAL de `creado` (ver `partesLiterales`):
+      // en las filas del LOGO esos digitos ya son hora de Colombia.
+      const minutos = horaEstimada ? partesLiterales(r.creado)?.minutos ?? 0 : minutosProd!
 
       let turnoAsignado: number | null = null
       for (const t of [1, 2]) {

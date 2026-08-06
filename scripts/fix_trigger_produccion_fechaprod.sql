@@ -1,6 +1,11 @@
 -- =====================================================================
 -- `fn_sync_produccion_to_invtrans`: escribir tambien `fechaprod` y `horaprod`.
 --
+-- >>> CORREGIDO 2026-08-05. Si ya corriste la version anterior de este script,
+-- >>> VUELVE A CORRER ESTE: aquella convertia la zona horaria al reves y dejaba
+-- >>> la hora 5 horas antes de la real. Al final hay un UPDATE que repara las
+-- >>> filas que alcanzo a escribir.
+--
 -- PROBLEMA QUE CORRIGE
 -- La produccion que sube el LOGO llega a `invtrans` por este trigger, pero el
 -- INSERT no incluia `fechaprod` ni `horaprod`, asi que esas filas nacian con
@@ -9,24 +14,30 @@
 -- "Liquidación Tolva del día" filtra por `fechaprod = <fecha>`, de modo que la
 -- produccion del LOGO era INVISIBLE ahi — aunque estuviera aprobada y se viera
 -- perfectamente en "Aprobación de ingreso de producción", que no filtra por esa
--- columna. Verificado el 2026-08-05 contra datos reales: todas las filas con
+-- columna. Verificado contra datos reales: todas las filas con
 -- `creadopor = 'LOGO'` tenian `fechaprod` y `horaprod` en null.
 --
--- QUE FECHA SE USA
--- La de `produccion.fecha_hora` convertida a HORA COLOMBIA. Es el momento en que
--- el LOGO registro la produccion, que es el criterio confirmado con el negocio.
--- NO se usa el `lote`: aunque codifica una fecha (YYYYMMDD) y Conciliación
--- Avimol si lo interpreta asi (`loteAFecha`), en Indupan el lote cambia de dia a
--- media mañana, de modo que usarlo mandaria produccion de la tarde al dia
--- siguiente y el turno que la hizo no la veria.
+-- ZONA HORARIA — LEER ANTES DE TOCAR ESTO
+-- `produccion.fecha_hora` NO guarda UTC real: guarda la HORA DE PARED DE
+-- COLOMBIA ETIQUETADA COMO UTC. Es decir, `2026-08-05 13:25:40+00` significa la
+-- 1:25 de la tarde EN COLOMBIA, no las 8:25.
 --
--- OJO CON LA ZONA HORARIA: `fecha_hora` se guarda en UTC (los datos muestran el
--- sufijo +00). `AT TIME ZONE 'America/Bogota'` la baja a hora local, que es lo
--- que hay que comparar contra las ventanas de turno. Sin esa conversion, una
--- produccion de las 19:00 UTC (14:00 en Colombia) se leeria como de las 19:00 y
--- caeria en el turno equivocado.
+-- Esta documentado en `components/produccion/control-piso.tsx` (ver los
+-- comentarios de `bogotaWallAsUtcMs` y de `inactividad`), que es el modulo
+-- construido sobre esta tabla y que compara contra la hora de pared de Bogota
+-- reinterpretada como UTC justamente para no aplicar el desfase.
 --
--- `horaprod` se guarda como texto "HH:MM", que es el formato que ya espera
+-- Por eso aqui se leen los COMPONENTES LITERALES del timestamp (`AT TIME ZONE
+-- 'UTC'`) y NO se convierte a 'America/Bogota': convertir restaria cinco horas
+-- que la columna nunca tuvo, mandando la produccion al turno equivocado y, para
+-- lo registrado antes de las 05:00, al dia anterior.
+--
+-- COMO SE COMPRUEBA: la produccion del 04-ago iba de 08:29 a 19:03 en estos
+-- digitos, que encaja con los turnos 06:00-13:00 y 13:00-20:00. Convertida daria
+-- 03:29 a 14:03: arrancando a las 3 de la madrugada y sin nada en la segunda
+-- mitad del Turno 2. Ese contraste es la prueba.
+--
+-- `horaprod` se guarda como texto "HH:MM", que es el formato que espera
 -- `lib/liquidacion-tolva-actions.ts` (ver scripts/add_horaprod_invtrans.sql).
 --
 -- El resto de la funcion queda EXACTAMENTE igual.
@@ -49,8 +60,9 @@ BEGIN
   SELECT COALESCE(MAX(id), 0) INTO v_max_id FROM public.invtrans;
   PERFORM setval(pg_get_serial_sequence('public.invtrans', 'id'), v_max_id, true);
 
-  -- 1b. Momento de la produccion en HORA COLOMBIA (ver cabecera del script).
-  v_local := NEW.fecha_hora AT TIME ZONE 'America/Bogota';
+  -- 1b. Hora de la produccion. Se toman los digitos LITERALES del timestamp
+  --     porque ya son hora de Colombia (ver cabecera). NO convertir.
+  v_local := NEW.fecha_hora AT TIME ZONE 'UTC';
 
   -- 2. Búsqueda de datos en la tabla productos
   SELECT nombre, codigo INTO v_nombreproducto, v_codproducto
@@ -109,24 +121,36 @@ END;
 $function$;
 
 -- =====================================================================
+-- REPARACION de lo que escribio la version anterior (la que convertia mal).
+--
+-- IDEMPOTENTE: recalcula desde `creado` con el criterio correcto, asi que
+-- correrlo dos veces da el mismo resultado. Solo toca filas del LOGO que ya
+-- tengan `fechaprod`; las que siguen en NULL son historicas y las resuelve el
+-- respaldo de `lib/liquidacion-tolva-actions.ts`.
+-- =====================================================================
+
+update public.invtrans
+   set fechaprod = (creado AT TIME ZONE 'UTC')::date,
+       horaprod  = to_char(creado AT TIME ZONE 'UTC', 'HH24:MI')
+ where creadopor = 'LOGO'
+   and fechaprod is not null;
+
+-- =====================================================================
 -- VERIFICACION
 -- =====================================================================
 
--- 1) La funcion quedo con las dos columnas nuevas.
+-- 1) La funcion quedo con las dos columnas y SIN la conversion a Bogota.
 select pg_get_functiondef('public.fn_sync_produccion_to_invtrans'::regproc) like '%fechaprod%'
-       as tiene_fechaprod,
+         as tiene_fechaprod,
        pg_get_functiondef('public.fn_sync_produccion_to_invtrans'::regproc) like '%horaprod%'
-       as tiene_horaprod;
+         as tiene_horaprod,
+       pg_get_functiondef('public.fn_sync_produccion_to_invtrans'::regproc) like '%America/Bogota%'
+         as convierte_mal;   -- debe dar FALSE
 
--- 2) El trigger sigue siendo AFTER INSERT (no se toco, pero se confirma).
-select tgname, pg_get_triggerdef(oid) as definicion
-from pg_trigger
-where tgrelid = 'public.produccion'::regclass and not tgisinternal;
-
--- 3) Despues de que el LOGO registre una produccion nueva, debe traer las dos
---    columnas pobladas y la hora debe coincidir con la hora local de la planta.
+-- 2) `horaprod` debe coincidir con los digitos de `creado`. Si `creado` dice
+--    13:25, `horaprod` debe decir 13:25 — NO 08:25.
 select id, nombreproducto, lote, cantidad, creado, fechaprod, horaprod, creadopor
 from public.invtrans
-where creadopor = 'LOGO'
+where creadopor = 'LOGO' and fechaprod is not null
 order by id desc
 limit 10;
