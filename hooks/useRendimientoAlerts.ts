@@ -26,11 +26,18 @@ export function useRendimientoAlerts(empresaId: number | null, userId: string | 
       }
 
       try {
-        // Check permission for dashboard_operacion
-        const permResponse = await fetch(`/api/user-permissions?userId=${userId}`)
+        // Check permission for dashboard_operacion. `/api/user-permissions`
+        // NO existe en la app (404 constante en consola) — la fuente real de
+        // permisos del cliente es `/api/user-modules`, que devuelve los
+        // modulos cuyo flag de permiso esta activo. Mismo patron ya usado en
+        // useOperacionesDiaAlerts/useAsistenciaAlerts para este mismo permiso.
+        const permResponse = await fetch(`/api/user-modules`, { cache: "no-store" })
         if (permResponse.ok) {
           const permData = await permResponse.json()
-          const hasDashboardOperacionPermission = permData?.dashboard_operacion === true
+          const allowedModules: string[] = Array.isArray(permData?.allowedModules)
+            ? permData.allowedModules
+            : []
+          const hasDashboardOperacionPermission = allowedModules.includes("Dashboard Operacion")
           setHasPermission(hasDashboardOperacionPermission)
 
           if (!hasDashboardOperacionPermission) {
