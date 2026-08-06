@@ -122,6 +122,15 @@ const DEFAULT_SHIFT_END_HOUR = 20
 // Cada celda de cobertura = 1 intervalo de 2 min del contador de la maquina.
 const BUCKET_MIN = 2
 
+// Hora (literal) en la que arranca el eje X del grafico de velocidad.
+// El contador de la maquina escribe una lectura cada 2 min LAS 24 HORAS, asi que
+// sin este piso el eje empieza a las 00:00 con ~150 puntos en cero antes de que
+// arranque la planta: la jornada real queda comprimida contra el borde derecho.
+// Es un piso, no un recorte ciego: si hubiera produccion REAL antes de las 05:00
+// (turno nocturno, arranque adelantado) el inicio se corre hacia atras hasta esa
+// lectura, para no ocultar nunca produccion.
+const VELOCIDAD_INICIO_HORA = 5
+
 // Reglas de ritmo: meta de bultos por hora y meta de velocidad por
 // intervalo de 2 min (unidades producidas en cada lectura del contador).
 const META_POR_HORA = 240
@@ -754,14 +763,26 @@ function LiveTab() {
     return { total: lista.length, comentados, sinComentar: lista.length - comentados }
   }, [histRows, now, isToday, selectedDate, shiftStart, shiftEnd, parosComentados])
 
-  // Velocidad de produccion: un punto por lectura de 2 min del contador.
+  // Velocidad de produccion: un punto por lectura de 2 min del contador, desde
+  // VELOCIDAD_INICIO_HORA (05:00) en adelante. Ver el comentario de esa
+  // constante: el contador registra las 24 horas y sin el piso el eje X nacia a
+  // las 00:00. Si hay produccion real mas temprano, el inicio se corre hacia
+  // atras hasta esa lectura. Los contadores de "intervalos en meta" se calculan
+  // sobre lo que se GRAFICA, para que el ratio no cargue los ceros de la noche.
   const velocidad = useMemo(() => {
-    const puntos = histRows.map((h) => ({
-      hora: HORA_FMT.format(parseTs(h.fecha_hora)),
-      unidades: h.produccion_2min || 0,
-    }))
+    const horaLiteral = (h: HistorialRow) => parseTs(h.fecha_hora).getUTCHours()
+    const primeraProduccion = histRows.find((h) => (h.produccion_2min || 0) > 0)
+    const desde = primeraProduccion
+      ? Math.min(VELOCIDAD_INICIO_HORA, horaLiteral(primeraProduccion))
+      : VELOCIDAD_INICIO_HORA
+    const puntos = histRows
+      .filter((h) => horaLiteral(h) >= desde)
+      .map((h) => ({
+        hora: HORA_FMT.format(parseTs(h.fecha_hora)),
+        unidades: h.produccion_2min || 0,
+      }))
     const cumplidos = puntos.filter((p) => p.unidades >= META_2MIN).length
-    return { puntos, cumplidos, total: puntos.length }
+    return { puntos, cumplidos, total: puntos.length, desde }
   }, [histRows])
 
   // Disponibilidad = tiempo trabajando vs parado (cada celda = 2 min).
@@ -1068,7 +1089,9 @@ function LiveTab() {
         <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2">
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold text-card-foreground">Velocidad de Producción cada 2 min</h2>
+            <h2 className="text-sm font-semibold text-card-foreground">
+              Velocidad de Producción cada 2 min (desde {pad2(velocidad.desde)}:00)
+            </h2>
           </div>
           <span className="text-xs text-muted-foreground">
             {velocidad.cumplidos.toLocaleString("es-CO")}/{velocidad.total.toLocaleString("es-CO")} intervalos en meta
