@@ -122,14 +122,15 @@ const DEFAULT_SHIFT_END_HOUR = 20
 // Cada celda de cobertura = 1 intervalo de 2 min del contador de la maquina.
 const BUCKET_MIN = 2
 
-// Hora (literal) en la que arranca el eje X del grafico de velocidad.
+// Hora (literal) en la que arranca el eje X del grafico de velocidad. Coincide
+// con el inicio del turno por defecto (DEFAULT_SHIFT_START_HOUR).
 // El contador de la maquina escribe una lectura cada 2 min LAS 24 HORAS, asi que
-// sin este piso el eje empieza a las 00:00 con ~150 puntos en cero antes de que
+// sin este piso el eje empieza a las 00:00 con ~180 puntos en cero antes de que
 // arranque la planta: la jornada real queda comprimida contra el borde derecho.
-// Es un piso, no un recorte ciego: si hubiera produccion REAL antes de las 05:00
+// Es un piso, no un recorte ciego: si hubiera produccion REAL antes de esa hora
 // (turno nocturno, arranque adelantado) el inicio se corre hacia atras hasta esa
 // lectura, para no ocultar nunca produccion.
-const VELOCIDAD_INICIO_HORA = 5
+const VELOCIDAD_INICIO_HORA = 6
 
 // Reglas de ritmo: meta de bultos por hora y meta de velocidad por
 // intervalo de 2 min (unidades producidas en cada lectura del contador).
@@ -764,7 +765,7 @@ function LiveTab() {
   }, [histRows, now, isToday, selectedDate, shiftStart, shiftEnd, parosComentados])
 
   // Velocidad de produccion: un punto por lectura de 2 min del contador, desde
-  // VELOCIDAD_INICIO_HORA (05:00) en adelante. Ver el comentario de esa
+  // VELOCIDAD_INICIO_HORA (06:00) en adelante. Ver el comentario de esa
   // constante: el contador registra las 24 horas y sin el piso el eje X nacia a
   // las 00:00. Si hay produccion real mas temprano, el inicio se corre hacia
   // atras hasta esa lectura. Los contadores de "intervalos en meta" se calculan
