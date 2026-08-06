@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase-client"
 import { generateAndUploadBatchAssignmentPDF } from "@/lib/pdf-actions"
 import { getColombiaDate, getColombiaISO, getColombiaTime } from "@/lib/date-utils"
 import { getCurrentUserContext } from "@/lib/company-filter"
-import { generarDistribucionAutomatica } from "@/lib/orders-actions"
+import { generarDistribucionAutomatica, autoGenerarDescarguesCedi } from "@/lib/orders-actions"
 
 export interface LoadOrder {
   id: number
@@ -335,19 +335,23 @@ export async function approveBatchAllocation(data: BatchApprovalData, selectedEm
 
     console.log("[v0] Horalote updated successfully:", currentTime)
 
-    // CLON +D: ahora que la MADRE ya tiene lote asignado (horalote), generamos su
-    // clon de distribución (si la placa es de distribución). Así el clon HEREDA el
-    // horalote → nunca aparece como pendiente en Asignación de Lotes. Idempotente y
-    // falla-seguro (no bloquea la aprobación del lote).
+    // CLON +D y DESCARGUE CEDI: ahora que la MADRE ya tiene lote asignado
+    // (horalote), generamos sus clones (distribución si la placa es propia, y
+    // descargue en el CEDI destino si alguna línea va a un CEDI). Así heredan
+    // el horalote / ya encuentran lote en historicolotes al iniciarse.
+    // Idempotentes y falla-seguros (no bloquean la aprobación del lote).
     try {
       const { data: madre } = await supabase
         .from("cabeceraoc")
         .select("id")
         .eq("ordendecargue", data.ordendecargue)
         .maybeSingle()
-      if (madre?.id) await generarDistribucionAutomatica(null, madre.id)
+      if (madre?.id) {
+        await generarDistribucionAutomatica(null, madre.id)
+        await autoGenerarDescarguesCedi(null, madre.id)
+      }
     } catch (distErr) {
-      console.error("[+D] generar clon tras aprobar lote (no bloquea):", distErr)
+      console.error("[+D/auto-descargue] generar clones tras aprobar lote (no bloquea):", distErr)
     }
 
     // Get fecha and hora for PDF generation

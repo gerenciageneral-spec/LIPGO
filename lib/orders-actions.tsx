@@ -611,6 +611,16 @@ export async function autoGenerarDescarguesCedi(_supabase: any, orderId: number)
   const { data: origHeader } = await supabase.from("cabeceraoc").select("*").eq("id", cargueId).maybeSingle()
   if (!origHeader) return
   if (origHeader.tipooperacion !== "Cargue") return // solo desde órdenes de cargue
+
+  // EL CLON SOLO SE GENERA CUANDO LA MADRE YA TIENE LOTE ASIGNADO (horalote) —
+  // mismo criterio que el clon +D (generarDistribucionAutomatica, línea ~741).
+  // Antes de esto, si el CEDI le daba "inicio" al descargue antes de que la
+  // planta asignara lote, `generarIngresoProduccionDesdeDescargue` no encontraba
+  // nada en `historicolotes` y el ingreso de producción nacía sin lote. Si la
+  // madre aún no tiene lote, se omite: se genera al aprobar el lote
+  // (approveBatchAllocation) o en la reconciliación (reconciliarDescarguesCediFaltantes).
+  if (!origHeader.horalote) return
+
   const sessionEmpresaId: number = origHeader.idempresa
   const orderCodeMadre: string = origHeader.ordendecargue
   if (!PLANTAS_ORIGEN.has(sessionEmpresaId)) return // solo plantas (Avimol/Indupan)
@@ -871,6 +881,69 @@ export async function reconciliarDistribucionesFaltantes(supabase: any, empresaI
     return creados
   } catch (e: any) {
     console.error("[+D] reconciliación falló (no bloquea la lectura):", e?.message || e)
+    return 0
+  }
+}
+
+// ---------------------------------------------------------------------------
+// AUTO-SANACIÓN del clon de descargue CEDI (mismo espíritu que la de +D, pero
+// mirando desde el lado CEDI/destino, que es donde se lee/consume la lista de
+// descargues pendientes). Cubre el caso de una madre que YA tiene lote pero
+// cuyo clon no se generó (por rezago de despliegue del guard de arriba, o por
+// cualquier fallo silencioso en creación/asignación de vehículo).
+//
+// Ventana de 2 días (igual que +D), acotada (≤100 cargues), idempotente
+// (autoGenerarDescarguesCedi ya deduplica por `ordenorigen`) y falla-segura.
+// ---------------------------------------------------------------------------
+export async function reconciliarDescarguesCediFaltantes(supabase: any, empresaId: number): Promise<number> {
+  if (empresaId !== 3 && empresaId !== 4) return 0 // solo tiene sentido desde el lado CEDI
+  try {
+    const ahora = await getColombiaDateTime()
+    const cutoff = new Date(ahora.getTime() - 2 * 86400000)
+    const cutoffStr = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}-${String(cutoff.getDate()).padStart(2, "0")}`
+
+    const { data: cargues } = await supabase
+      .from("cabeceraoc")
+      .select("id, ordendecargue, fechacargue, horalote")
+      .in("idempresa", Array.from(PLANTAS_ORIGEN))
+      .eq("tipooperacion", "Cargue")
+      .not("horalote", "is", null)
+      .gte("fechacargue", cutoffStr)
+      .order("id", { ascending: false })
+      .limit(100)
+
+    if (!cargues || cargues.length === 0) return 0
+
+    let creados = 0
+    for (const c of cargues) {
+      const { data: existe } = await supabase
+        .from("cabeceraoc")
+        .select("id")
+        .eq("ordenorigen", c.ordendecargue)
+        .eq("idempresa", empresaId)
+        .eq("tipooperacion", "Descargue")
+        .limit(1)
+        .maybeSingle()
+      if (existe) continue // ya tiene su descargue en este CEDI
+
+      // autoGenerarDescarguesCedi decide sola a qué CEDI(s) corresponde (por
+      // detalleoc.cliente) y ya deduplica por ordenorigen — llamarla de más no
+      // genera duplicados, solo confirma que esta madre no le corresponde.
+      await autoGenerarDescarguesCedi(supabase, c.id)
+      const { data: despues } = await supabase
+        .from("cabeceraoc")
+        .select("id")
+        .eq("ordenorigen", c.ordendecargue)
+        .eq("idempresa", empresaId)
+        .eq("tipooperacion", "Descargue")
+        .limit(1)
+        .maybeSingle()
+      if (despues) creados++
+    }
+    if (creados > 0) console.log(`[auto-descargue] reconciliación CEDI ${empresaId}: ${creados} generada(s)`)
+    return creados
+  } catch (e: any) {
+    console.error("[auto-descargue] reconciliación falló (no bloquea la lectura):", e?.message || e)
     return 0
   }
 }
@@ -1317,6 +1390,16 @@ export async function getLoadOrders(statusFilter: "pendiente" | "finalizada" | "
       await reconciliarDistribucionesFaltantes(supabase, empresaId as number)
     } catch (reconErr) {
       console.error("[+D] reconciliación en getLoadOrders (no bloquea):", reconErr)
+    }
+
+    // Auto-sanación del clon de descargue CEDI: si la empresa vista es un CEDI
+    // (id3/id4), garantiza que los cargues recientes de planta con lote ya
+    // asignado tengan su descargue pendiente en este CEDI. Idempotente,
+    // acotada y falla-segura.
+    try {
+      await reconciliarDescarguesCediFaltantes(supabase, empresaId as number)
+    } catch (reconErr) {
+      console.error("[auto-descargue] reconciliación en getLoadOrders (no bloquea):", reconErr)
     }
 
     let query = supabase
