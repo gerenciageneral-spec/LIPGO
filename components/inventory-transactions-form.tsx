@@ -78,7 +78,6 @@ export function InventoryTransactionsForm() {
     cantidad: "",
     tipo_movimiento: "",
     cod_movimiento: "", // código de nomenclatura del movimiento
-    clave: "", // clave del responsable (control; libre mientras se prueba)
     observaciones: "",
   })
 
@@ -322,7 +321,6 @@ export function InventoryTransactionsForm() {
       cantidad: "",
       tipo_movimiento: "",
       cod_movimiento: "",
-      clave: "",
       observaciones: "",
     })
     setCurrentStock(null)
@@ -451,7 +449,6 @@ export function InventoryTransactionsForm() {
       tipo_movimiento: formData.tipo_movimiento as "Entrada" | "Salida" | "Reproceso",
       observaciones: formData.observaciones,
       cod_movimiento: formData.cod_movimiento || codigoPorDefecto(formData.tipo_movimiento) || null,
-      clave_responsable: formData.clave || null,
     })
 
     console.log("[v0] Transaction result:", result)
@@ -501,7 +498,6 @@ export function InventoryTransactionsForm() {
         cantidad: "",
         tipo_movimiento: "",
         cod_movimiento: "",
-        clave: "",
         observaciones: "",
       })
       setCurrentStock(null)
@@ -885,24 +881,6 @@ export function InventoryTransactionsForm() {
                 placeholder="Ingrese observaciones adicionales (opcional)"
                 className="h-8 md:h-9 text-xs md:text-sm"
               />
-            </div>
-
-            {/* Clave del responsable: control de quién mueve inventario.
-                Libre mientras se prueba; luego será obligatoria por responsable. */}
-            <div className="space-y-2">
-              <Label htmlFor="clave" className="text-xs md:text-sm">
-                Clave del responsable <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                id="clave"
-                type="password"
-                value={formData.clave}
-                onChange={(e) => setFormData({ ...formData, clave: e.target.value })}
-                placeholder="Clave que autoriza el movimiento"
-                className="h-8 md:h-9 text-xs md:text-sm"
-                autoComplete="off"
-              />
-              <p className="text-[11px] text-muted-foreground">Cada responsable usa su clave para autorizar el movimiento (queda registrado quién autoriza).</p>
             </div>
 
             <div className="flex justify-end">

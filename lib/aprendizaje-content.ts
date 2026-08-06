@@ -93,7 +93,7 @@ export const CATALOGO_APRENDIZAJE: ContenidoAprendizaje[] = [
       "Registrar un movimiento de Entrada, Salida o Reproceso.",
       "Trabajar en modo normal o en modo QR, escaneando la estiba con la camara o digitando el codigo.",
       "Registrar una estiba nueva cuando el QR escaneado todavia no existe en el sistema.",
-      "Dejar observaciones, un codigo de movimiento y la clave del responsable.",
+      "Dejar observaciones y un codigo de movimiento.",
     ],
     noPuedes: [
       "Editar o eliminar un movimiento ya registrado desde este modulo.",

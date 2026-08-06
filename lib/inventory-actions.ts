@@ -1,7 +1,6 @@
 "use server"
 
 import { createClient } from "@/lib/supabase-client"
-import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { fetchAllRows } from "@/lib/fetch-all-rows"
 import * as XLSX from "xlsx"
 import { generateAndUploadProductionEntryPDF } from "@/lib/pdf-actions"
@@ -500,7 +499,6 @@ export interface InventoryTransaction {
   tipo_movimiento: "Entrada" | "Salida" | "Reproceso"
   observaciones?: string | null // Added observaciones field
   cod_movimiento?: string | null // Código de nomenclatura elegido (si null, lo deriva el trigger)
-  clave_responsable?: string | null // Clave del responsable que autoriza el movimiento (control de acceso)
 }
 
 export async function registerInventoryTransaction(transaction: InventoryTransaction) {
@@ -528,32 +526,6 @@ export async function registerInventoryTransaction(transaction: InventoryTransac
     const empresaId = await getCurrentEmpresaIdForInsert()
     const usuario = await getCurrentUsuarioForInsert()
 
-    // Clave del responsable (control de acceso). Si hay claves configuradas en
-    // inv_clave_movimiento, se EXIGE una clave válida; si la tabla no existe o
-    // no hay claves activas, el movimiento queda LIBRE (transición/pruebas).
-    const claveInput = String(transaction.clave_responsable ?? "").trim()
-    let autoriza = ""
-    try {
-      const admin = await getSupabaseAdmin()
-      const { data: claves, error: claveErr } = await admin
-        .from("inv_clave_movimiento")
-        .select("responsable,clave")
-        .eq("activo", true)
-      if (!claveErr && claves && claves.length > 0) {
-        if (!claveInput) return { success: false, message: "Ingresa la clave del responsable para mover inventario." }
-        const match = claves.find((c: any) => String(c.clave) === claveInput)
-        if (!match) return { success: false, message: "Clave de responsable inválida. No se registró el movimiento." }
-        autoriza = match.responsable || ""
-      }
-    } catch {
-      /* tabla no disponible aún → movimiento libre */
-    }
-    // No se guarda la clave en claro; se deja la trazabilidad de quién autorizó.
-    const obsBase = transaction.observaciones || ""
-    const obsConClave = autoriza
-      ? `${obsBase}${obsBase ? " · " : ""}[autoriza: ${autoriza}]`
-      : obsBase || null
-
     const insertData: any = {
       id: nextId,
       idempresa: empresaId,
@@ -565,7 +537,7 @@ export async function registerInventoryTransaction(transaction: InventoryTransac
       almacen: transaction.almacen, // Now stores almacen name (string) instead of ID
       cantidad: transaction.cantidad,
       tipomov: transaction.tipo_movimiento,
-      observaciones: obsConClave, // Added observaciones field to insert data
+      observaciones: transaction.observaciones || null,
       status: "aprobado",
       origen: "transaccion manual",
       creadopor: usuario,
