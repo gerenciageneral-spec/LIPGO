@@ -683,6 +683,51 @@ export interface InventoryBalanceDetail {
   stock_disp: number
   stock_res: number
   stock_actual: number
+  /** Días transcurridos desde la fecha que codifica el lote. null = no se pudo
+   *  determinar (ver `edadLoteDias`). Puede ser negativo si el lote quedó
+   *  fechado en el futuro. */
+  edad_dias: number | null
+}
+
+/** Hoy en el calendario COLOMBIANO (YYYY-MM-DD), sin depender de la zona del
+ *  servidor. La edad del lote se cuenta contra este día. */
+function hoyColombiaISO(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Bogota",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date())
+}
+
+/**
+ * EDAD DEL LOTE en días.
+ *
+ * El lote codifica su fecha en formato YYYYMMDD. Es la convención del negocio,
+ * no un supuesto de esta función: es la misma con la que
+ * `lib/conciliacion-avimol-actions.ts` fecha la producción para facturarla y la
+ * que consultan los scripts de tarifas (`lote ~ '^\d{8}$'`).
+ *
+ * Devuelve null cuando el lote no es una fecha válida —otro formato, vacío, o
+ * dígitos imposibles como 20260231—. Preferimos no mostrar edad a mostrar una
+ * inventada: en la tabla eso sale como "—".
+ *
+ * Un valor NEGATIVO significa lote fechado en el futuro. No se oculta ni se
+ * recorta a 0 a propósito: es un error de digitación y conviene que se vea.
+ */
+function edadLoteDias(lote: unknown, hoyISO: string): number | null {
+  const m = String(lote ?? "").trim().match(/^(\d{4})(\d{2})(\d{2})$/)
+  if (!m) return null
+  const anio = Number(m[1])
+  const mes = Number(m[2])
+  const dia = Number(m[3])
+  const ms = Date.UTC(anio, mes - 1, dia)
+  // Date.UTC corre las fechas imposibles al mes siguiente (31-feb -> 3-mar), así
+  // que se comprueba que los componentes sobrevivan el viaje de ida y vuelta.
+  const d = new Date(ms)
+  if (d.getUTCFullYear() !== anio || d.getUTCMonth() !== mes - 1 || d.getUTCDate() !== dia) return null
+  const [hy, hm, hd] = hoyISO.split("-").map(Number)
+  return Math.round((Date.UTC(hy, hm - 1, hd) - ms) / 86_400_000)
 }
 
 export interface InventoryBalanceGlobal {
@@ -819,7 +864,11 @@ export async function getInventoryBalanceDetails(
       return loteA.localeCompare(loteB)
     })
 
-    return sorted
+    // Edad del lote. Se calcula aquí y no en el componente para que la tabla y
+    // el Excel exportado salgan con el mismo número: `exportInventoryDetailsToExcel`
+    // reutiliza esta misma función.
+    const hoy = hoyColombiaISO()
+    return sorted.map((r: any) => ({ ...r, edad_dias: edadLoteDias(r.lote, hoy) }))
   } catch (error) {
     console.error("[v0] Unexpected error:", error)
     return []
@@ -1030,6 +1079,9 @@ export async function exportInventoryDetailsToExcel(
         Categoria: item.categoria,
         Subcategoria: item.subcategoria,
         Lote: item.lote,
+        // Numero (no texto) para que en Excel se pueda ordenar y filtrar por
+        // edad. Vacio cuando el lote no codifica una fecha valida.
+        "Edad del Lote (días)": item.edad_dias ?? "",
         Localización: item.location,
         "Stock Disponible": item.stock_disp,
         "Stock Reservado": item.stock_res,

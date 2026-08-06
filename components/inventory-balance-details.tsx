@@ -335,6 +335,11 @@ export function InventoryBalanceDetails() {
                   <TableHead className="sticky top-0 z-20 bg-muted border-b whitespace-nowrap">Categoría</TableHead>
                   <TableHead className="sticky top-0 z-20 bg-muted border-b whitespace-nowrap">Sub Categoría</TableHead>
                   <TableHead className="sticky top-0 z-20 bg-muted border-b whitespace-nowrap">Lote</TableHead>
+                  {/* Edad = días desde la fecha que codifica el lote (YYYYMMDD).
+                      "—" cuando el lote no tiene ese formato. */}
+                  <TableHead className="sticky top-0 z-20 bg-muted border-b whitespace-nowrap text-right">
+                    Edad (días)
+                  </TableHead>
                   <TableHead className="sticky top-0 z-20 bg-muted border-b whitespace-nowrap">Localización</TableHead>
                   <TableHead className="sticky top-0 z-20 bg-muted border-b whitespace-nowrap text-right">Stock Disponible</TableHead>
                   <TableHead className="sticky top-0 z-20 bg-muted border-b whitespace-nowrap text-right">Stock Reservado</TableHead>
@@ -344,13 +349,13 @@ export function InventoryBalanceDetails() {
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
                       Cargando...
                     </TableCell>
                   </TableRow>
                 ) : balances.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
                       No se encontraron registros
                     </TableCell>
                   </TableRow>
@@ -363,6 +368,13 @@ export function InventoryBalanceDetails() {
                       <TableCell>{balance.categoria}</TableCell>
                       <TableCell>{balance.subcategoria}</TableCell>
                       <TableCell>{balance.lote}</TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {balance.edad_dias == null ? (
+                          <span className="text-muted-foreground">—</span>
+                        ) : (
+                          balance.edad_dias.toLocaleString("es-CO")
+                        )}
+                      </TableCell>
                       <TableCell>{balance.location}</TableCell>
                       <TableCell className="text-right font-medium">{balance.stock_disp.toLocaleString()}</TableCell>
                       <TableCell className="text-right font-medium">{balance.stock_res.toLocaleString()}</TableCell>
