@@ -18,6 +18,7 @@
  *
  * Reglas de agrupación (confirmadas con el negocio):
  *  - Solo entran ingresos YA APROBADOS (status='Aprobado').
+ *  - Solo entran ingresos con `creadopor = 'LOGO'` — ver CREADOPOR_TOLVA.
  *  - El DÍA de un ingreso = invtrans.fechaprod (fecha real de producción).
  *  - Dentro de ese día, el TURNO se determina por `invtrans.horaprod` — la
  *    HORA REAL DE PRODUCCIÓN, capturada en el formulario de Ingreso de
@@ -59,6 +60,31 @@ const ORIGEN_INGRESO_PRODUCCION = "%ingreso producci%"
  */
 const EXCLUIR_HARINERA = "tipo_produccion.is.null,tipo_produccion.neq.Harinera"
 const PUESTO_AUXILIAR_MIXTO = "Auxiliar Mixto"
+
+/**
+ * La Tolva se liquida SOLO sobre la produccion que reporta el LOGO.
+ *
+ * Ese valor lo escribe el trigger `fn_sync_produccion_to_invtrans` (ver
+ * scripts/fix_trigger_produccion_fechaprod.sql), que lo tiene fijo en 'LOGO'
+ * para TODA fila que nazca de la tabla `produccion` — tanto la que sube el LOGO
+ * como la que registra LIPGO por QR. Es decir: esto NO deja fuera la produccion
+ * de LIPGO por QR.
+ *
+ * Lo que SI deja fuera son los ingresos capturados a mano en el formulario de
+ * "Ingreso de Producción" (`registerProductionEntry` /
+ * `registerMultipleProductionEntries` en lib/inventory-actions.ts), que guardan
+ * el NOMBRE DEL USUARIO en `creadopor`. Esos siguen entrando a inventario y se
+ * siguen viendo en "Aprobación de ingreso de producción"; solo dejan de
+ * liquidarse como Tolva.
+ *
+ * OJO CON LA EMPRESA: el trigger tambien tiene fijo `idempresa = 1`, asi que no
+ * existe fila con `creadopor='LOGO'` para otra empresa. Con el selector en una
+ * empresa distinta de la 1 este modulo queda vacio POR DISEÑO.
+ *
+ * Comparacion EXACTA (`eq`) a proposito: es un valor que escribe el trigger, no
+ * algo que teclee un usuario.
+ */
+const CREADOPOR_TOLVA = "LOGO"
 
 // ---------------------------------------------------------------------------
 // Tipos
@@ -261,6 +287,9 @@ export async function getLiquidacionTolvaDia(
       .eq("tipomov", "Entrada")
       .eq("status", "Aprobado")
       .eq("idempresa", idempresa)
+      // Solo la produccion que viene de la tabla `produccion` (LOGO + QR de
+      // LIPGO). Los ingresos tecleados a mano no se liquidan. Ver CREADOPOR_TOLVA.
+      .eq("creadopor", CREADOPOR_TOLVA)
       .or(
         `fechaprod.eq.${fecha},and(fechaprod.is.null,creado.gte.${creadoDesde},creado.lt.${creadoHasta})`,
       )
@@ -529,6 +558,10 @@ export async function getAuditoriaTolva(
       .eq("tipomov", "Entrada")
       .eq("status", "Aprobado")
       .eq("idempresa", idempresa)
+      // Mismo filtro que el preview. Sin esto, un ingreso capturado a mano
+      // aparecería para siempre como diferencia entre lo aprobado y lo
+      // facturado, porque este modulo ya no le crea orden de Tolva.
+      .eq("creadopor", CREADOPOR_TOLVA)
       .gte("fechaprod", desde)
       .lte("fechaprod", hasta)
       .ilike("origen", ORIGEN_INGRESO_PRODUCCION)

@@ -124,6 +124,11 @@ function LiquidacionDelDia() {
               </Badge>
             )}
           </div>
+          <p className="w-full text-xs text-muted-foreground">
+            Solo se liquida la producción que viene del <strong>LOGO</strong> (incluye la que registra LIPGO
+            por QR). Los ingresos capturados a mano en <em>Ingreso de Producción</em> entran a inventario pero
+            no se liquidan como Tolva.
+          </p>
         </CardContent>
       </Card>
 
