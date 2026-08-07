@@ -250,7 +250,7 @@ async function realPorCodigo(
 
   // Clasifica una línea al código de actividad del acuerdo (misma lógica por
   // ID que antes; ahora se usa para AGRUPAR el valor real, no solo el volumen).
-  const codigoDe = (op: string, transporte: unknown, subcategoria: unknown): string | null => {
+  const codigoDe = (op: string, transporte: unknown, subcategoria: unknown, placa: unknown, cliente: unknown): string | null => {
     if (idempresa === 1 || idempresa === 2) {
       if (op === "CARGUE") return esSubproducto(subcategoria) ? "cargue_subproducto" : "aux_cargue_descargue"
       if (op === "TOLVA") return "tolva"
@@ -264,9 +264,32 @@ async function realPorCodigo(
       return null
     }
     if (idempresa === 4) {
-      if (op === "CARGUE") return norm(transporte) === "TERCEROS" ? "cargue_cliente_recoge" : "cargue_propios"
-      if (op === "DISTRIBUCION") return "descargue_distribucion"
-      if (op === "DESCARGUE") return "descargue_terceros"
+      const esSusanita = norm(transporte) === "SUSANITA" || norm(cliente).includes("SUSANITA")
+      // Cargue + Distribución del vehículo propio (LWY393) cuentan como UNA
+      // sola actividad del acuerdo ("Cargue y Distribución Propio", 480 t/mes)
+      // — mismo criterio (esPlacaDistribucion) que grupoResumen en
+      // getPrefactura (lib/facturacion-control-actions.ts). El cargue que se
+      // realice en ID4 para Susanita (cliente exclusivo de LIP) TAMBIÉN suma
+      // aquí, solo en este análisis (confirmado por el usuario: ese volumen
+      // sube el cumplimiento del proyecto ID4).
+      if (op === "CARGUE" || op === "DISTRIBUCION") {
+        if (esPlacaDistribucion(idempresa, placa as any) || esSusanita) return "cargue_distribucion_propio"
+      }
+      // Cargue Cliente Recoge = el cliente manda su propio transporte a recoger
+      // a bodega — TERCEROS o ZAMUDIO (nombre de transportadora, mismo caso).
+      // WMP446 NO forma parte del acuerdo (no lo atiende LIP salvo que cargue
+      // Susanita, ya cubierto arriba) — se excluye antes de llegar aquí
+      // (`placasExcluidas`, más abajo en el loop principal), así que no hace
+      // falta filtrarla de nuevo en este helper.
+      if (op === "CARGUE") {
+        const tr = norm(transporte)
+        return tr === "TERCEROS" || tr === "ZAMUDIO" ? "cargue_cliente_recoge" : null
+      }
+      // Descargue Terceros = el descargue del CEDI que no es de Susanita (ese
+      // cliente tiene su propio acuerdo/tarifa, no forma parte de este cupo de
+      // 993 t/mes) — confirmado con el cierre real del usuario (422,57 t exacto
+      // excluyendo Susanita).
+      if (op === "DESCARGUE") return esSusanita ? null : "descargue_terceros"
       return null
     }
     return null
@@ -326,7 +349,7 @@ async function realPorCodigo(
     const cl = norm(r.cliente)
     if (placasExcluidas.has(placa) && !cl.includes("SUSANITA")) continue // WMP446 salvo Susanita
     const op = norm(r.tipooperacion)
-    const codigo = codigoDe(op, r.transporte, r.subcategoria)
+    const codigo = codigoDe(op, r.transporte, r.subcategoria, r.placa, r.cliente)
     const ton = num(r.toneladas)
     ordenTotalDet.set(on, (ordenTotalDet.get(on) || 0) + ton)
     if (!codigo) continue // producto/operación fuera del acuerdo (no se pierde del denominador, sí de la salida)
