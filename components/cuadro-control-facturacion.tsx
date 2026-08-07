@@ -191,21 +191,31 @@ function exportarSoporteExcel(lineas: SoporteLinea[], nombre: string) {
     return w.substring(0, 12)
   }
   for (const g of grupos) {
-    const rows = g.lineas.map((l) => ({
-      Fecha: l.fecha ?? "",
-      Orden: l.numeroorden,
-      Tiquete: l.tiquete ?? "",
-      Placa: l.placa ?? "",
-      Cliente: l.cliente ?? "",
-      Producto: l.producto ?? "",
-      Servicio: l.servicio,
-      Cantidad: Number((Number(l.toneladas) || 0).toFixed(3)),
-      Unidad: uLabel(l.unidad),
-      Tarifa: l.tarifa,
-      Valor: Math.round(Number(l.valor) || 0),
+    // Totalizado por ORDEN (sin desglose de cliente/producto) — pedido explícito
+    // para el Excel exportable; la vista en pantalla (SoporteAnexo) sigue con el
+    // detalle completo por línea, esto solo afecta este archivo.
+    const porOrden = new Map<string, { fecha: string | null; tiquete: string | null; placa: string | null; servicio: string; unidad: SoporteLinea["unidad"]; cantidad: number; valor: number }>()
+    for (const l of g.lineas) {
+      const acc = porOrden.get(l.numeroorden) || {
+        fecha: l.fecha, tiquete: l.tiquete ?? null, placa: l.placa, servicio: l.servicio, unidad: l.unidad, cantidad: 0, valor: 0,
+      }
+      acc.cantidad += Number(l.toneladas) || 0
+      acc.valor += Number(l.valor) || 0
+      porOrden.set(l.numeroorden, acc)
+    }
+    const rows = Array.from(porOrden.entries()).map(([numeroorden, o]) => ({
+      Fecha: o.fecha ?? "",
+      Orden: numeroorden,
+      Tiquete: o.tiquete ?? "",
+      Placa: o.placa ?? "",
+      Servicio: o.servicio,
+      Cantidad: Number(o.cantidad.toFixed(3)),
+      Unidad: uLabel(o.unidad),
+      Tarifa: o.cantidad > 0 ? Math.round(o.valor / o.cantidad) : "",
+      Valor: Math.round(o.valor),
     }))
     rows.push({
-      Fecha: "", Orden: "", Tiquete: "", Placa: "", Cliente: "", Producto: "", Servicio: "SUBTOTAL",
+      Fecha: "", Orden: "", Tiquete: "", Placa: "", Servicio: "SUBTOTAL",
       Cantidad: Number(g.ton.toFixed(3)), Unidad: uLabel(g.lineas[0]?.unidad),
       Tarifa: "" as any, Valor: Math.round(g.valor),
     })
