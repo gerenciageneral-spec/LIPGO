@@ -190,11 +190,22 @@ export interface EstructuraFila {
   muelle: string | null
 }
 
+/** Cargo real de `headcount` (estado Activo), NO la estructura teórica del
+ *  acuerdo — el personal es flexible ("Auxiliar Mixto") y rota entre cargue,
+ *  tolva y distribución según la tonelada del día, por eso no se fuerza a
+ *  cuadrar 1 a 1 contra `estructura`. Es una foto de quién está activo hoy. */
+export interface PersonalActivoFila {
+  cargo: string
+  cantidad: number
+}
+
 export interface ProyectoAnalisis {
   idempresa: number
   proyecto: string
   actividades: ActividadAnalisis[]
   estructura: EstructuraFila[]
+  personalActivo: PersonalActivoFila[]
+  totalPersonalActivo: number
   tonAcordadas: number
   tonReales: number
   cumplimientoPct: number | null
@@ -409,6 +420,48 @@ async function realPorCodigo(
 }
 
 // ---------------------------------------------------------------------------
+// PERSONAL ACTIVO (foto real de hoy, NO la estructura teórica del acuerdo).
+// El personal es flexible ("Auxiliar Mixto"): rota entre cargue, tolva y
+// distribución según la tonelada del día, así que el conteo real casi nunca
+// va a cuadrar 1 a 1 contra `estructura` — es informativo, no un cruce.
+// ---------------------------------------------------------------------------
+
+/** Título legible para un cargo crudo de `headcount` (agrupa variantes de tilde/mayúsculas). */
+function cargoLabel(cargoCrudo: unknown): string {
+  const c = String(cargoCrudo ?? "").trim()
+  if (!c) return "Sin cargo asignado"
+  // Título: primera letra de cada palabra en mayúscula, resto en minúscula,
+  // preservando tildes ya presentes en el dato (no se reinventa ortografía).
+  return c
+    .toLowerCase()
+    .split(" ")
+    .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
+    .join(" ")
+}
+
+async function personalActivoDe(sb: any, idempresa: number): Promise<{ filas: PersonalActivoFila[]; total: number }> {
+  const { data } = await sb.from("headcount").select("cargo").eq("idempresa", idempresa).eq("estado", "Activo")
+  const porCargo = new Map<string, number>()
+  for (const r of data ?? []) {
+    // Normaliza SOLO para agrupar (sin acentos, mayúscula) — así "AUXILIAR
+    // LOGÍSTICO" y "AUXILIAR LOGISTICO" caen en la misma fila. La etiqueta
+    // que se muestra sale de `cargoLabel` sobre el primer valor crudo visto.
+    const key = norm(r.cargo) || "(SIN CARGO)"
+    porCargo.set(key, (porCargo.get(key) || 0) + 1)
+  }
+  const etiquetaPorKey = new Map<string, string>()
+  for (const r of data ?? []) {
+    const key = norm(r.cargo) || "(SIN CARGO)"
+    if (!etiquetaPorKey.has(key)) etiquetaPorKey.set(key, cargoLabel(r.cargo))
+  }
+  const filas = Array.from(porCargo.entries())
+    .map(([key, cantidad]) => ({ cargo: etiquetaPorKey.get(key) || "Sin cargo asignado", cantidad }))
+    .sort((a, b) => b.cantidad - a.cantidad || a.cargo.localeCompare(b.cargo))
+  const total = filas.reduce((s, f) => s + f.cantidad, 0)
+  return { filas, total }
+}
+
+// ---------------------------------------------------------------------------
 // Entrada
 // ---------------------------------------------------------------------------
 
@@ -561,12 +614,15 @@ export async function getAnalisisFinanciero(
       const totalAFacturarAdicional = lista.reduce((s, a) => s + a.aFacturarAdicional, 0)
       const costoNomina = Math.round(costoDe.get(id) || 0)
       const tarifaPromedio = tonAcordadas > 0 ? totalFacturaAcordada / tonAcordadas : 0
+      const { filas: personalActivo, total: totalPersonalActivo } = await personalActivoDe(sb, id)
 
       proyectos.push({
         idempresa: id,
         proyecto: nombreDe.get(id) || `Empresa ${id}`,
         actividades: lista,
         estructura,
+        personalActivo,
+        totalPersonalActivo,
         tonAcordadas: Math.round(tonAcordadas * 10) / 10,
         tonReales: Math.round(tonReales * 10) / 10,
         cumplimientoPct: tonAcordadas > 0 ? Math.round((tonReales / tonAcordadas) * 100) : null,

@@ -43,6 +43,7 @@ import {
   ShieldAlert,
   Target,
   TrendingUp,
+  Users,
 } from "lucide-react"
 import { KpiCard } from "@/components/orders/dashboard-pedidos/kpi-card"
 import {
@@ -196,6 +197,7 @@ function ResumenEjecutivo({ data }: { data: AnalisisData }) {
 
 function ProyectoCard({ p, meses, esHistorico }: { p: ProyectoAnalisis; meses: number; esHistorico: boolean }) {
   const [verEstructura, setVerEstructura] = useState(false)
+  const [verPersonal, setVerPersonal] = useState(false)
   const deficitTotal = p.totalAFacturarAdicional
   const cumple = deficitTotal <= 0
 
@@ -372,6 +374,48 @@ function ProyectoCard({ p, meses, esHistorico }: { p: ProyectoAnalisis; meses: n
                         <TableCell className="text-xs text-muted-foreground">{e.muelle ?? "—"}</TableCell>
                       </TableRow>
                     ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Personal activo hoy (real, Head Count) — el equipo es flexible
+            ("Auxiliar Mixto") y rota entre cargue/tolva/distribución según la
+            tonelada del día, así que NO se compara 1 a 1 contra la estructura
+            acordada de arriba: es solo la foto de quién está activo hoy. */}
+        {p.personalActivo.length > 0 && (
+          <div>
+            <button
+              type="button"
+              className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+              onClick={() => setVerPersonal((v) => !v)}
+            >
+              {verPersonal ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+              <Users className="h-3.5 w-3.5" />
+              Personal activo hoy ({p.totalPersonalActivo})
+            </button>
+            {verPersonal && (
+              <div className="mt-2 overflow-x-auto rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="text-[11px]">
+                      <TableHead>Cargo</TableHead>
+                      <TableHead className="text-right">Activos</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {p.personalActivo.map((f, i) => (
+                      <TableRow key={`${f.cargo}-${i}`}>
+                        <TableCell className="text-xs">{f.cargo}</TableCell>
+                        <TableCell className="text-right text-xs tabular-nums">{f.cantidad}</TableCell>
+                      </TableRow>
+                    ))}
+                    <TableRow className="border-t-2">
+                      <TableCell className="text-xs font-semibold">Total</TableCell>
+                      <TableCell className="text-right text-xs font-semibold tabular-nums">{p.totalPersonalActivo}</TableCell>
+                    </TableRow>
                   </TableBody>
                 </Table>
               </div>
