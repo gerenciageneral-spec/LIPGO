@@ -90,13 +90,15 @@ export function numeroOrdenDistribucion(ordenCargue: string): string {
  * Proyectos donde el vehículo PROPIO se factura ENTERO al owner del
  * proyecto, sin importar el producto que lleve (confirmado 2026-08-02 para
  * ID4/Molinos del Atlántico — LWY393 mezcla productos de Molinos y Avimol
- * pero el viaje completo es un servicio que se le vende solo a Molinos).
- * Los proyectos que NO estén aquí (Avimol/QHC437,QHQ434,GQV639 · Funza/LWY354)
- * NO tienen esta regla: su vehículo propio sigue facturando por el owner
- * real del producto, como siempre — ampliarla es una decisión aparte.
+ * pero el viaje completo es un servicio que se le vende solo a Molinos;
+ * extendido 2026-08-06 a ID3/Avimol — LWY354 en Funza). El proyecto que NO
+ * está aquí (Avimol id2, QHC437/QHQ434/GQV639) no tiene esta regla: su
+ * vehículo propio sigue facturando por el owner real del producto, como
+ * siempre — ampliarla es una decisión aparte.
  */
 export const OWNER_DE_PLACA_PROPIA: Record<number, string> = {
   4: "Molinos del Atlántico",
+  3: "Avimol",
 }
 
 /**

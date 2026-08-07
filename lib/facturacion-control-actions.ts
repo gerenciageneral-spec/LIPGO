@@ -737,12 +737,19 @@ export async function getPrefactura(
         const grupoResumen = esVehiculoPropioConRegla
           ? "Cargue + Distribución (vehículo propio)"
           : r.tipooperacion || "(sin operación)"
+        // ID3/ID4 no tienen báscula física: el "Tiquete Báscula" de Cargue y
+        // Distribución no es un dato real (no hay tiquete que digitar). Se
+        // muestra el número de la propia orden en su lugar. Descargue NO se
+        // toca: ahí el tiquete sí es real (manual para terceros, o heredado
+        // del clon cross-empresa desde la planta) y debe respetarse.
+        const esCedi = idempresa === 3 || idempresa === 4
+        const tiquete = esCedi && (opNorm === "cargue" || opNorm === "distribucion") ? on : r.tiquetebascula ?? null
         const linea: PrefacturaLinea = {
           fechaorden: r.fechaorden ?? null,
           fechacargue: r.fechacargue ?? null,
           cliente: r.cliente ?? null,
           numeroorden: on,
-          tiquete: r.tiquetebascula ?? null,
+          tiquete,
           placa: r.placa ?? null,
           producto: r.producto ?? null,
           pesobascula: num(r.pesobascula),
@@ -1186,11 +1193,18 @@ export async function getControlFacturacion(
       // filtraba en SQL contra el owner del producto, asi que elegir "Terceros"
       // o "Zamudio" no devolvia nada.
       if (filtros.owner && ownerKey(fa.owner) !== ownerKey(filtros.owner)) continue
+      // Mismo criterio que getPrefactura: ID3/ID4 no tienen báscula física, así
+      // que el tiquete de Cargue/Distribución no es un dato real — se muestra el
+      // número de la propia orden. Descargue no se toca (tiquete real, manual o
+      // heredado del clon cross-empresa).
+      const opNormFila = String(a.op).trim().toLowerCase()
+      const esCargueODistribucionCedi =
+        (idempresa === 3 || idempresa === 4) && (opNormFila === "cargue" || opNormFila === "distribucion")
       filasMap.set(k, {
         numeroorden: a.on,
         fecha: a.r.fechacargue ?? a.r.fechaorden ?? null,
         placa: a.r.placa ?? null,
-        tiquete: a.r.tiquetebascula ?? null,
+        tiquete: esCargueODistribucionCedi ? a.on : a.r.tiquetebascula ?? null,
         tipooperacion: a.op || null,
         cliente: a.r.cliente ?? null,
         owner: fa.owner,
