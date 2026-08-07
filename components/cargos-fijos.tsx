@@ -35,12 +35,15 @@ import {
   marcarCargoSolicitado,
   adjuntarFacturaSiigoCargo,
   quitarFacturaSiigoCargo,
+  getComparativoToneladasFijas,
   type MontacargasAlquilerRow,
   type CargoFijoProyectoRow,
   type CargoFijoGenerado,
+  type ComparativoToneladasFijas,
 } from "@/lib/cargos-fijos-actions"
 
 const money = (n: number) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO")
+const ton = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { maximumFractionDigits: 2 })
 
 function hoyISO(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota" }).format(new Date())
@@ -499,6 +502,7 @@ function VistaMensual({ empresas }: { empresas: Array<{ id: number; nombre: stri
   const [data, setData] = useState<CargoFijoGenerado[]>([])
   const [loading, setLoading] = useState(true)
   const [generando, setGenerando] = useState(false)
+  const [comparativo, setComparativo] = useState<ComparativoToneladasFijas | null>(null)
   const fileInputs = useRef<Record<number, HTMLInputElement | null>>({})
 
   const nombreEmpresa = (id: number) => empresas.find((e) => e.id === id)?.nombre || `Empresa ${id}`
@@ -509,6 +513,16 @@ function VistaMensual({ empresas }: { empresas: Array<{ id: number; nombre: stri
     if (r.success) setData(r.data)
     else toast({ title: "Error", description: r.message, variant: "destructive" })
     setLoading(false)
+
+    // Comparativo toneladas fijas vs reales: hoy solo aplica a Avimol (ID2,
+    // Distribución fija). Puramente informativo — el fijo se cobra completo
+    // sin importar el real; no afecta valor/estado de ningún cargo.
+    if (empresaId === 2) {
+      const rc = await getComparativoToneladasFijas(2, `${periodo}-01`)
+      setComparativo(rc.success ? rc.data ?? null : null)
+    } else {
+      setComparativo(null)
+    }
   }, [empresaId, periodo, toast])
 
   useEffect(() => {
@@ -594,6 +608,27 @@ function VistaMensual({ empresas }: { empresas: Array<{ id: number; nombre: stri
             <div className="text-lg font-bold">{money(totalGasto)}</div>
           </div>
         </div>
+
+        {comparativo && comparativo.toneladasFijas > 0 && (
+          <div className="rounded-md border border-dashed p-3">
+            <div className="text-[11px] text-muted-foreground">
+              Distribución Avimol — toneladas fijas vs reales del mes (solo informativo: el fijo se cobra completo, no importa el real)
+            </div>
+            <div className="mt-1 flex items-baseline gap-4">
+              <span className="text-sm">
+                Fijas: <strong>{ton(comparativo.toneladasFijas)} t</strong>
+              </span>
+              <span className="text-sm">
+                Reales: <strong>{ton(comparativo.toneladasReales)} t</strong>
+              </span>
+              <span className={`text-xs ${comparativo.toneladasReales >= comparativo.toneladasFijas ? "text-emerald-700" : "text-amber-700"}`}>
+                {comparativo.toneladasReales >= comparativo.toneladasFijas
+                  ? "el real cubre o supera el fijo"
+                  : `el real quedó ${ton(comparativo.toneladasFijas - comparativo.toneladasReales)} t por debajo del fijo`}
+              </span>
+            </div>
+          </div>
+        )}
 
         <div className="overflow-x-auto rounded-md border">
           {loading ? (

@@ -370,6 +370,62 @@ export async function getCargosFijosGenerados(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Toneladas fijas vs reales (hoy solo aplica a Avimol/ID2 — Distribución
+// fija, 600 t/mes en 2 tramos). El fijo SIEMPRE se cobra completo, pase lo
+// que pase con el volumen real — este comparativo es solo informativo, para
+// no perder de vista si el fijo cubre bien lo que realmente se distribuye.
+// No se toca lo que ya se cobra/paga: es una lectura aparte.
+// ---------------------------------------------------------------------------
+
+export interface ComparativoToneladasFijas {
+  toneladasFijas: number
+  toneladasReales: number
+}
+
+export async function getComparativoToneladasFijas(
+  idempresa: number,
+  periodo: string, // YYYY-MM-01
+): Promise<{ success: boolean; data?: ComparativoToneladasFijas; message?: string }> {
+  try {
+    const sb: any = await getSupabaseAdmin()
+    const mes = inicioMes(periodo)
+    const [anioStr, mesStr] = mes.split("-")
+    const ultimoDia = new Date(Number(anioStr), Number(mesStr), 0).getDate()
+    const desde = mes
+    const hasta = `${anioStr}-${mesStr}-${String(ultimoDia).padStart(2, "0")}`
+
+    // Toneladas FIJAS: suma de `cantidad` de los conceptos vigentes ese mes
+    // (cantidad IS NOT NULL = son cantidad×tarifa, no un valor fijo directo).
+    const { data: cfp, error: errCfp } = await sb
+      .from("cargos_fijos_proyecto")
+      .select("cantidad")
+      .eq("idempresa", idempresa)
+      .not("cantidad", "is", null)
+      .lte("fechainicio", mes)
+      .gte("fechafin", mes)
+    if (errCfp) return { success: false, message: errCfp.message }
+    const toneladasFijas = (cfp || []).reduce((s: number, r: any) => s + num(r.cantidad), 0)
+    if (toneladasFijas <= 0) return { success: true, data: { toneladasFijas: 0, toneladasReales: 0 } }
+
+    // Toneladas REALES: Distribución de ese proyecto en el mes, peso de báscula
+    // (mismo criterio que pagonomina/facturación para plantas sin CEDI).
+    const { data: distrib, error: errDist } = await sb
+      .from("cabeceraoc")
+      .select("pesovascula")
+      .eq("idempresa", idempresa)
+      .eq("tipooperacion", "Distribucion")
+      .gte("fechacargue", desde)
+      .lte("fechacargue", hasta)
+    if (errDist) return { success: false, message: errDist.message }
+    const toneladasReales = (distrib || []).reduce((s: number, r: any) => s + num(r.pesovascula), 0)
+
+    return { success: true, data: { toneladasFijas, toneladasReales } }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al calcular el comparativo de toneladas." }
+  }
+}
+
 export async function marcarCargoSolicitado(id: number): Promise<{ success: boolean; message?: string }> {
   try {
     const sb: any = await getSupabaseAdmin()
