@@ -49,9 +49,12 @@ function hoyColombia(): string {
   return new Date(colombiaDate).toISOString().split("T")[0]
 }
 
-// Opciones de valor para el ajuste manual: 0.5, 1, 2, 3, 4 o 5 (jornada base 7h
-// vigente desde el 16-jul-2026; antes era 0.66/2.66 con jornada 7.3333h).
-const OPCIONES_AJUSTE: number[] = [0.5, 1, 2, 3, 4, 5]
+// Rango permitido del ajuste manual: de 0,5 a 5 (jornada base 7h vigente
+// desde el 16-jul-2026; antes era 0.66/2.66 con jornada 7.3333h). El campo es
+// libre (el usuario escribe el número que quiera dentro del rango), no una
+// lista fija de opciones.
+const VALOR_MIN = 0.5
+const VALOR_MAX = 5
 
 // Botón + popover para ajustar manualmente un campo de hora extra
 // (HED, HEDF, HEN o HN) con un valor entre 0,5 y 5.
@@ -90,28 +93,21 @@ function AjusteManualButton({
           </Select>
         </div>
         <div className="space-y-1.5">
-          <Label className="text-xs font-semibold">Valor (0,5 - 3)</Label>
-          <Select
-            value={String(valor)}
-            onValueChange={(v) => setValor(Number(v))}
-          >
-            <SelectTrigger className="h-8">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {/* `value` va con punto (se re-parsea con Number); solo el texto
-                  visible se muestra con coma decimal (es-CO). */}
-              {OPCIONES_AJUSTE.map((o) => (
-                <SelectItem key={o} value={String(o)}>
-                  {o.toLocaleString("es-CO")}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <Label className="text-xs font-semibold">Valor ({VALOR_MIN.toLocaleString("es-CO")} - {VALOR_MAX.toLocaleString("es-CO")})</Label>
+          <Input
+            type="number"
+            min={VALOR_MIN}
+            max={VALOR_MAX}
+            step={0.1}
+            className="h-8"
+            value={valor}
+            onChange={(e) => setValor(Number(e.target.value))}
+          />
         </div>
         <Button
           size="sm"
           className="w-full"
+          disabled={!Number.isFinite(valor) || valor < VALOR_MIN || valor > VALOR_MAX}
           onClick={() => {
             onApply(campo, valor)
             setOpen(false)
