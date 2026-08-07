@@ -4,9 +4,9 @@
 -- Calcula y asigna las HORAS EXTRAS (hed / hedf) del personal de ESPECIALIDAD
 -- en la tabla de asistencia (registroasistencia). Reglas:
 --   1) Inicio efectivo = max(horaingreso, horaentradaprogramada).
---   2) Fin efectivo    = regla de 30 min de tolerancia a la salida:
---        - si se quedó tarde < 30 min → cuenta hasta la hora programada;
---        - si salió 30+ min tarde (o salió temprano) → su hora real.
+--   2) Fin efectivo    = regla de 45 min de tolerancia a la salida:
+--        - si se quedó tarde < 45 min → cuenta hasta la hora programada;
+--        - si salió 45+ min tarde (o salió temprano) → su hora real.
 --      Con ajuste de cruce de medianoche.
 --   3) Horas trabajadas = fin − inicio (ajustando medianoche);
 --      Horas extra = horas − 1h (descanso) − 7h (jornada base vigente desde
@@ -51,7 +51,7 @@ BEGIN
         END IF;
 
         -- ====================================================================
-        -- 2. LÓGICA DE FIN EFECTIVO (REGLA DE LOS 30 MINUTOS)
+        -- 2. LÓGICA DE FIN EFECTIVO (REGLA DE LOS 45 MINUTOS)
         -- ====================================================================
         intervalo_exceso_salida := NEW.horasalida - NEW.horasalidaprogramada;
 
@@ -62,11 +62,11 @@ BEGIN
             intervalo_exceso_salida := intervalo_exceso_salida - interval '24 hours';
         END IF;
 
-        -- Si se quedó tarde, pero NO superó los 30 minutos, su fin efectivo es la hora programada
-        IF intervalo_exceso_salida >= interval '0' AND intervalo_exceso_salida < interval '30 minutes' THEN
+        -- Si se quedó tarde, pero NO superó los 45 minutos, su fin efectivo es la hora programada
+        IF intervalo_exceso_salida >= interval '0' AND intervalo_exceso_salida < interval '45 minutes' THEN
             hora_fin_efectiva := NEW.horasalidaprogramada;
         ELSE
-            -- Si salió 30+ minutos tarde, o si salió temprano, usamos su hora de salida real
+            -- Si salió 45+ minutos tarde, o si salió temprano, usamos su hora de salida real
             hora_fin_efectiva := NEW.horasalida;
         END IF;
 
