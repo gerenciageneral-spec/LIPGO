@@ -370,6 +370,71 @@
     section.step { padding: 20px; }
     .wrap { padding: 36px 16px 72px; }
   }
+
+  .tshoot-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+
+  .tshoot-card {
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    border-radius: 12px;
+    padding: 14px 16px;
+  }
+
+  .tshoot-card.cause {
+    grid-column: 1 / -1;
+    border-color: color-mix(in srgb, #e0a63a 45%, var(--border));
+    background: color-mix(in srgb, #e0a63a 10%, var(--surface-2));
+  }
+
+  .tshoot-card p {
+    margin: 0;
+    font-size: 13.5px;
+    color: var(--text-secondary);
+    line-height: 1.55;
+  }
+
+  .tshoot-label {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .02em;
+    margin-bottom: 8px;
+  }
+
+  .tshoot-label.ok { color: var(--ok); }
+  .tshoot-label.warn { color: #e0a63a; }
+
+  .fix-box {
+    border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+    background: color-mix(in srgb, var(--accent) 10%, var(--surface-2));
+    border-radius: 12px;
+    padding: 16px 20px;
+  }
+
+  .fix-title {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: .02em;
+    color: var(--accent-strong);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+  }
+
+  .fix-box ol {
+    margin: 0;
+    padding-left: 20px;
+    color: var(--text-primary);
+    font-size: 14px;
+    line-height: 1.7;
+  }
+
+  @media (max-width: 640px) {
+    .tshoot-grid { grid-template-columns: 1fr; }
+  }
 </style>
 
 <div class="wrap">
@@ -395,6 +460,10 @@
     <a href="#step-3"><span class="num">3</span><span class="label">Vista pagonomina</span></a>
     <a href="#step-4"><span class="num">4</span><span class="label">Trigger horas extra</span></a>
   </nav>
+
+  <a href="#troubleshooting" class="badge warn" style="text-decoration:none; display:inline-flex; margin-bottom:32px;">
+    ⚠ No veo el módulo nuevo → ver troubleshooting
+  </a>
 
   <section class="step" id="step-1">
     <div class="step-head">
@@ -475,6 +544,50 @@
       <button class="copy" data-target="4">Copiar código</button>
     </div>
     <div class="code-scroll"><pre class="code-block"><code id="code-4"></code></pre></div>
+  </section>
+
+  <section class="step" id="troubleshooting">
+    <div class="step-head">
+      <div class="step-num" style="background: color-mix(in srgb, #e0554a 16%, var(--surface-2)); border-color: color-mix(in srgb, #e0554a 40%, var(--border)); color: #ff8a7d;">!</div>
+      <div class="step-title-row">
+        <h2>Troubleshooting — "no veo el módulo nuevo en el menú"</h2>
+        <p class="step-desc">
+          Pasa después de correr el script 2 (o cualquier permiso nuevo) y dar el toggle en Gestión de Usuarios,
+          si la pestaña de LIPgo ya estaba abierta desde antes del despliegue.
+        </p>
+      </div>
+    </div>
+
+    <div class="tshoot-grid">
+      <div class="tshoot-card">
+        <div class="tshoot-label ok">✓ Verificado — no es la base de datos</div>
+        <p>La columna <code class="mono">apoyo_cargue</code> y la tabla <code class="mono">apoyo_cargue_asignaciones</code>
+        existen; el toggle en Gestión de Usuarios sí guarda el permiso en <code class="mono">permisos_usuarios</code>
+        correctamente (confirmado con datos reales).</p>
+      </div>
+      <div class="tshoot-card">
+        <div class="tshoot-label ok">✓ Verificado — no es el código</div>
+        <p>El sidebar (<code class="mono">components/sidebar.tsx</code>) resuelve visibilidad SIEMPRE contra
+        <code class="mono">MODULE_PERMISSION_MAP</code> — mismo origen que usa Gestión de Usuarios para construir
+        el árbol de permisos. Sin listas paralelas, sin nombres desalineados.</p>
+      </div>
+      <div class="tshoot-card cause">
+        <div class="tshoot-label warn">⚠ Causa real</div>
+        <p>El sidebar sí trae los permisos <em>frescos</em> en cada carga (<code class="mono">cache: "no-store"</code>),
+        pero el <strong>listado de módulos posibles</strong> (incluido el nuevo) vive en el JavaScript ya cargado en
+        la pestaña del navegador. Si la pestaña de LIPgo llevaba abierta desde antes del <code class="mono">git push</code>,
+        sigue corriendo el bundle viejo — que ni siquiera sabe que el módulo nuevo existe.</p>
+      </div>
+    </div>
+
+    <div class="fix-box">
+      <div class="fix-title">Solución</div>
+      <ol>
+        <li>Cerrar por completo la pestaña/ventana de LIPgo (no solo navegar dentro de la app).</li>
+        <li>Abrirla de nuevo, o hacer un refresco duro (<code class="mono">Ctrl+Shift+R</code>).</li>
+        <li>Confirmar con qué correo quedó iniciada la sesión — el permiso debe estar en <code class="mono">true</code> para <strong>ese</strong> usuario específico, no otro.</li>
+      </ol>
+    </div>
   </section>
 
   <footer class="page">
