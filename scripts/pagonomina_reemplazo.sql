@@ -89,6 +89,18 @@ create or replace view public.pagonomina as
             TRIM(BOTH FROM regexp_split_to_table(cabeceraoc.auxiliares, ','::text)) AS nombre_auxiliar
            FROM cabeceraoc
           WHERE ((cabeceraoc.fincargue IS NOT NULL) AND ((cabeceraoc.fincargue)::text <> ''::text))
+            -- AVIMOL (idempresa=2): la Distribución NO se paga por destajo — el clon
+            -- automático "+D" de las placas propias (generarDistribucionAutomatica)
+            -- HEREDA los mismos `auxiliares` de su Cargue madre, así que sin esta
+            -- exclusión esas mismas personas cobraban su tonelaje de Cargue Y OTRA VEZ
+            -- el de la Distribución clon (doble conteo real, no solo un pago de más).
+            -- Ya está cubierta aparte por las 300 t fijas de facturación
+            -- (lib/cargos-fijos-actions.ts, "Distribución Turno") — concepto de
+            -- FACTURACIÓN, no de nómina; no se cruza con esto. Exclusión TOTAL (ni
+            -- toneladas ni pago) para no caer en el patrón de excedente_bruto_destajo
+            -- negativo cuando hay toneladas sin tarifa. Fuera de Avimol, sin cambio:
+            -- id1/3/4 siguen pagando Distribución con su propia tarifa y auxiliares.
+            AND NOT ((cabeceraoc.idempresa = 2) AND (cabeceraoc.tipooperacion = 'Distribucion'::text))
         ), produccion_diaria AS (
          SELECT t.fechacargue AS fecha,
             t.nombre_auxiliar AS persona,

@@ -1868,6 +1868,11 @@ function AjusteProyecciones() {
             <span>
               Día(s) proyectado(s): <strong>{cruce.diasProyectados.join(", ")}</strong>. El ajuste se aplicará en la{" "}
               <strong>{cruce.aplicaEn.quincena}ª quincena de {MESES[cruce.aplicaEn.mes - 1]} {cruce.aplicaEn.anio}</strong>.
+              {cruce.resumen.tonDistribucionAvimolExcluida > 0 && (
+                <span className="text-muted-foreground">
+                  {" "}· Distribución Avimol excluida del destajo: {t2(cruce.resumen.tonDistribucionAvimolExcluida)} t.
+                </span>
+              )}
             </span>
             <Button size="sm" className="ml-auto" onClick={generar} disabled={guardando || cruce.lineas.length === 0}>
               {guardando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}

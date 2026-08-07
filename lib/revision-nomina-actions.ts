@@ -1127,6 +1127,17 @@ function pesoBaseCalculo(
   return { peso: pesovascula, fuente: "bascula" }
 }
 
+/**
+ * AVIMOL (idempresa=2): la Distribución NO se paga por destajo — el clon
+ * automático "+D" hereda los mismos `auxiliares` de su Cargue madre, así que
+ * sin esta exclusión esas personas se contarían dos veces (Cargue + Distribución
+ * clon). Mismo criterio que `pagonomina_reemplazo.sql` y
+ * `lib/ajuste-proyeccion-actions.ts` — si se toca uno, tocar los tres.
+ */
+function excluirAvimolDistribucion(idempresa: number, tipooperacion: string): boolean {
+  return idempresa === 2 && tipooperacion === "Distribucion"
+}
+
 export interface OrdenConciliada {
   idorden: number
   orden: string
@@ -1288,6 +1299,7 @@ export async function getConciliacionQuincena(
     for (const o of ordenesRaw) {
       const planta = Number(o.idempresa)
       const tipo = String(o.tipooperacion || "").trim()
+      if (excluirAvimolDistribucion(planta, tipo)) continue
       const fecha = String(o.fechacargue).slice(0, 10)
       const auxiliares = String(o.auxiliares || "")
         .split(",")
@@ -1698,6 +1710,7 @@ export async function getAuxiliaresVsAsistencia(
     for (const o of ordenesRaw) {
       const planta = Number(o.idempresa)
       const tipo = String(o.tipooperacion || "").trim()
+      if (excluirAvimolDistribucion(planta, tipo)) continue
       const fecha = String(o.fechacargue).slice(0, 10)
       const auxiliares = String(o.auxiliares || "")
         .split(",")

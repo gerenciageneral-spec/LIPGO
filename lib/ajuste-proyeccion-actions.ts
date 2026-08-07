@@ -50,12 +50,29 @@ function pesoBaseCalculo(idempresa: number, tipooperacion: string, pesovascula: 
   return pesovascula
 }
 
+/**
+ * AVIMOL (idempresa=2): la Distribución NO se paga por destajo — el clon
+ * automático "+D" hereda los mismos `auxiliares` de su Cargue madre, así que
+ * sin esta exclusión esas personas cobrarían su tonelaje de Cargue Y OTRA VEZ
+ * el de la Distribución clon (doble conteo). Ya está cubierta aparte por las
+ * 300 t fijas de facturación (lib/cargos-fijos-actions.ts) — concepto de
+ * FACTURACIÓN, no de nómina. Mismo criterio que scripts/pagonomina_reemplazo.sql
+ * (CTE `transformacion`); si se toca uno, tocar el otro.
+ */
+function excluirAvimolDistribucion(idempresa: number, tipooperacion: string): boolean {
+  return idempresa === 2 && tipooperacion === "Distribucion"
+}
+
 export interface AjusteLinea {
   id?: number
   idempresa: number
   fechaProyectada: string
   persona: string
   identificacion: string | null
+  /** Toneladas de la orden `tipooperacion='proyeccion'` (lo que se proyectó, aparte de lo real). */
+  tonProyectada: number
+  /** Hora en que quedó guardada la proyección de ese día+empresa (fincargue, MAX si hubo varias). */
+  horaCorte: string | null
   tonPagada: number
   tonReal: number
   diferenciaTon: number
@@ -82,6 +99,8 @@ export interface CruceProyeccionData {
     valorAFavorEmpresa: number
     neto: number
     yaRegistrados: number
+    /** Toneladas de Distribución en Avimol en los días proyectados — ya excluidas del destajo, solo informativo. */
+    tonDistribucionAvimolExcluida: number
   }
   lineas: AjusteLinea[]
   /** Sin días de proyección en la quincena: no hay nada que ajustar. */
@@ -116,10 +135,15 @@ export async function getCruceProyeccion(
     const emps = [1, 2, 3, 4, 6].includes(empresa) ? [empresa] : null
 
     // 1) Órdenes de la quincena. Mismo universo que pagonomina (fincargue).
+    //    `fincargue` también se trae como HORA (HH:MM:SS) — en las órdenes
+    //    reales es la hora real de cierre; en las de proyección, la hora en
+    //    que se guardó (saveProyeccion, lib/orders-actions.tsx). Comparación
+    //    lexicográfica de string funciona porque el formato siempre es
+    //    zero-padded HH:MM:SS.
     const ordenes = await paginar(
       sb,
       "cabeceraoc",
-      "id, idempresa, ordendecargue, fechacargue, tipooperacion, pesovascula, pesoorden, auxiliares",
+      "id, idempresa, ordendecargue, fechacargue, tipooperacion, pesovascula, pesoorden, auxiliares, fincargue",
       (q: any) => {
         let x = q.gte("fechacargue", desde).lte("fechacargue", hasta).not("fincargue", "is", null)
         if (emps) x = x.in("idempresa", emps)
@@ -154,6 +178,7 @@ export async function getCruceProyeccion(
             valorAFavorEmpresa: 0,
             neto: 0,
             yaRegistrados: 0,
+            tonDistribucionAvimolExcluida: 0,
           },
           lineas: [],
           sinProyeccion: true,
@@ -174,22 +199,30 @@ export async function getCruceProyeccion(
 
     // 4) REAL por (fecha, persona): solo órdenes que NO son proyección.
     //    Reparto idéntico al de pagonomina: peso ÷ cantidad de auxiliares.
+    //    Excluye Avimol+Distribución (ver excluirAvimolDistribucion) para que
+    //    "real" no incluya algo que pagonomina tampoco paga.
     const realTon = new Map<string, number>()
     const realVal = new Map<string, number>()
     const empresaDe = new Map<string, number>()
+    // Toneladas de Distribución en Avimol (informativo, ver punto 4 del plan) —
+    // se mide ANTES de excluir, para poder mostrar cuánto quedó fuera.
+    let tonDistribucionAvimolExcluida = 0
     for (const o of ordenes) {
       const tipo = String(o.tipooperacion || "").trim()
       if (tipo === "proyeccion") continue
       const fecha = String(o.fechacargue).slice(0, 10)
       if (!diasProyectados.includes(fecha)) continue
+      const emp = Number(o.idempresa)
       const aux = String(o.auxiliares || "")
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean)
-      if (aux.length === 0) continue
-      const emp = Number(o.idempresa)
       const peso = pesoBaseCalculo(emp, tipo, num(o.pesovascula), num(o.pesoorden))
-      if (peso <= 0) continue
+      if (excluirAvimolDistribucion(emp, tipo)) {
+        if (peso > 0) tonDistribucionAvimolExcluida += peso
+        continue
+      }
+      if (aux.length === 0 || peso <= 0) continue
       const porPersona = peso / aux.length
       const tarifa = tarifaDe(emp, tipo, fecha)
       for (const p of aux) {
@@ -200,26 +233,90 @@ export async function getCruceProyeccion(
       }
     }
 
-    // 5) PAGADO: lo que pagonomina liquidó esos días (proyección + real).
-    const filasPn = await paginar(
-      sb,
-      "pagonomina",
-      "fecha, persona, idempresa, idempresaliquidacion, toneladas, pago_produccion",
-      (q: any) => {
-        let x = q.gte("fecha", desde).lte("fecha", hasta).gt("toneladas", 0)
-        if (emps) x = x.in("idempresa", emps)
-        return x
-      },
-    )
+    // 5) HORA DE CORTE por (fecha, empresa): la hora en que quedó guardada la
+    //    proyección (fincargue de la fila tipooperacion='proyeccion'; si hubo
+    //    más de un guardado ese día, se usa la ÚLTIMA — el punto real de
+    //    corte es el último que se guardó).
+    const horaCortePorFechaEmpresa = new Map<string, string>()
+    for (const o of ordenes) {
+      if (String(o.tipooperacion || "").trim() !== "proyeccion") continue
+      const fecha = String(o.fechacargue).slice(0, 10)
+      const emp = Number(o.idempresa)
+      const hora = String(o.fincargue || "")
+      if (!hora) continue
+      const k = `${fecha}|${emp}`
+      const actual = horaCortePorFechaEmpresa.get(k)
+      if (!actual || hora > actual) horaCortePorFechaEmpresa.set(k, hora)
+    }
+
+    // 6) PAGADO = PROYECTADO (tonelaje propio de la orden de proyección) +
+    //    REAL ANTES DEL CORTE (órdenes reales de ese mismo día cuyo fincargue
+    //    ya estaba cerrado al momento del corte). Reemplaza la lectura previa
+    //    de `pagonomina` en vivo: esa vista SUMA proyección + real del día
+    //    sin distinguirlos, así que si después del corte se cerraban MÁS
+    //    órdenes reales ese mismo día, "lo pagado" seguía creciendo — ya no
+    //    era una foto de lo que realmente se envió al archivo plano ese día.
     const pagTon = new Map<string, number>()
     const pagVal = new Map<string, number>()
-    for (const r of filasPn) {
-      const fecha = String(r.fecha).slice(0, 10)
+    const proyTon = new Map<string, number>()
+    const horaCorteDe = new Map<string, string>()
+
+    // 6a) PROYECTADO: tonelaje propio de las filas tipooperacion='proyeccion'.
+    for (const o of ordenes) {
+      const tipo = String(o.tipooperacion || "").trim()
+      if (tipo !== "proyeccion") continue
+      const fecha = String(o.fechacargue).slice(0, 10)
+      const emp = Number(o.idempresa)
+      const aux = String(o.auxiliares || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+      const peso = num(o.pesoorden) // proyección: pesoorden = pesovascula = peso digitado
+      if (aux.length === 0 || peso <= 0) continue
+      const porPersona = peso / aux.length
+      const tarifa = tarifaDe(emp, "proyeccion", fecha)
+      const horaCorte = horaCortePorFechaEmpresa.get(`${fecha}|${emp}`) || null
+      for (const p of aux) {
+        const k = `${fecha}|${p.toUpperCase()}`
+        proyTon.set(k, (proyTon.get(k) || 0) + porPersona)
+        pagTon.set(k, (pagTon.get(k) || 0) + porPersona)
+        pagVal.set(k, (pagVal.get(k) || 0) + porPersona * tarifa)
+        if (!empresaDe.has(k)) empresaDe.set(k, emp)
+        if (horaCorte) horaCorteDe.set(k, horaCorte)
+      }
+    }
+
+    // 6b) REAL ANTES DEL CORTE: mismo criterio que el REAL completo (paso 4,
+    //     incluye la exclusión Avimol+Distribución), pero solo órdenes cuyo
+    //     `fincargue` es <= la hora de corte de ese día+empresa. Si ese
+    //     día+empresa no tuvo proyección, no hay corte que aplicar (no debería
+    //     pasar porque solo se recorren `diasProyectados`, pero por empresa
+    //     dentro del mismo día sí puede faltar si esa empresa no proyectó).
+    for (const o of ordenes) {
+      const tipo = String(o.tipooperacion || "").trim()
+      if (tipo === "proyeccion") continue
+      const fecha = String(o.fechacargue).slice(0, 10)
       if (!diasProyectados.includes(fecha)) continue
-      const k = `${fecha}|${String(r.persona || "").trim().toUpperCase()}`
-      pagTon.set(k, (pagTon.get(k) || 0) + num(r.toneladas))
-      pagVal.set(k, (pagVal.get(k) || 0) + num(r.pago_produccion))
-      if (!empresaDe.has(k)) empresaDe.set(k, Number(r.idempresaliquidacion ?? r.idempresa) || 0)
+      const emp = Number(o.idempresa)
+      if (excluirAvimolDistribucion(emp, tipo)) continue
+      const horaCorte = horaCortePorFechaEmpresa.get(`${fecha}|${emp}`)
+      if (!horaCorte) continue // esta empresa no proyectó ese día: nada "antes del corte"
+      const hora = String(o.fincargue || "")
+      if (!hora || hora > horaCorte) continue // llegó DESPUÉS del corte: no estaba pagado
+      const aux = String(o.auxiliares || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+      const peso = pesoBaseCalculo(emp, tipo, num(o.pesovascula), num(o.pesoorden))
+      if (aux.length === 0 || peso <= 0) continue
+      const porPersona = peso / aux.length
+      const tarifa = tarifaDe(emp, tipo, fecha)
+      for (const p of aux) {
+        const k = `${fecha}|${p.toUpperCase()}`
+        pagTon.set(k, (pagTon.get(k) || 0) + porPersona)
+        pagVal.set(k, (pagVal.get(k) || 0) + porPersona * tarifa)
+        if (!empresaDe.has(k)) empresaDe.set(k, emp)
+      }
     }
 
     // 6) Cédulas (el archivo plano paga por identificación).
@@ -231,12 +328,8 @@ export async function getCruceProyeccion(
       if (k && c && !cedulaDe.has(k)) cedulaDe.set(k, c)
     }
 
-    // 7) Nombre "bonito" tal como viene de pagonomina/cabeceraoc.
+    // 7) Nombre "bonito" tal como viene de cabeceraoc.auxiliares.
     const nombreReal = new Map<string, string>()
-    for (const r of filasPn) {
-      const p = String(r.persona || "").trim()
-      if (p) nombreReal.set(p.toUpperCase(), p)
-    }
     for (const o of ordenes) {
       for (const p of String(o.auxiliares || "").split(",")) {
         const t = p.trim()
@@ -262,6 +355,8 @@ export async function getCruceProyeccion(
         fechaProyectada: fecha,
         persona,
         identificacion: cedulaDe.get(personaUpper) || null,
+        tonProyectada: proyTon.get(k) || 0,
+        horaCorte: horaCorteDe.get(k) || null,
         tonPagada,
         tonReal,
         diferenciaTon,
@@ -297,6 +392,7 @@ export async function getCruceProyeccion(
           valorAFavorEmpresa: aFavorEmp,
           neto: aFavorTrab + aFavorEmp,
           yaRegistrados: (yaReg || []).length,
+          tonDistribucionAvimolExcluida,
         },
         lineas,
         sinProyeccion: false,
@@ -331,6 +427,8 @@ export async function generarAjustes(
       quincena,
       persona: l.persona,
       identificacion: l.identificacion,
+      ton_proyectada: l.tonProyectada,
+      hora_corte: l.horaCorte,
       ton_pagada: l.tonPagada,
       ton_real: l.tonReal,
       diferencia_ton: l.diferenciaTon,
@@ -400,6 +498,8 @@ export async function getAjustes(filtros: {
         quincena: Number(r.quincena),
         persona: String(r.persona || ""),
         identificacion: r.identificacion || null,
+        tonProyectada: num(r.ton_proyectada),
+        horaCorte: r.hora_corte || null,
         tonPagada: num(r.ton_pagada),
         tonReal: num(r.ton_real),
         diferenciaTon: num(r.diferencia_ton),
