@@ -159,6 +159,7 @@ export async function getPersonalApoyoDisponible(
       .select("id, nombre, puesto, especialidad")
       .eq("fecha", fecha)
       .is("asistencia", null) // excluye Ausentes
+      .not("horaingreso", "is", null) // excluye programados que no han confirmado llegada (ver picking-actions.ts)
       .order("nombre", { ascending: true })
     if (idempresa) q = q.eq("idempresa", idempresa)
     const { data, error } = await q

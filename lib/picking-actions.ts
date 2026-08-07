@@ -279,6 +279,15 @@ export async function getCarguDescarguePersonnel(empresaId?: number | null) {
   //   3) Se excluyen filas que tienen `asistencia` (codigo de novedad)
   //      porque corresponden a Ausentes; un Ausente no debe aparecer
   //      como personal disponible aun si quedo un `puesto` historico.
+  //   4) `horaingreso IS NOT NULL`: "Programacion de turnos" precrea la
+  //      fila del dia con `puesto` + `horaentradaprogramada` (la hora
+  //      PROGRAMADA) pero SIN `horaingreso` — la persona todavia no ha
+  //      confirmado que llego (ni por camara en el kiosko de asistencia,
+  //      ni porque el supervisor la marco presente en Tabla Asistencia,
+  //      que es lo unico que escribe `horaingreso`). Sin este filtro,
+  //      alguien programado pero que nunca se presento aparecia igual
+  //      como disponible para asignar a una orden. Verificado con datos
+  //      reales: 2026-08-06 tenia 41 candidatos, 1 sin horaingreso.
   //
   // Mapeo de columnas para mantener el contrato `{ id, nombreempleado }`
   // que el componente Picking ya consume:
@@ -297,6 +306,7 @@ export async function getCarguDescarguePersonnel(empresaId?: number | null) {
     .in("puesto", PUESTOS_PICKING)
     .eq("fecha", todayDate)
     .is("asistencia", null) // Excluye Ausentes con codigo de novedad
+    .not("horaingreso", "is", null) // Excluye programados que no han confirmado llegada
     .order("nombre", { ascending: true })
 
   if (finalEmpresaId) {
