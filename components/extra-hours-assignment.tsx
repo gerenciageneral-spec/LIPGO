@@ -49,12 +49,12 @@ function hoyColombia(): string {
   return new Date(colombiaDate).toISOString().split("T")[0]
 }
 
-// Opciones de valor para el ajuste manual: 0.5, 1, 2 o 3 (jornada base 7h
+// Opciones de valor para el ajuste manual: 0.5, 1, 2, 3, 4 o 5 (jornada base 7h
 // vigente desde el 16-jul-2026; antes era 0.66/2.66 con jornada 7.3333h).
-const OPCIONES_AJUSTE: number[] = [0.5, 1, 2, 3]
+const OPCIONES_AJUSTE: number[] = [0.5, 1, 2, 3, 4, 5]
 
 // Botón + popover para ajustar manualmente un campo de hora extra
-// (HED, HEDF, HEN o HN) con un valor entre 0,5 y 3.
+// (HED, HEDF, HEN o HN) con un valor entre 0,5 y 5.
 function AjusteManualButton({
   disabled,
   onApply,
@@ -294,7 +294,7 @@ export function ExtraHoursAssignment({
     }
   }
 
-  // Ajuste manual: aplica un valor (entre 0,5 y 3) a uno de los
+  // Ajuste manual: aplica un valor (entre 0,5 y 5) a uno de los
   // campos de hora extra (HED, HEDF, HEN, HN) del registro indicado y
   // lo persiste en registroasistencia.
   const ajustarManual = async (
