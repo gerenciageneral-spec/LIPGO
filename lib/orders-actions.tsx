@@ -762,6 +762,29 @@ export async function generarDistribucionAutomatica(
     const { data: yaExiste } = await supabase.from("cabeceraoc").select("id").eq("ordendecargue", distCode).limit(1).maybeSingle()
     if (yaExiste) return distCode // idempotente: no duplica
 
+    // DETALLE a clonar: se lee ANTES de crear la cabecera (antes se leía después,
+    // línea 804) para poder decidir si hay algo que clonar sin dejar una cabecera
+    // huérfana. En ID4, las líneas de JERÓNIMO MARTINS COLOMBIA se excluyen: ese
+    // cliente descarga él mismo, no usa el servicio de distribución de LIP
+    // (confirmado 2026-08-06). Si el cargue completo era de ese cliente, no se
+    // genera clon. El resto de proyectos (incl. ID3) clona todo, como siempre.
+    const { data: origDetails } = await supabase.from("detalleoc").select("*").eq("idorden", orderId)
+    if (!origDetails || origDetails.length === 0) return null
+    const normCliente = (s: any) =>
+      String(s ?? "").trim().toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
+    const detallesAClonar =
+      origHeader.idempresa === 4
+        ? origDetails.filter((d: any) => !normCliente(d.cliente).includes("JERONIMO MARTINS"))
+        : origDetails
+    if (detallesAClonar.length === 0) return null // todo el cargue era Jerónimo Martins: no se genera clon
+    // Solo se recalcula el peso si de verdad se excluyó algo (ID4 con Jerónimo
+    // Martins mezclado). En cualquier otro caso (incl. TODO id2/id3) el peso
+    // sigue heredado tal cual de la madre por el spread, sin cambio de conducta.
+    const seExcluyoAlgo = detallesAClonar.length !== origDetails.length
+    const pesoDetallesAClonar = seExcluyoAlgo
+      ? detallesAClonar.reduce((s: number, d: any) => s + (Number(d.toneladas) || 0), 0)
+      : null
+
     // CABECERA = clon exacto con id FRESCO + reintento ante colisión de PK (23505).
     let distId = 0, creada = false
     for (let intento = 0; intento < 6 && !creada; intento++) {
@@ -773,6 +796,11 @@ export async function generarDistribucionAutomatica(
         ordendecargue: distCode,
         tipooperacion: "Distribucion",
         facturar: true,
+        // Si se excluyó algún cliente (Jerónimo Martins en ID4), el peso del
+        // header refleja SOLO lo que realmente se clona — si no, quedaría con
+        // más peso del que tienen sus propias líneas de detalle. Si no se
+        // excluyó nada, se deja el heredado del spread (sin cambio de conducta).
+        ...(seExcluyoAlgo ? { pesoorden: pesoDetallesAClonar, pesovascula: pesoDetallesAClonar } : {}),
         // ES UN CLON: HEREDA de la orden madre TODO el contenido por el spread
         // `...origHeader` — incluidos `horalote` (lotes) y los campos de PESAJE. NO
         // se anulan, porque el clon NO re-asigna lotes ni vuelve a báscula (la madre
@@ -800,15 +828,12 @@ export async function generarDistribucionAutomatica(
     }
     if (!creada) { console.error("[+D] no se pudo crear la cabecera tras varios reintentos"); return null }
 
-    // DETALLE = clon exacto de todas las líneas del cargue, con id fresco.
-    const { data: origDetails } = await supabase.from("detalleoc").select("*").eq("idorden", orderId)
-    if (origDetails && origDetails.length > 0) {
-      const { data: maxD } = await supabase.from("detalleoc").select("id").order("id", { ascending: false }).limit(1).maybeSingle()
-      let did = (maxD?.id || 0) + 1
-      const distDetails = origDetails.map((d: any) => ({ ...d, id: did++, idorden: distId, numeroorden: distCode }))
-      const { error: dErr } = await supabase.from("detalleoc").insert(distDetails)
-      if (dErr) console.error("[+D] error creando detalle:", dErr.message)
-    }
+    // DETALLE = clon de las líneas A CLONAR (todas, salvo Jerónimo Martins en ID4).
+    const { data: maxD } = await supabase.from("detalleoc").select("id").order("id", { ascending: false }).limit(1).maybeSingle()
+    let did = (maxD?.id || 0) + 1
+    const distDetails = detallesAClonar.map((d: any) => ({ ...d, id: did++, idorden: distId, numeroorden: distCode }))
+    const { error: dErr } = await supabase.from("detalleoc").insert(distDetails)
+    if (dErr) console.error("[+D] error creando detalle:", dErr.message)
     console.log("[+D] distribución automática creada:", distCode, "id", distId, "desde", origHeader.ordendecargue)
     return distCode
   } catch (e: any) {
