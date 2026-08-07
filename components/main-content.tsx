@@ -72,6 +72,7 @@ import { Proyecciones } from "@/components/proyecciones"
 import AttendanceRegistration from "@/components/attendance-registration" // Added import for attendance registration
 import AttendanceTable from "@/components/attendance-table" // Added import for attendance table
 import { ExtraHoursAssignment } from "@/components/extra-hours-assignment" // Added import for extra hours assignment module
+import { ApoyoCargue } from "@/components/apoyo-cargue" // Added import for apoyo en cargue module
 import PersonnelNotices from "@/components/personnel-notices" // Added import for personnel notices module
 import GestionTurnos from "@/components/rrhh/gestion-turnos" // CRUD de turnos (tabla tarifasturnos)
 import ProgramacionTurnos from "@/components/rrhh/programacion-turnos" // Programación a futuro de personal en `registroasistencia`
@@ -263,6 +264,7 @@ export function MainContent({
       "Registro de asistencia": "attendance_registration", // Added mapping for attendance module
       "Tabla Asistencia": "attendance_table", // Added mapping for attendance table
       "Asignación horas extra": "extra_hours_assignment", // Added mapping for extra hours assignment module
+      "Asignación de apoyo en cargue": "apoyo_cargue", // Added mapping for apoyo en cargue module
       "Novedades de personal": "personnel_notices", // Added mapping for personnel notices module
       "Ver Picking": "view_picking", // Added mapping for ViewPicking module
       "Ver Picking/Packing": "view_picking", // Added mapping for renamed module Ver Picking/Packing
@@ -794,6 +796,10 @@ export function MainContent({
                   onSelectModule("Aprobar Turnos")
                 }}
               />
+            </PermissionGuard>
+          ) : selectedModule === "Asignación de apoyo en cargue" ? (
+            <PermissionGuard moduleName="Asignación de apoyo en cargue">
+              <ApoyoCargue />
             </PermissionGuard>
           ) : selectedModule === "Novedades de personal" ? (
             <PermissionGuard moduleName="Novedades de personal">

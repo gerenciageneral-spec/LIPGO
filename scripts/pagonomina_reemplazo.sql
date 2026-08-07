@@ -456,10 +456,17 @@ create or replace view public.pagonomina as
                     -- al Ajuste de Proyecciones, que es el objetivo del negocio.
                     WHEN (EXTRACT(day FROM calculo_nomina_base.fecha) = (31)::numeric) THEN
                     CASE
-                        WHEN ((calculo_nomina_base.toneladas > (0)::numeric) AND (calculo_nomina_base.especialidad IS NOT TRUE)) THEN calculo_nomina_base.pago_produccion
+                        -- EXCEPCIÓN "apoyo en cargue": una persona de especialidad=true
+                        -- SÍ entra al destajo cuando tiene una fila en
+                        -- apoyo_cargue_asignaciones ese día (la agregaron desde el módulo
+                        -- "Asignación de apoyo en cargue" a una orden de Cargue/Descargue).
+                        -- No cambia la regla general de especialidad, solo la excepciona
+                        -- para ese día/persona puntual.
+                        WHEN ((calculo_nomina_base.toneladas > (0)::numeric) AND ((calculo_nomina_base.especialidad IS NOT TRUE) OR EXISTS (SELECT 1 FROM apoyo_cargue_asignaciones ap WHERE ((ap.fecha = calculo_nomina_base.fecha) AND (upper(TRIM(BOTH FROM ap.persona)) = upper(TRIM(BOTH FROM calculo_nomina_base.persona))))))) THEN calculo_nomina_base.pago_produccion
                         ELSE (0)::numeric
                     END
-                    WHEN ((calculo_nomina_base.toneladas > (0)::numeric) AND (calculo_nomina_base.especialidad IS NOT TRUE)) THEN (calculo_nomina_base.pago_produccion - calculo_nomina_base.valor_diario_ley)
+                    -- Misma excepción de "apoyo en cargue" que arriba.
+                    WHEN ((calculo_nomina_base.toneladas > (0)::numeric) AND ((calculo_nomina_base.especialidad IS NOT TRUE) OR EXISTS (SELECT 1 FROM apoyo_cargue_asignaciones ap WHERE ((ap.fecha = calculo_nomina_base.fecha) AND (upper(TRIM(BOTH FROM ap.persona)) = upper(TRIM(BOTH FROM calculo_nomina_base.persona))))))) THEN (calculo_nomina_base.pago_produccion - calculo_nomina_base.valor_diario_ley)
                     ELSE (0)::numeric
                 END AS excedente_bruto_destajo,
                 CASE
@@ -539,7 +546,9 @@ create or replace view public.pagonomina as
         CASE
             WHEN ((fecha >= DATE '2026-07-16')
               AND (toneladas > (0)::numeric)
-              AND (especialidad IS NOT TRUE)) THEN (pago_produccion - valor_base_final)
+              -- EXCEPCIÓN "apoyo en cargue" (ver excedente_bruto_destajo arriba):
+              -- misma condición, para que este valor con piso de vigencia coincida.
+              AND ((especialidad IS NOT TRUE) OR EXISTS (SELECT 1 FROM apoyo_cargue_asignaciones ap WHERE ((ap.fecha = fecha) AND (upper(TRIM(BOTH FROM ap.persona)) = upper(TRIM(BOTH FROM persona))))))) THEN (pago_produccion - valor_base_final)
             ELSE excedente_bruto_destajo
         END AS bonif_prestacional,
         -- Bono NO prestacional del módulo "Bonos" (Compensación): suma de los

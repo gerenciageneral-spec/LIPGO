@@ -1,4 +1,4 @@
-import { Gift, Truck, Forklift, Scale, ClipboardCheck, Package, FileText, CheckCircle, Box, PackagePlus, BarChart3, Package2, ArrowRightLeft, History, Search, LayoutDashboard, Activity, FileCheck, Receipt, Clock, Users, Eye, Settings, Type as type, LucideIcon, CreditCard, UserCheck, Store, Tag, Layers, MapPin, Warehouse, Gauge, QrCode, Sparkles, BadgeCheck, BookOpen, Lock, ClipboardList, CalendarDays, NotebookPen, GraduationCap, Wallet, Banknote, Calculator, CalendarClock, FolderOpen, FolderArchive, UserCog, HeartHandshake, ShieldCheck, Stethoscope, AlertTriangle, Star, Send, Landmark } from "lucide-react"
+import { Gift, Truck, Forklift, Scale, ClipboardCheck, Package, FileText, CheckCircle, Box, PackagePlus, BarChart3, Package2, ArrowRightLeft, History, Search, LayoutDashboard, Activity, FileCheck, Receipt, Clock, Users, Eye, Settings, Type as type, LucideIcon, CreditCard, UserCheck, Store, Tag, Layers, MapPin, Warehouse, Gauge, QrCode, Sparkles, BadgeCheck, BookOpen, Lock, ClipboardList, CalendarDays, NotebookPen, GraduationCap, Wallet, Banknote, Calculator, CalendarClock, FolderOpen, FolderArchive, UserCog, HeartHandshake, ShieldCheck, Stethoscope, AlertTriangle, Star, Send, Landmark, UserPlus } from "lucide-react"
 
 export interface Module {
   name: string
@@ -385,6 +385,9 @@ export const groups: Group[] = [
       // Bonos operativos/administrativos por día y persona (no prestacionales).
       // Al aprobarse entran a pagonomina y salen en el archivo plano (43/50/66).
       { name: "Bonos", icon: Gift },
+      // Agrega personal extra (aparte de Picking/Packing) a una orden de
+      // Cargue/Descargue para que también entre en el reparto de toneladas.
+      { name: "Asignación de apoyo en cargue", icon: UserPlus },
       // Causación desde fecha de ingreso, disfrute (novedad del control diario), saldo y liquidación.
       { name: "Vacaciones", icon: CalendarClock },
     ],
