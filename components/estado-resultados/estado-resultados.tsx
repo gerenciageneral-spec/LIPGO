@@ -19,7 +19,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react"
-import useSWR from "swr"
+import useSWR, { useSWRConfig } from "swr"
 import {
   Card,
   CardContent,
@@ -39,7 +39,8 @@ import {
   ToggleGroupItem,
 } from "@/components/ui/toggle-group"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Building2, CalendarRange, BarChart3, AlertTriangle, History } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Building2, CalendarRange, BarChart3, AlertTriangle, History, RefreshCw } from "lucide-react"
 import { useAuth } from "@/components/auth-provider"
 import { getAccessibleEmpresesFromPermisos } from "@/lib/orders-actions"
 import { getAnalisisFinanciero } from "@/lib/analisis-financiero-actions"
@@ -189,6 +190,8 @@ export default function EstadoResultados() {
     [anio, mes, quincena],
   )
 
+  const { mutate: mutateSwr } = useSWRConfig()
+
   const ingresos = useIngresos({
     ids,
     desde: periodo.desde,
@@ -272,6 +275,17 @@ export default function EstadoResultados() {
                   ))}
                 </SelectContent>
               </Select>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 gap-2"
+                onClick={() =>
+                  mutateSwr((key) => Array.isArray(key) && String(key[0]).startsWith("estado-resultados:"))
+                }
+              >
+                <RefreshCw className="h-4 w-4" />
+                Actualizar
+              </Button>
             </div>
           </div>
         </CardHeader>

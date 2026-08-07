@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Loader2, Plus, Save, Target, Trash2 } from "lucide-react"
+import { Loader2, Plus, Save, Target, Trash2, RefreshCw } from "lucide-react"
 import {
   getMetasToneladas,
   guardarMetaToneladas,
@@ -124,9 +124,14 @@ export function MetasToneladas() {
             trabajador debe cargar/descargar para ganarse la base fija. Indicador de productividad en Revisión de nómina.
           </span>
         </div>
-        <Button variant="outline" size="sm" onClick={agregar}>
-          <Plus className="mr-2 h-4 w-4" /> Nuevo proyecto
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={cargar} disabled={loading}>
+            <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Actualizar
+          </Button>
+          <Button variant="outline" size="sm" onClick={agregar}>
+            <Plus className="mr-2 h-4 w-4" /> Nuevo proyecto
+          </Button>
+        </div>
       </div>
 
       <div className="overflow-x-auto rounded-lg border">

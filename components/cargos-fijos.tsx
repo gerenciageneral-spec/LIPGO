@@ -67,6 +67,7 @@ function ConfigMontacargas({ empresas }: { empresas: Array<{ id: number; nombre:
   const [abierto, setAbierto] = useState(false)
   const [editando, setEditando] = useState<MontacargasAlquilerRow | null>(null)
   const [guardando, setGuardando] = useState(false)
+  const [filtroEmpresa, setFiltroEmpresa] = useState(0) // 0 = todos los proyectos
 
   const cargar = useCallback(async () => {
     setLoading(true)
@@ -81,6 +82,7 @@ function ConfigMontacargas({ empresas }: { empresas: Array<{ id: number; nombre:
   }, [cargar])
 
   const nombreEmpresa = (id: number) => empresas.find((e) => e.id === id)?.nombre || `Empresa ${id}`
+  const filasFiltradas = filtroEmpresa ? filas.filter((f) => f.idempresa === filtroEmpresa) : filas
 
   const abrirEdicion = (f: MontacargasAlquilerRow | null) => {
     setEditando(
@@ -123,13 +125,31 @@ function ConfigMontacargas({ empresas }: { empresas: Array<{ id: number; nombre:
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
+      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
         <CardTitle className="flex items-center gap-2 text-sm">
           <Truck className="h-4 w-4" /> Alquiler de montacargas
         </CardTitle>
-        <Button size="sm" variant="outline" onClick={() => abrirEdicion(null)}>
-          + Nueva vigencia
-        </Button>
+        <div className="flex items-center gap-2">
+          <Select value={String(filtroEmpresa)} onValueChange={(v) => setFiltroEmpresa(Number(v))}>
+            <SelectTrigger className="h-8 w-[160px] text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="0">Todos los proyectos</SelectItem>
+              {empresas.map((e) => (
+                <SelectItem key={e.id} value={String(e.id)}>
+                  {e.nombre}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button size="sm" variant="outline" onClick={cargar} disabled={loading}>
+            <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} /> Actualizar
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => abrirEdicion(null)}>
+            + Nueva vigencia
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="overflow-x-auto p-0">
         {loading ? (
@@ -150,7 +170,7 @@ function ConfigMontacargas({ empresas }: { empresas: Array<{ id: number; nombre:
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filas.map((f) => (
+              {filasFiltradas.map((f) => (
                 <TableRow key={f.id}>
                   <TableCell className="text-xs">{nombreEmpresa(f.idempresa)}</TableCell>
                   <TableCell className="text-xs font-mono">{f.identificacion}</TableCell>
@@ -173,7 +193,7 @@ function ConfigMontacargas({ empresas }: { empresas: Array<{ id: number; nombre:
                   </TableCell>
                 </TableRow>
               ))}
-              {filas.length === 0 && (
+              {filasFiltradas.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={7} className="py-6 text-center text-xs text-muted-foreground">
                     Sin configuración todavía.
@@ -275,6 +295,7 @@ function ConfigProyecto({ empresas }: { empresas: Array<{ id: number; nombre: st
   const [abierto, setAbierto] = useState(false)
   const [editando, setEditando] = useState<CargoFijoProyectoRow | null>(null)
   const [guardando, setGuardando] = useState(false)
+  const [filtroEmpresa, setFiltroEmpresa] = useState(0) // 0 = todos los proyectos
 
   const cargar = useCallback(async () => {
     setLoading(true)
@@ -288,6 +309,7 @@ function ConfigProyecto({ empresas }: { empresas: Array<{ id: number; nombre: st
   }, [cargar])
 
   const nombreEmpresa = (id: number) => empresas.find((e) => e.id === id)?.nombre || `Empresa ${id}`
+  const filasFiltradas = filtroEmpresa ? filas.filter((f) => f.idempresa === filtroEmpresa) : filas
 
   const abrirEdicion = (f: CargoFijoProyectoRow | null) => {
     setEditando(
@@ -335,13 +357,31 @@ function ConfigProyecto({ empresas }: { empresas: Array<{ id: number; nombre: st
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
+      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
         <CardTitle className="flex items-center gap-2 text-sm">
           <Landmark className="h-4 w-4" /> Cargos fijos del proyecto
         </CardTitle>
-        <Button size="sm" variant="outline" onClick={() => abrirEdicion(null)}>
-          + Nuevo concepto
-        </Button>
+        <div className="flex items-center gap-2">
+          <Select value={String(filtroEmpresa)} onValueChange={(v) => setFiltroEmpresa(Number(v))}>
+            <SelectTrigger className="h-8 w-[160px] text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="0">Todos los proyectos</SelectItem>
+              {empresas.map((e) => (
+                <SelectItem key={e.id} value={String(e.id)}>
+                  {e.nombre}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button size="sm" variant="outline" onClick={cargar} disabled={loading}>
+            <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} /> Actualizar
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => abrirEdicion(null)}>
+            + Nuevo concepto
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="overflow-x-auto p-0">
         {loading ? (
@@ -362,7 +402,7 @@ function ConfigProyecto({ empresas }: { empresas: Array<{ id: number; nombre: st
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filas.map((f) => (
+              {filasFiltradas.map((f) => (
                 <TableRow key={f.id}>
                   <TableCell className="text-xs">{nombreEmpresa(f.idempresa)}</TableCell>
                   <TableCell className="text-xs">{f.concepto}</TableCell>
@@ -381,7 +421,7 @@ function ConfigProyecto({ empresas }: { empresas: Array<{ id: number; nombre: st
                   </TableCell>
                 </TableRow>
               ))}
-              {filas.length === 0 && (
+              {filasFiltradas.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={7} className="py-6 text-center text-xs text-muted-foreground">
                     Sin configuración todavía.

@@ -13,7 +13,7 @@ import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
-import { Info, Loader2, Save, Plus, Trash2, CalendarClock } from "lucide-react"
+import { Info, Loader2, Save, Plus, Trash2, CalendarClock, RefreshCw } from "lucide-react"
 import {
   getVigenciasParametros,
   guardarVigenciaParametros,
@@ -172,9 +172,14 @@ export function CuadroMandoNomina() {
             <CalendarClock className="h-4 w-4 text-primary" /> Vigencias de parámetros legales
             {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
           </div>
-          <Button size="sm" variant="outline" onClick={nueva}>
-            <Plus className="mr-2 h-4 w-4" /> Nueva vigencia
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" onClick={() => cargar()} disabled={loading}>
+              <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Actualizar
+            </Button>
+            <Button size="sm" variant="outline" onClick={nueva}>
+              <Plus className="mr-2 h-4 w-4" /> Nueva vigencia
+            </Button>
+          </div>
         </div>
         <div className="flex flex-wrap gap-1.5">
           {vigencias.map((v) => (

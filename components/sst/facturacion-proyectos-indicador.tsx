@@ -5,8 +5,8 @@
 // (solicitadas/total), pendientes por solicitar y valor pendiente. Mes actual
 // por defecto (el backlog histórico se considera cerrado). Fuente: LIPgo.
 
-import { useEffect, useState } from "react"
-import { Loader2, Receipt, FileWarning, ShieldCheck, Building2 } from "lucide-react"
+import { useCallback, useEffect, useState } from "react"
+import { Loader2, Receipt, FileWarning, ShieldCheck, Building2, RefreshCw } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { SST_TOKENS } from "@/components/sst/sst-utils"
 import { SigHeader, SigKpi, SigSection, SigFilterBar, SigField, sigControl } from "@/components/sst/sig-ui"
@@ -32,18 +32,16 @@ export function FacturacionProyectosIndicador() {
   const [desde, setDesde] = useState<string>(mesActualIni())
   const [hasta, setHasta] = useState<string>("")
 
-  useEffect(() => {
-    let cancel = false
+  const cargar = useCallback(async () => {
     setLoading(true)
-    getFacturacionPorProyecto(desde || null, hasta || null).then((r) => {
-      if (cancel) return
-      if (r.success) setData(r.data)
-      else toast({ title: "No se pudo cargar", description: r.error })
-      setLoading(false)
-    })
-    return () => {
-      cancel = true
-    }
+    const r = await getFacturacionPorProyecto(desde || null, hasta || null)
+    if (r.success) setData(r.data)
+    else toast({ title: "No se pudo cargar", description: r.error })
+    setLoading(false)
+  }, [desde, hasta, toast])
+
+  useEffect(() => {
+    cargar()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [desde, hasta])
 
@@ -66,7 +64,10 @@ export function FacturacionProyectosIndicador() {
         </SigField>
         <Button size="sm" variant="outline" onClick={() => { setDesde(mesActualIni()); setHasta("") }}>Este mes</Button>
         <Button size="sm" variant="ghost" onClick={() => { setDesde("2020-01-01"); setHasta("") }}>Ver histórico</Button>
-        {loading && <Loader2 className="h-4 w-4 animate-spin" style={{ color: SST_TOKENS.teal }} />}
+        <Button size="sm" variant="outline" onClick={cargar} disabled={loading} className="gap-2">
+          <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+          Actualizar
+        </Button>
       </SigFilterBar>
 
       {loading ? (

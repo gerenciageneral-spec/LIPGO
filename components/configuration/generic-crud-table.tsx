@@ -18,7 +18,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Pencil, Plus, Search, Loader2, Trash2, Download } from "lucide-react"
+import { Pencil, Plus, Search, Loader2, Trash2, Download, RefreshCw } from "lucide-react"
 import { toast } from "@/hooks/use-toast"
 import {
   AlertDialog,
@@ -840,6 +840,16 @@ if (moduleDef.tableName === "almacenes" && selectedEmpresaId) {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
         <h2 className="text-base sm:text-lg font-semibold">{moduleDef.name}</h2>
         <div className="flex gap-2 w-full sm:w-auto">
+          <Button
+            onClick={loadData}
+            size="sm"
+            variant="outline"
+            disabled={loading}
+            className="h-7 sm:h-8 text-xs flex-1 sm:flex-initial bg-transparent"
+          >
+            <RefreshCw className={`h-3 w-3 sm:h-4 sm:w-4 mr-1 ${loading ? "animate-spin" : ""}`} />
+            Actualizar
+          </Button>
           {!hideNewButton && (
             <Button onClick={handleAddNew} size="sm" className="h-7 sm:h-8 text-xs flex-1 sm:flex-initial">
               <Plus className="h-3 w-3 sm:h-4 sm:w-4 mr-1" />

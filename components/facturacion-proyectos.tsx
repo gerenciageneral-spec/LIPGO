@@ -140,14 +140,20 @@ export function FacturacionProyectos() {
     }
   }, [activeTab, selectedEmpresaId])
 
-  const fetchData = async () => {
+  // `empresaIdOverride` permite que el filtro "Empresa" del panel (independiente
+  // del selector global) dispare una recarga real para ese proyecto — antes
+  // solo filtraba en cliente sobre datos ya acotados al selector global, lo
+  // que dejaba la tabla vacía si se elegía otro proyecto.
+  const fetchData = async (empresaIdOverride?: number | null): Promise<FacturacionRecord[]> => {
     try {
       setLoading(true)
-      const response = await fetch(`/api/facturacion?empresaId=${selectedEmpresaId}`)
+      const empresaObjetivo = empresaIdOverride ?? selectedEmpresaId
+      const response = await fetch(`/api/facturacion?empresaId=${empresaObjetivo}`)
       if (!response.ok) throw new Error("Failed to fetch data")
       const result = await response.json()
-      console.log("[v0] Facturacion: Loaded", result.length, "records from API for empresa", selectedEmpresaId)
+      console.log("[v0] Facturacion: Loaded", result.length, "records from API for empresa", empresaObjetivo)
       setData(result || [])
+      return result || []
     } catch (error) {
       console.error("[v0] Error fetching data:", error)
       toast({
@@ -155,6 +161,7 @@ export function FacturacionProyectos() {
         description: "No se pudieron cargar los datos de facturación",
         variant: "destructive",
       })
+      return []
     } finally {
       setLoading(false)
     }
@@ -183,14 +190,16 @@ export function FacturacionProyectos() {
     }
   }
 
-  const fetchTurnosData = async () => {
+  const fetchTurnosData = async (empresaIdOverride?: number | null): Promise<FacturacionTurnoRecord[]> => {
     try {
       setTurnosLoading(true)
-      const response = await fetch(`/api/facturacion/turnos?empresaId=${selectedEmpresaId}`)
+      const empresaObjetivo = empresaIdOverride ?? selectedEmpresaId
+      const response = await fetch(`/api/facturacion/turnos?empresaId=${empresaObjetivo}`)
       if (!response.ok) throw new Error("Failed to fetch turnos data")
       const result = await response.json()
-      console.log("[v0] Facturacion Turnos: Loaded", result.length, "records from API for empresa", selectedEmpresaId)
+      console.log("[v0] Facturacion Turnos: Loaded", result.length, "records from API for empresa", empresaObjetivo)
       setTurnosData(result || [])
+      return result || []
     } catch (error) {
       console.error("[v0] Error fetching turnos data:", error)
       toast({
@@ -198,6 +207,7 @@ export function FacturacionProyectos() {
         description: "No se pudieron cargar los datos de facturación de turnos",
         variant: "destructive",
       })
+      return []
     } finally {
       setTurnosLoading(false)
     }
@@ -247,9 +257,18 @@ export function FacturacionProyectos() {
     setPendingFilters((prev) => ({ ...prev, [key]: value }))
   }
 
-  const applyFilters = () => {
+  const applyFilters = async () => {
+    // Si el proyecto elegido en el filtro difiere del ya cargado, recarga de
+    // verdad desde el servidor para ESE proyecto — antes solo filtraba en
+    // cliente sobre datos ya acotados al selector global (dejaba la tabla
+    // vacía al elegir otro proyecto).
+    const empresaObjetivo = pendingFilters.idempresa ? Number(pendingFilters.idempresa) : selectedEmpresaId
+    const baseData =
+      pendingFilters.idempresa && Number(pendingFilters.idempresa) !== selectedEmpresaId
+        ? await fetchData(empresaObjetivo)
+        : data
     // Calculate filtered data with new filters to show accurate count
-    const newFilteredData = data.filter((record) => {
+    const newFilteredData = baseData.filter((record) => {
       const fechaFiltro = record.fechacargue || record.fechaorden
       if (pendingFilters.fechaDesde && new Date(fechaFiltro) < new Date(pendingFilters.fechaDesde)) return false
       if (pendingFilters.fechaHasta && new Date(fechaFiltro) > new Date(pendingFilters.fechaHasta)) return false
@@ -299,8 +318,16 @@ export function FacturacionProyectos() {
     setPendingTurnosFilters((prev) => ({ ...prev, [key]: value }))
   }
 
-  const applyTurnosFilters = () => {
-    const newFilteredData = turnosData.filter((record) => {
+  const applyTurnosFilters = async () => {
+    // Mismo criterio que applyFilters: si se eligió un proyecto distinto al ya
+    // cargado, recarga de verdad desde el servidor en vez de filtrar en
+    // cliente sobre datos ya acotados al selector global.
+    const empresaObjetivo = pendingTurnosFilters.idempresa ? Number(pendingTurnosFilters.idempresa) : selectedEmpresaId
+    const baseTurnosData =
+      pendingTurnosFilters.idempresa && Number(pendingTurnosFilters.idempresa) !== selectedEmpresaId
+        ? await fetchTurnosData(empresaObjetivo)
+        : turnosData
+    const newFilteredData = baseTurnosData.filter((record) => {
       if (pendingTurnosFilters.fechaDesde && new Date(record.fecha) < new Date(pendingTurnosFilters.fechaDesde)) return false
       if (pendingTurnosFilters.fechaHasta && new Date(record.fecha) > new Date(pendingTurnosFilters.fechaHasta)) return false
       if (pendingTurnosFilters.puesto && record.puesto !== pendingTurnosFilters.puesto) return false

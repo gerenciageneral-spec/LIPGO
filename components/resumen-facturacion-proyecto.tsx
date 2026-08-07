@@ -15,13 +15,14 @@
  */
 
 import { useEffect, useMemo, useState } from "react"
-import useSWR from "swr"
+import useSWR, { useSWRConfig } from "swr"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Button } from "@/components/ui/button"
 import { KpiCard } from "@/components/orders/dashboard-pedidos/kpi-card"
-import { Target, DollarSign, TrendingUp, Scale } from "lucide-react"
+import { Target, DollarSign, TrendingUp, Scale, RefreshCw } from "lucide-react"
 import { getAccessibleEmpresesFromPermisos } from "@/lib/orders-actions"
 import { getControlFacturacion, type ResumenOwner } from "@/lib/facturacion-control-actions"
 import { getAnalisisFinanciero } from "@/lib/analisis-financiero-actions"
@@ -172,6 +173,7 @@ function ProyectoResumen({
 // ---------------------------------------------------------------------------
 
 export default function ResumenFacturacionProyecto() {
+  const { mutate } = useSWRConfig()
   const [empresas, setEmpresas] = useState<Array<{ id: number; nombre: string }>>([])
   useEffect(() => {
     getAccessibleEmpresesFromPermisos()
@@ -226,6 +228,15 @@ export default function ResumenFacturacionProyecto() {
               ))}
             </SelectContent>
           </Select>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            onClick={() => mutate((key) => Array.isArray(key) && String(key[0]).startsWith("resumen-facturacion:"))}
+          >
+            <RefreshCw className="h-4 w-4" />
+            Actualizar
+          </Button>
         </div>
       </div>
 
