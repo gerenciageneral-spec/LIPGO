@@ -57,6 +57,8 @@ interface LoadOrder {
   tiquetebascula: string | null
   pdfoc: string | null
   status: string | null
+  // Distribución creada a mano (no por la automatización +D) — ver getLoadOrders.
+  distribucionManual?: boolean
 }
 
 interface EmpresaInfo {
@@ -623,10 +625,12 @@ export function LoadOrdersManagement() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredOrders.map((order) => (
+                  {filteredOrders.map((order) => {
+                    const esDistribucionManual = order.tipooperacion === "Distribucion" && order.distribucionManual
+                    return (
                     <TableRow
                       key={order.id}
-                      className="cursor-pointer hover:bg-blue-50"
+                      className={`cursor-pointer ${esDistribucionManual ? "bg-red-50 hover:bg-red-100 dark:bg-red-950/30 dark:hover:bg-red-950/50" : "hover:bg-blue-50"}`}
                       onClick={() => {
                         if (order.idempresa) {
                           setSelectedOrderEmpresa(empresasMap.get(order.idempresa) || null)
@@ -640,7 +644,14 @@ export function LoadOrdersManagement() {
                       <TableCell className="text-[10px] sm:text-xs">{formatDate(order.fechaorden)}</TableCell>
                       <TableCell className="text-[10px] sm:text-xs">{formatDate(order.fechacargue)}</TableCell>
                       <TableCell className="text-[10px] sm:text-xs">{order.placa}</TableCell>
-                      <TableCell className="text-[10px] sm:text-xs">{order.tipooperacion}</TableCell>
+                      <TableCell className="text-[10px] sm:text-xs">
+                        {order.tipooperacion}
+                        {esDistribucionManual && (
+                          <span className="ml-1 rounded bg-red-600 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-white">
+                            manual
+                          </span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-[10px] sm:text-xs">{formatNumber(order.pesoorden)}</TableCell>
                       <TableCell className="text-[10px] sm:text-xs">{formatTime(order.horaorden)}</TableCell>
                       <TableCell className="text-[10px] sm:text-xs">{formatTime(order.horasanitario)}</TableCell>
@@ -714,7 +725,7 @@ export function LoadOrdersManagement() {
                         </DropdownMenu>
                       </TableCell>
                     </TableRow>
-                  ))}
+                  )})}
                 </TableBody>
               </table>
             </div>

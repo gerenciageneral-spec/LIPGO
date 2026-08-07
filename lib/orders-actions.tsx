@@ -919,6 +919,13 @@ export async function reconciliarDistribucionesFaltantes(supabase: any, empresaI
 //
 // Ventana de 2 días (igual que +D), acotada (≤100 cargues), idempotente
 // (autoGenerarDescarguesCedi ya deduplica por `ordenorigen`) y falla-segura.
+//
+// FIX PERFORMANCE (2026-08-06): la primera versión hacía 1 query de "¿ya
+// existe?" POR CADA candidato (hasta 100, secuenciales) — con 0 faltantes
+// reales tardaba ~56s en getLoadOrders (id4) sin crear nada. Ahora se trae en
+// UNA sola consulta cuáles códigos YA tienen su descargue en este CEDI, y solo
+// se itera (llamando autoGenerarDescarguesCedi) sobre los que de verdad faltan
+// — que en el caso normal son 0.
 // ---------------------------------------------------------------------------
 export async function reconciliarDescarguesCediFaltantes(supabase: any, empresaId: number): Promise<number> {
   if (empresaId !== 3 && empresaId !== 4) return 0 // solo tiene sentido desde el lado CEDI
@@ -929,7 +936,7 @@ export async function reconciliarDescarguesCediFaltantes(supabase: any, empresaI
 
     const { data: cargues } = await supabase
       .from("cabeceraoc")
-      .select("id, ordendecargue, fechacargue, horalote")
+      .select("id, ordendecargue")
       .in("idempresa", Array.from(PLANTAS_ORIGEN))
       .eq("tipooperacion", "Cargue")
       .not("horalote", "is", null)
@@ -939,34 +946,43 @@ export async function reconciliarDescarguesCediFaltantes(supabase: any, empresaI
 
     if (!cargues || cargues.length === 0) return 0
 
-    let creados = 0
-    for (const c of cargues) {
-      const { data: existe } = await supabase
-        .from("cabeceraoc")
-        .select("id")
-        .eq("ordenorigen", c.ordendecargue)
-        .eq("idempresa", empresaId)
-        .eq("tipooperacion", "Descargue")
-        .limit(1)
-        .maybeSingle()
-      if (existe) continue // ya tiene su descargue en este CEDI
-
-      // autoGenerarDescarguesCedi decide sola a qué CEDI(s) corresponde (por
-      // detalleoc.cliente) y ya deduplica por ordenorigen — llamarla de más no
-      // genera duplicados, solo confirma que esta madre no le corresponde.
-      await autoGenerarDescarguesCedi(supabase, c.id)
-      const { data: despues } = await supabase
-        .from("cabeceraoc")
-        .select("id")
-        .eq("ordenorigen", c.ordendecargue)
-        .eq("idempresa", empresaId)
-        .eq("tipooperacion", "Descargue")
-        .limit(1)
-        .maybeSingle()
-      if (despues) creados++
+    // Pre-filtro por destino real ANTES de llamar autoGenerarDescarguesCedi: la
+    // inmensa mayoría de cargues de planta NO van a un CEDI (van a clientes
+    // normales), así que sin esto se llamaba la función (header+detalle+grupos)
+    // para ~100 candidatos que nunca iban a generar nada — el otro origen del
+    // mismo problema de rendimiento. Una sola consulta de detalleoc basta.
+    const idsCargue = cargues.map((c: any) => c.id)
+    const { data: detalles } = await supabase.from("detalleoc").select("idorden, cliente").in("idorden", idsCargue)
+    const idsConEsteCedi = new Set<number>()
+    for (const d of detalles ?? []) {
+      const cedi = cediDeDestino(d.cliente)
+      if (cedi && cedi.idempresa === empresaId) idsConEsteCedi.add(d.idorden)
     }
-    if (creados > 0) console.log(`[auto-descargue] reconciliación CEDI ${empresaId}: ${creados} generada(s)`)
-    return creados
+    const candidatosRelevantes = cargues.filter((c: any) => idsConEsteCedi.has(c.id))
+    if (candidatosRelevantes.length === 0) return 0
+
+    const codigos = candidatosRelevantes.map((c: any) => c.ordendecargue)
+    const { data: existentes } = await supabase
+      .from("cabeceraoc")
+      .select("ordenorigen")
+      .eq("idempresa", empresaId)
+      .eq("tipooperacion", "Descargue")
+      .in("ordenorigen", codigos)
+    const yaExisten = new Set((existentes ?? []).map((e: any) => e.ordenorigen))
+
+    const faltantes = candidatosRelevantes.filter((c: any) => !yaExisten.has(c.ordendecargue))
+    if (faltantes.length === 0) return 0
+
+    // autoGenerarDescarguesCedi decide sola a qué CEDI(s) corresponde (por
+    // detalleoc.cliente) y ya deduplica por ordenorigen — llamarla de más no
+    // genera duplicados. No se re-verifica después (esa segunda consulta era
+    // parte del mismo problema de rendimiento): son pocos candidatos y la
+    // función ya loguea sus propios errores.
+    for (const c of faltantes) {
+      await autoGenerarDescarguesCedi(supabase, c.id)
+    }
+    console.log(`[auto-descargue] reconciliación CEDI ${empresaId}: ${faltantes.length} candidato(s) faltante(s) procesado(s)`)
+    return faltantes.length
   } catch (e: any) {
     console.error("[auto-descargue] reconciliación falló (no bloquea la lectura):", e?.message || e)
     return 0
@@ -1453,6 +1469,51 @@ export async function getLoadOrders(statusFilter: "pendiente" | "finalizada" | "
     if (error) {
       console.error("Error fetching load orders:", error)
       return { success: false, message: error.message }
+    }
+
+    // Alerta: Distribución creada A MANO (no por la automatización +D). La
+    // automatización ya funciona bien, así que una manual hoy es señal de que
+    // algo debió generarse solo y no pasó (o alguien se está saltando el
+    // flujo). No hay columna que distinga origen; la señal confiable es que
+    // TODO clon automático tiene `ordendecargue = {código del cargue madre}D`
+    // y esa madre existe como Cargue real — si no hay madre, es manual.
+    // Solo se evalúa si esta empresa participa de la automatización +D (si no
+    // tiene placas de distribución, ninguna Distribución suya es "automática"
+    // y marcar todas sería puro ruido) y SOLO desde que el clon automático
+    // existe (16-jul-2026, confirmado por el usuario) — antes de esa fecha
+    // TODO era manual por diseño, marcarlo sería puro ruido histórico.
+    const DISTRIBUCION_AUTOMATICA_DESDE = "2026-07-16"
+    try {
+      await cargarPlacasDistribucion()
+      const tienePlacasPropias = getPlacasEmpresa(empresaId as number).length > 0
+      const distribuciones = (data ?? []).filter(
+        (o: any) => o.tipooperacion === "Distribucion" && (o.fechaorden ?? "") >= DISTRIBUCION_AUTOMATICA_DESDE,
+      )
+      if (tienePlacasPropias && distribuciones.length > 0) {
+        const candidatosMadre = Array.from(
+          new Set(
+            distribuciones
+              .filter((o: any) => String(o.ordendecargue || "").endsWith("D"))
+              .map((o: any) => String(o.ordendecargue).slice(0, -1)),
+          ),
+        )
+        const madresExistentes = new Set<string>()
+        if (candidatosMadre.length > 0) {
+          const { data: madres } = await supabase
+            .from("cabeceraoc")
+            .select("ordendecargue")
+            .eq("tipooperacion", "Cargue")
+            .in("ordendecargue", candidatosMadre)
+          for (const m of madres ?? []) madresExistentes.add(String(m.ordendecargue))
+        }
+        for (const o of distribuciones) {
+          const code = String(o.ordendecargue || "")
+          const madreCode = code.endsWith("D") ? code.slice(0, -1) : null
+          ;(o as any).distribucionManual = !(madreCode && madresExistentes.has(madreCode))
+        }
+      }
+    } catch (alertErr) {
+      console.error("[+D] deteccion de distribucion manual (no bloquea):", alertErr)
     }
 
     return { success: true, data }
