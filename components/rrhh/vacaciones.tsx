@@ -41,6 +41,7 @@ import {
   AlertTriangle,
   Check,
   X,
+  RefreshCw,
 } from "lucide-react"
 import {
   getVacacionesResumen,
@@ -274,10 +275,16 @@ export default function Vacaciones() {
               )}
             </TabsTrigger>
           </TabsList>
-          <Button onClick={() => abrirSolicitud()} className="gap-2">
-            <Plus className="h-4 w-4" />
-            Nueva solicitud
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={loadData} disabled={loading} className="gap-2">
+              <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+              Actualizar
+            </Button>
+            <Button onClick={() => abrirSolicitud()} className="gap-2">
+              <Plus className="h-4 w-4" />
+              Nueva solicitud
+            </Button>
+          </div>
         </div>
 
         {/* SALDOS */}

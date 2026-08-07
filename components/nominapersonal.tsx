@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useAuth } from "@/components/auth-provider"
 import { createClient } from "@/lib/supabase-client"
 import { useToast } from "@/components/ui/use-toast"
-import { Download } from "lucide-react"
+import { Download, RefreshCw } from "lucide-react"
 import { Search } from "lucide-react" // Declare the Search variable
 import { ChevronDown, ChevronRight } from "lucide-react"
 import * as XLSX from "xlsx"
@@ -1812,8 +1812,18 @@ export default function Nominapersonal() {
             </CardContent>
           </Card>
 
-          {/* Export Button */}
-          <div className="flex justify-end">
+          {/* Actualizar + Export */}
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={loadArchivoplanano}
+              disabled={loading}
+              className="text-xs h-8 gap-2 bg-transparent"
+            >
+              <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+              Actualizar
+            </Button>
             <Button
               variant="outline"
               size="sm"

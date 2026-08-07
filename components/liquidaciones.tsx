@@ -27,6 +27,7 @@ import {
   Save,
   SlidersHorizontal,
   Scale,
+  RefreshCw,
 } from "lucide-react"
 import * as XLSX from "xlsx"
 import {
@@ -225,6 +226,9 @@ export default function Liquidaciones() {
             <UserMinus className="h-5 w-5 text-primary" /> Liquidaciones de personal retirado
           </CardTitle>
           <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={cargar} disabled={loading}>
+              <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Actualizar
+            </Button>
             <Button size="sm" variant="outline" onClick={() => setShowNomenclatura((s) => !s)}>
               <Scale className="mr-2 h-4 w-4" /> Nomenclatura legal
             </Button>

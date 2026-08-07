@@ -2338,6 +2338,7 @@ function HcPorDia() {
   const [anio, setAnio] = useState(hoy.getFullYear())
   const [mes, setMes] = useState(hoy.getMonth() + 1)
   const [rows, setRows] = useState<HcDiaProyecto[]>([])
+  const [proyectoFiltro, setProyectoFiltro] = useState<number>(0) // 0 = todos
   const [loading, setLoading] = useState(false)
   const [cargado, setCargado] = useState(false)
   const t1 = (x: number) => (Number(x) || 0).toLocaleString("es-CO", { maximumFractionDigits: 1 })
@@ -2352,6 +2353,15 @@ function HcPorDia() {
   }, [anio, mes, toast])
 
   const anios = [hoy.getFullYear() + 1, hoy.getFullYear(), hoy.getFullYear() - 1, hoy.getFullYear() - 2]
+
+  // Filtro de proyecto: cliente-side sobre lo ya traído (la tabla es
+  // comparativa entre proyectos por diseño; "Todos" sigue siendo el default).
+  const proyectosDisponibles = useMemo(() => {
+    const map = new Map<number, string>()
+    for (const r of rows) if (!map.has(r.idempresa)) map.set(r.idempresa, r.proyecto)
+    return Array.from(map.entries()).sort((a, b) => a[0] - b[0])
+  }, [rows])
+  const rowsFiltradas = proyectoFiltro ? rows.filter((r) => r.idempresa === proyectoFiltro) : rows
 
   return (
     <div className="space-y-4">
@@ -2396,11 +2406,26 @@ function HcPorDia() {
 
       {cargado && (
         <Card>
-          <CardHeader className="pb-2">
+          <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0 pb-2">
             <CardTitle className="text-base">HC por día por proyecto — {MESES[mes - 1]} {anio}</CardTitle>
+            {proyectosDisponibles.length > 0 && (
+              <Select value={String(proyectoFiltro)} onValueChange={(v) => setProyectoFiltro(Number(v))}>
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="0">Todos los proyectos</SelectItem>
+                  {proyectosDisponibles.map(([id, nombre]) => (
+                    <SelectItem key={id} value={String(id)}>
+                      {nombre}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </CardHeader>
           <CardContent className="overflow-x-auto">
-            {rows.length === 0 ? (
+            {rowsFiltradas.length === 0 ? (
               <p className="py-6 text-sm text-muted-foreground">Sin movimiento de toneladas en el mes.</p>
             ) : (
               <Table>
@@ -2417,7 +2442,7 @@ function HcPorDia() {
                   </TableRow>
                 </TableHeader>
                 <TableBody className="tabular-nums">
-                  {rows.map((r, i) => {
+                  {rowsFiltradas.map((r, i) => {
                     const cumpleMeta = r.meta > 0 && r.tonPorTrabajador >= r.meta
                     return (
                       <TableRow key={i}>

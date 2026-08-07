@@ -33,6 +33,7 @@ import {
   type BonoRow,
   type BonosResumen,
 } from "@/lib/bonos-actions"
+import { getAllEmpresas } from "@/lib/actions"
 import { NOVEDADES_BONO, TIPOS_BONO, type TipoBono, type EstadoBono } from "@/lib/bonos-constants"
 
 const money = (n: number) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO")
@@ -401,6 +402,8 @@ function ListadoBonosTab() {
   const [hasta, setHasta] = useState(hoy)
   const [estado, setEstado] = useState<EstadoBono | "todos">("todos")
   const [tipo, setTipo] = useState<TipoBono | "todos">("todos")
+  const [empresaFiltro, setEmpresaFiltro] = useState<number>(0) // 0 = todas
+  const [empresas, setEmpresas] = useState<Array<{ id: number; nombre: string }>>([])
   const [rows, setRows] = useState<BonoRow[]>([])
   const [resumen, setResumen] = useState<BonosResumen | null>(null)
   const [loading, setLoading] = useState(false)
@@ -441,7 +444,7 @@ function ListadoBonosTab() {
   const consultar = useCallback(async () => {
     setLoading(true)
     setError(null)
-    const r = await getBonos({ desde, hasta, estado, tipo })
+    const r = await getBonos({ desde, hasta, estado, tipo, empresa: empresaFiltro || undefined })
     setLoading(false)
     if (r.success) {
       setRows(r.data)
@@ -452,7 +455,11 @@ function ListadoBonosTab() {
       setError(r.message || "Error al listar los bonos.")
       toast({ title: "No se pudieron cargar los bonos", description: r.message, variant: "destructive" })
     }
-  }, [desde, hasta, estado, tipo, toast])
+  }, [desde, hasta, estado, tipo, empresaFiltro, toast])
+
+  useEffect(() => {
+    getAllEmpresas().then(setEmpresas)
+  }, [])
 
   useEffect(() => {
     consultar()
@@ -485,6 +492,22 @@ function ListadoBonosTab() {
           <div className="space-y-1">
             <Label>Hasta</Label>
             <Input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} className="w-[160px]" />
+          </div>
+          <div className="space-y-1">
+            <Label>Proyecto</Label>
+            <Select value={String(empresaFiltro)} onValueChange={(v) => setEmpresaFiltro(Number(v))}>
+              <SelectTrigger className="w-[170px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="0">Todos los proyectos</SelectItem>
+                {empresas.map((e) => (
+                  <SelectItem key={e.id} value={String(e.id)}>
+                    {e.nombre}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="space-y-1">
             <Label>Estado</Label>

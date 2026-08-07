@@ -16,7 +16,7 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useAuth } from "@/components/auth-provider"
 import { useToast } from "@/hooks/use-toast"
-import { UserPlus, Loader2, X, Users, Package } from "lucide-react"
+import { UserPlus, Loader2, X, Users, Package, RefreshCw } from "lucide-react"
 import {
   getOrdenesApoyoDelDia,
   getPersonalApoyoDisponible,
@@ -144,6 +144,10 @@ export function ApoyoCargue() {
           <div className="flex items-center gap-3">
             <label className="text-sm font-medium">Fecha</label>
             <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="w-44" />
+            <Button variant="outline" size="sm" onClick={cargarOrdenes} disabled={loading} className="gap-2">
+              <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+              Actualizar
+            </Button>
           </div>
 
           {loading ? (

@@ -29,6 +29,7 @@ import {
   CheckCircle2,
   Info,
   RotateCcw,
+  RefreshCw,
 } from "lucide-react"
 import {
   getParafiscales,
@@ -227,6 +228,9 @@ export default function Parafiscales() {
             <Landmark className="h-5 w-5 text-primary" /> Parafiscales y Seguridad Social
           </CardTitle>
           <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={cargar} disabled={loading}>
+              <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Actualizar
+            </Button>
             <Button size="sm" variant="outline" onClick={() => setShowNomenclatura((s) => !s)}>
               <Scale className="mr-2 h-4 w-4" /> Nomenclatura legal
             </Button>
