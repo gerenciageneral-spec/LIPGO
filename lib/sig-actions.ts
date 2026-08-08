@@ -2451,7 +2451,7 @@ export async function getMovimientosProducto(
   proyectoId?: number | null,
   anio?: string | null,
   mes?: string | null,
-): Promise<{ success: boolean; data: any[]; error?: string }> {
+): Promise<{ success: boolean; data: any[]; saldoInicialPeriodo?: number; saldoFinalPeriodo?: number; error?: string }> {
   try {
     if (!codproducto) return { success: true, data: [] }
     const supabase: any = await getSupabaseAdmin()
@@ -2466,6 +2466,38 @@ export async function getMovimientosProducto(
       .in("idempresa", clientes)
       .limit(5000)
     if (error) return { success: false, data: [], error: error.message }
+
+    // Saldo corrido — se calcula sobre TODA la historia (antes del filtro
+    // año/mes de abajo) para que sea correcto incluso mirando un mes cerrado.
+    // Ancla: el stock vivo (saldoinvdetalle, la verdad física) menos la suma
+    // de movimientos APROBADOS (mismo criterio que getConciliacionMensualInventario:
+    // rechazado/paralelo no mueve saldo) da el saldo de apertura; desde ahí se
+    // recorre cronológicamente asignando saldoAntes/saldoDespues a cada fila.
+    const { data: saldoRows } = await supabase
+      .from("saldoinvdetalle")
+      .select("stock_actual")
+      .eq("codproducto", codproducto)
+      .in("idempresa", clientes)
+    const stockVivo = (saldoRows ?? []).reduce((s: number, r: any) => s + (Number(r.stock_actual) || 0), 0)
+
+    const cronologico = [...(rows ?? [])].sort((a: any, b: any) => String(a.creado || "").localeCompare(String(b.creado || "")))
+    const sumaDeltas = cronologico.reduce((s: number, r: any) => {
+      if (!String(r.status || "").toLowerCase().startsWith("aprob")) return s
+      const c = Math.abs(Number(r.cantidad) || 0)
+      return s + (r.tipomov === "Entrada" ? c : -c)
+    }, 0)
+    let saldoAcumulado = stockVivo - sumaDeltas
+    const saldosPorFila = new Map<any, { antes: number; despues: number }>()
+    for (const r of cronologico) {
+      const antes = saldoAcumulado
+      const aprobado = String(r.status || "").toLowerCase().startsWith("aprob")
+      if (aprobado) {
+        const c = Math.abs(Number(r.cantidad) || 0)
+        saldoAcumulado += r.tipomov === "Entrada" ? c : -c
+      }
+      saldosPorFila.set(r, { antes: Math.round(antes), despues: Math.round(saldoAcumulado) })
+    }
+
     const movs = (rows ?? []).filter((r: any) => (!anio || yr(r.creado) === anio) && (!mes || mo(r.creado) === mes))
 
     // Resolver PDFs de las órdenes de cargue
@@ -2484,22 +2516,34 @@ export async function getMovimientosProducto(
       return "Ajuste (701/702)"
     }
     const data = movs
-      .map((r: any) => ({
-        fecha: r.creado,
-        tipo: label(r),
-        tipomov: r.tipomov,
-        cantidad: Number(r.cantidad) || 0,
-        status: r.status,
-        usuario: r.creadopor || null, // quién realizó el movimiento (auditoría)
-        lote: r.lote,
-        location: r.location,
-        ocargue: r.ocargue,
-        pdf: r.pdf || null, // soporte de ingreso/aprobación si existe
-        pdfoc: r.ocargue ? pdfPorOC[r.ocargue]?.pdfoc ?? null : null, // orden de cargue
-        doccargue: r.ocargue ? pdfPorOC[r.ocargue]?.doccargue ?? null : null, // picking
-      }))
+      .map((r: any) => {
+        const saldo = saldosPorFila.get(r)
+        return {
+          fecha: r.creado,
+          tipo: label(r),
+          tipomov: r.tipomov,
+          cantidad: Number(r.cantidad) || 0,
+          status: r.status,
+          afectaSaldo: String(r.status || "").toLowerCase().startsWith("aprob"),
+          saldoAntes: saldo?.antes ?? null,
+          saldoDespues: saldo?.despues ?? null,
+          usuario: r.creadopor || null, // quién realizó el movimiento (auditoría)
+          lote: r.lote,
+          location: r.location,
+          ocargue: r.ocargue,
+          pdf: r.pdf || null, // soporte de ingreso/aprobación si existe
+          pdfoc: r.ocargue ? pdfPorOC[r.ocargue]?.pdfoc ?? null : null, // orden de cargue
+          doccargue: r.ocargue ? pdfPorOC[r.ocargue]?.doccargue ?? null : null, // picking
+        }
+      })
       .sort((a: any, b: any) => String(b.fecha || "").localeCompare(String(a.fecha || "")))
-    return { success: true, data }
+
+    // Bordes del periodo visible (para el resumen "empecé con X, quedo con Y").
+    // data ya está ordenada desc por fecha: [0] = más reciente, [ultimo] = más antiguo.
+    const saldoInicialPeriodo = data.length ? data[data.length - 1].saldoAntes : stockVivo
+    const saldoFinalPeriodo = data.length ? data[0].saldoDespues : stockVivo
+
+    return { success: true, data, saldoInicialPeriodo: saldoInicialPeriodo ?? undefined, saldoFinalPeriodo: saldoFinalPeriodo ?? undefined }
   } catch (err: any) {
     return { success: false, data: [], error: err?.message || "Error desconocido" }
   }

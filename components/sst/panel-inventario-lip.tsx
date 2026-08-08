@@ -37,7 +37,7 @@ export function PanelInventarioLIP() {
   const [kardex, setKardex] = useState<any[]>([])
   const [loadingKardex, setLoadingKardex] = useState(false)
   const [filtroProd, setFiltroProd] = useState<string>("")
-  const [drill, setDrill] = useState<{ producto: string; movs: any[] } | null>(null)
+  const [drill, setDrill] = useState<{ producto: string; movs: any[]; saldoInicialPeriodo?: number; saldoFinalPeriodo?: number } | null>(null)
   const [loadingDrill, setLoadingDrill] = useState(false)
   const [tiposMov, setTiposMov] = useState<any[]>([])
   const [verNomenclatura, setVerNomenclatura] = useState(false)
@@ -109,8 +109,14 @@ export function PanelInventarioLIP() {
     setLoadingDrill(true)
     const r = await getMovimientosProducto(p.codproducto, selectedEmpresaId ?? null, anio || null, mes || null)
     setLoadingDrill(false)
-    if (r.success) setDrill({ producto: `${p.producto} (${p.codproducto})`, movs: r.data })
-    else toast({ title: "No se pudo cargar el detalle", description: r.error })
+    if (r.success) {
+      setDrill({
+        producto: `${p.producto} (${p.codproducto})`,
+        movs: r.data,
+        saldoInicialPeriodo: r.saldoInicialPeriodo,
+        saldoFinalPeriodo: r.saldoFinalPeriodo,
+      })
+    } else toast({ title: "No se pudo cargar el detalle", description: r.error })
   }
 
   async function abrirNomenclatura() {
@@ -877,41 +883,58 @@ export function PanelInventarioLIP() {
               ) : drill.movs.length === 0 ? (
                 <p className="py-6 text-center text-sm text-muted-foreground">Sin movimientos en el periodo.</p>
               ) : (
-                <div className="max-h-[65vh] overflow-auto">
-                  <table className="w-full text-sm">
-                    <thead className="sticky top-0 bg-background">
-                      <tr className="border-b text-left text-[11px] uppercase text-muted-foreground">
-                        <th className="px-2 py-2">Fecha</th>
-                        <th className="px-2 py-2">Tipo</th>
-                        <th className="px-2 py-2">Lote</th>
-                        <th className="px-2 py-2 text-right">Cantidad</th>
-                        <th className="px-2 py-2">Usuario</th>
-                        <th className="px-2 py-2">Orden</th>
-                        <th className="px-2 py-2">Soportes</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {drill.movs.map((mv, i) => (
-                        <tr key={i} className="border-b last:border-0 align-top">
-                          <td className="px-2 py-1.5 text-xs">{String(mv.fecha || "").slice(0, 10)}</td>
-                          <td className="px-2 py-1.5"><Badge variant="outline" className="text-[10px]">{mv.tipo}</Badge></td>
-                          <td className="px-2 py-1.5 text-xs text-muted-foreground">{mv.lote}</td>
-                          <td className="px-2 py-1.5 text-right font-medium" style={{ color: mv.tipomov === "Salida" ? SST_TOKENS.navy : SST_TOKENS.ok }}>{fmt(mv.cantidad)}</td>
-                          <td className="px-2 py-1.5 text-xs">{mv.usuario || "—"}</td>
-                          <td className="px-2 py-1.5 text-xs text-muted-foreground">{mv.ocargue}</td>
-                          <td className="px-2 py-1.5">
-                            <span className="flex flex-wrap gap-2">
-                              {mv.pdf && <a href={mv.pdf} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs hover:underline" style={{ color: SST_TOKENS.navy }}><FileText className="h-3 w-3" /> Ingreso</a>}
-                              {mv.pdfoc && <a href={mv.pdfoc} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs hover:underline" style={{ color: SST_TOKENS.navy }}><FileText className="h-3 w-3" /> Orden</a>}
-                              {mv.doccargue && <a href={mv.doccargue} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs hover:underline" style={{ color: SST_TOKENS.navy }}><FileText className="h-3 w-3" /> Picking</a>}
-                              {!mv.pdf && !mv.pdfoc && !mv.doccargue && <span className="text-xs text-muted-foreground">—</span>}
-                            </span>
-                          </td>
+                <>
+                  <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-xs">
+                    <span className="text-muted-foreground">Empezó con</span>
+                    <span className="font-semibold tabular-nums">{fmt(drill.saldoInicialPeriodo ?? 0)}</span>
+                    <span className="text-muted-foreground">→ va quedando con</span>
+                    <span className="font-semibold tabular-nums" style={{ color: SST_TOKENS.navy }}>{fmt(drill.saldoFinalPeriodo ?? 0)}</span>
+                  </div>
+                  <div className="max-h-[65vh] overflow-auto">
+                    <table className="w-full text-sm">
+                      <thead className="sticky top-0 bg-background">
+                        <tr className="border-b text-left text-[11px] uppercase text-muted-foreground">
+                          <th className="px-2 py-2">Fecha</th>
+                          <th className="px-2 py-2">Tipo</th>
+                          <th className="px-2 py-2">Lote</th>
+                          <th className="px-2 py-2 text-right">Cantidad</th>
+                          <th className="px-2 py-2 text-right">Saldo</th>
+                          <th className="px-2 py-2">Usuario</th>
+                          <th className="px-2 py-2">Orden</th>
+                          <th className="px-2 py-2">Soportes</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </thead>
+                      <tbody>
+                        {drill.movs.map((mv, i) => (
+                          <tr key={i} className="border-b last:border-0 align-top">
+                            <td className="px-2 py-1.5 text-xs">{String(mv.fecha || "").slice(0, 10)}</td>
+                            <td className="px-2 py-1.5"><Badge variant="outline" className="text-[10px]">{mv.tipo}</Badge></td>
+                            <td className="px-2 py-1.5 text-xs text-muted-foreground">{mv.lote}</td>
+                            <td className="px-2 py-1.5 text-right font-medium" style={{ color: mv.tipomov === "Salida" ? SST_TOKENS.navy : SST_TOKENS.ok }}>{fmt(mv.cantidad)}</td>
+                            <td className="px-2 py-1.5 text-right tabular-nums" title={mv.afectaSaldo ? undefined : "No aprobado: no afectó el saldo"}>
+                              {mv.afectaSaldo ? (
+                                <span className="font-semibold">{fmt(mv.saldoDespues)}</span>
+                              ) : (
+                                <span className="text-muted-foreground">{fmt(mv.saldoDespues)} *</span>
+                              )}
+                            </td>
+                            <td className="px-2 py-1.5 text-xs">{mv.usuario || "—"}</td>
+                            <td className="px-2 py-1.5 text-xs text-muted-foreground">{mv.ocargue}</td>
+                            <td className="px-2 py-1.5">
+                              <span className="flex flex-wrap gap-2">
+                                {mv.pdf && <a href={mv.pdf} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs hover:underline" style={{ color: SST_TOKENS.navy }}><FileText className="h-3 w-3" /> Ingreso</a>}
+                                {mv.pdfoc && <a href={mv.pdfoc} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs hover:underline" style={{ color: SST_TOKENS.navy }}><FileText className="h-3 w-3" /> Orden</a>}
+                                {mv.doccargue && <a href={mv.doccargue} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs hover:underline" style={{ color: SST_TOKENS.navy }}><FileText className="h-3 w-3" /> Picking</a>}
+                                {!mv.pdf && !mv.pdfoc && !mv.doccargue && <span className="text-xs text-muted-foreground">—</span>}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">* No aprobado (rechazado / lote paralelo) — no movió el saldo.</p>
+                </>
               )}
             </>
           )}
