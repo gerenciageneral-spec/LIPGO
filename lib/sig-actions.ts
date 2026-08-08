@@ -4625,6 +4625,11 @@ export async function getOrCrearActaCruce(
 
     // Stock vivo de HOY, por (producto, lote, ubicación) — el nivel que
     // realmente importa para poder corregir/ajustar.
+    // PAGINACIÓN CON ORDEN EXPLÍCITO: sin ORDER BY, las páginas de .range()
+    // pueden duplicar/saltar filas entre corridas (no determinista) —
+    // detectado con datos reales 2026-08-08: dos corridas del mismo cálculo
+    // daban totales distintos. Toda paginación que ALIMENTE un dato
+    // persistido debe llevar orden estable.
     const stockHoy: Record<string, { codproducto: string; producto: string; lote: string; location: string; valor: number }> = {}
     const nombrePorCod: Record<string, string> = {}
     let from = 0
@@ -4633,6 +4638,9 @@ export async function getOrCrearActaCruce(
         .from("saldoinvdetalle")
         .select("codproducto,nombreproducto,lote,location,stock_actual")
         .eq("idempresa", proyectoId)
+        .order("codproducto", { ascending: true })
+        .order("lote", { ascending: true })
+        .order("location", { ascending: true })
         .range(from, from + 999)
       for (const r of data ?? []) {
         const lote = r.lote ?? ""
@@ -4664,9 +4672,10 @@ export async function getOrCrearActaCruce(
     while (true) {
       const { data } = await supabase
         .from("invtrans")
-        .select("codproducto,lote,location,tipomov,cantidad,status,creado")
+        .select("id,codproducto,lote,location,tipomov,cantidad,status,creado")
         .eq("idempresa", proyectoId)
         .gte("creado", corteConsulta.toISOString())
+        .order("id", { ascending: true }) // paginación determinista (ver nota arriba)
         .range(from2, from2 + 999)
       for (const r of data ?? []) {
         if (!String(r.status || "").toLowerCase().startsWith("aprob")) continue
