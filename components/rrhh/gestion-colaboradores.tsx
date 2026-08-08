@@ -37,6 +37,7 @@ import {
   updateColaboradorTH,
   deleteColaboradorTH,
 } from "@/lib/rrhh-actions"
+import { useAuth } from "@/components/auth-provider"
 import { Trash2, Edit2, Plus, User, FileText } from "lucide-react"
 
 // Estado del formulario: todo como string salvo los dos campos booleanos.
@@ -430,6 +431,7 @@ interface ColaboradorRow extends Record<string, any> {
 }
 
 export default function GestionColaboradores() {
+  const { selectedEmpresaId } = useAuth()
   const [colaboradores, setColaboradores] = useState<ColaboradorRow[]>([])
   const [loading, setLoading] = useState(true)
   const [open, setOpen] = useState(false)
@@ -444,7 +446,7 @@ export default function GestionColaboradores() {
 
   const loadColaboradores = async () => {
     setLoading(true)
-    const result = await getColaboradoresTH()
+    const result = await getColaboradoresTH(selectedEmpresaId ?? undefined)
     if (result.success) {
       setColaboradores(result.data as ColaboradorRow[])
     } else {
@@ -455,7 +457,7 @@ export default function GestionColaboradores() {
 
   useEffect(() => {
     loadColaboradores()
-  }, [])
+  }, [selectedEmpresaId])
 
   const validateStep = (s: 1 | 2): boolean => {
     const required = s === 1 ? REQUIRED_STEP_1 : REQUIRED_STEP_2
@@ -504,7 +506,7 @@ export default function GestionColaboradores() {
     const payload = buildPayload()
     const result = editingId
       ? await updateColaboradorTH(editingId, payload)
-      : await createColaboradorTH(payload)
+      : await createColaboradorTH(payload, selectedEmpresaId ?? undefined)
     setSaving(false)
 
     if (result.success) {

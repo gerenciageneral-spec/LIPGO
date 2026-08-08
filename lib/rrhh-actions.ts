@@ -196,9 +196,9 @@ async function syncHeadcountForColaborador(
 
 // Crea un colaborador. Inyecta idempresa de forma segura en el servidor y
 // crea (o reutiliza) su registro espejo en headcount.
-export async function createColaboradorTH(colaborador: Record<string, any>) {
+export async function createColaboradorTH(colaborador: Record<string, any>, selectedEmpresaId?: number) {
   const supabase = await createClient()
-  const empresaId = await getCurrentEmpresaIdForInsert()
+  const empresaId = selectedEmpresaId ?? (await getCurrentEmpresaIdForInsert())
 
   // Primero sincronizamos headcount para obtener el vinculo.
   const headcountId = await syncHeadcountForColaborador(supabase, empresaId, colaborador, null)
