@@ -172,11 +172,11 @@ export async function getVehiclesFromCitas(selectedEmpresaId?: number | null) {
   }
 }
 
-export async function getVehiclesForBascula() {
+export async function getVehiclesForBascula(selectedEmpresaId?: number) {
   try {
     const supabase = await createClient()
 
-    const empresaId = await getCurrentEmpresaIdForInsert()
+    const empresaId = selectedEmpresaId ?? (await getCurrentEmpresaIdForInsert())
 
     const { data, error } = await supabase
       .from("citasvehiculos")

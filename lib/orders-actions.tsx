@@ -1536,10 +1536,10 @@ export async function getLoadOrders(statusFilter: "pendiente" | "finalizada" | "
   }
 }
 
-export async function getLoadOrdersForBascula() {
+export async function getLoadOrdersForBascula(selectedEmpresaId?: number) {
   const supabase = await createClient()
   try {
-    const empresaId = await getCurrentEmpresaIdForInsert()
+    const empresaId = selectedEmpresaId ?? (await getCurrentEmpresaIdForInsert())
 
     const { data, error } = await supabase
       .from("cabeceraoc")

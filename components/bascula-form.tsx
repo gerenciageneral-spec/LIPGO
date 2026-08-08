@@ -78,10 +78,10 @@ export function BasculaForm({ initialOrderId, onOrderLoaded }: BasculaFormProps)
   }, [selectedEmpresaId])
 
   React.useEffect(() => {
-    if (registrationType === "placa") {
+    if (registrationType === "placa" && selectedEmpresaId) {
       loadVehicles()
     }
-  }, [registrationType])
+  }, [registrationType, selectedEmpresaId])
 
   React.useEffect(() => {
     if (initialOrderId && loadOrders.length > 0) {
@@ -97,7 +97,7 @@ export function BasculaForm({ initialOrderId, onOrderLoaded }: BasculaFormProps)
 
   const loadLoadOrders = async () => {
     setIsLoadingOrders(true)
-    const result = await getLoadOrdersForBascula()
+    const result = await getLoadOrdersForBascula(selectedEmpresaId ?? undefined)
     if (result.success && result.data) {
       setLoadOrders(result.data)
     } else {
@@ -108,7 +108,7 @@ export function BasculaForm({ initialOrderId, onOrderLoaded }: BasculaFormProps)
 
   const loadVehicles = async () => {
     setIsLoadingVehicles(true)
-    const result = await getVehiclesForBascula()
+    const result = await getVehiclesForBascula(selectedEmpresaId ?? undefined)
     if (result.success && result.data) {
       setVehicles(result.data)
     } else {
