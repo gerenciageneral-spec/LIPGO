@@ -91,7 +91,13 @@ export async function fetchConfigData(tableName: string, selectedEmpresaId?: num
     }
 
     if (tableName === "cabeceraoc") {
-      const { data, error } = await supabase.from(tableName).select("*").order("id", { ascending: false })
+      let cabeceraocQuery = supabase.from(tableName).select("*").order("id", { ascending: false })
+
+      if (empresaId) {
+        cabeceraocQuery = cabeceraocQuery.eq("idempresa", empresaId)
+      }
+
+      const { data, error } = await cabeceraocQuery
 
       if (error) throw error
       return { success: true, data }

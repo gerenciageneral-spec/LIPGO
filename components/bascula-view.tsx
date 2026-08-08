@@ -40,7 +40,7 @@ export function BasculaView() {
 
   const loadData = async () => {
     setLoading(true)
-    const result = await fetchConfigData("cabeceraoc")
+    const result = await fetchConfigData("cabeceraoc", selectedEmpresaId ?? undefined)
     if (result.success) {
       setData(result.data || [])
     } else {
