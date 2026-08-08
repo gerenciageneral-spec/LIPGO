@@ -1166,7 +1166,7 @@ export function PanelInventarioLIP() {
 
       {/* DRILL-DOWN: movimientos de un producto con soportes PDF */}
       <Dialog open={!!drill} onOpenChange={(o) => !o && setDrill(null)}>
-        <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+        <DialogContent className="max-h-[95vh] max-w-6xl overflow-y-auto">
           {drill && (
             <>
               <DialogHeader><DialogTitle className="text-base">Movimientos · {drill.producto}</DialogTitle></DialogHeader>
@@ -1189,7 +1189,7 @@ export function PanelInventarioLIP() {
                   <p className="text-[11px] text-muted-foreground">
                     El kardex real vive por lote — cada lote tiene su propia ubicación y su propio saldo corrido. Agrupado por lote, orden cronológico dentro de cada uno.
                   </p>
-                  <div className="max-h-[65vh] space-y-3 overflow-auto">
+                  <div className="max-h-[78vh] space-y-3 overflow-auto">
                     {(() => {
                       const grupos: Record<string, any[]> = {}
                       for (const mv of drill.movs) {
@@ -1200,9 +1200,9 @@ export function PanelInventarioLIP() {
                         .map(([key, movs]) => {
                           const asc = [...movs].sort((a, b) => String(a.fecha || "").localeCompare(String(b.fecha || "")))
                           const [lote, location] = key.split("||")
-                          return { lote, location, asc, ultimaFecha: asc[asc.length - 1]?.fecha || "" }
+                          return { lote, location, asc, primeraFecha: asc[0]?.fecha || "" }
                         })
-                        .sort((a, b) => String(b.ultimaFecha).localeCompare(String(a.ultimaFecha)))
+                        .sort((a, b) => String(a.primeraFecha).localeCompare(String(b.primeraFecha)))
                       return listas.map((grupo) => (
                         <div key={`${grupo.lote}||${grupo.location}`} className="overflow-hidden rounded-md border">
                           <div className="flex flex-wrap items-center justify-between gap-2 bg-muted/40 px-3 py-1.5 text-xs">
