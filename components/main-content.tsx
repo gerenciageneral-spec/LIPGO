@@ -198,7 +198,7 @@ export function MainContent({
   React.useEffect(() => {
     if (!selectedEmpresaId) return
     let cancel = false
-    getAtencionDelDia(profile?.id)
+    getAtencionDelDia(profile?.id, selectedEmpresaId ?? undefined)
       .then((r) => {
         if (!cancel && r.success) setHomeAlertas(r.items as AtencionItem[])
       })

@@ -14,6 +14,7 @@ import {
   getGerenciaDashboardData,
   type DashboardGerenciaPayload,
 } from "@/lib/dashboard-gerencia-actions"
+import { useAuth } from "@/components/auth-provider"
 
 /**
  * Frecuencia de auto-refresh en ms. El centro de control necesita datos
@@ -37,6 +38,7 @@ const REFRESH_MS = 60_000
  *    #5bc0de primary, #343a40 texto, #dee2e6 bordes).
  */
 export default function DashboardGerencia() {
+  const { selectedEmpresaId } = useAuth()
   const [section, setSection] = useState<GerenciaSection>("operaciones")
   const [payload, setPayload] = useState<DashboardGerenciaPayload | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -47,7 +49,7 @@ export default function DashboardGerencia() {
   const load = useCallback(async (silent: boolean) => {
     if (silent) setRefreshing(true)
     try {
-      const res = await getGerenciaDashboardData()
+      const res = await getGerenciaDashboardData(selectedEmpresaId ?? undefined)
       if (!mounted.current) return
       if (res.success && res.data) {
         setPayload(res.data)
@@ -63,7 +65,7 @@ export default function DashboardGerencia() {
         setRefreshing(false)
       }
     }
-  }, [])
+  }, [selectedEmpresaId])
 
   useEffect(() => {
     mounted.current = true

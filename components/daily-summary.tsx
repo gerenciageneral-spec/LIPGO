@@ -27,7 +27,7 @@ export function DailySummary() {
     const loadStats = async () => {
       setLoading(true)
       try {
-        const result = await getDailySummaryStats()
+        const result = await getDailySummaryStats(selectedEmpresaId ?? undefined)
         if (result.success && result.data) {
           setStats(result.data)
         }

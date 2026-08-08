@@ -29,10 +29,10 @@ function colombiaHour(): number {
  * del selector global). Defensivo: cualquier fallo devuelve lista vacía y la
  * tarjeta de IA simplemente no muestra el bloque.
  */
-export async function getAtencionDelDia(userId?: string): Promise<{ success: boolean; items: AtencionRow[] }> {
+export async function getAtencionDelDia(userId?: string, selectedEmpresaId?: number): Promise<{ success: boolean; items: AtencionRow[] }> {
   try {
     const supabase = await createClient()
-    const empresaId = await getCurrentEmpresaId()
+    const empresaId = selectedEmpresaId ?? (await getCurrentEmpresaId())
     if (!empresaId) return { success: true, items: [] }
 
     const items: AtencionRow[] = []

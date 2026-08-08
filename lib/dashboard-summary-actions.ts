@@ -13,10 +13,10 @@ function getColombiaDateString(): string {
   return `${year}-${month}-${day}`
 }
 
-export async function getDailySummaryStats() {
+export async function getDailySummaryStats(selectedEmpresaId?: number) {
   try {
     const supabase = await createClient()
-    const empresaId = await getCurrentEmpresaId()
+    const empresaId = selectedEmpresaId ?? (await getCurrentEmpresaId())
     const today = getColombiaDateString()
 
     console.log("[v0] Fetching daily summary for empresa:", empresaId, "date:", today)
