@@ -262,14 +262,13 @@ export async function getNextId(tableName: string, primaryKey: string) {
   }
 }
 
-export async function createConfigRecord(tableName: string, data: any) {
+export async function createConfigRecord(tableName: string, data: any, selectedEmpresaId?: number) {
   const supabase = await createClient()
 
   try {
     const empresaFieldName = await getEmpresaIdFieldName(tableName)
     if (empresaFieldName && (await shouldFilterByEmpresa(tableName))) {
-      const empresaId = await getCurrentEmpresaIdForInsert()
-      data[empresaFieldName] = empresaId
+      data[empresaFieldName] = selectedEmpresaId ?? (await getCurrentEmpresaIdForInsert())
     }
 
     const { data: createdData, error } = await supabase.from(tableName).insert(data).select()
@@ -362,9 +361,9 @@ export async function fetchSubcategorias(categoriaid?: number) {
   }
 }
 
-export async function fetchClientes() {
+export async function fetchClientes(selectedEmpresaId?: number) {
   const supabase = await createClient()
-  const empresaId = await getCurrentEmpresaId()
+  const empresaId = selectedEmpresaId ?? (await getCurrentEmpresaId())
 
   try {
     let query = supabase.from("clientes").select("id, nombre").eq("activo", true).order("nombre", { ascending: true })
@@ -567,9 +566,9 @@ export async function fetchDestinos() {
   }
 }
 
-export async function getProductosForFilter() {
+export async function getProductosForFilter(selectedEmpresaId?: number) {
   const supabase = await createClient()
-  const empresaId = await getCurrentEmpresaIdForInsert()
+  const empresaId = selectedEmpresaId ?? (await getCurrentEmpresaIdForInsert())
 
   try {
     let query = supabase

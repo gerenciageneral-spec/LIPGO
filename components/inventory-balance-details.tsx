@@ -70,7 +70,7 @@ export function InventoryBalanceDetails() {
 
   const loadProductos = async () => {
     try {
-      const data = await getProductosForFilter()
+      const data = await getProductosForFilter(selectedEmpresaId ?? undefined)
       setProductos(data)
     } catch (error) {
       console.error("[v0] Error loading productos:", error)
@@ -97,7 +97,7 @@ export function InventoryBalanceDetails() {
   }, [categoriaFilter])
 
   const loadLocations = async () => {
-    const data = await getLocations()
+    const data = await getLocations(undefined, selectedEmpresaId ?? undefined)
     setLocations(data)
   }
 

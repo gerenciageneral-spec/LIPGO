@@ -159,7 +159,7 @@ export function GenericCrudTable({ moduleDef, hideNewButton = false }: GenericCr
         }
       }
       if (field.type === "select" && field.name === "clienteid") {
-        const response = await fetch("/api/clientes")
+        const response = await fetch(`/api/clientes${selectedEmpresaId ? `?empresaId=${selectedEmpresaId}` : ""}`)
         const result = await response.json()
         if (result.success && result.data) {
           options[field.name] = result.data.map((cliente: any) => ({
@@ -686,11 +686,7 @@ if (moduleDef.tableName === "almacenes" && selectedEmpresaId) {
         )
       } else {
         const { cliente, ...insertData } = formData
-        // Auto-assign idempresa from session for bodegas module
-if (moduleDef.tableName === "almacenes" && selectedEmpresaId) {
-      insertData.idempresa = selectedEmpresaId
-        }
-        result = await createConfigRecord(moduleDef.tableName, insertData)
+        result = await createConfigRecord(moduleDef.tableName, insertData, selectedEmpresaId ?? undefined)
         
         // Auto-generate codigo for productos after creation
         if (result.success && moduleDef.tableName === "productos" && result.data?.id) {

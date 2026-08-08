@@ -181,9 +181,9 @@ export async function getMedios(): Promise<Medio[]> {
   }
 }
 
-export async function getClientes(): Promise<Cliente[]> {
+export async function getClientes(selectedEmpresaId?: number): Promise<Cliente[]> {
   console.log("[v0] Fetching clientes from server action")
-  const empresaId = await getCurrentEmpresaId()
+  const empresaId = selectedEmpresaId ?? (await getCurrentEmpresaId())
 
   try {
     let query = supabase.from("clientes").select("id, nombre").order("nombre", { ascending: true })

@@ -2,11 +2,13 @@ export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 import { fetchClientes } from "@/lib/config-actions"
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const result = await fetchClientes()
+    const { searchParams } = new URL(request.url)
+    const empresaIdParam = searchParams.get("empresaId")
+    const result = await fetchClientes(empresaIdParam ? Number(empresaIdParam) : undefined)
     return NextResponse.json(result)
   } catch (error) {
     console.error("[API] Error fetching clientes:", error)

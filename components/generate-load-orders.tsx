@@ -158,9 +158,9 @@ function GenerateLoadOrdersComponent() {
   useEffect(() => {
     const loadFilterData = async () => {
       const [clientesData, filtersData, vehiclesData, bodegasData] = await Promise.all([
-        getClientes(),
+        getClientes(selectedEmpresaId ?? undefined),
         getOrderFiltersData(),
-        getVehiclesFromCitas(),
+        getVehiclesFromCitas(selectedEmpresaId ?? undefined),
         getAccessibleEmpresesFromPermisos(),
       ])
 
@@ -718,7 +718,7 @@ function GenerateLoadOrdersComponent() {
   }
 
   const loadVehicles = async () => {
-    const vehiclesData = await getVehiclesFromCitas()
+    const vehiclesData = await getVehiclesFromCitas(selectedEmpresaId ?? undefined)
     if (vehiclesData.success && vehiclesData.data) {
       setVehicles(vehiclesData.data as any)
     }
