@@ -80,7 +80,7 @@ export function SanitaryRegistryForm({ initialVehicleId, onVehicleLoaded }: Sani
 
   const loadVehicles = async () => {
     if (registrationType === "vehicle-only") {
-      const result = await getVehiclesForSanitaryWithoutOrder()
+      const result = await getVehiclesForSanitaryWithoutOrder(selectedEmpresaId ?? undefined)
       if (result.success && result.data) {
         setVehicles(result.data)
       } else {

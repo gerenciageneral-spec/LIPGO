@@ -167,7 +167,7 @@ export function LoadOrdersManagement() {
     setSelectedVehicleId("")
 
     // Fetch available vehicles
-    const result = await getAvailableVehiclesForAssignment()
+    const result = await getAvailableVehiclesForAssignment(selectedEmpresaId ?? undefined)
     if (result.success && result.data) {
       setAvailableVehicles(result.data)
       setShowAssignDialog(true)

@@ -67,10 +67,10 @@ async function uploadDataUrl(
   return data.publicUrl
 }
 
-export async function saveVehicleInspection(input: VehicleInspectionInput) {
+export async function saveVehicleInspection(input: VehicleInspectionInput, selectedEmpresaId?: number) {
   try {
     const supabaseAdmin = await getSupabaseAdmin()
-    const empresaId = (await getCurrentEmpresaId()) || 1
+    const empresaId = selectedEmpresaId ?? (await getCurrentEmpresaId()) ?? 1
 
     // 1) Subir firma (si existe) a storage.
     let firmaUrl: string | null = null
@@ -160,10 +160,11 @@ export interface VehicleInspectionRecord {
 export async function getVehicleInspections(filters?: {
   desde?: string
   hasta?: string
+  selectedEmpresaId?: number
 }): Promise<{ success: boolean; data: VehicleInspectionRecord[]; error?: string }> {
   try {
     const supabaseAdmin = await getSupabaseAdmin()
-    const empresaId = (await getCurrentEmpresaId()) || 1
+    const empresaId = filters?.selectedEmpresaId ?? (await getCurrentEmpresaId()) ?? 1
 
     let query = supabaseAdmin
       .from("inspeccion_sanitaria_vehiculos")

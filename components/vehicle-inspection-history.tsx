@@ -22,6 +22,7 @@ import {
   getVehicleInspections,
   type VehicleInspectionRecord,
 } from "@/lib/vehicle-inspection-actions"
+import { useAuth } from "@/components/auth-provider"
 import * as XLSX from "xlsx"
 
 // Criterios: clave de columna + etiqueta visible (para exportar y resumir).
@@ -52,6 +53,7 @@ function formatFecha(iso: string | null): string {
 
 export function VehicleInspectionHistory() {
   const { toast } = useToast()
+  const { selectedEmpresaId } = useAuth()
 
   const [registros, setRegistros] = useState<VehicleInspectionRecord[]>([])
   const [loading, setLoading] = useState(true)
@@ -68,6 +70,7 @@ export function VehicleInspectionHistory() {
     const res = await getVehicleInspections({
       desde: desde || undefined,
       hasta: hasta || undefined,
+      selectedEmpresaId: selectedEmpresaId ?? undefined,
     })
     if (res.success) {
       setRegistros(res.data)
@@ -75,7 +78,7 @@ export function VehicleInspectionHistory() {
       toast({ title: "Error", description: res.error || "No se pudo cargar el historial.", variant: "destructive" })
     }
     setLoading(false)
-  }, [desde, hasta, toast])
+  }, [desde, hasta, toast, selectedEmpresaId])
 
   useEffect(() => {
     cargar()

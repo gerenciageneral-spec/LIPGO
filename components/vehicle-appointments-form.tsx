@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Clock } from "lucide-react"
 import { toast } from "sonner"
 import { registerVehicleAppointment } from "@/lib/vehicle-actions"
+import { useAuth } from "@/components/auth-provider"
 import {
   getCategorias,
   getTransportes,
@@ -21,6 +22,7 @@ import {
 } from "@/lib/actions"
 
 export function VehicleAppointmentsForm() {
+  const { selectedEmpresaId } = useAuth()
   const [formData, setFormData] = React.useState({
     placa: "",
     nombre_conductor: "",
@@ -126,6 +128,7 @@ export function VehicleAppointmentsForm() {
         tipo_producto: formData.tipo_producto,
         capacidad: capacidad,
         tipo_despacho: formData.tipo_despacho,
+        selectedEmpresaId: selectedEmpresaId ?? undefined,
       })
 
       if (!result.success) {

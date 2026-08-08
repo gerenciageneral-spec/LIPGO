@@ -14,6 +14,7 @@ import { Truck, ClipboardCheck, Camera, Trash2, PenLine, Save, ClipboardList, Hi
 import { useToast } from "@/hooks/use-toast"
 import { saveVehicleInspection, type VehicleInspectionInput } from "@/lib/vehicle-inspection-actions"
 import { VehicleInspectionHistory } from "@/components/vehicle-inspection-history"
+import { useAuth } from "@/components/auth-provider"
 
 /**
  * Estructura exacta del payload que se envia a la server action,
@@ -50,6 +51,7 @@ function getTodayISO(): string {
 }
 
 export function VehicleInspectionForm() {
+  const { selectedEmpresaId } = useAuth()
   const { toast } = useToast()
 
   const [fecha, setFecha] = useState(getTodayISO())
@@ -250,7 +252,7 @@ export function VehicleInspectionForm() {
         firma,
       }
 
-      const result = await saveVehicleInspection(payload)
+      const result = await saveVehicleInspection(payload, selectedEmpresaId ?? undefined)
 
       if (result.success) {
         toast({ title: "Inspeccion guardada", description: "El registro se guardo correctamente." })

@@ -76,6 +76,7 @@ export async function registerVehicleAppointment(data: {
   tipo_producto?: string
   capacidad?: number
   tipo_despacho?: string
+  selectedEmpresaId?: number
 }) {
   try {
     // Check if placa already exists with open status
@@ -96,7 +97,7 @@ export async function registerVehicleAppointment(data: {
 
     const supabase = await createClient()
 
-    const empresaId = await getCurrentEmpresaIdForInsert()
+    const empresaId = data.selectedEmpresaId ?? (await getCurrentEmpresaIdForInsert())
 
     const horallegada = await getColombiaTime()
     const fechallegada = await getColombiaDate()
@@ -216,11 +217,11 @@ export async function updateVehicleWeighingTime(vehicleId: number, horaInicio: s
   }
 }
 
-export async function getVehiclesForSanitaryWithoutOrder() {
+export async function getVehiclesForSanitaryWithoutOrder(selectedEmpresaId?: number) {
   try {
     const supabase = await createClient()
 
-    const empresaId = await getCurrentEmpresaIdForInsert()
+    const empresaId = selectedEmpresaId ?? (await getCurrentEmpresaIdForInsert())
 
     const { data, error } = await supabase
       .from("citasvehiculos")
@@ -259,10 +260,10 @@ export async function updateVehicleSanitaryTime(vehicleId: number, horaRegistro:
   }
 }
 
-export async function getAvailableVehiclesForAssignment() {
+export async function getAvailableVehiclesForAssignment(selectedEmpresaId?: number) {
   try {
     const supabase = await createClient()
-    const empresaId = await getCurrentEmpresaIdForInsert()
+    const empresaId = selectedEmpresaId ?? (await getCurrentEmpresaIdForInsert())
 
     const { data, error } = await supabase
       .from("citasvehiculos")
@@ -288,10 +289,10 @@ export async function getAvailableVehiclesForAssignment() {
   }
 }
 
-export async function getVehiclesForDistribution() {
+export async function getVehiclesForDistribution(selectedEmpresaId?: number) {
   try {
     const supabase = await createClient()
-    const empresaId = await getCurrentEmpresaIdForInsert()
+    const empresaId = selectedEmpresaId ?? (await getCurrentEmpresaIdForInsert())
 
     const { data, error } = await supabase
       .from("citasvehiculos")
