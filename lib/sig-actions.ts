@@ -2592,18 +2592,37 @@ export async function getMovimientosProducto(
     // calcular saldosPorFila — no de `data` (reordenada desc por fecha, donde
     // empates de fecha pueden quedar en otro orden y desalinear el borde).
     const cronologicoFiltrado = cronologico.filter((r: any) => (!anio || yr(r.creado) === anio) && (!mes || mo(r.creado) === mes))
-    const saldoFinalPeriodo = cronologicoFiltrado.length ? (saldosPorFila.get(cronologicoFiltrado[cronologicoFiltrado.length - 1])?.despues ?? stockVivo) : stockVivo
-    // "Saldo inicial" solo se expone como número verificado cuando hay un
-    // proyecto+año+mes puntual (mismo criterio que la columna "Saldo inicial"
-    // de la tabla Kardex, getKardexInventario) — sin eso, "empezó con X" no
-    // tiene una verdad física contra la cual compararse (podría confundirse
-    // con un conteo real, como ya pasó). undefined → la UI muestra "—".
-    const saldoInicialPeriodo =
-      proyectoId && anio && mes && cronologicoFiltrado.length
-        ? saldosPorFila.get(cronologicoFiltrado[0])?.antes ?? stockVivo
+
+    // Un borde solo se expone como número si está RESPALDADO por una verdad
+    // física real — no basta con "hay un mes seleccionado" (eso fue el bug:
+    // julio mostraba un "empezó con 1.985" back-solveado del kardex crudo,
+    // sin ningún cierre físico detrás, solo porque había un mes elegido).
+    // Verificado = el cierre/apertura de ESE mes coincide con un cierre
+    // congelado real (`fisico_snapshot`), o el borde es HOY (stock vivo,
+    // siempre verdad). Mismo criterio que ya usa la tabla Kardex.
+    const mesSeleccionado = anio && mes ? `${anio}-${String(mes).padStart(2, "0")}` : null
+    const anclaPorMes = new Map(anclas.map((a) => [a.mes, a.valor]))
+    let mesAnteriorKey: string | null = null
+    if (mesSeleccionado) {
+      const d = new Date(Number(anio), Number(mes) - 1, 1)
+      d.setMonth(d.getMonth() - 1)
+      mesAnteriorKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`
+    }
+
+    const finalEsHoy = !mesSeleccionado || (cronologicoFiltrado.length > 0 && cronologico.length > 0 && cronologicoFiltrado[cronologicoFiltrado.length - 1] === cronologico[cronologico.length - 1])
+    const finalVerificado = finalEsHoy || (mesSeleccionado ? anclaPorMes.has(mesSeleccionado) : false)
+    const saldoFinalPeriodo = !cronologicoFiltrado.length
+      ? stockVivo // sin movimientos en el periodo: no cambió, el stock vivo de hoy es la verdad
+      : finalVerificado
+        ? saldosPorFila.get(cronologicoFiltrado[cronologicoFiltrado.length - 1])?.despues ?? stockVivo
         : undefined
 
-    return { success: true, data, saldoInicialPeriodo, saldoFinalPeriodo: saldoFinalPeriodo ?? undefined }
+    const inicialVerificado = !!(mesAnteriorKey && anclaPorMes.has(mesAnteriorKey))
+    const saldoInicialPeriodo = inicialVerificado
+      ? (cronologicoFiltrado.length ? saldosPorFila.get(cronologicoFiltrado[0])?.antes ?? undefined : anclaPorMes.get(mesAnteriorKey!))
+      : undefined
+
+    return { success: true, data, saldoInicialPeriodo, saldoFinalPeriodo }
   } catch (err: any) {
     return { success: false, data: [], error: err?.message || "Error desconocido" }
   }

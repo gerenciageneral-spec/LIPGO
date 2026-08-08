@@ -887,10 +887,12 @@ export function PanelInventarioLIP() {
                   <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-xs">
                     <span className="text-muted-foreground">Empezó con</span>
                     <span className="font-semibold tabular-nums">
-                      {drill.saldoInicialPeriodo === undefined ? "— (elige año y mes)" : fmt(drill.saldoInicialPeriodo)}
+                      {drill.saldoInicialPeriodo === undefined ? "— (sin cierre físico del mes anterior)" : fmt(drill.saldoInicialPeriodo)}
                     </span>
                     <span className="text-muted-foreground">→ va quedando con</span>
-                    <span className="font-semibold tabular-nums" style={{ color: SST_TOKENS.navy }}>{fmt(drill.saldoFinalPeriodo ?? 0)}</span>
+                    <span className="font-semibold tabular-nums" style={{ color: SST_TOKENS.navy }}>
+                      {drill.saldoFinalPeriodo === undefined ? "— (sin cierre físico de este mes)" : fmt(drill.saldoFinalPeriodo)}
+                    </span>
                   </div>
                   <div className="max-h-[65vh] overflow-auto">
                     <table className="w-full text-sm">
