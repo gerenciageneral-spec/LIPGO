@@ -2647,7 +2647,17 @@ export async function getCuadreDetalle(
 /** Crea un documento de conteo cargando el stock en sistema (saldoinvdetalle). */
 export async function crearCuadre(
   proyectoId: number,
-  payload: { fecha?: string; tipo?: string; almacen?: string | null; responsable?: string | null; creado_por?: string | null },
+  payload: {
+    fecha?: string
+    tipo?: string
+    almacen?: string | null
+    responsable?: string | null
+    creado_por?: string | null
+    // Conteo cíclico de UN producto en vez de todo el inventario. A diferencia
+    // del conteo total (que solo siembra stock != 0), aquí SÍ se incluyen las
+    // ubicaciones en 0 — el usuario eligió a propósito verificar ese producto.
+    codproductoUnico?: string | null
+  },
 ): Promise<{ success: boolean; id?: number; items?: number; error?: string }> {
   try {
     if (!proyectoId) return { success: false, error: "Selecciona un cliente/sitio" }
@@ -2657,18 +2667,19 @@ export async function crearCuadre(
     const saldos: any[] = []
     let from = 0
     while (true) {
-      const { data, error } = await supabase
+      let q = supabase
         .from("saldoinvdetalle")
         .select("codproducto,nombreproducto,lote,location,stock_actual")
         .eq("idempresa", proyectoId)
-        .range(from, from + 999)
+      if (payload.codproductoUnico) q = q.eq("codproducto", payload.codproductoUnico)
+      const { data, error } = await q.range(from, from + 999)
       if (error) return { success: false, error: error.message }
       saldos.push(...(data ?? []))
       if (!data || data.length < 1000) break
       from += 1000
       if (from > 60000) break
     }
-    const lineasBase = saldos.filter((r) => (Number(r.stock_actual) || 0) !== 0)
+    const lineasBase = payload.codproductoUnico ? saldos : saldos.filter((r) => (Number(r.stock_actual) || 0) !== 0)
     const totalSistema = lineasBase.reduce((s, r) => s + (Number(r.stock_actual) || 0), 0)
 
     const { data: cab, error: errCab } = await supabase

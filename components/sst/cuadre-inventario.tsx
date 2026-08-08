@@ -72,7 +72,7 @@ export function CuadreInventario() {
   const [detalle, setDetalle] = useState<SigInventarioCuadreDetalle[]>([])
   const [loadingDet, setLoadingDet] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [nuevo, setNuevo] = useState<{ fecha: string; tipo: string; responsable: string } | null>(null)
+  const [nuevo, setNuevo] = useState<{ fecha: string; tipo: string; responsable: string; modo: "todos" | "producto"; codproducto: string } | null>(null)
   const [formAjuste, setFormAjuste] = useState<any | null>(null)
   const [firma, setFirma] = useState<{ firmante: string; cargo: string; fecha: string; obs: string }>({ firmante: "", cargo: "", fecha: "", obs: "" })
   const [tiposMov, setTiposMov] = useState<any[]>([])
@@ -189,8 +189,18 @@ export function CuadreInventario() {
 
   async function crear() {
     if (!nuevo) return
+    if (nuevo.modo === "producto" && !nuevo.codproducto.trim()) {
+      toast({ title: "Selecciona el producto a contar" })
+      return
+    }
     setSaving(true)
-    const r = await crearCuadre(Number(proyecto), { fecha: nuevo.fecha || undefined, tipo: nuevo.tipo, responsable: nuevo.responsable, creado_por: actor })
+    const r = await crearCuadre(Number(proyecto), {
+      fecha: nuevo.fecha || undefined,
+      tipo: nuevo.tipo,
+      responsable: nuevo.responsable,
+      creado_por: actor,
+      codproductoUnico: nuevo.modo === "producto" ? nuevo.codproducto.trim() : undefined,
+    })
     setSaving(false)
     if (r.success) {
       toast({ title: "Conteo creado", description: `${r.items} ítems cargados desde el sistema` })
@@ -477,7 +487,7 @@ export function CuadreInventario() {
 
           <TabsContent value="cuadres" className="space-y-3 pt-3">
             <div className="flex justify-end">
-              <Button size="sm" onClick={() => setNuevo({ fecha: "", tipo: "total", responsable: "" })}>
+              <Button size="sm" onClick={() => setNuevo({ fecha: "", tipo: "total", responsable: "", modo: "todos", codproducto: "" })}>
                 <Plus className="mr-2 h-4 w-4" /> Nuevo conteo físico
               </Button>
             </div>
@@ -596,6 +606,29 @@ export function CuadreInventario() {
                   <option value="total">Conteo total</option>
                   <option value="ciclico">Conteo cíclico</option>
                 </select>
+                <div className="flex gap-2">
+                  <Button type="button" size="sm" variant={nuevo.modo === "todos" ? "default" : "outline"} className="flex-1" onClick={() => setNuevo({ ...nuevo, modo: "todos", codproducto: "" })}>
+                    Todos los productos
+                  </Button>
+                  <Button type="button" size="sm" variant={nuevo.modo === "producto" ? "default" : "outline"} className="flex-1" onClick={() => setNuevo({ ...nuevo, modo: "producto" })}>
+                    Un producto
+                  </Button>
+                </div>
+                {nuevo.modo === "producto" && (
+                  <div className="relative">
+                    <PackageSearch className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      list="prod-codigos-conteo"
+                      value={nuevo.codproducto}
+                      className="h-9 pl-8"
+                      placeholder="Digita o selecciona el código del producto"
+                      onChange={(e) => setNuevo({ ...nuevo, codproducto: e.target.value })}
+                    />
+                    <datalist id="prod-codigos-conteo">
+                      {productos.map((p) => (<option key={p.codproducto} value={p.codproducto}>{p.nombreproducto}</option>))}
+                    </datalist>
+                  </div>
+                )}
                 <Input value={nuevo.responsable} onChange={(e) => setNuevo({ ...nuevo, responsable: e.target.value })} placeholder="Responsable" />
                 <div className="flex justify-end gap-2 pt-1">
                   <Button variant="outline" size="sm" onClick={() => setNuevo(null)}>Cancelar</Button>

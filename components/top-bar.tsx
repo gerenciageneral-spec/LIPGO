@@ -15,6 +15,7 @@ import { useInventarioAlerts } from "@/hooks/useInventarioAlerts"
  import { useEvaluacionesAlerts } from "@/hooks/useEvaluacionesAlerts"
 import { useAsistenciaAlerts } from "@/hooks/useAsistenciaAlerts"
 import { useOperacionesDiaAlerts } from "@/hooks/useOperacionesDiaAlerts"
+import { useConteoCiclicoAlerts } from "@/hooks/useConteoCiclicoAlerts"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -69,6 +70,11 @@ export function TopBar() {
     count: operacionesDiaAlertCount,
     hasPermission: hasOperacionesDiaPermission,
   } = useOperacionesDiaAlerts(selectedEmpresaId, profile?.id)
+  const {
+    alerts: conteoCiclicoAlerts,
+    count: conteoCiclicoAlertCount,
+    hasPermission: hasConteoCiclicoPermission,
+  } = useConteoCiclicoAlerts(selectedEmpresaId, profile?.id)
   const [turnosOpen, setTurnosOpen] = useState(false)
   const [prechequeoOpen, setPrechequeoOpen] = useState(false)
   const [rendimientoOpen, setRendimientoOpen] = useState(false)
@@ -78,6 +84,7 @@ export function TopBar() {
   const [asistenciaPendientesOpen, setAsistenciaPendientesOpen] = useState(false)
   const [asistenciaSinSalidaOpen, setAsistenciaSinSalidaOpen] = useState(false)
   const [operacionesDiaOpen, setOperacionesDiaOpen] = useState(false)
+  const [conteoCiclicoOpen, setConteoCiclicoOpen] = useState(false)
 
   const hasTurnosAlerts = pendingTurnosCount > 0
   const hasPrechequeoAlerts = hasPrechequeoPermission && preoperacionalAlertCount > 0
@@ -91,6 +98,7 @@ export function TopBar() {
     hasTablaAsistenciaPermission && asistenciaSinSalidaCount > 0
   const hasOperacionesDiaAlerts =
     hasOperacionesDiaPermission && operacionesDiaAlertCount > 0
+  const hasConteoCiclicoAlerts = hasConteoCiclicoPermission && conteoCiclicoAlertCount > 0
 
   const handleEmpresaChange = (value: string) => {
     const newId = parseInt(value, 10)
@@ -227,6 +235,51 @@ export function TopBar() {
                         </p>
                       </div>
                     )}
+                  </div>
+                </PopoverContent>
+              </Popover>
+            )}
+
+            {/* Conteo Ciclico de Inventario - vencido o con diferencia sin resolver */}
+            {hasConteoCiclicoAlerts && (
+              <Popover open={conteoCiclicoOpen} onOpenChange={setConteoCiclicoOpen}>
+                <PopoverTrigger asChild>
+                  <button
+                    className="relative p-1 sm:p-2 rounded-lg hover:bg-teal-100 transition-colors"
+                    title="Conteo Ciclico de Inventario"
+                  >
+                    <ClipboardCheck className="h-4 w-4 sm:h-5 sm:w-5 text-teal-600" />
+                    <span className="absolute top-0 right-0 flex items-center justify-center h-5 w-5 text-xs font-bold text-white bg-teal-600 rounded-full animate-pulse">
+                      {conteoCiclicoAlertCount > 9 ? "9+" : conteoCiclicoAlertCount}
+                    </span>
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent className="w-96 p-0" align="end">
+                  <div className="p-3 border-b bg-teal-50">
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-semibold text-sm flex items-center gap-2 text-teal-700">
+                        <ClipboardCheck className="h-4 w-4" />
+                        Conteo Ciclico de Inventario
+                      </h4>
+                      <Badge variant="secondary" className="bg-teal-100 text-teal-700">
+                        {conteoCiclicoAlertCount} pendiente{conteoCiclicoAlertCount !== 1 ? "s" : ""}
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-teal-600 mt-1">Conteo vencido (7+ dias) o con diferencia sin ajuste aprobado</p>
+                  </div>
+                  <div className="max-h-72 overflow-y-auto">
+                    <div className="divide-y">
+                      {conteoCiclicoAlerts.map((a, index) => (
+                        <div key={`${a.tipo}-${a.cuadre_id ?? index}`} className="p-3 hover:bg-teal-50/50 transition-colors">
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-sm font-medium text-teal-700 flex-1 min-w-0">{a.mensaje}</p>
+                            <Badge variant="outline" className="text-xs shrink-0 border-teal-200 text-teal-600">
+                              {a.tipo === "vencido" ? "Vencido" : "Diferencia"}
+                            </Badge>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </PopoverContent>
               </Popover>
