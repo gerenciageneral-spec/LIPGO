@@ -2473,80 +2473,101 @@ export async function getMovimientosProducto(
     // año/mes de abajo) para que sea correcto incluso mirando un mes cerrado.
     const { data: saldoRows } = await supabase
       .from("saldoinvdetalle")
-      .select("stock_actual")
+      .select("stock_actual,lote,location")
       .eq("codproducto", codproducto)
       .in("idempresa", clientes)
     const stockVivo = (saldoRows ?? []).reduce((s: number, r: any) => s + (Number(r.stock_actual) || 0), 0)
+    // El kardex real vive POR LOTE (cada lote tiene su propia ubicación y su
+    // propia trazabilidad) — el saldo corrido se calcula por (lote,
+    // ubicación), no mezclado entre lotes del mismo producto.
+    const stockVivoPorLote: Record<string, number> = {}
+    for (const r of saldoRows ?? []) {
+      const key = `${r.lote ?? ""}||${r.location ?? ""}`
+      stockVivoPorLote[key] = (stockVivoPorLote[key] || 0) + (Number(r.stock_actual) || 0)
+    }
 
-    // Anclas físicas reales (cierres mensuales congelados, mismo mecanismo
-    // que usa getKardexInventario para su columna "Saldo inicial"): si un mes
-    // quedó cerrado con conteo físico real para este producto, ESE valor es
-    // la verdad — no la suma del kardex crudo (que puede arrastrar errores
-    // de digitación). Solo aplica con un proyecto puntual seleccionado.
-    let anclas: Array<{ mes: string; valor: number }> = []
+    // Anclas físicas reales POR LOTE: si el Acta de Cruce ya congeló la
+    // apertura de un mes para este producto (mismo mecanismo, ver
+    // getOrCrearActaCruce), ESE valor por lote es la verdad — no la suma del
+    // kardex crudo (que puede arrastrar errores de digitación). Solo aplica
+    // con un proyecto puntual seleccionado.
+    const anclasPorLote: Record<string, Array<{ mes: string; valor: number }>> = {}
     if (proyectoId) {
       try {
-        const { data: cierres } = await supabase
-          .from("sig_inventario_cierre_mes")
-          .select("mes, fisico_snapshot")
+        const { data: actas } = await supabase
+          .from("sig_inventario_acta_cruce")
+          .select("mes, sig_inventario_acta_cruce_detalle(lote,location,sistema_original)")
           .eq("proyecto_id", proyectoId)
-          .not("fisico_snapshot", "is", null)
           .order("mes", { ascending: true })
-        anclas = (cierres ?? [])
-          .map((c: any) => ({ mes: c.mes, valor: c.fisico_snapshot?.[codproducto] }))
-          .filter((a: any) => a.valor !== undefined && a.valor !== null)
-          .map((a: any) => ({ mes: a.mes, valor: Number(a.valor) }))
-      } catch { /* tabla aún no creada o sin cierres con físico */ }
+        for (const a of actas ?? []) {
+          for (const d of a.sig_inventario_acta_cruce_detalle ?? []) {
+            if (d.codproducto && d.codproducto !== codproducto) continue
+            const key = `${d.lote ?? ""}||${d.location ?? ""}`
+            ;(anclasPorLote[key] = anclasPorLote[key] || []).push({ mes: a.mes, valor: Number(d.sistema_original) || 0 })
+          }
+        }
+      } catch { /* tabla aún no creada o sin actas de cruce */ }
     }
 
     const aprobado = (r: any) => String(r.status || "").toLowerCase().startsWith("aprob")
     const mesDeFila = (r: any) => { const c = String(r.creado || ""); return c.length >= 7 ? c.slice(0, 7) : null }
     const cronologico = [...(rows ?? [])].sort((a: any, b: any) => String(a.creado || "").localeCompare(String(b.creado || "")))
 
-    // Para cada ancla, el índice de su ÚLTIMA fila con mes <= mes de la ancla
-    // (el punto donde el saldo corrido se fuerza al valor congelado real).
-    const idxDeAncla: number[] = anclas.map((a) => {
-      let idx = -1
-      for (let i = 0; i < cronologico.length; i++) {
-        const m = mesDeFila(cronologico[i])
-        if (m && m <= a.mes) idx = i
-      }
-      return idx
-    })
-    // Si alguna ancla no tiene fila aplicable (toda la historia es posterior
-    // a ese cierre), se arranca ya en su valor en vez de en 0.
-    let saldoAcumulado = 0
-    for (let k = 0; k < anclas.length; k++) if (idxDeAncla[k] === -1) saldoAcumulado = anclas[k].valor
-    if (!anclas.length) {
-      // Sin ninguna ancla física disponible: back-solve clásico desde el
-      // stock vivo (mismo criterio de siempre — rechazado/paralelo no mueve saldo).
-      const sumaDeltas = cronologico.reduce((s: number, r: any) => {
-        if (!aprobado(r)) return s
-        const c = Math.abs(Number(r.cantidad) || 0)
-        return s + (r.tipomov === "Entrada" ? c : -c)
-      }, 0)
-      saldoAcumulado = stockVivo - sumaDeltas
+    // Agrupa la historia por (lote, ubicación) — cada grupo lleva su PROPIO
+    // saldo corrido, independiente de los demás lotes del mismo producto.
+    const porLote: Record<string, any[]> = {}
+    for (const r of cronologico) {
+      const key = `${r.lote ?? ""}||${r.location ?? ""}`
+      ;(porLote[key] = porLote[key] || []).push(r)
     }
 
     const saldosPorFila = new Map<any, { antes: number; despues: number }>()
-    for (let i = 0; i < cronologico.length; i++) {
-      const r = cronologico[i]
-      const antes = saldoAcumulado
-      if (aprobado(r)) {
-        const c = Math.abs(Number(r.cantidad) || 0)
-        saldoAcumulado += r.tipomov === "Entrada" ? c : -c
+    for (const [key, filasLote] of Object.entries(porLote)) {
+      const anclas = anclasPorLote[key] ?? []
+      const stockVivoLote = stockVivoPorLote[key] ?? 0
+
+      // Para cada ancla, el índice de su ÚLTIMA fila con mes <= mes de la
+      // ancla (el punto donde el saldo se fuerza al valor congelado real).
+      const idxDeAncla: number[] = anclas.map((a) => {
+        let idx = -1
+        for (let i = 0; i < filasLote.length; i++) {
+          const m = mesDeFila(filasLote[i])
+          if (m && m <= a.mes) idx = i
+        }
+        return idx
+      })
+      let saldoAcumulado = 0
+      for (let k = 0; k < anclas.length; k++) if (idxDeAncla[k] === -1) saldoAcumulado = anclas[k].valor
+      if (!anclas.length) {
+        // Sin ancla física para este lote: back-solve clásico desde su stock
+        // vivo (mismo criterio de siempre — rechazado/paralelo no mueve saldo).
+        const sumaDeltas = filasLote.reduce((s: number, r: any) => {
+          if (!aprobado(r)) return s
+          const c = Math.abs(Number(r.cantidad) || 0)
+          return s + (r.tipomov === "Entrada" ? c : -c)
+        }, 0)
+        saldoAcumulado = stockVivoLote - sumaDeltas
       }
-      for (let k = 0; k < anclas.length; k++) if (idxDeAncla[k] === i) saldoAcumulado = anclas[k].valor
-      saldosPorFila.set(r, { antes: Math.round(antes), despues: Math.round(saldoAcumulado) })
-    }
-    // Ajuste final: el saldo de HOY es el stock vivo real (verdad física en
-    // tiempo real) — cualquier desfase residual desde la última ancla (o
-    // desde siempre, si no hay ninguna) se absorbe en la última fila, mismo
-    // criterio de cuadre exacto que usa la Conciliación Mensual.
-    if (cronologico.length) {
-      const ultima = cronologico[cronologico.length - 1]
-      const previa = saldosPorFila.get(ultima)!
-      saldosPorFila.set(ultima, { antes: previa.antes, despues: Math.round(stockVivo) })
+
+      for (let i = 0; i < filasLote.length; i++) {
+        const r = filasLote[i]
+        const antes = saldoAcumulado
+        if (aprobado(r)) {
+          const c = Math.abs(Number(r.cantidad) || 0)
+          saldoAcumulado += r.tipomov === "Entrada" ? c : -c
+        }
+        for (let k = 0; k < anclas.length; k++) if (idxDeAncla[k] === i) saldoAcumulado = anclas[k].valor
+        saldosPorFila.set(r, { antes: Math.round(antes), despues: Math.round(saldoAcumulado) })
+      }
+      // Ajuste final: el saldo de HOY de ESTE lote es su stock vivo real
+      // (verdad física en tiempo real) — cualquier desfase residual desde la
+      // última ancla se absorbe en su última fila, mismo criterio de cuadre
+      // exacto que usa la Conciliación Mensual.
+      if (filasLote.length) {
+        const ultima = filasLote[filasLote.length - 1]
+        const previa = saldosPorFila.get(ultima)!
+        saldosPorFila.set(ultima, { antes: previa.antes, despues: Math.round(stockVivoLote) })
+      }
     }
 
     const movs = (rows ?? []).filter((r: any) => (!anio || yr(r.creado) === anio) && (!mes || mo(r.creado) === mes))
@@ -2603,7 +2624,24 @@ export async function getMovimientosProducto(
     // congelado real (`fisico_snapshot`), o el borde es HOY (stock vivo,
     // siempre verdad). Mismo criterio que ya usa la tabla Kardex.
     const mesSeleccionado = anio && mes ? `${anio}-${String(mes).padStart(2, "0")}` : null
-    const anclaPorMes = new Map(anclas.map((a) => [a.mes, a.valor]))
+    // Ancla POR PRODUCTO (agregado, sig_inventario_cierre_mes.fisico_snapshot)
+    // — concepto distinto a las anclas por lote de arriba: esta solo verifica
+    // si el borde del periodo tiene un cierre físico real detrás.
+    let anclasProducto: Array<{ mes: string; valor: number }> = []
+    if (proyectoId) {
+      try {
+        const { data: cierres } = await supabase
+          .from("sig_inventario_cierre_mes")
+          .select("mes, fisico_snapshot")
+          .eq("proyecto_id", proyectoId)
+          .not("fisico_snapshot", "is", null)
+        anclasProducto = (cierres ?? [])
+          .map((c: any) => ({ mes: c.mes, valor: c.fisico_snapshot?.[codproducto] }))
+          .filter((a: any) => a.valor !== undefined && a.valor !== null)
+          .map((a: any) => ({ mes: a.mes, valor: Number(a.valor) }))
+      } catch { /* tabla aún no creada o sin cierres con físico */ }
+    }
+    const anclaPorMes = new Map(anclasProducto.map((a) => [a.mes, a.valor]))
     let mesAnteriorKey: string | null = null
     if (mesSeleccionado) {
       const d = new Date(Number(anio), Number(mes) - 1, 1)
@@ -2611,18 +2649,20 @@ export async function getMovimientosProducto(
       mesAnteriorKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`
     }
 
+    // Estos bordes son un AGREGADO por producto (para el resumen "empecé con
+    // X, quedo con Y") — concepto aparte del saldo por fila de arriba (que
+    // ahora es por lote). Se leen directo del stock vivo / ancla por
+    // producto, nunca del mapa por lote.
     const finalEsHoy = !mesSeleccionado || (cronologicoFiltrado.length > 0 && cronologico.length > 0 && cronologicoFiltrado[cronologicoFiltrado.length - 1] === cronologico[cronologico.length - 1])
     const finalVerificado = finalEsHoy || (mesSeleccionado ? anclaPorMes.has(mesSeleccionado) : false)
-    const saldoFinalPeriodo = !cronologicoFiltrado.length
-      ? stockVivo // sin movimientos en el periodo: no cambió, el stock vivo de hoy es la verdad
-      : finalVerificado
-        ? saldosPorFila.get(cronologicoFiltrado[cronologicoFiltrado.length - 1])?.despues ?? stockVivo
-        : undefined
+    const saldoFinalPeriodo = !finalVerificado
+      ? undefined
+      : finalEsHoy
+        ? stockVivo
+        : anclaPorMes.get(mesSeleccionado!)
 
     const inicialVerificado = !!(mesAnteriorKey && anclaPorMes.has(mesAnteriorKey))
-    const saldoInicialPeriodo = inicialVerificado
-      ? (cronologicoFiltrado.length ? saldosPorFila.get(cronologicoFiltrado[0])?.antes ?? undefined : anclaPorMes.get(mesAnteriorKey!))
-      : undefined
+    const saldoInicialPeriodo = inicialVerificado ? anclaPorMes.get(mesAnteriorKey!) : undefined
 
     return { success: true, data, saldoInicialPeriodo, saldoFinalPeriodo }
   } catch (err: any) {
