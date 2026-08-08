@@ -2159,8 +2159,8 @@ export async function getPanelInventarioLIP(
     const saldoFisico = saldosRows.reduce((s, r) => s + (Number(r.stock_actual) || 0), 0)
     const skusConStock = new Set(saldosRows.filter((r) => (Number(r.stock_actual) || 0) > 0).map((r) => r.codproducto)).size
 
-    const yr = (s: any) => (s ? String(s).slice(0, 4) : null)
-    const mo = (s: any) => (s ? String(s).slice(5, 7) : null)
+    const yr = (s: any) => (s ? fechaColombiaDe(s).slice(0, 4) : null)
+    const mo = (s: any) => (s ? fechaColombiaDe(s).slice(5, 7) : null)
     const has = (v: any, t: string) => String(v || "").toLowerCase().includes(t)
     // Años disponibles.
     const aniosSet = new Set<string>()
@@ -2459,8 +2459,11 @@ export async function getMovimientosProducto(
     const supabase: any = await getSupabaseAdmin()
     const clientes: number[] = proyectoId ? [proyectoId] : SIG_CLIENTES_LIP
     const has = (v: any, t: string) => String(v || "").toLowerCase().includes(t)
-    const yr = (s: any) => (s ? String(s).slice(0, 4) : null)
-    const mo = (s: any) => (s ? String(s).slice(5, 7) : null)
+    // Fecha CALENDARIO en hora Colombia (invtrans.creado está en UTC, 5h
+    // adelante) — un movimiento de las 8pm cae en el día/mes real de
+    // Colombia, no en el que marca el timestamp UTC crudo.
+    const yr = (s: any) => (s ? fechaColombiaDe(s).slice(0, 4) : null)
+    const mo = (s: any) => (s ? fechaColombiaDe(s).slice(5, 7) : null)
     const { data: rows, error } = await supabase
       .from("invtrans")
       .select("tipomov,origen,cantidad,creado,creadopor,ocargue,pdf,status,lote,location")
@@ -2510,7 +2513,7 @@ export async function getMovimientosProducto(
     }
 
     const aprobado = (r: any) => String(r.status || "").toLowerCase().startsWith("aprob")
-    const mesDeFila = (r: any) => { const c = String(r.creado || ""); return c.length >= 7 ? c.slice(0, 7) : null }
+    const mesDeFila = (r: any) => (r.creado ? fechaColombiaDe(r.creado).slice(0, 7) : null)
     const cronologico = [...(rows ?? [])].sort((a: any, b: any) => String(a.creado || "").localeCompare(String(b.creado || "")))
 
     // Agrupa la historia por (lote, ubicación) — cada grupo lleva su PROPIO
@@ -2683,8 +2686,8 @@ export async function getKardexInventario(
     const supabase: any = await getSupabaseAdmin()
     const clientes: number[] = proyectoId ? [proyectoId] : SIG_CLIENTES_LIP
     const has = (v: any, t: string) => String(v || "").toLowerCase().includes(t)
-    const yr = (s: any) => (s ? String(s).slice(0, 4) : null)
-    const mo = (s: any) => (s ? String(s).slice(5, 7) : null)
+    const yr = (s: any) => (s ? fechaColombiaDe(s).slice(0, 4) : null)
+    const mo = (s: any) => (s ? fechaColombiaDe(s).slice(5, 7) : null)
 
     // Movimientos (paginado)
     const inv: any[] = []
@@ -4223,8 +4226,9 @@ export async function getConciliacionMensualInventario(
     const mesDe = (oc: any, creado: any): string | null => {
       const m = RE_ORDEN.exec(String(oc || "").trim())
       if (m) return `${m[1]}-${m[2]}`
-      const c = String(creado || "")
-      return c.length >= 7 ? c.slice(0, 7) : null
+      // Fallback (sin código de orden estándar, ej. ajustes manuales): hora
+      // Colombia real, no el timestamp UTC crudo (5h adelante).
+      return creado ? fechaColombiaDe(creado).slice(0, 7) : null
     }
 
     // ============================================================
@@ -4563,6 +4567,18 @@ function mesAnteriorDe(mes: string): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`
 }
 
+// `invtrans.creado` se guarda en UTC. Colombia es UTC-5: una transacción
+// registrada a las 8pm del 31-jul (hora Colombia) queda como "2026-08-01"
+// en UTC. Comparar por el string crudo de `creado` clasifica mal esas
+// transacciones como "del día del corte" cuando en realidad son del día
+// anterior — causó un hueco real en la Acta de Cruce de ID2 (confirmado
+// con datos reales 2026-08-08). Toda comparación de fecha-calendario contra
+// el corte debe pasar por esta función, no por `String(creado).slice(0,10)`.
+function fechaColombiaDe(iso: string): string {
+  if (!iso) return ""
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso))
+}
+
 /** Trae el acta de cruce del mes; si no existe, la crea (por lote/ubicación) desde el físico congelado del mes anterior. */
 export async function getOrCrearActaCruce(
   proyectoId: number,
@@ -4593,7 +4609,7 @@ export async function getOrCrearActaCruce(
     const mesAnterior = mesAnteriorDe(mes)
     const { data: cierre } = await supabase
       .from("sig_inventario_cierre_mes")
-      .select("id, fisico_snapshot, cerrado_por")
+      .select("id, fisico_snapshot, fisico_congelado, cerrado_por")
       .eq("proyecto_id", proyectoId)
       .eq("mes", mesAnterior)
       .maybeSingle()
@@ -4633,10 +4649,16 @@ export async function getOrCrearActaCruce(
 
     // Movimientos APROBADOS desde el corte (a retroceder), misma granularidad.
     // El día del corte es el propio inventario físico ("a primera hora"): una
-    // ENTRADA fechada ese mismo día es el registro en sistema de algo que ya
-    // existía al corte (ej. producción real de julio digitada el 1-ago) — se
-    // trata como apertura, no se retrocede. Una SALIDA siempre es movimiento
-    // real (un despacho es un despacho, sin importar el día).
+    // ENTRADA fechada ese mismo día (HORA COLOMBIA — invtrans.creado está en
+    // UTC, 5h adelante; una transacción de las 8pm del 31-jul queda como
+    // "2026-08-01" en UTC y se clasificaba mal como "del corte") es el
+    // registro en sistema de algo que ya existía al corte — se trata como
+    // apertura, no se retrocede. Una SALIDA siempre es movimiento real (un
+    // despacho es un despacho, sin importar el día). Se trae con 1 día de
+    // margen en la consulta (UTC) para no perder filas por el corrimiento de
+    // huso horario, y se filtra la fecha real en JS con fechaColombiaDe.
+    const corteConsulta = new Date(`${corte}T00:00:00Z`)
+    corteConsulta.setUTCDate(corteConsulta.getUTCDate() - 1)
     const deltaCorte: Record<string, number> = {}
     let from2 = 0
     while (true) {
@@ -4644,11 +4666,13 @@ export async function getOrCrearActaCruce(
         .from("invtrans")
         .select("codproducto,lote,location,tipomov,cantidad,status,creado")
         .eq("idempresa", proyectoId)
-        .gte("creado", corte)
+        .gte("creado", corteConsulta.toISOString())
         .range(from2, from2 + 999)
       for (const r of data ?? []) {
         if (!String(r.status || "").toLowerCase().startsWith("aprob")) continue
-        const esEntradaDelDiaDelCorte = r.tipomov === "Entrada" && String(r.creado || "").slice(0, 10) === corte
+        const fechaLocal = fechaColombiaDe(r.creado)
+        if (fechaLocal < corte) continue // cayó en el margen de 1 día, es anterior al corte real
+        const esEntradaDelDiaDelCorte = r.tipomov === "Entrada" && fechaLocal === corte
         if (esEntradaDelDiaDelCorte) continue
         const key = `${r.codproducto}||${r.lote ?? ""}||${r.location ?? ""}`
         const c = Math.abs(Number(r.cantidad) || 0)
@@ -4739,11 +4763,22 @@ export async function getOrCrearActaCruce(
     // para mantener limpio el mismo mecanismo en ambos casos.
     const agregadoPorProducto: Record<string, number> = {}
     for (const f of filas) agregadoPorProducto[f.codproducto] = Math.round(((agregadoPorProducto[f.codproducto] ?? 0) + f.sistema_original) * 100) / 100
+    // `fisico_congelado` (el TOTAL) es lo que lee getConciliacionMensualInventario
+    // para "saldoFinal"/"Ajuste y depuración" — si solo se actualiza
+    // fisico_snapshot (el detalle por producto) sin este total, Conciliación
+    // Mensual sigue mostrando el ajuste viejo aunque el detalle ya esté
+    // corregido (bug real encontrado 2026-08-08 con datos de ID2). Con
+    // archivo real (ID3), el total NUNCA se toca — es el verificado; solo se
+    // recalcula para proyectos calculados (sin archivo externo que proteger).
+    const totalCongelado =
+      origen === "archivo_fisico"
+        ? Number(cierre?.fisico_congelado) || 0
+        : Math.round(Object.values(agregadoPorProducto).reduce((s, v) => s + v, 0) * 100) / 100
     const cierreId = cierre?.id
     if (cierreId) {
       await supabase
         .from("sig_inventario_cierre_mes")
-        .update({ fisico_snapshot: agregadoPorProducto, updated_at: new Date().toISOString() })
+        .update({ fisico_snapshot: agregadoPorProducto, fisico_congelado: totalCongelado, updated_at: new Date().toISOString() })
         .eq("id", cierreId)
     }
 
@@ -4806,7 +4841,7 @@ export async function corregirLineaActaCruce(
     // 1) Registra la corrección por el formulario sancionado.
     const direccion = diferencia < 0 ? "salida" : "ingreso"
     const reg = await registrarAjusteInventario(acta.proyecto_id, {
-      fecha: new Date().toISOString().slice(0, 10),
+      fecha: fechaColombiaDe(new Date().toISOString()),
       codproducto: det.codproducto,
       producto: det.producto,
       location,
@@ -4850,14 +4885,18 @@ export async function corregirLineaActaCruce(
 
     const { data: cierre } = await supabase
       .from("sig_inventario_cierre_mes")
-      .select("id, fisico_snapshot")
+      .select("id, fisico_snapshot, fisico_congelado")
       .eq("proyecto_id", acta.proyecto_id)
       .eq("mes", mesAnteriorDe(acta.mes))
       .maybeSingle()
     if (cierre) {
       const snap = { ...(cierre.fisico_snapshot ?? {}) }
+      const anterior = Number(snap[det.codproducto]) || 0
       snap[det.codproducto] = Math.round(nuevoAgregado * 100) / 100
-      await supabase.from("sig_inventario_cierre_mes").update({ fisico_snapshot: snap, updated_at: new Date().toISOString() }).eq("id", cierre.id)
+      // El TOTAL también se ajusta por la misma diferencia — es el que lee
+      // getConciliacionMensualInventario (Ajuste y depuración).
+      const totalNuevo = Math.round(((Number(cierre.fisico_congelado) || 0) - anterior + snap[det.codproducto]) * 100) / 100
+      await supabase.from("sig_inventario_cierre_mes").update({ fisico_snapshot: snap, fisico_congelado: totalNuevo, updated_at: new Date().toISOString() }).eq("id", cierre.id)
     }
 
     return { success: true }
