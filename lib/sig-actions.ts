@@ -3963,7 +3963,9 @@ export async function getPanelOperacionLIP(
         valorPorOrden[oc] = Math.round(v)
       }
     }
-    const hoyTs = Date.parse(new Date().toISOString().slice(0, 10))
+    // "Hoy" en día calendario de COLOMBIA (en UTC, de 7pm a medianoche ya
+    // sería "mañana" y los días de pendiente saldrían inflados en 1).
+    const hoyTs = Date.parse(fechaColombiaDe(new Date().toISOString()))
     const pendientesFact = pendRows
       .map((r) => {
         const fc = r.fechacargue || r.fechaorden
@@ -4107,7 +4109,8 @@ export async function getFacturacionPorProyecto(
         valorPorOrden[oc] = Math.round(v)
       }
     }
-    const hoyTs = Date.parse(new Date().toISOString().slice(0, 10))
+    // "Hoy" en día calendario de COLOMBIA (mismo criterio que pendientesFact).
+    const hoyTs = Date.parse(fechaColombiaDe(new Date().toISOString()))
     const map: Record<number, any> = {}
     for (const r of facturables) {
       const id = r.idempresa

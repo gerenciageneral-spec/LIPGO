@@ -188,7 +188,9 @@ export function PanelInventarioLIP() {
       return
     }
     setLoadingCruce(true)
-    const mesActualCruce = new Date().toISOString().slice(0, 7)
+    // Mes calendario de COLOMBIA — en UTC, desde las 7pm del último día del
+    // mes se crearía el acta del mes siguiente antes de tiempo.
+    const mesActualCruce = fechaColombiaUI(new Date().toISOString()).slice(0, 7)
     const r = await getOrCrearActaCruce(selectedEmpresaId, mesActualCruce)
     if (r.success) setCruce({ acta: r.acta, detalle: r.detalle ?? [] })
     else {
@@ -462,7 +464,7 @@ export function PanelInventarioLIP() {
   const k = data?.kpis
   const colorExact = (v: number) => (v >= 98 ? SST_TOKENS.ok : v >= 95 ? SST_TOKENS.warn : SST_TOKENS.bad)
   const fmt = (n: number) => (n ?? 0).toLocaleString("es-CO")
-  const mesActual = new Date().toISOString().slice(0, 7) // "AAAA-MM" — solo este mes queda pendiente
+  const mesActual = fechaColombiaUI(new Date().toISOString()).slice(0, 7) // "AAAA-MM" hora Colombia — solo este mes queda pendiente
 
   return (
     <div className="space-y-5">
