@@ -2469,10 +2469,6 @@ export async function getMovimientosProducto(
 
     // Saldo corrido — se calcula sobre TODA la historia (antes del filtro
     // año/mes de abajo) para que sea correcto incluso mirando un mes cerrado.
-    // Ancla: el stock vivo (saldoinvdetalle, la verdad física) menos la suma
-    // de movimientos APROBADOS (mismo criterio que getConciliacionMensualInventario:
-    // rechazado/paralelo no mueve saldo) da el saldo de apertura; desde ahí se
-    // recorre cronológicamente asignando saldoAntes/saldoDespues a cada fila.
     const { data: saldoRows } = await supabase
       .from("saldoinvdetalle")
       .select("stock_actual")
@@ -2480,22 +2476,75 @@ export async function getMovimientosProducto(
       .in("idempresa", clientes)
     const stockVivo = (saldoRows ?? []).reduce((s: number, r: any) => s + (Number(r.stock_actual) || 0), 0)
 
+    // Anclas físicas reales (cierres mensuales congelados, mismo mecanismo
+    // que usa getKardexInventario para su columna "Saldo inicial"): si un mes
+    // quedó cerrado con conteo físico real para este producto, ESE valor es
+    // la verdad — no la suma del kardex crudo (que puede arrastrar errores
+    // de digitación). Solo aplica con un proyecto puntual seleccionado.
+    let anclas: Array<{ mes: string; valor: number }> = []
+    if (proyectoId) {
+      try {
+        const { data: cierres } = await supabase
+          .from("sig_inventario_cierre_mes")
+          .select("mes, fisico_snapshot")
+          .eq("proyecto_id", proyectoId)
+          .not("fisico_snapshot", "is", null)
+          .order("mes", { ascending: true })
+        anclas = (cierres ?? [])
+          .map((c: any) => ({ mes: c.mes, valor: c.fisico_snapshot?.[codproducto] }))
+          .filter((a: any) => a.valor !== undefined && a.valor !== null)
+          .map((a: any) => ({ mes: a.mes, valor: Number(a.valor) }))
+      } catch { /* tabla aún no creada o sin cierres con físico */ }
+    }
+
+    const aprobado = (r: any) => String(r.status || "").toLowerCase().startsWith("aprob")
+    const mesDeFila = (r: any) => { const c = String(r.creado || ""); return c.length >= 7 ? c.slice(0, 7) : null }
     const cronologico = [...(rows ?? [])].sort((a: any, b: any) => String(a.creado || "").localeCompare(String(b.creado || "")))
-    const sumaDeltas = cronologico.reduce((s: number, r: any) => {
-      if (!String(r.status || "").toLowerCase().startsWith("aprob")) return s
-      const c = Math.abs(Number(r.cantidad) || 0)
-      return s + (r.tipomov === "Entrada" ? c : -c)
-    }, 0)
-    let saldoAcumulado = stockVivo - sumaDeltas
+
+    // Para cada ancla, el índice de su ÚLTIMA fila con mes <= mes de la ancla
+    // (el punto donde el saldo corrido se fuerza al valor congelado real).
+    const idxDeAncla: number[] = anclas.map((a) => {
+      let idx = -1
+      for (let i = 0; i < cronologico.length; i++) {
+        const m = mesDeFila(cronologico[i])
+        if (m && m <= a.mes) idx = i
+      }
+      return idx
+    })
+    // Si alguna ancla no tiene fila aplicable (toda la historia es posterior
+    // a ese cierre), se arranca ya en su valor en vez de en 0.
+    let saldoAcumulado = 0
+    for (let k = 0; k < anclas.length; k++) if (idxDeAncla[k] === -1) saldoAcumulado = anclas[k].valor
+    if (!anclas.length) {
+      // Sin ninguna ancla física disponible: back-solve clásico desde el
+      // stock vivo (mismo criterio de siempre — rechazado/paralelo no mueve saldo).
+      const sumaDeltas = cronologico.reduce((s: number, r: any) => {
+        if (!aprobado(r)) return s
+        const c = Math.abs(Number(r.cantidad) || 0)
+        return s + (r.tipomov === "Entrada" ? c : -c)
+      }, 0)
+      saldoAcumulado = stockVivo - sumaDeltas
+    }
+
     const saldosPorFila = new Map<any, { antes: number; despues: number }>()
-    for (const r of cronologico) {
+    for (let i = 0; i < cronologico.length; i++) {
+      const r = cronologico[i]
       const antes = saldoAcumulado
-      const aprobado = String(r.status || "").toLowerCase().startsWith("aprob")
-      if (aprobado) {
+      if (aprobado(r)) {
         const c = Math.abs(Number(r.cantidad) || 0)
         saldoAcumulado += r.tipomov === "Entrada" ? c : -c
       }
+      for (let k = 0; k < anclas.length; k++) if (idxDeAncla[k] === i) saldoAcumulado = anclas[k].valor
       saldosPorFila.set(r, { antes: Math.round(antes), despues: Math.round(saldoAcumulado) })
+    }
+    // Ajuste final: el saldo de HOY es el stock vivo real (verdad física en
+    // tiempo real) — cualquier desfase residual desde la última ancla (o
+    // desde siempre, si no hay ninguna) se absorbe en la última fila, mismo
+    // criterio de cuadre exacto que usa la Conciliación Mensual.
+    if (cronologico.length) {
+      const ultima = cronologico[cronologico.length - 1]
+      const previa = saldosPorFila.get(ultima)!
+      saldosPorFila.set(ultima, { antes: previa.antes, despues: Math.round(stockVivo) })
     }
 
     const movs = (rows ?? []).filter((r: any) => (!anio || yr(r.creado) === anio) && (!mes || mo(r.creado) === mes))
@@ -2539,11 +2588,22 @@ export async function getMovimientosProducto(
       .sort((a: any, b: any) => String(b.fecha || "").localeCompare(String(a.fecha || "")))
 
     // Bordes del periodo visible (para el resumen "empecé con X, quedo con Y").
-    // data ya está ordenada desc por fecha: [0] = más reciente, [ultimo] = más antiguo.
-    const saldoInicialPeriodo = data.length ? data[data.length - 1].saldoAntes : stockVivo
-    const saldoFinalPeriodo = data.length ? data[0].saldoDespues : stockVivo
+    // Se extraen del MISMO array cronológico (único, ascendente) usado para
+    // calcular saldosPorFila — no de `data` (reordenada desc por fecha, donde
+    // empates de fecha pueden quedar en otro orden y desalinear el borde).
+    const cronologicoFiltrado = cronologico.filter((r: any) => (!anio || yr(r.creado) === anio) && (!mes || mo(r.creado) === mes))
+    const saldoFinalPeriodo = cronologicoFiltrado.length ? (saldosPorFila.get(cronologicoFiltrado[cronologicoFiltrado.length - 1])?.despues ?? stockVivo) : stockVivo
+    // "Saldo inicial" solo se expone como número verificado cuando hay un
+    // proyecto+año+mes puntual (mismo criterio que la columna "Saldo inicial"
+    // de la tabla Kardex, getKardexInventario) — sin eso, "empezó con X" no
+    // tiene una verdad física contra la cual compararse (podría confundirse
+    // con un conteo real, como ya pasó). undefined → la UI muestra "—".
+    const saldoInicialPeriodo =
+      proyectoId && anio && mes && cronologicoFiltrado.length
+        ? saldosPorFila.get(cronologicoFiltrado[0])?.antes ?? stockVivo
+        : undefined
 
-    return { success: true, data, saldoInicialPeriodo: saldoInicialPeriodo ?? undefined, saldoFinalPeriodo: saldoFinalPeriodo ?? undefined }
+    return { success: true, data, saldoInicialPeriodo, saldoFinalPeriodo: saldoFinalPeriodo ?? undefined }
   } catch (err: any) {
     return { success: false, data: [], error: err?.message || "Error desconocido" }
   }
