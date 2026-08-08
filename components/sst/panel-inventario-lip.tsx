@@ -1235,7 +1235,7 @@ export function PanelInventarioLIP() {
                                   <td className="px-2 py-1.5 text-xs">{String(mv.fecha || "").slice(0, 10)}</td>
                                   <td className="px-2 py-1.5"><Badge variant="outline" className="text-[10px]">{mv.tipo}</Badge></td>
                                   <td className="px-2 py-1.5 text-right font-medium tabular-nums" style={{ color: SST_TOKENS.ok }}>{mv.tipomov === "Entrada" ? fmt(mv.cantidad) : ""}</td>
-                                  <td className="px-2 py-1.5 text-right font-medium tabular-nums" style={{ color: SST_TOKENS.navy }}>{mv.tipomov !== "Entrada" ? fmt(mv.cantidad) : ""}</td>
+                                  <td className="px-2 py-1.5 text-right font-medium tabular-nums" style={{ color: SST_TOKENS.bad }}>{mv.tipomov !== "Entrada" ? fmt(mv.cantidad) : ""}</td>
                                   <td className="px-2 py-1.5 text-right tabular-nums" title={mv.afectaSaldo ? undefined : "No aprobado: no afectó el saldo"}>
                                     {mv.afectaSaldo ? (
                                       <span className="font-semibold">{fmt(mv.saldoDespues)}</span>
