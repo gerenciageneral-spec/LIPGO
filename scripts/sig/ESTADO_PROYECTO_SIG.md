@@ -164,6 +164,42 @@ Carpeta `scripts/sig/`. Ver `_LEEME_EJECUTAR_EN_SUPABASE.md`. Idempotentes.
 - Permisos SIG quedan **agrupados bajo sig_matriz** (no granular) — así está concebido.
 - Un solo formulario para mover/ajustar inventario (no dos). Clave por responsable (2323 Gerencia).
 
+## 6j. Sesión 2026-08-08 — Físico congelado al cierre (SQL 46 conectado), validado con inventario real de ID3
+
+- **Comparativo con inventario físico real** (archivo del cliente, 31-jul-2026, ID3/Cedi Funza,
+  66 productos): **99,87% de exactitud** — Físico=49.905 vs lo que el sistema mostraba ESE DÍA
+  ("inventario LIP")=49.969. Confirma que el criterio de conciliación (§6f/§6e) sigue siendo
+  correcto en vivo.
+- **HALLAZGO — el cuadre de un mes YA CERRADO se sigue moviendo con la operación de los días
+  siguientes.** `getConciliacionMensualInventario` compara el kardex contra `saldoinvdetalle`
+  EN VIVO para la merma de proceso; verificado con datos crudos que ventas reales de agosto contra
+  LOTES fechados en julio (ej. PT LA NIEVE 25LB, lotes 20260717/18/22/24) se cuelan como "merma de
+  julio" cada vez que se recalcula. Confirmado empíricamente: dos corridas del mismo cálculo,
+  minutos aparte, dieron números distintos para julio. Es EXACTAMENTE la limitación ya prevista en
+  §6g (SQL 46, "Congelado de físico al cierre") — quedaba pausada/sin conectar.
+- **SQL 46 ya CORRIDO** (las columnas `fisico_congelado`/`fisico_snapshot` ya existían en
+  `sig_inventario_cierre_mes` al verificar, aunque este documento decía "pendiente"). **Ahora SÍ
+  está conectado al cálculo**: si un mes tiene `fisico_congelado`, `getConciliacionMensualInventario`
+  usa ese valor como `saldoFinal` de ese mes (mismo mecanismo de residuo que ya existía para el mes
+  en curso contra el stock vivo, generalizado a cualquier mes cerrado) — el resto de meses/proyectos
+  SIN cierre congelado sigue exactamente igual que siempre (cero cambio de conducta). `getKardexInventario`
+  expone `saldoInicial` por producto (desde el `fisico_snapshot` del mes anterior) cuando se filtra
+  un mes/año/proyecto puntual. `guardarCierreMesInventario` acepta `fisico_congelado`/`fisico_snapshot`
+  opcionales y ya no exige `documento_url` (permite cierres sin acta en PDF).
+- **Julio/2026 (ID3) quedó congelado** con el físico real del archivo: `saldoFinal=49.905`. Agosto
+  arranca desde ahí (`saldoInicial=49.905`) y sigue **100% en vivo** de ahí en adelante — verificado
+  que `saldoFinal` de agosto = `stockActual` (stock vivo) exacto, es decir el inventario de HOY no
+  se tocó. **NO se editó `invtrans` ni `saldoinvdetalle` en ningún momento** (regla firme de §6f/§8).
+- **Pendiente/oportunidad**: hoy este congelado se hizo a mano (script puntual, un solo mes/proyecto).
+  Si se va a repetir cada mes con inventarios físicos reales del cliente, conviene una pantalla en
+  el panel para cargar el conteo (por producto) y persistir el cierre desde ahí, en vez de un script.
+  9 líneas del archivo de ID3 no cruzaron por nombre contra el catálogo (8 con físico=0, bajo
+  impacto; revisar si "PT LA INSUPERABLE REPOSTERIA PREMIUM 12.5 KG" existe en el catálogo con otro
+  nombre).
+- Archivos: `lib/sig-actions.ts` (`getConciliacionMensualInventario`, `getKardexInventario`,
+  `guardarCierreMesInventario`), `components/sst/panel-inventario-lip.tsx` (columna "Saldo inicial"
+  en Kardex). Commit `33bb5dc`.
+
 ## 9. Pendientes / oportunidades
 - Cargar ausentismo histórico de los Cedis si se requiere detalle SST (ausentismosst solo tiene Indupan; el indicador ya usa registroasistencia para los 4).
 - Confirmar planta Cedis si cambia. PT vs SUB por orden (afinar SLA). Órdenes sin cita de vehículo (mejorar cobertura de medición).
