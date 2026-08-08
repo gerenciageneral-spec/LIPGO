@@ -1166,7 +1166,7 @@ export function PanelInventarioLIP() {
 
       {/* DRILL-DOWN: movimientos de un producto con soportes PDF */}
       <Dialog open={!!drill} onOpenChange={(o) => !o && setDrill(null)}>
-        <DialogContent className="max-h-[95vh] max-w-6xl overflow-y-auto">
+        <DialogContent className="max-h-[95vh] w-[95vw] max-w-[95vw] sm:max-w-[95vw] overflow-y-auto">
           {drill && (
             <>
               <DialogHeader><DialogTitle className="text-base">Movimientos · {drill.producto}</DialogTitle></DialogHeader>
@@ -1204,7 +1204,7 @@ export function PanelInventarioLIP() {
                         })
                         .sort((a, b) => String(a.primeraFecha).localeCompare(String(b.primeraFecha)))
                       return listas.map((grupo) => (
-                        <div key={`${grupo.lote}||${grupo.location}`} className="overflow-hidden rounded-md border">
+                        <div key={`${grupo.lote}||${grupo.location}`} className="rounded-md border">
                           <div className="flex flex-wrap items-center justify-between gap-2 bg-muted/40 px-3 py-1.5 text-xs">
                             <span>
                               <span className="font-semibold">Lote {grupo.lote}</span>
@@ -1215,7 +1215,8 @@ export function PanelInventarioLIP() {
                               {" → "}saldo <span className="font-semibold tabular-nums" style={{ color: SST_TOKENS.navy }}>{fmt(grupo.asc[grupo.asc.length - 1]?.saldoDespues)}</span>
                             </span>
                           </div>
-                          <table className="w-full text-sm">
+                          <div className="overflow-x-auto">
+                          <table className="w-full min-w-[900px] text-sm">
                             <thead>
                               <tr className="border-b text-left text-[11px] uppercase text-muted-foreground">
                                 <th className="px-2 py-2">Fecha</th>
@@ -1256,6 +1257,7 @@ export function PanelInventarioLIP() {
                               ))}
                             </tbody>
                           </table>
+                          </div>
                         </div>
                       ))
                     })()}
