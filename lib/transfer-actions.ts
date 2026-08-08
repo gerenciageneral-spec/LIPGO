@@ -272,11 +272,11 @@ export async function updateTransferRequest(
   }
 }
 
-export async function getDispatchTransfers() {
+export async function getDispatchTransfers(selectedEmpresaId?: number) {
   const supabase = await createClient()
 
   try {
-    const empresaId = await getCurrentEmpresaIdForInsert()
+    const empresaId = selectedEmpresaId ?? (await getCurrentEmpresaIdForInsert())
     console.log("[v0] Getting dispatch transfers for empresa:", empresaId)
 
     const { data, error } = await supabase
@@ -364,12 +364,12 @@ export async function getDispatchTransfers() {
   }
 }
 
-export async function generateUnloadOrder(ocargue: string) {
+export async function generateUnloadOrder(ocargue: string, selectedEmpresaId?: number) {
   const supabase = await createClient()
 
   try {
     // Get empresa ID from session
-    const empresaId = await getCurrentEmpresaIdForInsert()
+    const empresaId = selectedEmpresaId ?? (await getCurrentEmpresaIdForInsert())
 
     // Get dispatch transfer details for this ocargue
     const { data: transferDetails, error: transferError } = await supabase

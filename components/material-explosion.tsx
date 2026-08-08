@@ -18,6 +18,7 @@ import {
 } from "@/lib/mrp-actions"
 import type { Product, Material, MaterialExplosion } from "@/lib/mrp-actions"
 import { useToast } from "@/hooks/use-toast"
+import { useAuth } from "@/components/auth-provider"
 import {
   Dialog,
   DialogContent,
@@ -38,6 +39,7 @@ interface MaterialLine {
 }
 
 function MaterialExplosionComponent() {
+  const { selectedEmpresaId } = useAuth()
   const [products, setProducts] = useState<Product[]>([])
   const [materials, setMaterials] = useState<Material[]>([])
   const [selectedProductId, setSelectedProductId] = useState<string>("")
@@ -180,7 +182,7 @@ function MaterialExplosionComponent() {
 
     setSaving(true)
     try {
-      await createMaterialExplosion(Number.parseInt(selectedProductId), selectedProductName, materialLines)
+      await createMaterialExplosion(Number.parseInt(selectedProductId), selectedProductName, materialLines, selectedEmpresaId ?? undefined)
       toast({
         title: "Éxito",
         description: "Explosión de materiales creada correctamente",

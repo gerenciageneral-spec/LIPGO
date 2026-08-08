@@ -109,7 +109,7 @@ export function GenerateDistributionOrders() {
       }
 
       // Fetch vehicles for distribution from citasvehiculos
-      const vehiclesResult = await getVehiclesForDistribution()
+      const vehiclesResult = await getVehiclesForDistribution(selectedEmpresaId ?? undefined)
       if (vehiclesResult.success && vehiclesResult.data) {
         setVehicles(vehiclesResult.data as Vehicle[])
       }
@@ -251,6 +251,7 @@ export function GenerateDistributionOrders() {
       setSaving(true)
 
       const result = await generateDistributionOrder({
+        selectedEmpresaId: selectedEmpresaId ?? undefined,
         fechaDistribucion: orderData.fechaDistribucion,
         placa: orderData.placaVehiculo,
         transporte: orderData.transporte!.nombretransporte,
@@ -285,7 +286,7 @@ export function GenerateDistributionOrders() {
         })
 
         // Reload vehicles to remove the processed one from the list
-        const vehiclesResult = await getVehiclesForDistribution()
+        const vehiclesResult = await getVehiclesForDistribution(selectedEmpresaId ?? undefined)
         if (vehiclesResult.success && vehiclesResult.data) {
           setVehicles(vehiclesResult.data as Vehicle[])
         }

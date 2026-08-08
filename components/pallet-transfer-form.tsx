@@ -11,6 +11,7 @@ import { useToast } from "@/hooks/use-toast"
 import { QRCameraScanner } from "@/components/qr-camera-scanner"
 import { searchPalletByQR } from "@/lib/picking-actions"
 import { getInventoryByPallet, registerPalletTransfer, type PalletTransferLabel } from "@/lib/qr-actions"
+import { useAuth } from "@/components/auth-provider"
 
 // Endpoint de impresión (mismo módulo de Registro de QR estiba).
 const PRINT_API_URL = "https://duct-dose-gentleman.ngrok-free.dev/api/registro-manual"
@@ -26,6 +27,7 @@ interface PalletLine {
 
 export function PalletTransferForm() {
   const { toast } = useToast()
+  const { selectedEmpresaId } = useAuth()
 
   // --- Origen ---
   const [originMode, setOriginMode] = useState<"scan" | "select">("scan")
@@ -207,6 +209,7 @@ export function PalletTransferForm() {
         nombreproducto: selectedOriginLine.nombreproducto,
         lote: selectedOriginLine.lote,
         cantidad: n,
+        selectedEmpresaId: selectedEmpresaId ?? undefined,
       })
 
       if (!result.success) {

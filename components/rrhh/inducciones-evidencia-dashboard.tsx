@@ -27,6 +27,7 @@ import {
   type IntentoInduccion,
 } from "@/lib/inducciones-actions"
 import { generarPdfInduccion } from "@/lib/pdf-induccion"
+import { useAuth } from "@/components/auth-provider"
 
 /**
  * Dashboard de Evidencia de Inducciones.
@@ -37,6 +38,7 @@ import { generarPdfInduccion } from "@/lib/pdf-induccion"
  * nombre/cedula/induccion y contadores de total y aprobadas.
  */
 export default function InduccionesEvidenciaDashboard() {
+  const { selectedEmpresaId } = useAuth()
   const [intentos, setIntentos] = useState<IntentoInduccion[]>([])
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState("")
@@ -69,7 +71,7 @@ export default function InduccionesEvidenciaDashboard() {
     let cancelled = false
     const load = async () => {
       setLoading(true)
-      const result = await getEvidenciaInducciones()
+      const result = await getEvidenciaInducciones(selectedEmpresaId ?? undefined)
       if (!cancelled) {
         setIntentos(result.success ? result.data : [])
         setLoading(false)
@@ -79,7 +81,7 @@ export default function InduccionesEvidenciaDashboard() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [selectedEmpresaId])
 
   // Genera el PDF de evidencia, lo sube al storage, persiste su URL en la
   // evaluacion y lo abre en una nueva pestana.

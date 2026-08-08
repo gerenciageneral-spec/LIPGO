@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { getDispatchTransfers, generateUnloadOrder } from "@/lib/transfer-actions"
 import { toast } from "@/hooks/use-toast"
 import { FileDown } from "lucide-react"
+import { useAuth } from "@/components/auth-provider"
 
 interface DispatchTransfer {
   id: number
@@ -35,6 +36,7 @@ interface OrderDetail {
 }
 
 export function TransferRequestsView() {
+  const { selectedEmpresaId } = useAuth()
   const [transfers, setTransfers] = useState<DispatchTransfer[]>([])
   const [uniqueOrders, setUniqueOrders] = useState<string[]>([])
   const [selectedOrder, setSelectedOrder] = useState<string>("")
@@ -54,8 +56,9 @@ export function TransferRequestsView() {
   const [isGeneratingOrder, setIsGeneratingOrder] = useState(false)
 
   useEffect(() => {
+    if (!selectedEmpresaId) return
     loadTransfers()
-  }, [])
+  }, [selectedEmpresaId])
 
   useEffect(() => {
     if (selectedOrder) {
@@ -107,7 +110,7 @@ export function TransferRequestsView() {
     try {
       setLoading(true)
       console.log("[v0] TransferRequestsView: Loading transfers...")
-      const data = await getDispatchTransfers()
+      const data = await getDispatchTransfers(selectedEmpresaId ?? undefined)
       console.log("[v0] TransferRequestsView: Received data:", data.length, "records")
       console.log("[v0] TransferRequestsView: Sample transfer data:", data[0])
       setTransfers(data)
@@ -149,7 +152,7 @@ export function TransferRequestsView() {
 
     setIsGeneratingOrder(true)
     try {
-      const result = await generateUnloadOrder(selectedOrder)
+      const result = await generateUnloadOrder(selectedOrder, selectedEmpresaId ?? undefined)
       toast({
         title: "Éxito",
         description: `Orden de descargue ${result.ordendecargue} generada exitosamente`,

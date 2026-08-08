@@ -489,6 +489,7 @@ export async function registerPalletTransfer(params: {
   nombreproducto: string
   lote: string
   cantidad: number
+  selectedEmpresaId?: number
 }): Promise<{ success: boolean; message: string; labels: PalletTransferLabel[] }> {
   const supabase = await createClient()
 
@@ -551,7 +552,7 @@ export async function registerPalletTransfer(params: {
     const destExistingStock =
       destAll.find((r) => r.nombreproducto === nombreproducto && r.lote === lote)?.stock_total || 0
 
-    const empresaId = await getCurrentEmpresaIdForInsert()
+    const empresaId = params.selectedEmpresaId ?? (await getCurrentEmpresaIdForInsert())
     const usuario = await getCurrentUsuarioForInsert()
     const now = new Date().toISOString()
 

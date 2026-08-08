@@ -719,7 +719,7 @@ const loadOrders = async () => {
     setShowPickingView(true)
 
     setLoadingPicking(true)
-    const result = await getPickingItems(order.ordendecargue)
+    const result = await getPickingItems(order.ordendecargue, selectedEmpresaId ?? undefined)
 
     if (result.success) {
       // Initialize verificationType and reset QR states

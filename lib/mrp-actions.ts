@@ -85,10 +85,11 @@ export async function createMaterialExplosion(
     materialUnit: string
     consumo: number
   }>,
+  selectedEmpresaId?: number,
 ) {
   const supabase = await createClient()
 
-  const empresaId = await getCurrentEmpresaIdForInsert()
+  const empresaId = selectedEmpresaId ?? (await getCurrentEmpresaIdForInsert())
 
   const explosions = materials.map((material) => ({
     idempresa: empresaId, // Use dynamic empresa ID

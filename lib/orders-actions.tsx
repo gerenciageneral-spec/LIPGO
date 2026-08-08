@@ -2604,6 +2604,7 @@ export async function generateUnloadOrder(orderData: {
 }
 
 export async function generateDistributionOrder(orderData: {
+  selectedEmpresaId?: number
   fechaDistribucion: string
   placa: string
   transporte: string
@@ -2624,8 +2625,8 @@ export async function generateDistributionOrder(orderData: {
   try {
     console.log("[v0] Generating distribution order with data:", orderData)
 
-    // Get current session empresa ID
-    const sessionEmpresaId = await getCurrentEmpresaId()
+    // Empresa del SELECTOR GLOBAL manda (mismo criterio que generateUnloadOrder).
+    const sessionEmpresaId = orderData.selectedEmpresaId ?? (await getCurrentEmpresaId())
 
     if (!sessionEmpresaId) {
       console.error("[v0] Could not get session empresa ID")
@@ -3042,14 +3043,15 @@ export async function saveTolva(tolvaData: {
     producto?: { id: number; nombre: string; peso_unitkg: number }
     cantidad: number
   }>
+  selectedEmpresaId?: number
 }) {
   const supabase = await createClient()
 
   try {
     console.log("[v0] Tolva: Saving tolva with data:", tolvaData)
 
-    // Get current empresa ID
-    const empresaId = await getCurrentEmpresaId()
+    // Empresa del SELECTOR GLOBAL manda.
+    const empresaId = tolvaData.selectedEmpresaId ?? (await getCurrentEmpresaId())
 
     if (!empresaId) {
       console.error("[v0] Could not get session empresa ID")

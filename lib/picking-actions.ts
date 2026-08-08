@@ -613,7 +613,7 @@ export async function assignPersonnelToOrder(
   return { success: true, message: "Personal asignado exitosamente y PDF actualizado" }
 }
 
-export async function getPickingItems(ordenCargue: string) {
+export async function getPickingItems(ordenCargue: string, selectedEmpresaId?: number) {
   const supabase = await createClient()
 
   const { data, error } = await supabase
@@ -627,7 +627,7 @@ export async function getPickingItems(ordenCargue: string) {
     return { success: false, data: [], alternos: [], message: error.message }
   }
 
-  const empresaId = await getCurrentEmpresaIdForInsert()
+  const empresaId = selectedEmpresaId ?? (await getCurrentEmpresaIdForInsert())
 
   // Helper para enriquecer cada fila con su stock disponible.
   const withStock = async (item: any) => {

@@ -437,6 +437,7 @@ export function Tolva({
       } else {
         // Create new tolva
         const result = await saveTolva({
+          selectedEmpresaId: selectedEmpresaId ?? undefined,
           fechaFabricacion: tolvaData.fechaFabricacion,
           lote: tolvaData.lote,
           empleados: tolvaData.empleados,
