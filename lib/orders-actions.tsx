@@ -2409,6 +2409,7 @@ export async function addProductsToOrder(idpedido: number, productsToInsert: any
 }
 
 export async function generateUnloadOrder(orderData: {
+  selectedEmpresaId?: number
   fechaDescargue: string
   placa: string
   transporte: string
@@ -2430,8 +2431,11 @@ export async function generateUnloadOrder(orderData: {
   try {
     console.log("[v0] Generating unload order with data:", orderData)
 
-    // Get current session empresa ID
-    const sessionEmpresaId = await getCurrentEmpresaId()
+    // Empresa del SELECTOR GLOBAL manda (el usuario puede estar digitando una
+    // orden para un proyecto distinto al de su empresa de perfil, ej. terceros
+    // en ID4 mientras su perfil por defecto es otra empresa). Fallback a la
+    // empresa de sesión solo si el selector no vino en el payload.
+    const sessionEmpresaId = orderData.selectedEmpresaId ?? (await getCurrentEmpresaId())
 
     if (!sessionEmpresaId) {
       console.error("[v0] Could not get session empresa ID")

@@ -271,6 +271,7 @@ console.log("[v0] selectedEmpresaId:", selectedEmpresaId)
       setSaving(true)
 
       const result = await generateUnloadOrder({
+        selectedEmpresaId: selectedEmpresaId ?? undefined,
         fechaDescargue: orderData.fechaDescargue,
         placa: orderData.placaVehiculo,
         transporte: orderData.transporte!.nombretransporte,
