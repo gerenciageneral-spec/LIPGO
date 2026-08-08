@@ -746,7 +746,17 @@ export async function generarDistribucionAutomatica(
     const { data: origHeader } = await supabase.from("cabeceraoc").select("*").eq("id", orderId).maybeSingle()
     if (!origHeader) return null
     if (origHeader.tipooperacion !== "Cargue") return null // solo cargues
-    if (!esPlacaDistribucion(origHeader.idempresa, origHeader.placa)) return null // solo placas propias de distribución
+
+    // CASO AISLADO — WMP446 (ID4) / Tostaditos Susanita SAS (confirmado 2026-08-08).
+    // Es un vehículo EVENTUAL (pasa pocas veces), NO una placa propia de
+    // distribución: a propósito NO está en `distribucion_placas` ni entra por
+    // `esPlacaDistribucion`, para no tocar la lógica general que usan LWY393,
+    // QHC437, etc. Solo genera clon cuando el cargue trae Susanita, y solo
+    // clona esas líneas — cualquier otro cliente mezclado en el mismo viaje
+    // (ej. Ospina Bedoya en MED202608067722) queda fuera.
+    const esWMP446Susanita =
+      origHeader.idempresa === 4 && String(origHeader.placa ?? "").trim().toUpperCase() === "WMP446"
+    if (!esPlacaDistribucion(origHeader.idempresa, origHeader.placa) && !esWMP446Susanita) return null // solo placas propias de distribución
 
     // EL CLON SOLO SE GENERA CUANDO LA MADRE YA TIENE LOTE ASIGNADO (horalote).
     // Así hereda ese horalote por el spread y NUNCA aparece como pendiente en
@@ -776,15 +786,10 @@ export async function generarDistribucionAutomatica(
       origHeader.idempresa === 4
         ? origDetails.filter((d: any) => !normCliente(d.cliente).includes("JERONIMO MARTINS"))
         : origDetails
-    // WMP446 (ID4) es EXCLUSIVA de Tostaditos Susanita: aunque el cargue mezcle
-    // otro cliente en la misma placa, LIP solo distribuye lo de Susanita, nunca
-    // lo demás (confirmado 2026-08-08 con el caso MED202608067722, que traía
-    // también una línea de Ospina Bedoya Enrique). Si la placa no trae nada de
-    // Susanita, no se genera clon.
-    if (String(origHeader.placa ?? "").trim().toUpperCase() === "WMP446") {
+    if (esWMP446Susanita) {
       detallesAClonar = detallesAClonar.filter((d: any) => normCliente(d.cliente).includes("SUSANITA"))
     }
-    if (detallesAClonar.length === 0) return null // nada que clonar (excluido o sin Susanita en WMP446)
+    if (detallesAClonar.length === 0) return null // todo el cargue era Jerónimo Martins (u otro cliente en WMP446): no se genera clon
     // Solo se recalcula el peso si de verdad se excluyó algo (ID4 con Jerónimo
     // Martins mezclado). En cualquier otro caso (incl. TODO id2/id3) el peso
     // sigue heredado tal cual de la madre por el spread, sin cambio de conducta.
