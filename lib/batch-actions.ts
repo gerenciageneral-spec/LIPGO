@@ -167,6 +167,37 @@ export async function approveBatchAllocation(data: BatchApprovalData, selectedEm
     const currentEmpresaId = selectedEmpresaId || empresaId || 1
     const currentUsuario = usuario || "admin" // Fallback to "admin" if not found
 
+    // BLOQUEO: una orden solo puede tener UNA salida de inventario. Si ya
+    // existe una salida registrada para esta orden (cualquier estado salvo
+    // rechazado), NO se permite digitar otra — caso real: orden
+    // IND202607247162 quedó con la salida doble y dejó el lote en negativo
+    // (detectado 2026-08-08; regla del cliente: "no está permitido").
+    const { data: salidaExistente } = await supabase
+      .from("invtrans")
+      .select("id, creado, creadopor, status")
+      .eq("idempresa", currentEmpresaId)
+      .eq("ocargue", data.ordendecargue)
+      .eq("tipomov", "Salida")
+      .eq("origen", "orden de cargue")
+      .not("status", "ilike", "rechazado%")
+      .limit(1)
+      .maybeSingle()
+    if (salidaExistente) {
+      const cuando = String(salidaExistente.creado || "").slice(0, 16).replace("T", " ")
+      // Retorno explícito (no throw): en producción Next.js enmascara los
+      // mensajes de errores lanzados en server actions y el usuario vería
+      // un genérico en vez de esta alerta.
+      return {
+        success: false as const,
+        error:
+          `Esta orden YA tiene su salida de inventario registrada (${cuando} por ${salidaExistente.creadopor || "?"}). ` +
+          `No está permitido digitar dos salidas para la misma orden — si necesita corregir la asignación, use Cuadre y Correcciones.`,
+        recordsInserted: 0,
+        invtransRecordsInserted: 0,
+        pdfUrl: null as string | null,
+      }
+    }
+
     // Get the last id from historicolotes to generate the next consecutive ID
     const { data: lastRecord, error: lastRecordError } = await supabase
       .from("historicolotes")
@@ -403,7 +434,8 @@ export async function approveBatchAllocation(data: BatchApprovalData, selectedEm
     }
 
     return {
-      success: true,
+      success: true as const,
+      error: null as string | null,
       recordsInserted: recordsToInsert.length,
       invtransRecordsInserted: invtransRecords.length,
       pdfUrl: pdfResult.url || null,

@@ -2336,10 +2336,12 @@ export async function getCuadreDiario(
       from += 1000
       if (from > 60000) break
     }
-    // Agrupar por día
+    // Agrupar por día — DÍA CALENDARIO DE COLOMBIA (invtrans.creado está en
+    // UTC, 5h adelante: un movimiento de las 8pm caía en el día siguiente y
+    // el cuadre diario se veía "atrasado").
     const byDay: Record<string, { ingresos: number; salidas: number; otros: number }> = {}
     for (const r of inv) {
-      const d = String(r.creado || "").slice(0, 10)
+      const d = r.creado ? fechaColombiaDe(r.creado) : ""
       if (!d) continue
       if (has(r.origen, "traslado entre localizaciones")) continue // interno: no afecta
       const c = Number(r.cantidad) || 0
@@ -4430,7 +4432,9 @@ export async function getConciliacionMensualInventario(
     // libro-vs-físico (mermaProceso) es depuración/ajuste, hoy ~0.
     const reprocesoTotal = filas.reduce((s: number, f: any) => s + (f.reproceso || 0), 0)
     // La tarjeta muestra la ACUMULACIÓN del MES EN CURSO (se cierra mes a mes).
-    const mesEnCurso = new Date().toISOString().slice(0, 7)
+    // Mes calendario de COLOMBIA (en UTC, de 7pm a medianoche del último día
+    // del mes ya sería "el mes siguiente").
+    const mesEnCurso = fechaColombiaDe(new Date().toISOString()).slice(0, 7)
     const filaMesEnCurso = filas.find((f: any) => f.mes === mesEnCurso) || (filas.length ? filas[filas.length - 1] : null)
 
     const resumen = {
@@ -4498,7 +4502,7 @@ export async function guardarCierreMesInventario(payload: {
 }): Promise<{ success: boolean; data?: SigInventarioCierreMes; error?: string }> {
   try {
     const supabase: any = await getSupabaseAdmin()
-    const mesActual = new Date().toISOString().slice(0, 7)
+    const mesActual = fechaColombiaDe(new Date().toISOString()).slice(0, 7)
     const estado = payload.mes < mesActual ? "conciliado" : "pendiente"
     const fila: any = {
       proyecto_id: payload.proyecto_id,
@@ -4526,7 +4530,7 @@ export async function guardarCierreMesInventario(payload: {
     if (payload.firmante_cargo != null) fila.firmante_cargo = payload.firmante_cargo
     if (payload.firma_url != null) {
       fila.firma_url = payload.firma_url
-      fila.fecha_firma = new Date().toISOString().slice(0, 10)
+      fila.fecha_firma = fechaColombiaDe(new Date().toISOString())
     }
     const { data, error } = await supabase
       .from("sig_inventario_cierre_mes")
@@ -4927,7 +4931,7 @@ export async function firmarActaCruce(
         firmante: payload.firmante,
         firmante_cargo: payload.firmante_cargo ?? null,
         firma_url: payload.firma_url ?? null,
-        fecha_firma: new Date().toISOString().slice(0, 10),
+        fecha_firma: fechaColombiaDe(new Date().toISOString()),
         observaciones: payload.observaciones ?? null,
         updated_at: new Date().toISOString(),
       })

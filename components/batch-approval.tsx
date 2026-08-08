@@ -439,6 +439,11 @@ export function BatchApproval() {
         selectedEmpresaId,
       )
 
+      if (!result.success) {
+        toast({ title: "Salida duplicada — no permitida", description: result.error || "", variant: "destructive" })
+        return
+      }
+
       toast({
         title: "Lotes aprobados exitosamente",
         description: `Se registraron ${result.recordsInserted} asignaciones en el historial de lotes`,
@@ -459,11 +464,11 @@ export function BatchApproval() {
       setOrderProducts([])
       setLotAllocations([])
       loadAvailableOrders()
-    } catch (error) {
+    } catch (error: any) {
       console.error("[v0] Error approving batch:", error)
       toast({
         title: "Error al aprobar lotes",
-        description: "Ocurrió un error al registrar la aprobación. Por favor intente nuevamente.",
+        description: error?.message || "Ocurrió un error al registrar la aprobación. Por favor intente nuevamente.",
         variant: "destructive",
       })
     } finally {
@@ -579,6 +584,11 @@ export function BatchApproval() {
         selectedEmpresaId,
       )
 
+      if (!result.success) {
+        toast({ title: "Salida duplicada — no permitida", description: result.error || "", variant: "destructive" })
+        return
+      }
+
       toast({
         title: "Lotes aprobados exitosamente",
         description: `Se registraron ${result.recordsInserted} asignaciones en el historial de lotes`,
@@ -601,11 +611,11 @@ export function BatchApproval() {
       setOrderProducts([])
       setLotAllocations([])
       loadAvailableOrders()
-    } catch (error) {
+    } catch (error: any) {
       console.error("[v0] Error approving batch:", error)
       toast({
         title: "Error al aprobar lotes",
-        description: "Ocurrió un error al registrar la aprobación. Por favor intente nuevamente.",
+        description: error?.message || "Ocurrió un error al registrar la aprobación. Por favor intente nuevamente.",
         variant: "destructive",
       })
     } finally {

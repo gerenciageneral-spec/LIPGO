@@ -26,6 +26,18 @@ function KPI({ label, valor, unidad, Icon, color, sub }: { label: string; valor:
   return <SigKpi label={label} value={valor} unit={unidad} Icon={Icon} accent={color} valueColor={color} sub={sub} />
 }
 
+// Fecha calendario en hora Colombia (invtrans.creado está en UTC, 5h
+// adelante) — mismo criterio que fechaColombiaDe en el servidor: un
+// movimiento de las 8pm debe mostrarse con SU día, no el del UTC.
+const fechaColombiaUI = (iso: any): string => {
+  if (!iso) return ""
+  try {
+    return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(String(iso)))
+  } catch {
+    return String(iso).slice(0, 10)
+  }
+}
+
 export function PanelInventarioLIP() {
   const { toast } = useToast()
   const { selectedEmpresaId, selectedEmpresaNombre, user, profile } = useAuth()
@@ -1232,7 +1244,7 @@ export function PanelInventarioLIP() {
                             <tbody>
                               {grupo.asc.map((mv: any, i: number) => (
                                 <tr key={i} className="border-b last:border-0 align-top">
-                                  <td className="px-2 py-1.5 text-xs">{String(mv.fecha || "").slice(0, 10)}</td>
+                                  <td className="px-2 py-1.5 text-xs">{fechaColombiaUI(mv.fecha)}</td>
                                   <td className="px-2 py-1.5"><Badge variant="outline" className="text-[10px]">{mv.tipo}</Badge></td>
                                   <td className="px-2 py-1.5 text-right font-medium tabular-nums" style={{ color: SST_TOKENS.ok }}>{mv.tipomov === "Entrada" ? fmt(mv.cantidad) : ""}</td>
                                   <td className="px-2 py-1.5 text-right font-medium tabular-nums" style={{ color: SST_TOKENS.bad }}>{mv.tipomov !== "Entrada" ? fmt(mv.cantidad) : ""}</td>
