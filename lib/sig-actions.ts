@@ -4561,7 +4561,10 @@ export async function getOrCrearActaCruce(
     if (!Object.keys(aggregadoVerificado).length) {
       return { success: false, error: `No hay físico congelado de ${mesAnterior} para este proyecto todavía.` }
     }
-    const origen = /archivo/i.test(String(cierre?.cerrado_por || "")) ? "archivo_fisico" : "calculado"
+    // "sin archivo físico externo" (ID1/ID2/ID4 calculados) contiene la
+    // palabra "archivo" — se descarta explícitamente antes de buscarla.
+    const cerradoPorTxt = String(cierre?.cerrado_por || "")
+    const origen = !/sin archivo/i.test(cerradoPorTxt) && /archivo/i.test(cerradoPorTxt) ? "archivo_fisico" : "calculado"
     const corte = `${mes}-01`
 
     // Stock vivo de HOY, por (producto, lote, ubicación) — el nivel que
@@ -4589,6 +4592,11 @@ export async function getOrCrearActaCruce(
     }
 
     // Movimientos APROBADOS desde el corte (a retroceder), misma granularidad.
+    // El día del corte es el propio inventario físico ("a primera hora"): una
+    // ENTRADA fechada ese mismo día es el registro en sistema de algo que ya
+    // existía al corte (ej. producción real de julio digitada el 1-ago) — se
+    // trata como apertura, no se retrocede. Una SALIDA siempre es movimiento
+    // real (un despacho es un despacho, sin importar el día).
     const deltaCorte: Record<string, number> = {}
     let from2 = 0
     while (true) {
@@ -4600,6 +4608,8 @@ export async function getOrCrearActaCruce(
         .range(from2, from2 + 999)
       for (const r of data ?? []) {
         if (!String(r.status || "").toLowerCase().startsWith("aprob")) continue
+        const esEntradaDelDiaDelCorte = r.tipomov === "Entrada" && String(r.creado || "").slice(0, 10) === corte
+        if (esEntradaDelDiaDelCorte) continue
         const key = `${r.codproducto}||${r.lote ?? ""}||${r.location ?? ""}`
         const c = Math.abs(Number(r.cantidad) || 0)
         deltaCorte[key] = (deltaCorte[key] || 0) + (r.tipomov === "Entrada" ? c : -c)
@@ -4647,15 +4657,46 @@ export async function getOrCrearActaCruce(
       })
       .filter((f) => f.sistema_original !== 0) // sin actividad ni saldo — no hay nada que cruzar en ese lote
 
+    // Cuando hay archivo físico real, ESE total por producto manda (ya
+    // verificado — no se recalcula ni se pisa). El desglose por lote es la
+    // mejor referencia posible desde el kardex; si no cuadra exacto con el
+    // archivo, la diferencia queda como una línea aparte, VISIBLE ("(sin
+    // ubicar por lote)") — nunca repartida/escalada entre los lotes reales
+    // (eso ya se probó y el cliente lo rechazó explícitamente).
+    if (origen === "archivo_fisico") {
+      const agregadoCalculado: Record<string, number> = {}
+      for (const f of filas) agregadoCalculado[f.codproducto] = Math.round(((agregadoCalculado[f.codproducto] ?? 0) + f.sistema_original) * 100) / 100
+      for (const cod of Object.keys(aggregadoVerificado)) {
+        const verificado = Math.round((Number(aggregadoVerificado[cod]) || 0) * 100) / 100
+        const calculado = agregadoCalculado[cod] ?? 0
+        const gap = Math.round((verificado - calculado) * 100) / 100
+        if (gap !== 0) {
+          filas.push({
+            acta_id: nueva.id,
+            codproducto: cod,
+            producto: nombrePorCod[cod] || null,
+            lote: "(archivo real, sin ubicar por lote)",
+            location: "(sin ubicar)",
+            sistema_original: gap,
+            fisico_actual: gap,
+            diferencia: 0,
+          })
+        }
+      }
+    }
+
     for (let i = 0; i < filas.length; i += 500) {
       const { error: errDet } = await supabase.from("sig_inventario_acta_cruce_detalle").insert(filas.slice(i, i + 500))
       if (errDet) return { success: false, error: errDet.message }
     }
 
-    // El agregado por producto (suma real de sus lotes) reemplaza el que
-    // tenía el acta de cierre del mes anterior — la trazabilidad por lote
-    // manda, la cifra del cierre queda sincronizada con ella (pedido del
-    // cliente: "esto también debe estar en las actas de cierre").
+    // El agregado por producto (suma real de sus lotes, ya reconciliada
+    // contra el archivo cuando existe) reemplaza el que tenía el acta de
+    // cierre del mes anterior — la trazabilidad por lote manda, la cifra del
+    // cierre queda sincronizada con ella (pedido del cliente: "esto también
+    // debe estar en las actas de cierre"). Con archivo real, el total no
+    // cambia (la línea "sin ubicar" ya lo compensa) — se re-escribe igual
+    // para mantener limpio el mismo mecanismo en ambos casos.
     const agregadoPorProducto: Record<string, number> = {}
     for (const f of filas) agregadoPorProducto[f.codproducto] = Math.round(((agregadoPorProducto[f.codproducto] ?? 0) + f.sistema_original) * 100) / 100
     const cierreId = cierre?.id
