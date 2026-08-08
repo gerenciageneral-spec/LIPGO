@@ -357,6 +357,45 @@ export interface SigInventarioCierreMes {
   firmante_cargo: string | null // cargo de quien firma el acta
 }
 
+// Acta de Cruce de Inventario (apertura de mes, congelado real) — cabecera.
+// Tabla separada del Cuadre mensual (decisión del cliente 2026-08-08); las
+// correcciones NO se editan aquí directo: pasan por sig_inventario_ajuste
+// (único formulario sancionado para mover inventario), y quedan enlazadas
+// aquí (invtrans_id) como evidencia.
+export interface SigInventarioActaCruce {
+  id: number
+  proyecto_id: number
+  mes: string // YYYY-MM (mes que ABRE con este cruce, ej. '2026-08')
+  fecha_corte: string // YYYY-MM-DD
+  origen: string | null // archivo_fisico | calculado
+  estado: string | null // borrador | firmado
+  firmante: string | null
+  firmante_cargo: string | null
+  firma_url: string | null
+  fecha_firma: string | null
+  observaciones: string | null
+  creado_por: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface SigInventarioActaCruceDetalle {
+  id: number
+  acta_id: number
+  codproducto: string
+  producto: string | null
+  lote: string
+  location: string
+  sistema_original: number
+  fisico_actual: number
+  diferencia: number
+  corregido: boolean
+  motivo_correccion: string | null
+  invtrans_id: number | null
+  corregido_por: string | null
+  corregido_fecha: string | null
+}
+
 // Plantas (producción PT) vs Cedis (descargue). Salidas = cargue + merma en ambos.
 export const SIG_PLANTAS_LIP = [1, 2] // Indupan, Avimol
 export const SIG_CEDIS_LIP = [3, 4] // Funza, Medellín

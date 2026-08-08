@@ -44,6 +44,8 @@ import type {
   SigInventarioCuadreDetalle,
   SigInventarioAjuste,
   SigInventarioCierreMes,
+  SigInventarioActaCruce,
+  SigInventarioActaCruceDetalle,
   SigSatisfaccion,
   SigPQRSF,
   SigTipoMovimiento,
@@ -4489,6 +4491,320 @@ export async function guardarCierreMesInventario(payload: {
       .single()
     if (error) return { success: false, error: error.message }
     return { success: true, data: data as SigInventarioCierreMes }
+  } catch (err: any) {
+    return { success: false, error: err?.message || "Error desconocido" }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Acta de Cruce de Inventario (apertura de mes, congelado real). Tabla
+// dedicada y separada del Cuadre mensual (decisión del cliente 2026-08-08):
+// deja constancia, POR LOTE Y UBICACIÓN (el nivel relevante para poder
+// corregir y donde vive la trazabilidad real), del inventario con el que
+// ABRE un mes (hoy agosto/2026) — stock vivo de hoy retrocedido por los
+// movimientos aprobados desde el corte, LOTE POR LOTE (sin repartir/escalar
+// un total inventado: el kardex ya lleva trazabilidad real por lote mes a
+// mes). El agregado por producto que usa el Kardex/actas de cierre
+// (`sig_inventario_cierre_mes.fisico_snapshot`) se recalcula desde esta
+// suma real de lotes al crear el cruce, quedando sincronizado con ella. Esta
+// tabla ALIMENTA y puede AJUSTAR invtrans (y por lo tanto todas las tablas
+// de inventario que dependen de él): las correcciones NO se editan aquí
+// directo, pasan por `sig_inventario_ajuste` (el ÚNICO formulario
+// sancionado para mover inventario, mismo que usa "Cuadre y Correcciones" —
+// regla firme del proyecto: "un solo formulario para mover/ajustar
+// inventario, no dos") y quedan enlazadas aquí (`invtrans_id`) como
+// evidencia de la corrección.
+// ---------------------------------------------------------------------------
+
+function mesAnteriorDe(mes: string): string {
+  const [y, m] = mes.split("-").map(Number)
+  const d = new Date(y, m - 1, 1)
+  d.setMonth(d.getMonth() - 1)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`
+}
+
+/** Trae el acta de cruce del mes; si no existe, la crea (por lote/ubicación) desde el físico congelado del mes anterior. */
+export async function getOrCrearActaCruce(
+  proyectoId: number,
+  mes: string, // '2026-08' — mes que ABRE con este cruce
+): Promise<{ success: boolean; acta?: SigInventarioActaCruce; detalle?: SigInventarioActaCruceDetalle[]; error?: string }> {
+  try {
+    if (!proyectoId) return { success: false, error: "Selecciona un cliente/sitio" }
+    const supabase: any = await getSupabaseAdmin()
+    const { data: existente } = await supabase
+      .from("sig_inventario_acta_cruce")
+      .select("*")
+      .eq("proyecto_id", proyectoId)
+      .eq("mes", mes)
+      .maybeSingle()
+
+    if (existente) {
+      const { data: det } = await supabase
+        .from("sig_inventario_acta_cruce_detalle")
+        .select("*")
+        .eq("acta_id", existente.id)
+        .order("producto", { ascending: true })
+        .order("lote", { ascending: true })
+      return { success: true, acta: existente as SigInventarioActaCruce, detalle: (det ?? []) as SigInventarioActaCruceDetalle[] }
+    }
+
+    // No existe: se crea desde el físico congelado del mes ANTERIOR (su
+    // cierre = la apertura de `mes`). Sin congelado, no hay cruce que armar.
+    const mesAnterior = mesAnteriorDe(mes)
+    const { data: cierre } = await supabase
+      .from("sig_inventario_cierre_mes")
+      .select("id, fisico_snapshot, cerrado_por")
+      .eq("proyecto_id", proyectoId)
+      .eq("mes", mesAnterior)
+      .maybeSingle()
+    const aggregadoVerificado: Record<string, number> = cierre?.fisico_snapshot ?? {}
+    if (!Object.keys(aggregadoVerificado).length) {
+      return { success: false, error: `No hay físico congelado de ${mesAnterior} para este proyecto todavía.` }
+    }
+    const origen = /archivo/i.test(String(cierre?.cerrado_por || "")) ? "archivo_fisico" : "calculado"
+    const corte = `${mes}-01`
+
+    // Stock vivo de HOY, por (producto, lote, ubicación) — el nivel que
+    // realmente importa para poder corregir/ajustar.
+    const stockHoy: Record<string, { codproducto: string; producto: string; lote: string; location: string; valor: number }> = {}
+    const nombrePorCod: Record<string, string> = {}
+    let from = 0
+    while (true) {
+      const { data } = await supabase
+        .from("saldoinvdetalle")
+        .select("codproducto,nombreproducto,lote,location,stock_actual")
+        .eq("idempresa", proyectoId)
+        .range(from, from + 999)
+      for (const r of data ?? []) {
+        const lote = r.lote ?? ""
+        const location = r.location ?? ""
+        const key = `${r.codproducto}||${lote}||${location}`
+        if (!stockHoy[key]) stockHoy[key] = { codproducto: r.codproducto, producto: r.nombreproducto ?? "", lote, location, valor: 0 }
+        stockHoy[key].valor += Number(r.stock_actual) || 0
+        if (r.nombreproducto && !nombrePorCod[r.codproducto]) nombrePorCod[r.codproducto] = r.nombreproducto
+      }
+      if (!data || data.length < 1000) break
+      from += 1000
+      if (from > 60000) break
+    }
+
+    // Movimientos APROBADOS desde el corte (a retroceder), misma granularidad.
+    const deltaCorte: Record<string, number> = {}
+    let from2 = 0
+    while (true) {
+      const { data } = await supabase
+        .from("invtrans")
+        .select("codproducto,lote,location,tipomov,cantidad,status,creado")
+        .eq("idempresa", proyectoId)
+        .gte("creado", corte)
+        .range(from2, from2 + 999)
+      for (const r of data ?? []) {
+        if (!String(r.status || "").toLowerCase().startsWith("aprob")) continue
+        const key = `${r.codproducto}||${r.lote ?? ""}||${r.location ?? ""}`
+        const c = Math.abs(Number(r.cantidad) || 0)
+        deltaCorte[key] = (deltaCorte[key] || 0) + (r.tipomov === "Entrada" ? c : -c)
+      }
+      if (!data || data.length < 1000) break
+      from2 += 1000
+      if (from2 > 60000) break
+    }
+
+    // Valor real por lote: stock vivo de hoy retrocedido por lo movido desde
+    // el corte. SIN inventar — nada de repartir/escalar un total a los
+    // lotes: el kardex YA lleva trazabilidad real por lote mes a mes, así
+    // que este cálculo por lote es la fuente directa (mismo criterio que
+    // getMovimientosProducto). Se pisa en 0 si da negativo (el físico no
+    // puede ser negativo — igual que el resto de la conciliación).
+    const keys = new Set([...Object.keys(stockHoy), ...Object.keys(deltaCorte)])
+    const valorPorLote: Record<string, number> = {}
+    for (const key of keys) {
+      const base = stockHoy[key]?.valor ?? 0
+      valorPorLote[key] = Math.max(0, Math.round((base - (deltaCorte[key] || 0)) * 100) / 100)
+    }
+
+    const { data: nueva, error: errIns } = await supabase
+      .from("sig_inventario_acta_cruce")
+      .insert({ proyecto_id: proyectoId, mes, fecha_corte: corte, origen, estado: "borrador" })
+      .select("*")
+      .single()
+    if (errIns) return { success: false, error: errIns.message }
+
+    const filas = Array.from(keys)
+      .map((key) => {
+        const info = stockHoy[key]
+        const [cod, lote, location] = key.split("||")
+        const v = valorPorLote[key] ?? 0
+        return {
+          acta_id: nueva.id,
+          codproducto: info?.codproducto ?? cod,
+          producto: info?.producto || nombrePorCod[cod] || null,
+          lote: lote || "",
+          location: location || "",
+          sistema_original: v,
+          fisico_actual: v,
+          diferencia: 0,
+        }
+      })
+      .filter((f) => f.sistema_original !== 0) // sin actividad ni saldo — no hay nada que cruzar en ese lote
+
+    for (let i = 0; i < filas.length; i += 500) {
+      const { error: errDet } = await supabase.from("sig_inventario_acta_cruce_detalle").insert(filas.slice(i, i + 500))
+      if (errDet) return { success: false, error: errDet.message }
+    }
+
+    // El agregado por producto (suma real de sus lotes) reemplaza el que
+    // tenía el acta de cierre del mes anterior — la trazabilidad por lote
+    // manda, la cifra del cierre queda sincronizada con ella (pedido del
+    // cliente: "esto también debe estar en las actas de cierre").
+    const agregadoPorProducto: Record<string, number> = {}
+    for (const f of filas) agregadoPorProducto[f.codproducto] = Math.round(((agregadoPorProducto[f.codproducto] ?? 0) + f.sistema_original) * 100) / 100
+    const cierreId = cierre?.id
+    if (cierreId) {
+      await supabase
+        .from("sig_inventario_cierre_mes")
+        .update({ fisico_snapshot: agregadoPorProducto, updated_at: new Date().toISOString() })
+        .eq("id", cierreId)
+    }
+
+    return { success: true, acta: nueva as SigInventarioActaCruce, detalle: filas as any }
+  } catch (err: any) {
+    return { success: false, error: err?.message || "Error desconocido" }
+  }
+}
+
+export async function getActaCruceDetalle(
+  actaId: number,
+): Promise<{ success: boolean; data: SigInventarioActaCruceDetalle[]; error?: string }> {
+  try {
+    const supabase: any = await getSupabaseAdmin()
+    const { data, error } = await supabase
+      .from("sig_inventario_acta_cruce_detalle")
+      .select("*")
+      .eq("acta_id", actaId)
+      .order("producto", { ascending: true })
+      .order("lote", { ascending: true })
+    if (error) return { success: false, data: [], error: error.message }
+    return { success: true, data: (data ?? []) as SigInventarioActaCruceDetalle[] }
+  } catch (err: any) {
+    return { success: false, data: [], error: err?.message || "Error desconocido" }
+  }
+}
+
+/**
+ * Corrige UNA línea (producto+lote+ubicación) del acta de cruce. NO edita el
+ * valor directo: registra y aprueba una corrección real por el ÚNICO camino
+ * sancionado (`registrarAjusteInventario` → `aprobarAjusteInventario` →
+ * invtrans, mismo mecanismo del Cuadre mensual), y deja la línea del acta
+ * como evidencia (fisico_actual/diferencia/invtrans_id). También recalcula
+ * el agregado del producto (suma de TODOS sus lotes en esta acta) y lo
+ * actualiza en `fisico_snapshot` para que el Kardex
+ * (getKardexInventario/getMovimientosProducto) siga vigente.
+ */
+export async function corregirLineaActaCruce(
+  detalleId: number,
+  payload: { nuevoValor: number; location?: string | null; lote?: string | null; motivo: string; actor: string },
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const supabase: any = await getSupabaseAdmin()
+    const { data: det } = await supabase
+      .from("sig_inventario_acta_cruce_detalle")
+      .select("*, sig_inventario_acta_cruce(proyecto_id, mes)")
+      .eq("id", detalleId)
+      .single()
+    if (!det) return { success: false, error: "Línea no encontrada" }
+    const acta = det.sig_inventario_acta_cruce
+    if (!acta) return { success: false, error: "Acta no encontrada" }
+
+    const location = (payload.location?.trim() || det.location || "").trim()
+    if (!location) return { success: false, error: "Indica la ubicación donde queda la corrección" }
+    const lote = (payload.lote?.trim() || det.lote || "").trim() || null
+
+    const diferencia = Math.round((Number(payload.nuevoValor) - Number(det.sistema_original)) * 100) / 100
+    if (diferencia === 0) return { success: false, error: "El valor no cambió — nada que corregir" }
+
+    // 1) Registra la corrección por el formulario sancionado.
+    const direccion = diferencia < 0 ? "salida" : "ingreso"
+    const reg = await registrarAjusteInventario(acta.proyecto_id, {
+      fecha: new Date().toISOString().slice(0, 10),
+      codproducto: det.codproducto,
+      producto: det.producto,
+      location,
+      lote,
+      direccion,
+      cantidad: Math.abs(diferencia),
+      tipo: "correccion",
+      motivo: `Acta de Cruce ${acta.mes} — ${payload.motivo}`.trim(),
+      responsable: payload.actor,
+    })
+    if (!reg.success || !reg.id) return { success: false, error: reg.error || "No se pudo registrar la corrección" }
+
+    // 2) Aprueba de inmediato (postea a invtrans, mueve el stock real).
+    const r = await aprobarAjusteInventario(reg.id, payload.actor)
+    if (!r.success) return { success: false, error: r.error }
+
+    // 3) Deja la línea del acta como evidencia.
+    const { error: errUpd } = await supabase
+      .from("sig_inventario_acta_cruce_detalle")
+      .update({
+        fisico_actual: payload.nuevoValor,
+        diferencia,
+        corregido: true,
+        motivo_correccion: payload.motivo,
+        invtrans_id: r.invtransId ?? null,
+        corregido_por: payload.actor,
+        corregido_fecha: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", detalleId)
+    if (errUpd) return { success: false, error: errUpd.message }
+
+    // 4) Recalcula el agregado del producto (todos sus lotes en esta acta) y
+    // mantiene el ancla del Kardex al día.
+    const { data: filasProducto } = await supabase
+      .from("sig_inventario_acta_cruce_detalle")
+      .select("fisico_actual")
+      .eq("acta_id", acta.id)
+      .eq("codproducto", det.codproducto)
+    const nuevoAgregado = (filasProducto ?? []).reduce((s: number, f: any) => s + (Number(f.fisico_actual) || 0), 0)
+
+    const { data: cierre } = await supabase
+      .from("sig_inventario_cierre_mes")
+      .select("id, fisico_snapshot")
+      .eq("proyecto_id", acta.proyecto_id)
+      .eq("mes", mesAnteriorDe(acta.mes))
+      .maybeSingle()
+    if (cierre) {
+      const snap = { ...(cierre.fisico_snapshot ?? {}) }
+      snap[det.codproducto] = Math.round(nuevoAgregado * 100) / 100
+      await supabase.from("sig_inventario_cierre_mes").update({ fisico_snapshot: snap, updated_at: new Date().toISOString() }).eq("id", cierre.id)
+    }
+
+    return { success: true }
+  } catch (err: any) {
+    return { success: false, error: err?.message || "Error desconocido" }
+  }
+}
+
+export async function firmarActaCruce(
+  actaId: number,
+  payload: { firmante: string; firmante_cargo?: string | null; firma_url?: string | null; observaciones?: string | null },
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const supabase: any = await getSupabaseAdmin()
+    const { error } = await supabase
+      .from("sig_inventario_acta_cruce")
+      .update({
+        estado: "firmado",
+        firmante: payload.firmante,
+        firmante_cargo: payload.firmante_cargo ?? null,
+        firma_url: payload.firma_url ?? null,
+        fecha_firma: new Date().toISOString().slice(0, 10),
+        observaciones: payload.observaciones ?? null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", actaId)
+    if (error) return { success: false, error: error.message }
+    return { success: true }
   } catch (err: any) {
     return { success: false, error: err?.message || "Error desconocido" }
   }

@@ -16,7 +16,7 @@ import { useToast } from "@/hooks/use-toast"
 import { SST_TOKENS } from "@/components/sst/sst-utils"
 import { SigHeader, SigFilterBar, SigField, SigKpi, sigControl } from "@/components/sst/sig-ui"
 import { useAuth } from "@/components/auth-provider"
-import { getPanelInventarioLIP, getKardexInventario, getMovimientosProducto, getTiposMovimiento, getCuadreDiario, getPreservacionInventario, getConciliacionMensualInventario, guardarCierreMesInventario, getConciliacionPedidosVsSalidas, getAuditoriaOrdenPedidoSalida, guardarCuadreManualPedidoSalida } from "@/lib/sig-actions"
+import { getPanelInventarioLIP, getKardexInventario, getMovimientosProducto, getTiposMovimiento, getCuadreDiario, getPreservacionInventario, getConciliacionMensualInventario, guardarCierreMesInventario, getConciliacionPedidosVsSalidas, getAuditoriaOrdenPedidoSalida, guardarCuadreManualPedidoSalida, getOrCrearActaCruce, corregirLineaActaCruce, firmarActaCruce, getProductosInventario } from "@/lib/sig-actions"
 import { Loader2, Boxes, TrendingDown, ArrowDownToLine, AlertTriangle, RefreshCw, CalendarClock, Layers, FileText, BookOpen, ZoomIn, ClipboardList, ShieldAlert, FolderOpen, ExternalLink, CheckCircle2 } from "lucide-react"
 import { ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts"
 
@@ -62,6 +62,18 @@ export function PanelInventarioLIP() {
   const [edits, setEdits] = useState<{ ped: Record<number, string>; pedU: Record<number, string> }>({ ped: {}, pedU: {} })
   const [savingCuadre, setSavingCuadre] = useState(false)
   const [tab, setTab] = useState("dashboard")
+  const [cruce, setCruce] = useState<{ acta: any; detalle: any[] } | null>(null)
+  const [loadingCruce, setLoadingCruce] = useState(false)
+  const [cruceBusqueda, setCruceBusqueda] = useState("")
+  const [cruceLote, setCruceLote] = useState("")
+  const [cruceSoloCorregidos, setCruceSoloCorregidos] = useState(false)
+  const [corrigiendo, setCorrigiendo] = useState<{ detalleId: number; codproducto: string; producto: string; sistemaOriginal: number; nuevoValor: string; location: string; lote: string; motivo: string } | null>(null)
+  const [ubicacionesProd, setUbicacionesProd] = useState<string[]>([])
+  const [savingCorreccion, setSavingCorreccion] = useState(false)
+  const [firmandoCruce, setFirmandoCruce] = useState(false)
+  const [firmanteCruceNom, setFirmanteCruceNom] = useState("")
+  const [firmanteCruceCargo, setFirmanteCruceCargo] = useState("")
+  const firmaCruceRef = useRef<SignaturePadHandle | null>(null)
 
   const MESES = [
     { v: "", l: "Todo el año" }, { v: "01", l: "Enero" }, { v: "02", l: "Febrero" }, { v: "03", l: "Marzo" },
@@ -93,6 +105,7 @@ export function PanelInventarioLIP() {
     else if (tab === "preservacion") cargarPreservacion()
     else if (tab === "conciliacion") cargarConciliacion()
     else if (tab === "pedidos_salidas") cargarPedidosSalidas()
+    else if (tab === "cruce") cargarCruce()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, selectedEmpresaId, anio, mes])
 
@@ -157,6 +170,107 @@ export function PanelInventarioLIP() {
     }
     setLoadingConc(false)
   }
+  async function cargarCruce() {
+    if (!selectedEmpresaId) {
+      setCruce(null)
+      return
+    }
+    setLoadingCruce(true)
+    const mesActualCruce = new Date().toISOString().slice(0, 7)
+    const r = await getOrCrearActaCruce(selectedEmpresaId, mesActualCruce)
+    if (r.success) setCruce({ acta: r.acta, detalle: r.detalle ?? [] })
+    else {
+      setCruce(null)
+      toast({ title: "No se pudo cargar el acta de cruce", description: r.error })
+    }
+    setLoadingCruce(false)
+  }
+
+  async function abrirCorregir(d: any) {
+    setCorrigiendo({
+      detalleId: d.id,
+      codproducto: d.codproducto,
+      producto: d.producto || d.codproducto,
+      sistemaOriginal: Number(d.sistema_original) || 0,
+      nuevoValor: String(d.fisico_actual ?? d.sistema_original ?? 0),
+      location: d.location || "",
+      lote: d.lote || "",
+      motivo: "",
+    })
+    setUbicacionesProd([])
+    if (selectedEmpresaId) {
+      const r = await getProductosInventario(selectedEmpresaId)
+      if (r.success) {
+        const p = r.data.find((x) => x.codproducto === d.codproducto)
+        setUbicacionesProd(p?.locations ?? [])
+      }
+    }
+  }
+
+  async function guardarCorreccion() {
+    if (!corrigiendo) return
+    const nuevo = Number(corrigiendo.nuevoValor)
+    if (!Number.isFinite(nuevo)) { toast({ title: "Valor inválido" }); return }
+    if (nuevo === corrigiendo.sistemaOriginal) { toast({ title: "El valor no cambió", description: "Nada que corregir." }); return }
+    if (!corrigiendo.location.trim()) { toast({ title: "Indica la ubicación", description: "Dónde queda registrada la corrección." }); return }
+    if (!corrigiendo.motivo.trim()) { toast({ title: "Indica el motivo de la corrección" }); return }
+    const diferencia = Math.round((nuevo - corrigiendo.sistemaOriginal) * 100) / 100
+    const signo = diferencia < 0 ? "salida (descuenta stock)" : "entrada (suma stock)"
+    if (!window.confirm(`Vas a CORREGIR ${corrigiendo.producto} de ${fmt(corrigiendo.sistemaOriginal)} a ${fmt(nuevo)}.\n\nSe generará un movimiento real de ${signo} en el inventario (mueve el saldo real). Esta acción no se puede deshacer.\n\n¿Confirmar la corrección?`)) return
+    setSavingCorreccion(true)
+    const r = await corregirLineaActaCruce(corrigiendo.detalleId, {
+      nuevoValor: nuevo,
+      location: corrigiendo.location.trim(),
+      lote: corrigiendo.lote.trim() || null,
+      motivo: corrigiendo.motivo.trim(),
+      actor,
+    })
+    setSavingCorreccion(false)
+    if (r.success) {
+      toast({ title: "Corrección aplicada", description: "El inventario quedó ajustado al valor corregido." })
+      setCorrigiendo(null)
+      cargarCruce()
+    } else toast({ title: "No se pudo aplicar la corrección", description: r.error })
+  }
+
+  async function guardarFirmaCruce() {
+    if (!cruce?.acta) return
+    if (!firmaCruceRef.current || firmaCruceRef.current.isEmpty()) {
+      toast({ title: "Falta la firma", description: "Dibuje la firma para cerrar el acta." })
+      return
+    }
+    if (!firmanteCruceNom.trim()) {
+      toast({ title: "Falta el firmante", description: "Escriba el nombre de quien firma." })
+      return
+    }
+    setSavingCorreccion(true)
+    try {
+      const firmaBlob = await firmaCruceRef.current.toBlob()
+      let firmaUrl: string | null = null
+      if (firmaBlob) {
+        const fd = new FormData()
+        fd.append("file", firmaBlob, `firma-cruce-${cruce.acta.mes}.png`)
+        const up = await fetch("/api/capacitaciones/upload-firma", { method: "POST", body: fd })
+        const upJson = await up.json()
+        if (!upJson?.url) throw new Error(upJson?.error || "No se pudo subir la firma")
+        firmaUrl = upJson.url
+      }
+      const r = await firmarActaCruce(cruce.acta.id, {
+        firmante: firmanteCruceNom.trim(),
+        firmante_cargo: firmanteCruceCargo.trim() || null,
+        firma_url: firmaUrl,
+      })
+      if (!r.success) throw new Error(r.error || "No se pudo firmar")
+      toast({ title: "Acta de cruce firmada", description: `Firmado por ${firmanteCruceNom.trim()}` })
+      setFirmandoCruce(false)
+      cargarCruce()
+    } catch (e: any) {
+      toast({ title: "No se pudo firmar el acta", description: e?.message || "Error desconocido" })
+    } finally {
+      setSavingCorreccion(false)
+    }
+  }
+
   async function cargarPedidosSalidas() {
     if (!selectedEmpresaId) {
       setPedSal(null)
@@ -368,6 +482,7 @@ export function PanelInventarioLIP() {
           <TabsTrigger value="diario">Cuadre diario</TabsTrigger>
           <TabsTrigger value="preservacion">Preservación / FIFO</TabsTrigger>
           <TabsTrigger value="pedidos_salidas">Conciliación pedidos vs salidas</TabsTrigger>
+          <TabsTrigger value="cruce">Acta de Cruce (apertura de mes)</TabsTrigger>
         </TabsList>
 
         <TabsContent value="dashboard" className="space-y-5 pt-3">
@@ -870,7 +985,184 @@ export function PanelInventarioLIP() {
             </>
           )}
         </TabsContent>
+
+        <TabsContent value="cruce" className="space-y-3 pt-3">
+          {!selectedEmpresaId ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">Selecciona un cliente/sitio en el selector global.</p>
+          ) : loadingCruce ? (
+            <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin" style={{ color: SST_TOKENS.navy }} /></div>
+          ) : !cruce?.acta ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">Aún no hay un cierre físico congelado del mes anterior para este proyecto — no hay cruce que armar todavía.</p>
+          ) : (
+            <>
+              <Card className="p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold" style={{ color: SST_TOKENS.navy }}>
+                      Acta de Cruce · apertura de {cruce.acta.mes} · corte {String(cruce.acta.fecha_corte).slice(0, 10)}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Inventario con el que ABRE el mes (antes de cualquier movimiento del mes), por lote y ubicación — retrocedido desde el stock vivo de hoy.
+                      {" "}{cruce.detalle.length.toLocaleString("es-CO")} lote(s) · {cruce.detalle.filter((d: any) => d.corregido).length} corregido(s).
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" size="sm" onClick={cargarCruce} disabled={loadingCruce}>
+                      <RefreshCw className="mr-1 h-3.5 w-3.5" /> Actualizar
+                    </Button>
+                    {cruce.acta.estado === "firmado" ? (
+                      <Badge variant="outline" className="gap-1" style={{ color: SST_TOKENS.ok, borderColor: SST_TOKENS.ok }}>
+                        <CheckCircle2 className="h-3 w-3" /> Firmado · {cruce.acta.firmante}
+                      </Badge>
+                    ) : (
+                      <Button size="sm" onClick={() => setFirmandoCruce(true)}>Firmar acta</Button>
+                    )}
+                  </div>
+                </div>
+              </Card>
+
+              <Card className="flex flex-wrap items-end gap-3 p-3">
+                <SigField label="Buscar producto / código">
+                  <Input value={cruceBusqueda} onChange={(e) => setCruceBusqueda(e.target.value)} placeholder="Nombre o código" className="h-9 w-56" />
+                </SigField>
+                <SigField label="Lote">
+                  <Input value={cruceLote} onChange={(e) => setCruceLote(e.target.value)} placeholder="Lote" className="h-9 w-36" />
+                </SigField>
+                <label className="flex items-center gap-2 pb-1.5 text-xs text-muted-foreground">
+                  <input type="checkbox" checked={cruceSoloCorregidos} onChange={(e) => setCruceSoloCorregidos(e.target.checked)} />
+                  Solo corregidos
+                </label>
+                {(cruceBusqueda || cruceLote || cruceSoloCorregidos) && (
+                  <Button variant="ghost" size="sm" className="h-9 text-xs" onClick={() => { setCruceBusqueda(""); setCruceLote(""); setCruceSoloCorregidos(false) }}>
+                    Limpiar filtros
+                  </Button>
+                )}
+              </Card>
+
+              {(() => {
+                const q = cruceBusqueda.trim().toLowerCase()
+                const ql = cruceLote.trim().toLowerCase()
+                const vista = cruce.detalle.filter((d: any) => {
+                  if (q && !(String(d.producto || "").toLowerCase().includes(q) || String(d.codproducto || "").toLowerCase().includes(q))) return false
+                  if (ql && !String(d.lote || "").toLowerCase().includes(ql)) return false
+                  if (cruceSoloCorregidos && !d.corregido) return false
+                  return true
+                })
+                return (
+                  <Card className="overflow-hidden">
+                    <div className="max-h-[60vh] overflow-auto">
+                      <table className="w-full text-sm">
+                        <thead className="sticky top-0 bg-background">
+                          <tr className="border-b text-left text-[11px] uppercase text-muted-foreground">
+                            <th className="px-3 py-2">Producto</th>
+                            <th className="px-3 py-2">Lote</th>
+                            <th className="px-3 py-2">Ubicación</th>
+                            <th className="px-3 py-2 text-right">Congelado (apertura)</th>
+                            <th className="px-3 py-2 text-right">Valor vigente</th>
+                            <th className="px-3 py-2 text-right">Diferencia</th>
+                            <th className="px-3 py-2">Estado</th>
+                            <th className="px-3 py-2 text-center">Acción</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {vista.map((d: any) => (
+                            <tr key={d.id} className="border-b last:border-0">
+                              <td className="px-3 py-1.5">
+                                <div className="font-medium">{d.producto || d.codproducto}</div>
+                                <div className="text-[11px] text-muted-foreground">{d.codproducto}</div>
+                              </td>
+                              <td className="px-3 py-1.5 text-xs">{d.lote || "—"}</td>
+                              <td className="px-3 py-1.5 text-xs text-muted-foreground">{d.location || "—"}</td>
+                              <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">{fmt(d.sistema_original)}</td>
+                              <td className="px-3 py-1.5 text-right font-semibold tabular-nums">{fmt(d.fisico_actual)}</td>
+                              <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: Number(d.diferencia) !== 0 ? "#C0392B" : "#1E8449" }}>
+                                {Number(d.diferencia) > 0 ? "+" : ""}{fmt(d.diferencia)}
+                              </td>
+                              <td className="px-3 py-1.5">
+                                {d.corregido ? <Badge variant="outline" className="text-[10px]" style={{ color: "#C0392B", borderColor: "#C0392B" }}>Corregido</Badge> : <Badge variant="outline" className="text-[10px]">Sin cambios</Badge>}
+                              </td>
+                              <td className="px-3 py-1.5 text-center">
+                                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => abrirCorregir(d)}>Corregir</Button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <p className="p-2 text-[11px] text-muted-foreground">
+                      {cruce.detalle.length > vista.length
+                        ? `Mostrando ${vista.length.toLocaleString("es-CO")} de ${cruce.detalle.length.toLocaleString("es-CO")} lotes. Afina con los filtros.`
+                        : `${vista.length.toLocaleString("es-CO")} lote(s).`}
+                    </p>
+                  </Card>
+                )
+              })()}
+            </>
+          )}
+        </TabsContent>
       </Tabs>
+
+      {/* ACTA DE CRUCE: corregir una línea (registra + aprueba el ajuste real) */}
+      <Dialog open={!!corrigiendo} onOpenChange={(o) => !o && setCorrigiendo(null)}>
+        <DialogContent className="max-w-md">
+          {corrigiendo && (
+            <>
+              <DialogHeader><DialogTitle className="text-base">Corregir · {corrigiendo.producto}</DialogTitle></DialogHeader>
+              <div className="space-y-3 text-sm">
+                <p className="text-xs text-muted-foreground">
+                  Congelado (apertura): <span className="font-semibold tabular-nums">{fmt(corrigiendo.sistemaOriginal)}</span>. Esta corrección se registra y aprueba de inmediato como movimiento real de inventario (mueve el stock).
+                </p>
+                <div>
+                  <label className="text-[11px] uppercase text-muted-foreground">Valor correcto</label>
+                  <Input type="number" value={corrigiendo.nuevoValor} onChange={(e) => setCorrigiendo({ ...corrigiendo, nuevoValor: e.target.value })} />
+                </div>
+                <div>
+                  <label className="text-[11px] uppercase text-muted-foreground">Ubicación (dónde queda la corrección)</label>
+                  <Input list="cruce-ubic" value={corrigiendo.location} onChange={(e) => setCorrigiendo({ ...corrigiendo, location: e.target.value })} placeholder="Ubicación" />
+                  <datalist id="cruce-ubic">{ubicacionesProd.map((u) => <option key={u} value={u} />)}</datalist>
+                </div>
+                <div>
+                  <label className="text-[11px] uppercase text-muted-foreground">Lote (opcional)</label>
+                  <Input value={corrigiendo.lote} onChange={(e) => setCorrigiendo({ ...corrigiendo, lote: e.target.value })} placeholder="Lote" />
+                </div>
+                <div>
+                  <label className="text-[11px] uppercase text-muted-foreground">Motivo</label>
+                  <Input value={corrigiendo.motivo} onChange={(e) => setCorrigiendo({ ...corrigiendo, motivo: e.target.value })} placeholder="Por qué se corrige este valor" />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setCorrigiendo(null)}>Cancelar</Button>
+                <Button onClick={guardarCorreccion} disabled={savingCorreccion}>{savingCorreccion ? "Guardando…" : "Aplicar corrección"}</Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ACTA DE CRUCE: firma digital */}
+      <Dialog open={firmandoCruce} onOpenChange={(o) => !o && setFirmandoCruce(false)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle className="text-base">Firmar Acta de Cruce · {cruce?.acta?.mes}</DialogTitle></DialogHeader>
+          <div className="space-y-3 text-sm">
+            <div>
+              <label className="text-[11px] uppercase text-muted-foreground">Nombre de quien firma</label>
+              <Input value={firmanteCruceNom} onChange={(e) => setFirmanteCruceNom(e.target.value)} />
+            </div>
+            <div>
+              <label className="text-[11px] uppercase text-muted-foreground">Cargo</label>
+              <Input value={firmanteCruceCargo} onChange={(e) => setFirmanteCruceCargo(e.target.value)} />
+            </div>
+            <div>
+              <label className="text-[11px] uppercase text-muted-foreground">Firma</label>
+              <SignaturePad ref={firmaCruceRef} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFirmandoCruce(false)}>Cancelar</Button>
+            <Button onClick={guardarFirmaCruce} disabled={savingCorreccion}>{savingCorreccion ? "Guardando…" : "Firmar y cerrar"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* DRILL-DOWN: movimientos de un producto con soportes PDF */}
       <Dialog open={!!drill} onOpenChange={(o) => !o && setDrill(null)}>
