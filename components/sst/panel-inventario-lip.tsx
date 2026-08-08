@@ -1166,7 +1166,7 @@ export function PanelInventarioLIP() {
 
       {/* DRILL-DOWN: movimientos de un producto con soportes PDF */}
       <Dialog open={!!drill} onOpenChange={(o) => !o && setDrill(null)}>
-        <DialogContent className="max-h-[95vh] w-[95vw] max-w-[95vw] sm:max-w-[95vw] overflow-y-auto">
+        <DialogContent className="overflow-y-auto" style={{ width: "95vw", maxWidth: "95vw", maxHeight: "95vh" }}>
           {drill && (
             <>
               <DialogHeader><DialogTitle className="text-base">Movimientos · {drill.producto}</DialogTitle></DialogHeader>
