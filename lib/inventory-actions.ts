@@ -250,10 +250,10 @@ export async function getLotesFromSaldoInvDetalleByLocationAndProduct(
   }
 }
 
-export async function getDestinationLocationsFromLocationsTable(): Promise<string[]> {
+export async function getDestinationLocationsFromLocationsTable(selectedEmpresaId?: number): Promise<string[]> {
   try {
     const supabase = await createClient()
-    const empresaId = await getCurrentEmpresaId()
+    const empresaId = selectedEmpresaId ?? (await getCurrentEmpresaId())
 
     console.log("[v0] Fetching destination locations from locations table for empresa:", empresaId)
 
@@ -354,11 +354,11 @@ export async function getLocationsByProductAndBatch(
   }
 }
 
-export async function getLocations(bodegaId?: number): Promise<Location[]> {
+export async function getLocations(bodegaId?: number, selectedEmpresaId?: number): Promise<Location[]> {
   try {
     const supabase = await createClient()
 
-    const empresaId = await getCurrentEmpresaIdForInsert()
+    const empresaId = selectedEmpresaId ?? (await getCurrentEmpresaIdForInsert())
     console.log("[v0] Filtering locations by empresa_id:", empresaId)
 
     let query = supabase
@@ -391,10 +391,11 @@ export async function getLocations(bodegaId?: number): Promise<Location[]> {
 // mostrar. Filtra por empresa y, opcionalmente, por almacén (bodega).
 export async function getLocationsWithId(
   bodegaId?: number,
+  selectedEmpresaId?: number,
 ): Promise<{ id: number; codigo: string; descripcion: string | null }[]> {
   try {
     const supabase = await createClient()
-    const empresaId = await getCurrentEmpresaIdForInsert()
+    const empresaId = selectedEmpresaId ?? (await getCurrentEmpresaIdForInsert())
 
     let query = supabase
       .from("locations")
@@ -499,6 +500,7 @@ export interface InventoryTransaction {
   tipo_movimiento: "Entrada" | "Salida" | "Reproceso"
   observaciones?: string | null // Added observaciones field
   cod_movimiento?: string | null // Código de nomenclatura elegido (si null, lo deriva el trigger)
+  selectedEmpresaId?: number
 }
 
 export async function registerInventoryTransaction(transaction: InventoryTransaction) {
@@ -523,7 +525,7 @@ export async function registerInventoryTransaction(transaction: InventoryTransac
     const nextId = maxIdData ? maxIdData.id + 1 : 1
     console.log("[v0] Next ID to use:", nextId)
 
-    const empresaId = await getCurrentEmpresaIdForInsert()
+    const empresaId = transaction.selectedEmpresaId ?? (await getCurrentEmpresaIdForInsert())
     const usuario = await getCurrentUsuarioForInsert()
 
     const insertData: any = {
@@ -1981,10 +1983,11 @@ export async function getAllLocationsFromSaldoInvDetalle(): Promise<string[]> {
  */
 export async function getLocationsFromSaldoInvDetalle(
   bodegaId?: number,
+  selectedEmpresaId?: number,
 ): Promise<string[]> {
   try {
     const supabase = await createClient()
-    const empresaId = await getCurrentEmpresaId()
+    const empresaId = selectedEmpresaId ?? (await getCurrentEmpresaId())
 
     const { data, error } = await supabase
       .from("saldoinvdetalle")
@@ -2048,10 +2051,10 @@ export async function getLocationsFromSaldoInvDetalle(
   }
 }
 
-export async function getProductsFromSaldoInvDetalle(): Promise<string[]> {
+export async function getProductsFromSaldoInvDetalle(selectedEmpresaId?: number): Promise<string[]> {
   try {
     const supabase = await createClient()
-    const empresaId = await getCurrentEmpresaId()
+    const empresaId = selectedEmpresaId ?? (await getCurrentEmpresaId())
 
     const { data, error } = await supabase
       .from("saldoinvdetalle")
@@ -2153,6 +2156,7 @@ export async function registerProductTransfer(
   producto: string,
   lote: string,
   cantidad: number,
+  selectedEmpresaId?: number,
 ): Promise<{ success: boolean; message: string }> {
   try {
     console.log("[v0] Registering product transfer:", {
@@ -2170,7 +2174,7 @@ export async function registerProductTransfer(
     }
 
     const supabase = await createClient()
-    const empresaId = await getCurrentEmpresaId()
+    const empresaId = selectedEmpresaId ?? (await getCurrentEmpresaId())
 
     const { data: lastRecord, error: lastRecordError } = await supabase
       .from("invtrans")
@@ -2246,6 +2250,7 @@ export async function registerProductTransfer(
 export async function getInventoryForAudit(
   location: string,
   productFilter?: string,
+  selectedEmpresaId?: number,
 ): Promise<{ nombreproducto: string; lote: string; stock_actual: number }[]> {
   const supabase = await createClient()
   // Aplicamos el filtro dinamico de empresa (mismo helper que el resto
@@ -2254,7 +2259,7 @@ export async function getInventoryForAudit(
   // conteo fisico se cargarian lotes que no pertenecen a la empresa
   // activa. `stock_actual > 0` ya estaba; lo conservamos para que el
   // operador solo vea producto realmente contable.
-  const empresaId = await getCurrentEmpresaId()
+  const empresaId = selectedEmpresaId ?? (await getCurrentEmpresaId())
 
   let query = supabase
     .from("saldoinvdetalle")

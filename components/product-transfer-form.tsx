@@ -22,9 +22,11 @@ import {
   getProductByName,
   getDestinationLocationsFromLocationsTable,
 } from "@/lib/inventory-actions"
+import { useAuth } from "@/components/auth-provider"
 
 export function ProductTransferForm() {
   const { toast } = useToast()
+  const { selectedEmpresaId } = useAuth()
 
   const [origenLocations, setOrigenLocations] = useState<string[]>([])
   const [destinoLocations, setDestinoLocations] = useState<string[]>([])
@@ -45,7 +47,7 @@ export function ProductTransferForm() {
   useEffect(() => {
     loadOrigenLocations()
     loadDestinoLocations()
-  }, [])
+  }, [selectedEmpresaId])
 
   // Load products when origen location changes
   useEffect(() => {
@@ -97,7 +99,7 @@ export function ProductTransferForm() {
   const loadOrigenLocations = async () => {
     try {
       console.log("[v0] Loading origen locations from saldoinvdetalle (with stock filter)...")
-      const data = await getLocationsFromSaldoInvDetalle()
+      const data = await getLocationsFromSaldoInvDetalle(undefined, selectedEmpresaId ?? undefined)
       console.log("[v0] Origen locations loaded:", data)
       setOrigenLocations(data)
     } catch (error) {
@@ -113,7 +115,7 @@ export function ProductTransferForm() {
   const loadDestinoLocations = async () => {
     try {
       console.log("[v0] Loading destino locations from locations table...")
-      const data = await getDestinationLocationsFromLocationsTable()
+      const data = await getDestinationLocationsFromLocationsTable(selectedEmpresaId ?? undefined)
       console.log("[v0] Destino locations loaded from locations table:", data)
       setDestinoLocations(data)
     } catch (error) {
@@ -246,6 +248,7 @@ export function ProductTransferForm() {
         selectedProduct,
         lote,
         Number.parseFloat(cantidad),
+        selectedEmpresaId ?? undefined,
       )
 
       if (!result.success) {

@@ -14,6 +14,7 @@ import {
   getProductsFromSaldoInvDetalle,
   getInventoryForAudit,
 } from "@/lib/inventory-actions"
+import { useAuth } from "@/components/auth-provider"
 
 interface AuditItem {
   nombreproducto: string
@@ -33,6 +34,7 @@ interface AlmacenOption {
 const ALL_ALMACENES = "all"
 
 export default function InventoryAudit() {
+  const { selectedEmpresaId } = useAuth()
   const [almacenes, setAlmacenes] = useState<AlmacenOption[]>([])
   const [selectedAlmacen, setSelectedAlmacen] = useState<string>(ALL_ALMACENES)
   const [locations, setLocations] = useState<string[]>([])
@@ -49,9 +51,10 @@ export default function InventoryAudit() {
   // dependen del almacen porque saldoinvdetalle ya viene filtrado por
   // empresa, y un producto puede existir en varias locations).
   useEffect(() => {
+    if (!selectedEmpresaId) return
     void loadAlmacenes()
     void loadProducts()
-  }, [])
+  }, [selectedEmpresaId])
 
   // Cuando cambia el almacen seleccionado, recargamos las localizaciones.
   // Memoizamos con useCallback porque la usamos como effect dependency
@@ -59,7 +62,7 @@ export default function InventoryAudit() {
   const loadLocations = useCallback(async (bodegaId?: number) => {
     setLoadingLocations(true)
     try {
-      const locs = await getLocationsFromSaldoInvDetalle(bodegaId)
+      const locs = await getLocationsFromSaldoInvDetalle(bodegaId, selectedEmpresaId ?? undefined)
       setLocations(locs)
     } catch (error) {
       console.error("[v0] Error loading locations:", error)
@@ -67,7 +70,7 @@ export default function InventoryAudit() {
     } finally {
       setLoadingLocations(false)
     }
-  }, [])
+  }, [selectedEmpresaId])
 
   useEffect(() => {
     const bodegaId =
@@ -80,7 +83,7 @@ export default function InventoryAudit() {
 
   const loadAlmacenes = async () => {
     try {
-      const data = await getAlmacenes()
+      const data = await getAlmacenes(selectedEmpresaId ?? undefined)
       // Mapeamos a la forma que necesita el Select. `getAlmacenes` ya
       // devuelve solo los de la empresa activa.
       const opts: AlmacenOption[] = (data ?? []).map((a: { id: number; nombre: string }) => ({
@@ -96,7 +99,7 @@ export default function InventoryAudit() {
 
   const loadProducts = async () => {
     try {
-      const prods = await getProductsFromSaldoInvDetalle()
+      const prods = await getProductsFromSaldoInvDetalle(selectedEmpresaId ?? undefined)
       setProducts(prods)
     } catch (error) {
       console.error("[v0] Error loading products:", error)
@@ -113,7 +116,7 @@ export default function InventoryAudit() {
     setIsValidated(false)
 
     try {
-      const data = await getInventoryForAudit(selectedLocation, selectedProduct)
+      const data = await getInventoryForAudit(selectedLocation, selectedProduct, selectedEmpresaId ?? undefined)
 
       // Initialize audit items with conteo = 0 and diferencia = 0
       const items: AuditItem[] = data.map((item) => ({

@@ -49,7 +49,7 @@ export function InventoryTransactionsManagement() {
     setLoading(true)
     const [transData, locData, prodData] = await Promise.all([
       getAllInventoryTransactions({ ...filters, idempresa: selectedEmpresaId }),
-      getLocations(),
+      getLocations(undefined, selectedEmpresaId ?? undefined),
       getProductsWithCodes(),
     ])
     setTransactions(transData)

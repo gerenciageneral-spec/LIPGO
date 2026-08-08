@@ -49,8 +49,8 @@ export function ReprocesosManagement() {
   const loadData = async () => {
     setLoading(true)
     const [reprocesosData, locationsData] = await Promise.all([
-      getReprocesos(selectedEmpresaId), 
-      getLocations()
+      getReprocesos(selectedEmpresaId),
+      getLocations(undefined, selectedEmpresaId ?? undefined)
     ])
     setReprocesos(reprocesosData)
     setLocations(locationsData)

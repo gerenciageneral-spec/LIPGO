@@ -54,7 +54,7 @@ export function ProductionApproval() {
   }
 
   const loadLocations = async (almacenId?: number) => {
-    const locs = await getLocations(almacenId)
+    const locs = await getLocations(almacenId, selectedEmpresaId ?? undefined)
     setLocations(locs as any)
   }
 

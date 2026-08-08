@@ -14,6 +14,7 @@ import { toast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
 import { getProductsWithCodes, getAlmacenes, getLocationsWithId } from "@/lib/inventory-actions"
 import { getMaxProduccionId, marcarProduccionHarinera } from "@/lib/qr-actions"
+import { useAuth } from "@/components/auth-provider"
 
 const API_URL = "https://duct-dose-gentleman.ngrok-free.dev/api/registro-manual"
 
@@ -66,6 +67,7 @@ interface LocationOption {
 }
 
 export default function QRPalletRegistration() {
+  const { selectedEmpresaId } = useAuth()
   const [formData, setFormData] = useState<FormState>(INITIAL_STATE)
   const [submitting, setSubmitting] = useState(false)
   const [lastResult, setLastResult] = useState<
@@ -93,12 +95,13 @@ export default function QRPalletRegistration() {
 
   // Carga inicial de productos y almacenes
   useEffect(() => {
+    if (!selectedEmpresaId) return
     ;(async () => {
-      const [prods, alms] = await Promise.all([getProductsWithCodes(), getAlmacenes()])
+      const [prods, alms] = await Promise.all([getProductsWithCodes(), getAlmacenes(selectedEmpresaId)])
       setProducts(prods as ProductOption[])
       setAlmacenes(alms as AlmacenOption[])
     })()
-  }, [])
+  }, [selectedEmpresaId])
 
   // Las localizaciones dependen del almacén seleccionado
   useEffect(() => {
@@ -108,11 +111,11 @@ export default function QRPalletRegistration() {
     }
     ;(async () => {
       setLoadingLocations(true)
-      const locs = await getLocationsWithId(Number.parseInt(formData.bodega, 10))
+      const locs = await getLocationsWithId(Number.parseInt(formData.bodega, 10), selectedEmpresaId ?? undefined)
       setLocations(locs)
       setLoadingLocations(false)
     })()
-  }, [formData.bodega])
+  }, [formData.bodega, selectedEmpresaId])
 
   const handleChange = (field: keyof FormState, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }))

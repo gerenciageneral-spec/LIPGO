@@ -218,7 +218,7 @@ export function InventoryTransactionsForm() {
   }
 
   const loadLocations = async (warehouseId: number) => {
-    const locationsData = await getLocations(warehouseId)
+    const locationsData = await getLocations(warehouseId, selectedEmpresaId ?? undefined)
     setLocations(locationsData)
   }
 
@@ -449,6 +449,7 @@ export function InventoryTransactionsForm() {
       tipo_movimiento: formData.tipo_movimiento as "Entrada" | "Salida" | "Reproceso",
       observaciones: formData.observaciones,
       cod_movimiento: formData.cod_movimiento || codigoPorDefecto(formData.tipo_movimiento) || null,
+      selectedEmpresaId: selectedEmpresaId ?? undefined,
     })
 
     console.log("[v0] Transaction result:", result)
