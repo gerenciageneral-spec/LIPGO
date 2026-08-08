@@ -2562,6 +2562,28 @@ export async function getKardexInventario(
       else if (r.tipomov === "Salida" && has(r.origen, "orden de cargue")) map[cod].salidas += c
       else map[cod].ajustes += r.tipomov === "Salida" ? -c : c
     }
+    // Saldo inicial del mes (por producto), SOLO cuando se pide un mes/año/
+    // proyecto puntual (si no, "inicio de mes" no tiene un único significado).
+    // Sale del físico congelado del mes ANTERIOR (`sig_inventario_cierre_mes`,
+    // mismo mecanismo que Conciliación Mensual) — así el Kardex arranca el mes
+    // con el mismo número que la conciliación, y de ahí en adelante los
+    // movimientos siguen exactamente igual que siempre.
+    let saldoInicialPorProducto: Record<string, number> | null = null
+    if (proyectoId && anio && mes) {
+      const d = new Date(Number(anio), Number(mes) - 1, 1)
+      d.setMonth(d.getMonth() - 1)
+      const mesAnteriorKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`
+      try {
+        const { data: cierreAnterior } = await supabase
+          .from("sig_inventario_cierre_mes")
+          .select("fisico_snapshot")
+          .eq("proyecto_id", proyectoId)
+          .eq("mes", mesAnteriorKey)
+          .maybeSingle()
+        if (cierreAnterior?.fisico_snapshot) saldoInicialPorProducto = cierreAnterior.fisico_snapshot
+      } catch { /* tabla aún no creada o sin cierre ese mes */ }
+    }
+
     const filas = Object.values(map)
       .map((p: any) => ({
         ...p,
@@ -2570,6 +2592,7 @@ export async function getKardexInventario(
         ajustes: Math.round(p.ajustes),
         merma: Math.round(p.merma),
         saldo: Math.round(saldos[p.codproducto] || 0),
+        saldoInicial: saldoInicialPorProducto ? Math.round(saldoInicialPorProducto[p.codproducto] ?? 0) : null,
       }))
       .sort((a: any, b: any) => (a.producto || "").localeCompare(b.producto || ""))
 
@@ -4137,22 +4160,57 @@ export async function getConciliacionMensualInventario(
     const eri = lotesEvaluados > 0 ? Math.round((lotesExactos / lotesEvaluados) * 1000) / 10 : 100
     revisar.sort((a, b) => Math.abs(b.diferencia) - Math.abs(a.diferencia))
 
+    // Cierres guardados (acta + físico congelado). Se trae ANTES del roll
+    // porque un mes con `fisico_congelado` reemplaza el ajuste lote-a-lote en
+    // vivo (ver abajo) — necesario para que meses YA CERRADOS no seteen se
+    // recalculen contra `saldoinvdetalle` de HOY (esa mezcla de fechas es la
+    // causa de que el cuadre de un mes cerrado "se mueva" con la operación de
+    // los días siguientes; confirmado 2026-08-08 con datos reales de ID3).
+    let cierresPrevios: SigInventarioCierreMes[] = []
+    try {
+      const { data: cData } = await supabase
+        .from("sig_inventario_cierre_mes")
+        .select("*")
+        .eq("proyecto_id", empresaId)
+        .order("mes")
+      cierresPrevios = (cData ?? []) as SigInventarioCierreMes[]
+    } catch { /* tabla aún no creada */ }
+    const cierrePorMes: Record<string, SigInventarioCierreMes> = {}
+    for (const c of cierresPrevios) cierrePorMes[c.mes] = c
+
     // ============================================================
     // A) ROLL MENSUAL — cierre de un mes = inicial del siguiente.
     //    Apertura = Inventario Inicial (561). Reconoce la MERMA DE PROCESO
     //    (diferencia libro-vs-físico por lote, mesProc) para que el saldo
     //    conciliado cuadre EXACTO contra el stock vivo (la verdad física).
+    //    Si el mes tiene `fisico_congelado` (acta cerrada con físico real
+    //    capturado ESE día), se usa ese valor como saldoFinal en vez del
+    //    ajuste lote-a-lote en vivo — el resto de meses (incl. el actual)
+    //    sigue exactamente igual que antes.
     // ============================================================
     const meses = Object.values(map).sort((x: any, y: any) => x.mes.localeCompare(y.mes))
     let saldo = Math.round(invInicial)
     const filas = meses.map((a: any) => {
       const ingresos = a.produccion + a.devolucion
-      const mermaProceso = Math.round(difMes[a.mes] || 0) // cuadre físico del mes (por lote)
-      const reproceso = Math.round(a.merma)               // reproceso/avería registrado (551)
-      const merma = reproceso + mermaProceso              // merma total = reproceso + cuadre
-      const salidas = a.cargue + merma
+      const congelado = cierrePorMes[a.mes]?.fisico_congelado
       const saldoInicial = saldo
-      const saldoFinal = saldoInicial + ingresos - salidas
+      let mermaProceso: number, reproceso: number, merma: number, salidas: number, saldoFinal: number
+      if (congelado !== null && congelado !== undefined) {
+        // Físico real de ese mes (capturado ese día) manda: se resuelve la
+        // merma de proceso como residuo, igual que el plug del mes en curso
+        // contra stock vivo (líneas más abajo), pero anclado al congelado.
+        reproceso = Math.round(a.merma)
+        saldoFinal = Math.round(congelado)
+        salidas = Math.round(saldoInicial + ingresos - saldoFinal)
+        merma = salidas - Math.round(a.cargue)
+        mermaProceso = merma - reproceso
+      } else {
+        mermaProceso = Math.round(difMes[a.mes] || 0) // cuadre físico del mes (por lote, en vivo)
+        reproceso = Math.round(a.merma)               // reproceso/avería registrado (551)
+        merma = reproceso + mermaProceso              // merma total = reproceso + cuadre
+        salidas = a.cargue + merma
+        saldoFinal = saldoInicial + ingresos - salidas
+      }
       saldo = saldoFinal
       return {
         mes: a.mes,
@@ -4212,18 +4270,10 @@ export async function getConciliacionMensualInventario(
       eri,              // Exactitud del Registro de Inventario (%)
     }
 
-    let cierres: SigInventarioCierreMes[] = []
-    try {
-      const { data: cData } = await supabase
-        .from("sig_inventario_cierre_mes")
-        .select("*")
-        .eq("proyecto_id", empresaId)
-        .order("mes")
-      cierres = (cData ?? []) as SigInventarioCierreMes[]
-    } catch { /* tabla aún no creada */ }
-
-    const cierrePorMes: Record<string, SigInventarioCierreMes> = {}
-    for (const c of cierres) cierrePorMes[c.mes] = c
+    // `cierresPrevios`/`cierrePorMes` ya se trajeron ANTES del roll (arriba)
+    // para poder aplicar el físico congelado; se reutilizan aquí solo para
+    // anotar documento_url/cierre_id/estado en cada fila.
+    const cierres = cierresPrevios
     for (const f of filas) {
       const c = cierrePorMes[f.mes]
       if (c) {
@@ -4254,12 +4304,17 @@ export async function guardarCierreMesInventario(payload: {
   ajuste: number
   produccion: number
   devolucion: number
-  documento_url: string
+  documento_url?: string | null
   cerrado_por?: string | null
   observaciones?: string | null
   firmante?: string | null
   firmante_cargo?: string | null
   firma_url?: string | null
+  // Físico congelado (conteo real capturado ese día) — ver "Físico congelado al
+  // cierre" en getConciliacionMensualInventario/getKardexInventario. Opcional:
+  // sin esto, el mes se recalcula en vivo como siempre.
+  fisico_congelado?: number | null
+  fisico_snapshot?: Record<string, number> | null
 }): Promise<{ success: boolean; data?: SigInventarioCierreMes; error?: string }> {
   try {
     const supabase: any = await getSupabaseAdmin()
@@ -4279,11 +4334,13 @@ export async function guardarCierreMesInventario(payload: {
       ajuste: payload.ajuste,
       produccion: payload.produccion,
       devolucion: payload.devolucion,
-      documento_url: payload.documento_url,
+      documento_url: payload.documento_url ?? null,
       cerrado_por: payload.cerrado_por ?? null,
       observaciones: payload.observaciones ?? null,
       updated_at: new Date().toISOString(),
     }
+    if (payload.fisico_congelado != null) fila.fisico_congelado = payload.fisico_congelado
+    if (payload.fisico_snapshot != null) fila.fisico_snapshot = payload.fisico_snapshot
     // Firma digital (opcional): nombre, cargo, imagen y fecha de firma.
     if (payload.firmante != null) fila.firmante = payload.firmante
     if (payload.firmante_cargo != null) fila.firmante_cargo = payload.firmante_cargo

@@ -591,6 +591,7 @@ export function PanelInventarioLIP() {
                     <tr className="border-b text-left text-[11px] uppercase text-muted-foreground">
                       <th className="px-3 py-2">Código</th>
                       <th className="px-3 py-2">Producto</th>
+                      <th className="px-3 py-2 text-right">Saldo inicial</th>
                       <th className="px-3 py-2 text-right">Entradas</th>
                       <th className="px-3 py-2 text-right">Salidas</th>
                       <th className="px-3 py-2 text-right">Traslados</th>
@@ -607,6 +608,7 @@ export function PanelInventarioLIP() {
                         <tr key={p.codproducto} className="cursor-pointer border-b last:border-0 hover:bg-muted/40" onClick={() => abrirDrill(p)}>
                           <td className="px-3 py-1.5 text-xs text-muted-foreground">{p.codproducto}</td>
                           <td className="px-3 py-1.5">{p.producto}</td>
+                          <td className="px-3 py-1.5 text-right text-muted-foreground">{p.saldoInicial === null ? "—" : fmt(p.saldoInicial)}</td>
                           <td className="px-3 py-1.5 text-right" style={{ color: SST_TOKENS.ok }}>{fmt(p.entradas)}</td>
                           <td className="px-3 py-1.5 text-right" style={{ color: SST_TOKENS.navy }}>{fmt(p.salidas)}</td>
                           <td className="px-3 py-1.5 text-right text-muted-foreground">{fmt(p.traslados)}</td>
