@@ -4428,6 +4428,30 @@ export async function getConciliacionMensualInventario(
         estadoCierre: null as string | null,
       }
     })
+    // APERTURA DE MIGRACIÓN: si el PRIMER mes está congelado y quedó con
+    // residuo, ese residuo es exactamente "lo que no se subió en la
+    // migración" (regla del cliente) — se absorbe en la APERTURA del
+    // periodo (inventario inicial efectivo), no como ajuste del mes. Solo si
+    // la apertura resultante no queda negativa (guarda anti-imposibles).
+    let invInicialEfectivo = Math.round(invInicial)
+    let aperturaAjustada = false
+    if (filas.length) {
+      const f0 = filas[0]
+      const congelado0 = cierrePorMes[f0.mes]?.fisico_congelado
+      if (congelado0 !== null && congelado0 !== undefined && f0.mermaProceso !== 0) {
+        const aperturaNecesaria = Math.round(invInicial - f0.mermaProceso)
+        if (aperturaNecesaria >= 0) {
+          const delta = f0.mermaProceso
+          f0.saldoInicial = aperturaNecesaria
+          f0.salidas -= delta
+          f0.merma -= delta
+          f0.mermaProceso = 0
+          invInicialEfectivo = aperturaNecesaria
+          aperturaAjustada = true
+        }
+      }
+    }
+
     // Cuadre exacto contra el físico: el residual (lotes sin fecha, 702/otros,
     // redondeos) se lleva al último mes como merma de proceso → saldo final = stock vivo.
     if (filas.length) {
@@ -4452,7 +4476,9 @@ export async function getConciliacionMensualInventario(
     const filaMesEnCurso = filas.find((f: any) => f.mes === mesEnCurso) || (filas.length ? filas[filas.length - 1] : null)
 
     const resumen = {
-      invInicial: Math.round(invInicial),
+      invInicial: invInicialEfectivo, // apertura efectiva (incluye lo no subido en la migración si aplicó)
+      invInicial561: Math.round(invInicial), // lo digitado como 561 (referencia)
+      aperturaAjustada, // true = la apertura absorbió la diferencia de migración
       saldoTeorico,                                        // = stock vivo tras conciliar
       saldoVivo: Math.round(stockActual),
       diferencia: Math.round(saldoTeorico - stockActual),  // ~0 tras conciliar
