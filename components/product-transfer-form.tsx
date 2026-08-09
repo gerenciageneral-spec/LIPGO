@@ -131,7 +131,7 @@ export function ProductTransferForm() {
   const loadProductosByLocation = async () => {
     try {
       console.log("[v0] Loading products from saldoinvdetalle by location:", origenLocation)
-      const data = await getProductosFromSaldoInvDetalleByLocation(origenLocation)
+      const data = await getProductosFromSaldoInvDetalleByLocation(origenLocation, false, selectedEmpresaId)
       console.log("[v0] Products loaded for location:", data)
       setProductos(data)
       setSelectedProduct("")
@@ -153,7 +153,7 @@ export function ProductTransferForm() {
     try {
       setLoading(true)
       console.log("[v0] Loading lotes with location:", origenLocation, "product:", selectedProduct)
-      const data = await getLotesFromSaldoInvDetalleByLocationAndProduct(origenLocation, selectedProduct)
+      const data = await getLotesFromSaldoInvDetalleByLocationAndProduct(origenLocation, selectedProduct, false, selectedEmpresaId)
       console.log("[v0] Lotes loaded:", data)
       setLotes(data)
       setLote("")

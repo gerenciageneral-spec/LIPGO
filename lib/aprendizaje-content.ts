@@ -86,39 +86,54 @@ export const CATALOGO_APRENDIZAJE: ContenidoAprendizaje[] = [
   // ==========================================================================
   {
     modulo: "Transacciones de Inventario",
-    resumen: "Registra entradas, salidas y reprocesos de producto en el inventario.",
+    resumen: "Movimientos y correcciones de inventario por codigo de transaccion (estilo SAP), con trazabilidad completa.",
     proposito:
-      "Es el punto donde el inventario cambia. Todo movimiento que suma o resta stock de un producto en un lote y una localizacion se registra aqui, y queda con trazabilidad de quien lo hizo y cuando.",
+      "Es el punto donde el inventario cambia. Todo movimiento o correccion (malos ingresos, correccion de lote, cantidades, reversos, bloqueos) se registra aqui escribiendo el codigo de la transaccion, y queda con trazabilidad de quien lo hizo, quien autorizo y por que — ya no se corrige nada directo en la base de datos.",
     puedes: [
-      "Registrar un movimiento de Entrada, Salida o Reproceso.",
-      "Trabajar en modo normal o en modo QR, escaneando la estiba con la camara o digitando el codigo.",
-      "Registrar una estiba nueva cuando el QR escaneado todavia no existe en el sistema.",
-      "Dejar observaciones y un codigo de movimiento.",
+      "Movimiento por codigo: escribir el codigo (101, 601, 311, 309, 102, 602, 552, 312, 653, 344, 343, 701, 702, 561, 551) y el sistema habilita SOLO los campos de ese movimiento, con la nomenclatura visible al lado.",
+      "Corregir un lote/producto/ubicacion mal digitado (309), anular ingresos (102), salidas (602), mermas (552) o traslados (312) — total o parcialmente, siempre referenciando el movimiento original.",
+      "Bloquear producto en cuarentena (344) y liberarlo (343) sin sacarlo del inventario.",
+      "Formulario clasico: registrar Entrada, Salida o Reproceso como siempre, con o sin QR de estiba.",
+      "Consulta de movimientos: ver cualquier movimiento por rango de fechas (desde-hasta) con todos sus datos y exportar a Excel.",
+      "Historial de correcciones: revisar todo lo ejecutado por codigo (quien, quien autorizo, motivo, evidencia) y exportarlo.",
+      "Pestana Guia: la capacitacion completa de cada transaccion con pasos y ejemplos.",
     ],
     noPuedes: [
-      "Editar o eliminar un movimiento ya registrado desde este modulo.",
-      "Dejar el inventario en negativo: si la cantidad supera el stock disponible, el sistema bloquea el movimiento.",
-      "Registrar una Salida o un Reproceso sobre un producto/lote/localizacion que no tenga stock.",
+      "Editar o eliminar un movimiento ya registrado: un error se corrige con OTRO movimiento (un reverso), nunca borrando.",
+      "Reversar mas de lo que el movimiento original registro (el sistema controla el reversible restante).",
+      "Ejecutar un codigo de correccion sin motivo y sin la clave del responsable.",
+      "Dejar el inventario en negativo: si la cantidad supera el stock del lote, el sistema bloquea el movimiento.",
     ],
     funcionalidades: [
       {
-        nombre: "Modo sin QR / con QR",
+        nombre: "Movimiento por codigo",
         descripcion:
-          "En modo sin QR se elige el producto de la lista. En modo con QR se escanea o digita el codigo de la estiba y el sistema trae la linea de inventario correspondiente. Si el QR no existe, ofrece registrar la estiba nueva.",
+          "Se escribe el codigo de la transaccion y el formulario habilita los campos de ese movimiento. Los codigos de correccion exigen motivo y clave del responsable; los reversos piden buscar y elegir el movimiento original y muestran cuanto queda reversible. Antes de ejecutar, un dialogo resume exactamente que se va a mover.",
       },
       {
-        nombre: "Tipo de movimiento",
+        nombre: "Nomenclatura visible",
         descripcion:
-          "Entrada suma stock; Salida lo resta; Reproceso lo resta para reprocesar el producto. En Entrada el lote y la localizacion son opcionales; en Salida y Reproceso son obligatorios, porque hay que saber exactamente de donde se descuenta.",
+          "La tabla de codigos con su explicacion esta siempre al lado derecho, con buscador; clic en un codigo lo selecciona. Los codigos que requieren clave llevan un escudo.",
       },
       {
-        nombre: "Validacion de stock",
+        nombre: "Formulario clasico (con o sin QR)",
         descripcion:
-          "Antes de guardar una Salida o un Reproceso el sistema consulta el stock real de ese producto, lote y localizacion. Si no hay stock, o si la cantidad lo supera, muestra el error y no guarda nada.",
+          "El flujo de siempre: Entrada suma stock; Salida y Reproceso lo restan y validan contra el stock real del producto/lote/localizacion. En modo QR se escanea la estiba y el sistema trae la linea de inventario.",
+      },
+      {
+        nombre: "Consulta de movimientos",
+        descripcion:
+          "Cualquier movimiento del proyecto en un rango desde-hasta (dia calendario de Colombia), con filtros por producto, lote, tipo, codigo y usuario, y exportacion a Excel.",
+      },
+      {
+        nombre: "Historial de correcciones",
+        descripcion:
+          "Registro propio y revisable de todo lo ejecutado por codigo: fecha, codigo, origen y destino, cantidad, motivo, quien lo realizo, quien lo autorizo y los movimientos generados como evidencia.",
       },
     ],
     consejos: [
       "El movimiento queda asociado a la empresa seleccionada en la barra superior. Si registra en la empresa equivocada, el saldo se afecta en la empresa equivocada.",
+      "Ante la duda de que codigo usar, abra la pestana Guia o preguntele a LIPbot: conoce cada transaccion y direcciona el paso a paso.",
     ],
   },
   {

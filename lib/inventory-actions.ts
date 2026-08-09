@@ -2193,7 +2193,11 @@ export async function registerProductTransfer(
       nextId = (lastRecord.id || 0) + 1
     }
 
-    const now = new Date().toISOString()
+    // Trazabilidad real: usuario de la sesión (antes quedaba "admin" fijo y
+    // nunca se sabía quién hizo el traslado) y hora Colombia, con el código
+    // de nomenclatura 311 explícito.
+    const now = await getColombiaDateTime()
+    const usuarioTraslado = await getCurrentUsuarioForInsert()
 
     const transactions = [
       {
@@ -2209,8 +2213,9 @@ export async function registerProductTransfer(
         tipomov: "Salida",
         status: "aprobado",
         origen: "traslado entre localizaciones",
+        cod_movimiento: "311",
         creado: now,
-        creadopor: "admin",
+        creadopor: usuarioTraslado,
       },
       {
         id: nextId + 1,
@@ -2225,8 +2230,9 @@ export async function registerProductTransfer(
         tipomov: "Entrada",
         status: "aprobado",
         origen: "traslado entre localizaciones",
+        cod_movimiento: "311",
         creado: now,
-        creadopor: "admin",
+        creadopor: usuarioTraslado,
       },
     ]
 

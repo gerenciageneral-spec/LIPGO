@@ -13,6 +13,7 @@ import { groups } from "@/lib/dashboard-data"
 import { REGISTRO_ACCIONES, NUCLEO_PROHIBIDO, pkDe } from "@/lib/lipbot-registry"
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getCurrentEmpresaId } from "@/lib/company-filter"
+import { guiaCompactaParaLIPbot } from "@/lib/transacciones-codigo"
 import { z } from "zod"
 
 /**
@@ -217,6 +218,8 @@ CONTEXTO ACTUAL (dónde está el usuario):
         • SOLO cuando la pregunta pertenece claramente a OTRO módulo (ej. le preguntan por pedidos o toneladas estando en Gestión Humana) → respóndele breve indicándole el MÓDULO correcto y ofrécele abrirlo (abrir_modulo / abrir_submodulo). No mezcles áreas que no tienen que ver.
     - Navegar es una AYUDA, no un reemplazo de responder: si puedes contestar con datos, contesta primero; abrir un módulo es solo cuando el usuario lo pide o cuando la información es de otra área.
 ` : ""}
+${guiaCompactaParaLIPbot()}
+
 FUENTE DE VERDAD (INQUEBRANTABLE):
 
     - TODA la información vive en Supabase. NUNCA respondas cifras, totales ni hechos de memoria o suposición: SIEMPRE consulta la base con la herramienta y basa tu respuesta EXCLUSIVAMENTE en lo que ella devuelve. Si no consultaste, no afirmas.

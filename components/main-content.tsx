@@ -25,7 +25,7 @@ import { BasculaHistory } from "@/components/bascula-history"
 import { GenerateLoadOrders } from "@/components/generate-load-orders"
 import { GenerateUnloadOrders } from "@/components/generate-unload-orders"
 import { GenerateDistributionOrders } from "@/components/generate-distribution-orders"
-import { InventoryTransactionsForm } from "@/components/inventory-transactions-form"
+import { InventoryTransactionsModule } from "@/components/inventory-transactions-module"
 import { ProductionEntryForm } from "@/components/production-entry-form"
 import { InventoryBalanceDetails } from "@/components/inventory-balance-details"
 import { InventoryBalanceGlobal } from "@/components/inventory-balance-global"
@@ -479,7 +479,7 @@ export function MainContent({
             </PermissionGuard>
           ) : selectedModule === "Transacciones de Inventario" ? (
             <PermissionGuard moduleName="Transacciones de Inventario">
-              <InventoryTransactionsForm />
+              <InventoryTransactionsModule />
             </PermissionGuard>
           ) : selectedModule === "Ingreso de Producción" ? (
             <PermissionGuard moduleName="Ingreso de Producción">

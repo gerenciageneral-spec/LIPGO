@@ -110,7 +110,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoadingEmpresas(true)
       const response = await fetch('/api/accessible-empresas')
       if (!response.ok) {
-        console.error("[v0] Failed to fetch accessible empresas")
+        // 401 = aún no hay sesión (pantalla de login / hidratación inicial):
+        // estado esperado, no un error — un console.error aquí dispara el
+        // overlay rojo del modo desarrollo y tapa toda la pantalla.
+        if (response.status !== 401) console.warn("[v0] Failed to fetch accessible empresas:", response.status)
         return
       }
       const data = await response.json()
