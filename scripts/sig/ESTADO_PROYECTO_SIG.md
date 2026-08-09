@@ -200,6 +200,53 @@ Carpeta `scripts/sig/`. Ver `_LEEME_EJECUTAR_EN_SUPABASE.md`. Idempotentes.
   `guardarCierreMesInventario`), `components/sst/panel-inventario-lip.tsx` (columna "Saldo inicial"
   en Kardex). Commit `33bb5dc`.
 
+## 6k. Sesión 2026-08-08 (maratónica) — Transacciones por Código, cierres a CERO, causa raíz de "ajustes irreales"
+
+- **Módulo "Transacciones de Inventario" REDISEÑADO (estilo SAP)** — commits `480cbcb`..`2128364`.
+  5 pestañas: **Movimiento por código** (escribes el código → se habilitan SOLO los campos de ese
+  movimiento; nomenclatura sticky al lado; modos Sin QR / Con QR; confirmación antes de ejecutar),
+  Formulario clásico (intacto), **Consulta de movimientos** (desde–hasta día Colombia + Excel),
+  **Historial de correcciones** (tabla `inv_correcciones_log`, revisable sin tocar invtrans),
+  **Guía** (capacitación por transacción, fuente única `GUIA_TRANSACCIONES` compartida con el
+  system prompt de LIPbot). 15 códigos: 7 existentes + **309 corrección de lote · 102/602/552
+  reversos (marcador [rev#id], reversible controlado) · 312 reverso de traslado · 653 devolución
+  cliente · 344/343 cuarentena** (requieren ubicación CUARENTENA — AÚN NO EXISTE en ningún ID).
+  Clave del responsable (`inv_clave_movimiento`, 2323) SOLO en códigos de corrección. **SQL 52
+  corrido**. OJO: columna real del catálogo = `codigo_sap` (el rename del SQL 17 nunca aplicó).
+  Archivos: `lib/transacciones-codigo(.ts/-actions.ts)`, `components/transacciones-por-codigo.tsx`,
+  `components/inventory-transactions-module.tsx`. Patrón clave: NO throw en server actions (Next
+  enmascara el mensaje en prod) → retornar {success:false, error}.
+- **BUG SISTÉMICO RESUELTO — paginación sin ORDER BY** (`6940be6`): `.range()` sin `.order()` NO es
+  determinista y saltaba/duplicaba MILES de filas. Era LA CAUSA de los "ajustes irreales" de la
+  Conciliación (ID1 mostraba 357.490 de ajuste anual; marzo contaba 48.675 de cargue vs 90.480
+  reales; el 561 leía 1.787 vs 25.711). Corregidos los ~10 loops del módulo de inventario. LECCIÓN:
+  si el cliente insiste en que los números "no son reales", buscar el bug de LECTURA primero.
+- **HORA COLOMBIA en todo** (`7100750`, `96ed9d7`, `d0746e8`): `invtrans.creado` es UTC (−5h);
+  helper `fechaColombiaDe()` en todas las comparaciones de fecha-calendario (Kardex, Cuadre diario,
+  mes en curso, facturación pendiente, mes del Acta de Cruce). Traslados: `creadopor` era "admin"
+  fijo → usuario real + hora Colombia + cod 311.
+- **BLOQUEO salida duplicada** (`96ed9d7`): una orden = UNA salida (guard en approveBatchAllocation).
+  Duplicado real IND202607247162 eliminado (invtrans 22710 + historicolotes 17730), lote quedó en 0.
+- **CIERRES MENSUALES A CERO — directriz firme del cliente** (`e3c4732`, `fda32b5`, `8563b7f`):
+  "todos los meses cruzaron al 100%; los únicos ajustes son los de la app; la diferencia de
+  migración NO es un ajuste". Implementado: (1) los ajustes reales 701/702 entran a la cadena del
+  roll CON SIGNO (¡una salida 702 sumaba en valor absoluto — bug!); (2) salidas "BODEGA GENERAL"
+  CON orden = CARGUE del mes de su orden (el cliente ratificó su regla y REVIERTE la exclusión de
+  §6d — eran despachos reales de la migración; cruzan con entradas del etiquetado QR de estibas);
+  (3) la APERTURA del periodo absorbe la diferencia de migración (apertura efectiva; tarjeta
+  "Inventario inicial (apertura real)" con el 561 digitado de referencia); (4) cierres re-congelados
+  con cadena pura anclada al julio verificado (rutas debug con guarda anti-negativos, borradas).
+  RESULTADO: ID1 apertura 59.271 (561=25.711) ene-jul TODOS 0 · ID2 42.878 todo 0 · ID3 52.319
+  todo 0 · ID4 todo 0 salvo +3.546 en su primer mes (exceso de migración, no absorbible en
+  apertura). Tarjeta Ajuste/Depuración: valor = meses cerrados (0), nota = mes en curso por
+  asentarse. **invtrans/saldoinvdetalle JAMÁS tocados** (verificado: 0 lotes negativos).
+- **Acta de Cruce (apertura de mes)** — pestaña nueva en Panel de Inventario (SQL 51 corrido):
+  inventario del día 1 POR LOTE/ubicación; corrección = ajuste real vía sig_inventario_ajuste;
+  cierres históricos ene-jun congelados los 4 IDs. Kardex drill-down: saldo corrido POR LOTE.
+- **Pendientes**: crear ubicación CUARENTENA por ID para 344/343 · performance del panel (cachear
+  meses cerrados; hoy relee todo el histórico por pestaña, 3-6s) · loops sin order en
+  getPanelOperacionLIP (solo KPIs) · residuo vivo de agosto se asienta con el inventario del 1-sep.
+
 ## 9. Pendientes / oportunidades
 - Cargar ausentismo histórico de los Cedis si se requiere detalle SST (ausentismosst solo tiene Indupan; el indicador ya usa registroasistencia para los 4).
 - Confirmar planta Cedis si cambia. PT vs SUB por orden (afinar SLA). Órdenes sin cita de vehículo (mejorar cobertura de medición).
