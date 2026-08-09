@@ -471,6 +471,43 @@ export async function getConsultaMovimientos(filtros: {
 }
 
 // ---------------------------------------------------------------------------
+// Productos del proyecto (para los filtros de consulta): SOLO los del ID
+// elegido en el selector global, con nombre y código.
+// ---------------------------------------------------------------------------
+
+export async function getProductosDeEmpresa(
+  selectedEmpresaId: number,
+): Promise<{ success: boolean; data: { nombre: string; codigo: string }[]; error?: string }> {
+  try {
+    if (!selectedEmpresaId) return { success: true, data: [] }
+    const sb: any = await getSupabaseAdmin()
+    const vistos = new Map<string, string>()
+    let from = 0
+    while (true) {
+      const { data, error } = await sb
+        .from("saldoinvdetalle")
+        .select("nombreproducto,codproducto")
+        .eq("idempresa", selectedEmpresaId)
+        .order("codproducto", { ascending: true })
+        .range(from, from + 999)
+      if (error) return { success: false, data: [], error: error.message }
+      for (const r of data ?? []) {
+        if (r.nombreproducto && !vistos.has(r.nombreproducto)) vistos.set(r.nombreproducto, r.codproducto ?? "")
+      }
+      if (!data || data.length < 1000) break
+      from += 1000
+      if (from > 60000) break
+    }
+    const filas = Array.from(vistos.entries())
+      .map(([nombre, codigo]) => ({ nombre, codigo }))
+      .sort((a, b) => a.nombre.localeCompare(b.nombre))
+    return { success: true, data: filas }
+  } catch (e: any) {
+    return { success: false, data: [], error: e?.message || "Error al leer los productos." }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Historial de correcciones (pestaña de revisión, solo lectura)
 // ---------------------------------------------------------------------------
 

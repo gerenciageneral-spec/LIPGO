@@ -20,7 +20,7 @@ import { useAuth } from "@/components/auth-provider"
 import { Loader2, Download, Search } from "lucide-react"
 import { InventoryTransactionsForm } from "@/components/inventory-transactions-form"
 import { TransaccionesPorCodigo } from "@/components/transacciones-por-codigo"
-import { getConsultaMovimientos, getHistorialCorrecciones } from "@/lib/transacciones-codigo-actions"
+import { getConsultaMovimientos, getHistorialCorrecciones, getProductosDeEmpresa } from "@/lib/transacciones-codigo-actions"
 import { FIELDSETS, GUIA_TRANSACCIONES, type CorreccionLogRow } from "@/lib/transacciones-codigo"
 import { ShieldCheck, BookOpen } from "lucide-react"
 
@@ -46,6 +46,14 @@ function ConsultaMovimientos() {
   const [desde, setDesde] = useState(hoyColombia())
   const [hasta, setHasta] = useState(hoyColombia())
   const [producto, setProducto] = useState("")
+  const [catalogoProductos, setCatalogoProductos] = useState<{ nombre: string; codigo: string }[]>([])
+
+  // Productos SOLO del proyecto elegido en el selector global.
+  useEffect(() => {
+    if (!selectedEmpresaId) { setCatalogoProductos([]); return }
+    getProductosDeEmpresa(selectedEmpresaId).then((r) => setCatalogoProductos(r.success ? r.data : []))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedEmpresaId])
   const [lote, setLote] = useState("")
   const [tipomov, setTipomov] = useState("")
   const [codigo, setCodigo] = useState("")
@@ -115,7 +123,15 @@ function ConsultaMovimientos() {
         </div>
         <div>
           <Label className="text-[11px] uppercase text-muted-foreground">Producto / código</Label>
-          <Input value={producto} onChange={(e) => setProducto(e.target.value)} placeholder="Nombre o código" className="mt-1 h-9 w-44" />
+          <Input list="consulta-productos" value={producto} onChange={(e) => setProducto(e.target.value)} placeholder="Todos — elige o escribe" className="mt-1 h-9 w-56" />
+          <datalist id="consulta-productos">
+            {catalogoProductos.map((p) => (
+              <option key={p.nombre} value={p.nombre}>{p.codigo}</option>
+            ))}
+            {catalogoProductos.map((p) => (
+              <option key={`c-${p.nombre}`} value={p.codigo}>{p.nombre}</option>
+            ))}
+          </datalist>
         </div>
         <div>
           <Label className="text-[11px] uppercase text-muted-foreground">Lote</Label>
@@ -217,6 +233,14 @@ function HistorialCorrecciones() {
   const [cargando, setCargando] = useState(false)
   const [codigo, setCodigo] = useState("")
   const [producto, setProducto] = useState("")
+  const [catalogoProductos, setCatalogoProductos] = useState<{ nombre: string; codigo: string }[]>([])
+
+  // Productos SOLO del proyecto elegido en el selector global.
+  useEffect(() => {
+    if (!selectedEmpresaId) { setCatalogoProductos([]); return }
+    getProductosDeEmpresa(selectedEmpresaId).then((r) => setCatalogoProductos(r.success ? r.data : []))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedEmpresaId])
 
   const cargar = async () => {
     if (!selectedEmpresaId) return
@@ -268,7 +292,15 @@ function HistorialCorrecciones() {
         </div>
         <div>
           <Label className="text-[11px] uppercase text-muted-foreground">Producto / código</Label>
-          <Input value={producto} onChange={(e) => setProducto(e.target.value)} placeholder="Nombre o código" className="mt-1 h-9 w-44" />
+          <Input list="historial-productos" value={producto} onChange={(e) => setProducto(e.target.value)} placeholder="Todos — elige o escribe" className="mt-1 h-9 w-56" />
+          <datalist id="historial-productos">
+            {catalogoProductos.map((p) => (
+              <option key={p.nombre} value={p.nombre}>{p.codigo}</option>
+            ))}
+            {catalogoProductos.map((p) => (
+              <option key={`c-${p.nombre}`} value={p.codigo}>{p.nombre}</option>
+            ))}
+          </datalist>
         </div>
         <Button onClick={cargar} disabled={cargando} className="h-9">
           {cargando ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Search className="mr-1 h-4 w-4" />} Actualizar
