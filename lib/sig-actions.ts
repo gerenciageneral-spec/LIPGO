@@ -4275,7 +4275,12 @@ export async function getConciliacionMensualInventario(
       if (anio && yyyy !== anio) continue
       if (!map[mk]) map[mk] = { mes: mk, produccion: 0, devolucion: 0, cargue: 0, merma: 0, ajuste: 0 }
       const a = map[mk]
-      const esCargue = r.tipomov === "Salida" && (r.cod_movimiento === "601" || has(r.origen, "orden de cargue"))
+      // Regla del cliente (2026-08-08): TODA salida CON orden de cargue es un
+      // despacho real — incluye las "BODEGA GENERAL" de la migración de ID1
+      // (traen orden IND2026xx aunque quedaron con cod 702).
+      const esCargue =
+        r.tipomov === "Salida" &&
+        (r.cod_movimiento === "601" || has(r.origen, "orden de cargue") || (has(r.origen, "bodega general") && !!(r.ocargue && String(r.ocargue).trim())))
       // MERMA = lo ENVIADO a reproceso / avería (tipomov 'Reproceso', mov 551 salida).
       // El "ingreso por reproceso" (tipomov Entrada) NO es merma: es el retorno → ingreso.
       const esMerma = r.tipomov === "Reproceso"
@@ -4287,7 +4292,9 @@ export async function getConciliacionMensualInventario(
       else if (esMerma) a.merma += c
       else if (esProd) a.produccion += c
       else if (esDev) a.devolucion += c
-      else if (esAjuste) a.ajuste += c
+      // AJUSTE CON SIGNO: una salida 702 RESTA inventario (antes sumaba en
+      // valor absoluto y una salida de ajuste inflaba la cadena — bug real).
+      else if (esAjuste) a.ajuste += r.tipomov === "Salida" ? -c : c
     }
 
     // ============================================================
