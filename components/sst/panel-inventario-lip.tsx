@@ -620,7 +620,14 @@ export function PanelInventarioLIP() {
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
                     <KPI label={conc.resumen.aperturaAjustada ? "Inventario inicial (apertura real)" : "Inventario inicial (561)"} valor={fmt(conc.resumen.invInicial)} unidad="und" Icon={ArrowDownToLine} color={SST_TOKENS.navy} sub={conc.resumen.aperturaAjustada ? `incluye migración · digitado 561: ${fmt(conc.resumen.invInicial561)}` : "apertura del periodo"} />
                     <KPI label="Merma de proceso" valor={fmt(conc.resumen.mermaMesEnCurso ?? 0)} unidad="und" Icon={AlertTriangle} color={SST_TOKENS.warn} sub={`reproceso/avería · mes ${conc.resumen.mesMerma ?? "—"}`} />
-                    <KPI label="Ajuste / depuración" valor={fmt(conc.resumen.ajusteMesEnCurso ?? 0)} unidad="und" Icon={RefreshCw} color={Math.abs(conc.resumen.ajusteMesEnCurso ?? 0) < 50 ? SST_TOKENS.ok : SST_TOKENS.warn} sub={`mes en curso · año: ${fmt(conc.resumen.mermaProceso)}`} />
+                    <KPI
+                      label="Ajuste / depuración (meses cerrados)"
+                      valor={fmt((conc.resumen.mermaProceso ?? 0) - (conc.resumen.ajusteMesEnCurso ?? 0))}
+                      unidad="und"
+                      Icon={RefreshCw}
+                      color={Math.abs((conc.resumen.mermaProceso ?? 0) - (conc.resumen.ajusteMesEnCurso ?? 0)) < 50 ? SST_TOKENS.ok : SST_TOKENS.warn}
+                      sub={`mes en curso por asentarse: ${fmt(conc.resumen.ajusteMesEnCurso ?? 0)} (cierra con el inventario del día 1)`}
+                    />
                     <KPI label="Saldo conciliado" valor={fmt(conc.resumen.saldoTeorico)} unidad="und" Icon={Boxes} color={SST_TOKENS.navy} sub="cierre del roll" />
                     <KPI label="Stock físico (sistema)" valor={fmt(conc.resumen.saldoVivo)} unidad="und" Icon={Boxes} color={SST_TOKENS.ok} sub="saldoinvdetalle" />
                     <KPI label="Diferencia" valor={fmt(conc.resumen.diferencia)} unidad="und" Icon={TrendingDown} color={Math.abs(conc.resumen.diferencia) < 5 ? SST_TOKENS.ok : SST_TOKENS.bad} sub={Math.abs(conc.resumen.diferencia) < 5 ? "✓ cuadra" : "revisar"} />
