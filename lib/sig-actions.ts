@@ -2132,6 +2132,7 @@ export async function getPanelInventarioLIP(
         .from("invtrans")
         .select("tipomov,origen,status,cantidad,creado,codproducto,nombreproducto")
         .in("idempresa", clientes)
+        .order("id", { ascending: true }) // paginación determinista: sin ORDER BY, .range() salta/duplica filas
         .range(fromIdx, fromIdx + 999)
       if (error) return { success: false, error: error.message }
       inv.push(...(data ?? []))
@@ -2150,7 +2151,7 @@ export async function getPanelInventarioLIP(
     const saldosRows: any[] = []
     let sFrom = 0
     while (true) {
-      const { data } = await supabase.from("saldoinvdetalle").select("codproducto,stock_actual").in("idempresa", clientes).range(sFrom, sFrom + 999)
+      const { data } = await supabase.from("saldoinvdetalle").select("codproducto,stock_actual").in("idempresa", clientes).order("codproducto").order("lote").order("location").range(sFrom, sFrom + 999)
       saldosRows.push(...(data ?? []))
       if (!data || data.length < 1000) break
       sFrom += 1000
@@ -2329,7 +2330,7 @@ export async function getCuadreDiario(
     const inv: any[] = []
     let from = 0
     while (true) {
-      const { data, error } = await supabase.from("invtrans").select("tipomov,origen,cantidad,creado").in("idempresa", clientes).range(from, from + 999)
+      const { data, error } = await supabase.from("invtrans").select("tipomov,origen,cantidad,creado").in("idempresa", clientes).order("id", { ascending: true }).range(from, from + 999)
       if (error) return { success: false, data: [], error: error.message }
       inv.push(...(data ?? []))
       if (!data || data.length < 1000) break
@@ -2388,7 +2389,7 @@ export async function getPreservacionInventario(
     const saldos: any[] = []
     let sFrom = 0
     while (true) {
-      const { data } = await supabase.from("saldoinvdetalle").select("codproducto,nombreproducto,lote,stock_actual").in("idempresa", clientes).range(sFrom, sFrom + 999)
+      const { data } = await supabase.from("saldoinvdetalle").select("codproducto,nombreproducto,lote,stock_actual").in("idempresa", clientes).order("codproducto").order("lote").order("location").range(sFrom, sFrom + 999)
       saldos.push(...(data ?? []))
       if (!data || data.length < 1000) break
       sFrom += 1000
@@ -2699,6 +2700,7 @@ export async function getKardexInventario(
         .from("invtrans")
         .select("codproducto,nombreproducto,tipomov,origen,cantidad,creado")
         .in("idempresa", clientes)
+        .order("id", { ascending: true }) // paginación determinista
         .range(from, from + 999)
       if (error) return { success: false, error: error.message }
       inv.push(...(data ?? []))
@@ -2711,7 +2713,7 @@ export async function getKardexInventario(
     const saldos: Record<string, number> = {}
     let sFrom = 0
     while (true) {
-      const { data } = await supabase.from("saldoinvdetalle").select("codproducto,stock_actual").in("idempresa", clientes).range(sFrom, sFrom + 999)
+      const { data } = await supabase.from("saldoinvdetalle").select("codproducto,stock_actual").in("idempresa", clientes).order("codproducto").order("lote").order("location").range(sFrom, sFrom + 999)
       for (const r of data ?? []) saldos[r.codproducto] = (saldos[r.codproducto] || 0) + (Number(r.stock_actual) || 0)
       if (!data || data.length < 1000) break
       sFrom += 1000
@@ -2842,7 +2844,7 @@ export async function crearCuadre(
         .select("codproducto,nombreproducto,lote,location,stock_actual")
         .eq("idempresa", proyectoId)
       if (payload.codproductoUnico) q = q.eq("codproducto", payload.codproductoUnico)
-      const { data, error } = await q.range(from, from + 999)
+      const { data, error } = await q.order("codproducto").order("lote").order("location").range(from, from + 999)
       if (error) return { success: false, error: error.message }
       saldos.push(...(data ?? []))
       if (!data || data.length < 1000) break
@@ -3294,6 +3296,9 @@ export async function getProductosInventario(
         .from("saldoinvdetalle")
         .select("codproducto,nombreproducto,lote,location,stock_actual")
         .eq("idempresa", proyectoId)
+        .order("codproducto")
+        .order("lote")
+        .order("location")
         .range(from, from + 999)
       if (error) return { success: false, data: [], error: error.message }
       if (!data || data.length === 0) break
@@ -4176,6 +4181,7 @@ export async function getConciliacionMensualInventario(
         .from("invtrans")
         .select("idproducto, nombreproducto, codproducto, lote, tipomov, origen, cantidad, creado, ocargue, ordentolva, cod_movimiento, status, location")
         .in("idempresa", clientes)
+        .order("id", { ascending: true }) // paginación determinista: sin ORDER BY, .range() salta/duplica filas — causa REAL de los "ajustes irreales" (confirmado 2026-08-08: marzo ID1 contaba 48.675 de cargue cuando lo real es 90.480)
         .range(from, from + 999)
       if (error) return { success: false, error: error.message }
       inv.push(...(data ?? []))
@@ -4189,7 +4195,7 @@ export async function getConciliacionMensualInventario(
     {
       let sf = 0
       while (true) {
-        const { data } = await supabase.from("saldoinvdetalle").select("idproducto, nombreproducto, codproducto, categoria, subcategoria, lote, stock_actual").in("idempresa", clientes).range(sf, sf + 999)
+        const { data } = await supabase.from("saldoinvdetalle").select("idproducto, nombreproducto, codproducto, categoria, subcategoria, lote, stock_actual").in("idempresa", clientes).order("codproducto").order("lote").order("location").range(sf, sf + 999)
         saldosRows.push(...(data ?? []))
         if (!data || data.length < 1000) break
         sf += 1000
@@ -4448,7 +4454,8 @@ export async function getConciliacionMensualInventario(
       reproceso: Math.round(reprocesoTotal),               // reproceso/avería acumulado del año (referencia)
       mermaMesEnCurso: Math.round(filaMesEnCurso?.reproceso || 0), // merma del mes en curso (tarjeta)
       mesMerma: filaMesEnCurso?.mes || null,
-      mermaProceso: Math.round(mermaProcesoTotal),         // cuadre físico por lote / depuración
+      mermaProceso: Math.round(mermaProcesoTotal),         // cuadre físico por lote / depuración (acumulado del año)
+      ajusteMesEnCurso: Math.round(filaMesEnCurso?.mermaProceso || 0), // ajuste/depuración SOLO del mes en curso (tarjeta)
       sobranteKardex: Math.round(sobrante),
       faltanteKardex: Math.round(Math.abs(faltante)),
       lotesRevisar: revisar.length,
