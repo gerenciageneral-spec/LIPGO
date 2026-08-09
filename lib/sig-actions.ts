@@ -4383,6 +4383,11 @@ export async function getConciliacionMensualInventario(
     let saldo = Math.round(invInicial)
     const filas = meses.map((a: any) => {
       const ingresos = a.produccion + a.devolucion
+      // Los AJUSTES REALES de la app (701/702, transacción manual) SÍ entran
+      // a la cadena del mes — son los únicos ajustes legítimos ("solo lo que
+      // esté en la app", regla del cliente 2026-08-08). Antes quedaban fuera
+      // del roll y aparecían como residuo falso en "Ajuste/Depuración".
+      const ajusteReal = Math.round(a.ajuste || 0)
       const congelado = cierrePorMes[a.mes]?.fisico_congelado
       const saldoInicial = saldo
       let mermaProceso: number, reproceso: number, merma: number, salidas: number, saldoFinal: number
@@ -4392,7 +4397,7 @@ export async function getConciliacionMensualInventario(
         // contra stock vivo (líneas más abajo), pero anclado al congelado.
         reproceso = Math.round(a.merma)
         saldoFinal = Math.round(congelado)
-        salidas = Math.round(saldoInicial + ingresos - saldoFinal)
+        salidas = Math.round(saldoInicial + ingresos + ajusteReal - saldoFinal)
         merma = salidas - Math.round(a.cargue)
         mermaProceso = merma - reproceso
       } else {
@@ -4400,7 +4405,7 @@ export async function getConciliacionMensualInventario(
         reproceso = Math.round(a.merma)               // reproceso/avería registrado (551)
         merma = reproceso + mermaProceso              // merma total = reproceso + cuadre
         salidas = a.cargue + merma
-        saldoFinal = saldoInicial + ingresos - salidas
+        saldoFinal = saldoInicial + ingresos + ajusteReal - salidas
       }
       saldo = saldoFinal
       return {
