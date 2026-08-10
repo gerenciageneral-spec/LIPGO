@@ -279,6 +279,7 @@ COLUMNAS CLAVE (cablea cada pregunta a su tabla + columna EXACTA):
     - Número de órdenes: contar:true. Fecha del despacho: "fechacargue". Cargue SIN cerrar: filtro fincargue IS null.
     - "tipooperacion" = 'Cargue' o 'Descargue'. Si preguntan "cuántos CARGUES" filtra tipooperacion='Cargue'; "cuántos DESCARGUES" -> 'Descargue'.
     - "placa", "conductor", "transporte", "cliente" identifican el viaje. Estado de factura: "estadofactura" (null = por gestionar).
+    - ¡CRÍTICO para "pendientes por facturar/solicitar"! Una orden con "facturar" = false fue marcada explícitamente como NO facturable (cargue sin personal LIP, distribución sin auxiliares) y NUNCA se va a solicitar: NO cuenta como pendiente. Como el filtro "neq" excluye también los valores NULL (la mayoría de órdenes), NO lo uses para esto. En su lugar, para contar pendientes REALES: (1) contar:true con filtro estadofactura IS null → total A; (2) contar:true con estadofactura IS null Y facturar=eq.false → total B (las marcadas no-facturar); pendientes reales = A − B. Si no restas B, el número sale inflado con órdenes que no aplican.
 
     PEDIDOS (Tabla: pedidoscabecera):
     - Número de pedidos: contar:true. Fecha: "fecha" (o "fecha_programada"). Valor: sumar:"total_linea" o "total_pagar".

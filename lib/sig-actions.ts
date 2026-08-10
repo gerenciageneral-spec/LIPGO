@@ -3743,7 +3743,7 @@ export async function getPanelOperacionLIP(
     // --- Órdenes (cabeceraoc): traer columnas necesarias y agregar en memoria ---
     let q = supabase
       .from("cabeceraoc")
-      .select("idempresa,fechaorden,tipooperacion,pesovascula,iniciocargue,fincargue,fotospicking,pdfoc,doccargue,status,ordendecargue,estadofactura,fechacargue,placa,cliente,transporte")
+      .select("idempresa,fechaorden,tipooperacion,pesovascula,iniciocargue,fincargue,fotospicking,pdfoc,doccargue,status,ordendecargue,estadofactura,fechacargue,placa,cliente,transporte,facturar")
       .in("idempresa", clientes)
       .limit(10000)
     if (desde) q = q.gte("fechaorden", desde)
@@ -3946,7 +3946,10 @@ export async function getPanelOperacionLIP(
     })()
     const factFloor = desde || mesIniFact
     const opsFacturables = rows.filter(
-      (r) => esFacturable(r.tipooperacion) && String(r.fechacargue || r.fechaorden || "").slice(0, 10) >= factFloor,
+      (r) =>
+        esFacturable(r.tipooperacion) &&
+        r.facturar !== false && // "no facturar" (Picking/Packing) nunca se va a solicitar: fuera del universo
+        String(r.fechacargue || r.fechaorden || "").slice(0, 10) >= factFloor,
     )
     const gestionadas = opsFacturables.filter((r) => r.estadofactura).length
     const facturacionPct = pct(gestionadas, opsFacturables.length)
@@ -4083,7 +4086,7 @@ export async function getFacturacionPorProyecto(
 
     let q = supabase
       .from("cabeceraoc")
-      .select("idempresa, ordendecargue, estadofactura, tipooperacion, fechacargue, fechaorden, pesovascula")
+      .select("idempresa, ordendecargue, estadofactura, tipooperacion, fechacargue, fechaorden, pesovascula, facturar")
       .in("idempresa", clientes)
       .gte("fechaorden", floor)
       .limit(20000)
@@ -4094,7 +4097,8 @@ export async function getFacturacionPorProyecto(
       const x = String(t || "").toLowerCase()
       return x && x !== "proyeccion" && x !== "tolva"
     }
-    const facturables = (rows ?? []).filter((r: any) => esFact(r.tipooperacion))
+    // "no facturar" (Picking/Packing) nunca se va a solicitar: fuera del universo.
+    const facturables = (rows ?? []).filter((r: any) => esFact(r.tipooperacion) && r.facturar !== false)
     const pend = facturables.filter((r: any) => !r.estadofactura)
     const pendIds = Array.from(new Set(pend.map((r: any) => String(r.ordendecargue)).filter(Boolean)))
     const valorPorOrden: Record<string, number> = {}
