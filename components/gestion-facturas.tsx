@@ -102,6 +102,17 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
     cuenta: "",
   })
 
+  // Transportes REALES que existen para el proyecto seleccionado (lista
+  // desplegable, no texto libre) — evita amarrar una factura Siigo al
+  // transporte equivocado por un typo.
+  const [transportesDisponibles, setTransportesDisponibles] = useState<string[]>([])
+
+  // Alias de lectura: el "Rango factura Siigo" usa el MISMO Desde/Hasta que el
+  // filtro general de la hoja (una sola fuente de verdad para la fecha de
+  // cargue). Para escribir, usar setFilters({ ...filters, fechaCargueDesde/Hasta }).
+  const rangoDesde = filters.fechaCargueDesde
+  const rangoHasta = filters.fechaCargueHasta
+
   // View state - 'list' for orders list, 'register' for registration form
   const [currentView, setCurrentView] = useState<"list" | "register">("list")
   // Flow type: "sin_factura" means Coordinator handles payment with subtotal calc,
@@ -166,8 +177,9 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
   const [detallesConfirmacion, setDetallesConfirmacion] = useState<DetalleFacturacion[]>([])
   const [loadingDetallesConfirmacion, setLoadingDetallesConfirmacion] = useState(false)
   // Amarrar la factura Siigo a un RANGO de fechas (varias solicitudes en una factura).
-  const [rangoDesde, setRangoDesde] = useState("")
-  const [rangoHasta, setRangoHasta] = useState("")
+  // Usa el MISMO Desde/Hasta que el filtro general de la hoja (filters.fechaCargueDesde/
+  // Hasta) — antes eran dos pares de fechas independientes, lo que permitía que la tabla
+  // mostrara un rango y el amarre operara sobre otro sin que se notara.
   const [amarrandoRango, setAmarrandoRango] = useState(false)
   // Total calculado (MAX * MAX) para la vista de Confirmacion, empresas 1 y 2.
   const [totalCalculadoConfirmacion, setTotalCalculadoConfirmacion] = useState<number | null>(null)
@@ -234,6 +246,31 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
     setCurrentPage(1)
     loadOrdenes(1, searchTerm, filters)
   }, [selectedEmpresaId, searchTerm])
+
+  // Carga la lista de transportes reales del proyecto (para el filtro
+  // desplegable) cada vez que cambia la empresa o el rango de fechas del
+  // "Rango factura Siigo" — si el rango está definido, solo ofrece los
+  // transportes que de verdad tienen órdenes ahí (no los de otras fechas).
+  useEffect(() => {
+    if (!selectedEmpresaId) { setTransportesDisponibles([]); return }
+    let cancel = false
+    const params = new URLSearchParams({ empresaId: String(selectedEmpresaId) })
+    if (rangoDesde) params.append("desde", rangoDesde)
+    if (rangoHasta) params.append("hasta", rangoHasta)
+    fetch(`/api/gestion-facturas/transportes?${params}`)
+      .then((r) => r.json())
+      .then((result) => {
+        if (cancel || !result.success) return
+        const lista: string[] = result.transportes || []
+        setTransportesDisponibles(lista)
+        // Si el transporte elegido ya no aplica al nuevo rango de fechas, se
+        // limpia el filtro en vez de dejarlo "seleccionado" apuntando a algo
+        // que ya no está en la lista.
+        setFilters((prev) => (prev.transporte && prev.transporte !== "all" && !lista.includes(prev.transporte) ? { ...prev, transporte: "" } : prev))
+      })
+      .catch(() => { if (!cancel) setTransportesDisponibles([]) })
+    return () => { cancel = true }
+  }, [selectedEmpresaId, rangoDesde, rangoHasta])
 
   // Valor NETO solo de las órdenes de la página visible (ligero; se calcula igual que el cuadro).
   useEffect(() => {
@@ -913,7 +950,13 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
       const res = await fetch("/api/gestion-facturas/amarrar-rango", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ idempresa, facturasiigo, desde: rangoDesde, hasta: rangoHasta }),
+        body: JSON.stringify({
+          idempresa,
+          facturasiigo,
+          desde: rangoDesde,
+          hasta: rangoHasta,
+          transporte: transporteFiltroActivo || undefined,
+        }),
       })
       const result = await res.json()
       if (!result.success) {
@@ -922,7 +965,7 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
       }
       toast({
         title: "Factura amarrada al rango",
-        description: `${result.count} orden(es) 'Factura solicitada' del rango quedaron amarradas a la factura Siigo y cerradas.`,
+        description: `${result.count} orden(es) 'Factura solicitada' del rango${transporteFiltroActivo ? ` (transporte "${transporteFiltroActivo}")` : ""} quedaron amarradas a la factura Siigo y cerradas.`,
       })
     } catch (error) {
       console.error("Error amarrando rango:", error)
@@ -943,13 +986,19 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
       toast({ title: "Selecciona un proyecto", variant: "destructive" })
       return
     }
-    if (!confirm("¿Deshacer el amarre? Las órdenes cerradas con factura Siigo de este rango volverán a 'Factura solicitada' y se les quitará la factura.")) return
+    if (!confirm(`¿Deshacer el amarre${transporteFiltroActivo ? ` del transporte "${transporteFiltroActivo}"` : ""}? Las órdenes cerradas con factura Siigo de este rango volverán a 'Factura solicitada' y se les quitará la factura.`)) return
     setAmarrandoRango(true)
     try {
       const res = await fetch("/api/gestion-facturas/amarrar-rango", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ idempresa: selectedEmpresaId, desde: rangoDesde, hasta: rangoHasta, undo: true }),
+        body: JSON.stringify({
+          idempresa: selectedEmpresaId,
+          desde: rangoDesde,
+          hasta: rangoHasta,
+          transporte: transporteFiltroActivo || undefined,
+          undo: true,
+        }),
       })
       const result = await res.json()
       if (!result.success) {
@@ -966,14 +1015,24 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
     }
   }
 
+  // Transporte activo del filtro (el Select usa "all" para "Todos", que
+  // equivale a "sin filtro" — igual que Estado/Tipo Operación en este mismo
+  // formulario).
+  const transporteFiltroActivo = filters.transporte && filters.transporte !== "all" ? filters.transporte : ""
+
   // ¿Una orden cae en el rango de facturación seleccionado (fecha de cargue) y está pendiente?
+  // Si hay un Transporte activo en los filtros, también debe coincidir (mismo criterio
+  // "contiene, sin mayúsculas" que usa ese filtro) — así la vista previa coincide
+  // exactamente con lo que el amarre en el backend va a afectar.
   const enRangoSiigo = (orden: OrdenCargue): boolean => {
     if (!rangoDesde || !rangoHasta) return false
     if (orden.estadofactura !== "CF - Factura solicitada") return false
     const f = (orden as any).fechacargue
     if (!f) return false
     const fc = String(f).slice(0, 10)
-    return fc >= rangoDesde && fc <= rangoHasta
+    if (fc < rangoDesde || fc > rangoHasta) return false
+    if (transporteFiltroActivo && !(orden.transporte ?? "").toLowerCase().includes(transporteFiltroActivo.toLowerCase())) return false
+    return true
   }
 
   // Calculate totals - ensure values are parsed as numbers.
@@ -1272,12 +1331,22 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Transporte</Label>
-                <Input
-                  placeholder="Transporte"
-                  value={filters.transporte}
-                  onChange={(e) => setFilters({ ...filters, transporte: e.target.value })}
-                  className="h-8 text-xs"
-                />
+                <Select
+                  value={filters.transporte || "all"}
+                  onValueChange={(value) => setFilters({ ...filters, transporte: value })}
+                >
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue placeholder="Todos" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos</SelectItem>
+                    {transportesDisponibles.map((t) => (
+                      <SelectItem key={t} value={t}>
+                        {t}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Estado</Label>
@@ -1385,18 +1454,36 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
               <div className="text-xs font-semibold text-blue-900 dark:text-blue-300">Rango factura Siigo (fecha de cargue)</div>
               <p className="text-[11px] text-muted-foreground">
                 Marca las "Factura solicitada" del rango. Al cargar la factura Siigo, se amarra a todas ellas.
+                {transporteFiltroActivo
+                  ? ` Con el filtro de Transporte activo, SOLO se amarran las de "${transporteFiltroActivo}".`
+                  : " Usa el filtro de Transporte (arriba) si el rango tiene más de una transportadora, para amarrar solo la que corresponde."}
               </p>
             </div>
             <div>
               <Label className="text-[11px]">Desde</Label>
-              <Input type="date" value={rangoDesde} onChange={(e) => setRangoDesde(e.target.value)} className="h-8 w-40 text-xs" />
+              <Input
+                type="date"
+                value={rangoDesde}
+                onChange={(e) => setFilters({ ...filters, fechaCargueDesde: e.target.value })}
+                className="h-8 w-40 text-xs"
+              />
             </div>
             <div>
               <Label className="text-[11px]">Hasta</Label>
-              <Input type="date" value={rangoHasta} onChange={(e) => setRangoHasta(e.target.value)} className="h-8 w-40 text-xs" />
+              <Input
+                type="date"
+                value={rangoHasta}
+                onChange={(e) => setFilters({ ...filters, fechaCargueHasta: e.target.value })}
+                className="h-8 w-40 text-xs"
+              />
             </div>
             {(rangoDesde || rangoHasta) && (
-              <Button variant="outline" size="sm" className="h-8" onClick={() => { setRangoDesde(""); setRangoHasta("") }}>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8"
+                onClick={() => setFilters({ ...filters, fechaCargueDesde: "", fechaCargueHasta: "" })}
+              >
                 Limpiar rango
               </Button>
             )}
@@ -1408,6 +1495,7 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
             {rangoDesde && rangoHasta && (
               <Badge className="bg-blue-600">
                 {ordenes.filter((o) => enRangoSiigo(o)).length} en rango (pág. actual)
+                {transporteFiltroActivo ? ` · transporte "${transporteFiltroActivo}"` : ""}
               </Badge>
             )}
             {amarrandoRango && <Loader2 className="h-4 w-4 animate-spin text-blue-600" />}

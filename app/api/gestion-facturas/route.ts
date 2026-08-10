@@ -54,7 +54,7 @@ export async function GET(request: NextRequest) {
       if (placaFilter) {
         q = q.ilike("placa", `%${placaFilter}%`)
       }
-      if (transporteFilter) {
+      if (transporteFilter && transporteFilter !== "all") {
         q = q.ilike("transporte", `%${transporteFilter}%`)
       }
       if (estadoFilter && estadoFilter !== "all") {

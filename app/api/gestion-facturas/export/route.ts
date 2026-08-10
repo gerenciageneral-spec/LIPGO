@@ -47,7 +47,7 @@ export async function GET(request: NextRequest) {
       if (fechaCargueDesde) query = query.gte("fechacargue", fechaCargueDesde)
       if (fechaCargueHasta) query = query.lte("fechacargue", fechaCargueHasta)
       if (placaFilter) query = query.ilike("placa", `%${placaFilter}%`)
-      if (transporteFilter) query = query.ilike("transporte", `%${transporteFilter}%`)
+      if (transporteFilter && transporteFilter !== "all") query = query.ilike("transporte", `%${transporteFilter}%`)
       if (estadoFilter && estadoFilter !== "all") {
         if (estadoFilter === "pendiente") query = query.is("estadofactura", null)
         else if (estadoFilter === "facturado") query = query.eq("estadofactura", "Facturado - por validar")
