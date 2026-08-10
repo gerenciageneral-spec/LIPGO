@@ -41,7 +41,44 @@ export async function getBasculaHistory(selectedEmpresaId?: number | null) {
       return { success: false, error: error.message, data: [] }
     }
 
-    return { success: true, data: data || [] }
+    const rows = data || []
+
+    // Ton producto = Σ toneladas del detalle REAL de cada orden (detalleoc),
+    // no `pesoorden` (que puede quedar desactualizado si se editan las
+    // líneas después de creada la orden). Sirve para comparar contra el
+    // peso de báscula y detectar tiquetes mal digitados.
+    const ids = rows.map((r: any) => r.id).filter((id: any) => id != null)
+    const tonProductoPorOrden = new Map<number, number>()
+    for (let i = 0; i < ids.length; i += 500) {
+      const chunk = ids.slice(i, i + 500)
+      // Un chunk de 500 órdenes puede traer MÁS de 1000 líneas de detalle (una
+      // orden trae varias): sin paginar, Supabase corta en 1000 filas y varias
+      // órdenes se quedan sin ninguna línea contada (Ton Producto queda null
+      // por error, no porque de verdad no tenga detalle). Se pagina hasta
+      // agotar el chunk, igual que el resto de consultas grandes de la app.
+      for (let offset = 0; ; offset += 1000) {
+        const { data: detalle } = await supabase
+          .from("detalleoc")
+          .select("idorden, toneladas")
+          .in("idorden", chunk)
+          .range(offset, offset + 999)
+        if (!detalle || detalle.length === 0) break
+        for (const d of detalle) {
+          const idorden = Number(d.idorden)
+          tonProductoPorOrden.set(idorden, (tonProductoPorOrden.get(idorden) || 0) + (Number(d.toneladas) || 0))
+        }
+        if (detalle.length < 1000) break
+      }
+    }
+
+    const dataConComparacion = rows.map((r: any) => {
+      const tonProducto = tonProductoPorOrden.has(r.id) ? Math.round(tonProductoPorOrden.get(r.id)! * 1000) / 1000 : null
+      const diferencia =
+        r.pesovascula != null && tonProducto != null ? Math.round((Number(r.pesovascula) - tonProducto) * 1000) / 1000 : null
+      return { ...r, tonProducto, diferencia }
+    })
+
+    return { success: true, data: dataConComparacion }
   } catch (error) {
     console.error("[v0] Error in getBasculaHistory:", error)
     return { success: false, error: "Error al cargar el historial de báscula", data: [] }

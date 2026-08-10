@@ -18,6 +18,14 @@ import { KpiCard } from "@/components/orders/dashboard-pedidos/kpi-card"
 
 const EDIT_PASSWORD = "Jeff123456"
 
+// Diferencia "sospechosa" entre báscula y producto: más del 10% del peso del
+// producto, con un piso de 0.5 t para no marcar en rojo órdenes chiquitas por
+// la variación normal de pesaje. Ayuda a detectar un tiquete mal digitado.
+function diferenciaAnomala(diferencia: number | null, tonProducto: number | null): boolean {
+  if (diferencia == null || tonProducto == null || tonProducto <= 0) return false
+  return Math.abs(diferencia) > Math.max(0.5, tonProducto * 0.1)
+}
+
 interface BasculaHistoryRecord {
   id: number
   ordendecargue: string
@@ -30,6 +38,10 @@ interface BasculaHistoryRecord {
   tiquetebascula: string
   pesoorden: number
   pesovascula: number
+  // Comparación contra el detalle REAL de la orden (Σ detalleoc.toneladas),
+  // para detectar de un vistazo un tiquete de báscula mal digitado.
+  tonProducto: number | null
+  diferencia: number | null
 }
 
 export function BasculaHistory() {
@@ -184,6 +196,8 @@ export function BasculaHistory() {
         "Tiquete Báscula": row.tiquetebascula || "",
         "Peso Orden (kg)": row.pesoorden || "",
         "Peso Báscula (kg)": row.pesovascula || "",
+        "Ton Producto": row.tonProducto ?? "",
+        Diferencia: row.diferencia ?? "",
       }))
       const worksheet = XLSX.utils.json_to_sheet(dataToExport)
       const workbook = XLSX.utils.book_new()
@@ -333,19 +347,21 @@ export function BasculaHistory() {
               <TableHead className="text-xs whitespace-nowrap font-semibold">Tiquete Báscula</TableHead>
               <TableHead className="text-xs whitespace-nowrap font-semibold">Peso Orden (kg)</TableHead>
               <TableHead className="text-xs whitespace-nowrap font-semibold">Peso Báscula (kg)</TableHead>
+              <TableHead className="text-xs whitespace-nowrap font-semibold">Ton Producto</TableHead>
+              <TableHead className="text-xs whitespace-nowrap font-semibold">Diferencia</TableHead>
               <TableHead className="text-xs whitespace-nowrap font-semibold w-24 text-center">Acciones</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={8} className="h-24 text-center text-xs">
+                <TableCell colSpan={10} className="h-24 text-center text-xs">
                   <Loader2 className="h-6 w-6 animate-spin mx-auto" />
                 </TableCell>
               </TableRow>
             ) : filteredData.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="h-24 text-center text-xs">No se encontraron registros.</TableCell>
+                <TableCell colSpan={10} className="h-24 text-center text-xs">No se encontraron registros.</TableCell>
               </TableRow>
             ) : (
               filteredData.map((row) => {
@@ -365,6 +381,17 @@ export function BasculaHistory() {
                   </TableCell>
                   <TableCell className="text-xs whitespace-nowrap">{row.pesoorden || "-"}</TableCell>
                   <TableCell className="text-xs whitespace-nowrap">{row.pesovascula || "-"}</TableCell>
+                  <TableCell className="text-xs whitespace-nowrap">{row.tonProducto ?? "-"}</TableCell>
+                  <TableCell
+                    className={`text-xs whitespace-nowrap ${diferenciaAnomala(row.diferencia, row.tonProducto) ? "font-semibold text-destructive" : ""}`}
+                    title={
+                      diferenciaAnomala(row.diferencia, row.tonProducto)
+                        ? "Diferencia mayor al 10% entre el peso de báscula y el producto de la orden: revisa el tiquete."
+                        : undefined
+                    }
+                  >
+                    {row.diferencia ?? "-"}
+                  </TableCell>
                   <TableCell className="text-xs whitespace-nowrap text-center">
                     <div className="flex items-center justify-center gap-1">
                       <Button
