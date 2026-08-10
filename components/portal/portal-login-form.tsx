@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, type FormEvent } from "react"
+import { useEffect, useState, type FormEvent } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -20,6 +20,21 @@ export function PortalLoginForm() {
   const [password, setPassword] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+
+  // `?inactivo=1` lo pone el shell cuando cierra una sesion cuyo colaborador
+  // dejo de estar activo en headcount. Sin este aviso el usuario volveria al
+  // login sin entender por que lo sacaron.
+  //
+  // Se lee de `window.location` y no con `useSearchParams`: ese hook obliga a
+  // Next a bailar del prerender de esta pagina, que es estatica, y rompe el
+  // build. Dentro de un efecto el acceso a `window` es cliente puro y seguro.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("inactivo") === "1") {
+      setError(
+        "Tu usuario ya no está activo, por eso se cerró tu sesión. Comunícate con Gestión Humana si crees que es un error.",
+      )
+    }
+  }, [])
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()

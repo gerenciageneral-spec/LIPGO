@@ -72,6 +72,60 @@ export async function getEmpresaNombrePortal(
 }
 
 /**
+ * ¿El colaborador esta ACTIVO en headcount?
+ *
+ * Se normaliza (trim + mayusculas) porque el valor lo teclean personas y
+ * conviven variantes como "Activo", "ACTIVO" o con espacios sobrantes.
+ *
+ * NULL y vacio cuentan como NO activo. Es el mismo criterio con el que
+ * `pagonomina` decide a quien liquidar —`upper(trim(coalesce(estado,''))) =
+ * 'ACTIVO'`— y el de Tabla Asistencia, que filtra por `estado = 'Activo'`. Si
+ * el portal fuera mas permisivo que la nomina, alguien sin estado veria datos
+ * de un vinculo que el sistema ya no reconoce.
+ */
+function esHeadcountActivo(estado: unknown): boolean {
+  return String(estado ?? "").trim().toUpperCase() === "ACTIVO"
+}
+
+/**
+ * Revalida que la sesion abierta siga correspondiendo a alguien ACTIVO.
+ *
+ * El portal guarda la sesion en `localStorage`, asi que sin esto una persona
+ * que inicio sesion antes de ser retirada seguiria entrando indefinidamente:
+ * bloquear solo el login dejaria la regla a medias.
+ *
+ * FALLA-ABIERTO a proposito: ante un error de red o de base devuelve
+ * `permitido: true`. Sacar a la gente de su portal por un fallo tecnico es peor
+ * que dejar entrar unos minutos de mas a quien ya fue retirado.
+ */
+export async function verificarAccesoPortal(
+  identificacion: string,
+): Promise<{ permitido: boolean }> {
+  const ident = (identificacion || "").trim()
+  if (!ident) return { permitido: true }
+  try {
+    const supabase = await getSupabaseAdmin()
+    const { data, error } = await supabase
+      .from("headcount")
+      .select("estado")
+      .eq("identificacion", ident)
+      .limit(1)
+      .maybeSingle()
+    if (error) {
+      console.log("[v0] portal verificarAcceso error:", error.message)
+      return { permitido: true }
+    }
+    // Sin fila tampoco se saca a nadie: puede ser una identificacion escrita
+    // distinto en headcount, y eso lo corrige Gestion Humana, no una expulsion.
+    if (!data) return { permitido: true }
+    return { permitido: esHeadcountActivo(data.estado) }
+  } catch (err: any) {
+    console.log("[v0] portal verificarAcceso exception:", err?.message)
+    return { permitido: true }
+  }
+}
+
+/**
  * Autenticacion simulada para el Portal de Trabajadores.
  * No usa Supabase Auth: solo valida que la identificacion exista en headcount
  * y que el usuario haya escrito la misma identificacion como contrasena.
@@ -111,7 +165,7 @@ export async function loginPortalColaborador(
 
     const { data, error } = await supabase
       .from("headcount")
-      .select("id, nombre, cargo, salario, identificacion, idempresa")
+      .select("id, nombre, cargo, salario, identificacion, idempresa, estado")
       .eq("identificacion", ident)
       .limit(1)
       .maybeSingle()
@@ -134,6 +188,18 @@ export async function loginPortalColaborador(
       return {
         success: false,
         error: "No encontramos un colaborador con esa identificacion.",
+      }
+    }
+
+    // SOLO PERSONAL ACTIVO. Quien esta retirado o inactivo en headcount no
+    // entra al portal: sus datos de nomina, anticipos y certificados dejan de
+    // corresponderle. Ver `esHeadcountActivo`.
+    if (!esHeadcountActivo(data.estado)) {
+      console.log("[v0] portal login bloqueado por estado:", ident, data.estado)
+      return {
+        success: false,
+        error:
+          "Tu usuario no está activo. Comunícate con Gestión Humana si crees que es un error.",
       }
     }
 

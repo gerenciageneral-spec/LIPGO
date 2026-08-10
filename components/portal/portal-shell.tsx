@@ -7,6 +7,7 @@ import { useEffect, type ReactNode } from "react"
 import { Home, FileText, Wallet, CalendarClock, BarChart3, AlertCircle, GraduationCap, LogOut, Target, type LucideIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { usePortal } from "@/components/portal/portal-provider"
+import { verificarAccesoPortal } from "@/lib/portal-actions"
 import { cn } from "@/lib/utils"
 
 interface MenuItem {
@@ -50,6 +51,38 @@ export function PortalShell({ children }: { children: ReactNode }) {
       router.replace("/portal/login")
     }
   }, [isHydrated, colaborador, router])
+
+  // Guardia de ESTADO: solo personal activo en headcount puede estar aqui.
+  //
+  // El login ya lo valida, pero la sesion vive en `localStorage` y no caduca:
+  // sin esta revalidacion, quien inicio sesion antes de ser retirado seguiria
+  // entrando para siempre y desactivarlo en headcount no tendria efecto real.
+  //
+  // Se revisa al montar y cada vez que la pestana vuelve a primer plano —en
+  // movil una sesion puede quedar abierta dias sin recargar—. `verificarAccesoPortal`
+  // falla-abierto: un error de red no saca a nadie.
+  const identificacion = colaborador?.identificacion
+  useEffect(() => {
+    if (!identificacion) return
+    let vigente = true
+
+    const revisar = async () => {
+      const { permitido } = await verificarAccesoPortal(identificacion)
+      if (!vigente || permitido) return
+      logout()
+      router.replace("/portal/login?inactivo=1")
+    }
+
+    revisar()
+    const alVolver = () => {
+      if (document.visibilityState === "visible") revisar()
+    }
+    document.addEventListener("visibilitychange", alVolver)
+    return () => {
+      vigente = false
+      document.removeEventListener("visibilitychange", alVolver)
+    }
+  }, [identificacion, logout, router])
 
   if (!isHydrated || !colaborador) {
     return (
