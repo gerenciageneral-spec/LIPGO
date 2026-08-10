@@ -1596,10 +1596,53 @@ export async function updateBasculaData(orderData: {
       return { success: false, message: error.message }
     }
 
+    // Sincroniza el pesaje al clon de Distribución (+D) de placa propia, si
+    // existe. La báscula NUNCA pesa el clon (está excluido de esa lista): sin
+    // esto, Pes.Ini/Pes.Fin/Peso báscula/Tiquete quedan en blanco para
+    // siempre en el clon. NO toca iniciocargue/fincargue/status: esos los
+    // llena el coordinador al tramitar el Packing de la propia distribución.
+    await sincronizarBasculaAClon(orderData.orderId)
+
     return { success: true }
   } catch (error) {
     console.error("Unexpected error:", error)
     return { success: false, message: "Error inesperado al actualizar datos de báscula" }
+  }
+}
+
+/**
+ * Copia pesajeinicial/pesajefinal/pesovascula/tiquetebascula/status de una
+ * orden de Cargue hacia su clon de Distribución (+D), si el clon ya existe.
+ * `status` va aquí también: lo cierra la báscula (updateData.status arriba),
+ * no el coordinador de Packing (ese usa fincargue, que nunca se toca aquí).
+ * Falla segura: nunca bloquea la actualización de báscula de la madre.
+ */
+async function sincronizarBasculaAClon(ordenId: number): Promise<void> {
+  try {
+    const admin = await getSupabaseAdmin()
+    const { data: madre } = await admin
+      .from("cabeceraoc")
+      .select("ordendecargue, tipooperacion, pesajeinicial, pesajefinal, pesovascula, tiquetebascula, status")
+      .eq("id", ordenId)
+      .maybeSingle()
+    if (!madre || madre.tipooperacion !== "Cargue") return
+
+    const distCode = numeroOrdenDistribucion(madre.ordendecargue)
+    const { data: clon } = await admin.from("cabeceraoc").select("id").eq("ordendecargue", distCode).limit(1).maybeSingle()
+    if (!clon) return
+
+    await admin
+      .from("cabeceraoc")
+      .update({
+        pesajeinicial: madre.pesajeinicial,
+        pesajefinal: madre.pesajefinal,
+        pesovascula: madre.pesovascula,
+        tiquetebascula: madre.tiquetebascula,
+        status: madre.status,
+      })
+      .eq("id", clon.id)
+  } catch (e: any) {
+    console.error("[sincronizarBasculaAClon] excepción (no bloquea la orden):", e?.message || e)
   }
 }
 
