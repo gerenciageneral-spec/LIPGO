@@ -56,6 +56,11 @@ interface LoadOrder {
   pesovascula: number | null
   tiquetebascula: string | null
   pdfoc: string | null
+  // PDF operativo (Picking/Packing). Fallback cuando `pdfoc` quedó vacío: en
+  // descargues de CEDI (manuales o automáticos) el PDF real queda aquí, no en
+  // `pdfoc` — sin este fallback el botón se ve "en blanco" aunque el
+  // documento sí existe.
+  doccargue: string | null
   status: string | null
   // Distribución creada a mano (no por la automatización +D) — ver getLoadOrders.
   distribucionManual?: boolean
@@ -668,8 +673,8 @@ export function LoadOrdersManagement() {
                           variant="ghost"
                           size="icon"
                           className="h-6 w-6 sm:h-7 sm:w-7"
-                          onClick={() => handlePrintPDF(order.pdfoc)}
-                          disabled={!order.pdfoc}
+                          onClick={() => handlePrintPDF(order.pdfoc || order.doccargue)}
+                          disabled={!order.pdfoc && !order.doccargue}
                         >
                           <FileTextIcon className="h-3 w-3 sm:h-4 sm:w-4 text-purple-500" />
                         </Button>
