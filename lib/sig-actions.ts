@@ -53,6 +53,7 @@ import type {
 import { SIG_EMPRESA_LIP, SIG_CLIENTES_LIP } from "@/lib/sig-types"
 import { getMetaDiaForEmpresa } from "@/lib/empresa-meta-dia"
 import { getSlaCargueMin, PLANTA_ACORDADA, factorTiempoSitio } from "@/lib/sla-acordados"
+import { excluirNoFacturable } from "@/lib/facturas-exclusiones"
 
 // Mapea el estado del Centro de Evidencia ISO 9001 al estado de la matriz SIG.
 function isoEstadoASig(e: EstadoISO): SigEstadoCobertura {
@@ -1865,7 +1866,11 @@ async function _computeIndicadoresValores(
     const filtroFact = (q: any) => {
       q = q.gte("fechaorden", factDesde)
       if (hasta) q = q.lte("fechaorden", hasta)
-      return q.not("tipooperacion", "ilike", "proyeccion").not("tipooperacion", "ilike", "tolva")
+      q = q.not("tipooperacion", "ilike", "proyeccion").not("tipooperacion", "ilike", "tolva")
+      // Ordenes marcadas "no facturar" (facturar=false) quedan fuera del universo:
+      // nunca se les va a pedir factura, así que no deben contar ni como pendientes
+      // ni como parte del total (dañarían el % hacia abajo para siempre).
+      return excluirNoFacturable(q)
     }
     const factTot = await contar("cabeceraoc", filtroFact)
     const factPend = await contar("cabeceraoc", (q: any) => filtroFact(q).is("estadofactura", null))

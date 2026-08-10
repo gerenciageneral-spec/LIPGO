@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { GESTION_LIPGO_DESDE } from "@/lib/facturacion-constantes"
+import { excluirNoFacturable } from "@/lib/facturas-exclusiones"
 
 export async function GET(request: NextRequest) {
   try {
@@ -16,13 +17,15 @@ export async function GET(request: NextRequest) {
     // Get count of pending orders (estadofactura is null means "Pendiente por procesar").
     // Piso GESTION_LIPGO_DESDE: lo anterior ya se facturó manual fuera de LIPgo
     // (confirmado por gerencia) — no es una alarma abierta real.
-    const { count, error: countError } = await supabase
+    let countQuery = supabase
       .from("cabeceraoc")
       .select("id", { count: "exact", head: true })
       .eq("idempresa", parseInt(empresaId, 10))
       .is("estadofactura", null)
       .neq("tipooperacion", "proyeccion")
       .gte("fechaorden", GESTION_LIPGO_DESDE)
+    countQuery = excluirNoFacturable(countQuery)
+    const { count, error: countError } = await countQuery
 
     if (countError) {
       console.error("[v0] Error counting pending facturas:", countError)
@@ -30,15 +33,15 @@ export async function GET(request: NextRequest) {
     }
 
     // Get first 5 pending orders for display (estadofactura is null)
-    const { data, error } = await supabase
+    let alertsQuery = supabase
       .from("cabeceraoc")
       .select("id, ordendecargue, placa, transporte, tipooperacion, fechaorden")
       .eq("idempresa", parseInt(empresaId, 10))
       .is("estadofactura", null)
       .neq("tipooperacion", "proyeccion")
       .gte("fechaorden", GESTION_LIPGO_DESDE)
-      .order("id", { ascending: false })
-      .limit(5)
+    alertsQuery = excluirNoFacturable(alertsQuery)
+    const { data, error } = await alertsQuery.order("id", { ascending: false }).limit(5)
 
     if (error) {
       console.error("[v0] Error fetching pending facturas:", error)
