@@ -11,6 +11,7 @@
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getMetasToneladas } from "@/lib/metas-toneladas-actions"
+import { pesoBaseCalculo, excluirAvimolDistribucion, liquidable } from "@/lib/nomina-calculo-utils"
 
 export interface ColaboradorRef {
   persona: string
@@ -146,25 +147,11 @@ async function fetchAllRows(makeQuery: (from: number, to: number) => any): Promi
   return all
 }
 
-/**
- * ¿Esta persona entra a la Revisión de nómina? Misma regla del negocio que
- * filtra el ARCHIVO PLANO (ver scripts/archivoplano_reemplazo.sql), para que las
- * dos pantallas hablen del mismo universo:
- *   · RETIRADOS fuera — su nómina pendiente se paga por el submódulo
- *     Liquidaciones, no por el plano. Se detecta por `estado = 'Inactivo'` y
- *     también por tener `fecha_retiro`, porque hay filas marcadas Activo con
- *     fecha de retiro puesta (inconsistencia real en Head Count).
- *   · SIN CONTRATO fuera — sin `contratosiigo` no hay vínculo al que cargarle la
- *     novedad en Siigo, así que no hay nada que cruzar.
- * Medido sobre Head Count: de 57 personas no inactivas, solo 3 quedan fuera por
- * contrato, y las 3 son casos a corregir allá.
- */
-function liquidable(r: any): boolean {
-  if (String(r?.estado || "activo").trim().toLowerCase() === "inactivo") return false
-  if (String(r?.fecha_retiro || "").trim()) return false
-  if (!String(r?.contratosiigo || "").trim()) return false
-  return true
-}
+// `liquidable`: ¿esta persona entra a la Revisión de nómina? Misma regla del
+// negocio que filtra el ARCHIVO PLANO (ver scripts/archivoplano_reemplazo.sql):
+// RETIRADOS fuera (su nómina pendiente se paga por Liquidaciones) y SIN CONTRATO
+// fuera (sin `contratosiigo` no hay vínculo al que cargarle la novedad en Siigo).
+// Movida a `lib/nomina-calculo-utils.ts` (compartida con Control de Toneladas).
 
 /** Parte una lista larga en lotes, para no reventar la URL de un `.in(...)`. */
 function enLotes<T>(arr: T[], n: number): T[][] {
@@ -1104,39 +1091,9 @@ export async function getRevisionNominaProyecto(
 //   - Δ por colaborador entre este cálculo y pagonomina (vínculo/retiro/fechas).
 // ---------------------------------------------------------------------------
 
-const PLANTAS_BASCULA = new Set([1, 2]) // Indupan, Avimol — báscula física
-const CEDIS = new Set([3, 4]) // Cedi Funza, Cedi Medellín — sin báscula propia
-
-/** Replica exacta de `peso_base_calculo` (pagonomina_reemplazo.sql). */
-function pesoBaseCalculo(
-  idempresa: number,
-  tipooperacion: string,
-  pesovascula: number,
-  pesoorden: number,
-): { peso: number; fuente: "bascula" | "producto" } {
-  if (CEDIS.has(idempresa) && tipooperacion === "Descargue") {
-    if (pesovascula <= 0) return { peso: pesoorden, fuente: "producto" }
-    const norm = pesoorden > 0 && pesovascula / pesoorden > 50 ? pesovascula / 1000 : pesovascula
-    if (pesoorden > 0) {
-      const ratio = norm / pesoorden
-      if (ratio < 0.1 || ratio > 10) return { peso: pesoorden, fuente: "producto" }
-    }
-    return { peso: norm, fuente: "bascula" }
-  }
-  if (CEDIS.has(idempresa)) return { peso: pesoorden, fuente: "producto" }
-  return { peso: pesovascula, fuente: "bascula" }
-}
-
-/**
- * AVIMOL (idempresa=2): la Distribución NO se paga por destajo — el clon
- * automático "+D" hereda los mismos `auxiliares` de su Cargue madre, así que
- * sin esta exclusión esas personas se contarían dos veces (Cargue + Distribución
- * clon). Mismo criterio que `pagonomina_reemplazo.sql` y
- * `lib/ajuste-proyeccion-actions.ts` — si se toca uno, tocar los tres.
- */
-function excluirAvimolDistribucion(idempresa: number, tipooperacion: string): boolean {
-  return idempresa === 2 && tipooperacion === "Distribucion"
-}
+// `pesoBaseCalculo` y `excluirAvimolDistribucion`: movidas a
+// `lib/nomina-calculo-utils.ts` (compartidas con Control de Toneladas) —
+// mismo comportamiento, ver ese archivo para el detalle de cada regla.
 
 export interface OrdenConciliada {
   idorden: number

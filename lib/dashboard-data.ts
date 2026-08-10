@@ -197,6 +197,10 @@ export const groups: Group[] = [
           // operacion logistica.
           { name: "Dashboard Operaciones LIP", icon: LayoutDashboard },
           { name: "Panel LIP Operación", icon: BarChart3, label: "Tablero del Coordinador" },
+          // Toneladas por día y acumuladas por trabajador (mismo cálculo que
+          // paga nómina): para que el coordinador gestione personal — quién
+          // mueve menos, quién es más eficiente, qué vehículos atendió.
+          { name: "Control de Toneladas", icon: Scale },
           // "Gestión de Facturas" reubicado aquí desde Gestión Financiera: es
           // función operativa propia del coordinador/líder de LIP. Conserva su
           // nombre y permiso (gestionfacturas).

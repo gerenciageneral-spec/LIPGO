@@ -134,6 +134,7 @@ import { NoConformidadesSIG } from "@/components/sst/no-conformidades-sig"
 import { IndicadoresSIG } from "@/components/sst/indicadores-sig"
 import { EvaluacionAreas } from "@/components/sst/evaluacion-areas"
 import { PanelOperacionLIP } from "@/components/sst/panel-operacion-lip"
+import ControlToneladas from "@/components/control-toneladas"
 import { MapaInteraccionProceso } from "@/components/sst/mapa-interaccion-proceso"
 import { PanelInventarioLIP } from "@/components/sst/panel-inventario-lip"
 import { CuadreInventario } from "@/components/sst/cuadre-inventario"
@@ -924,6 +925,10 @@ export function MainContent({
           ) : selectedModule === "Panel LIP Operación" ? (
             <PermissionGuard moduleName="Panel LIP Operación">
               <PanelOperacionLIP />
+            </PermissionGuard>
+          ) : selectedModule === "Control de Toneladas" ? (
+            <PermissionGuard moduleName="Control de Toneladas">
+              <ControlToneladas />
             </PermissionGuard>
           ) : selectedModule === "Mapa de Interacción del Proceso" ? (
             <PermissionGuard moduleName="Mapa de Interacción del Proceso">

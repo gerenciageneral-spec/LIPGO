@@ -147,6 +147,10 @@ export interface UserPermissions {
   // Gobierna el envio de alertas y programacion de turnos por WhatsApp
   // al celular del personal. Coincide con la columna en `permisos_usuarios`.
   notificaciones: boolean
+  // Permiso del modulo "Control de Toneladas" (Operación Lip). Vista
+  // operativa del coordinador: toneladas por dia y acumuladas por
+  // trabajador, para gestionar personal (no es un modulo de pago).
+  control_toneladas: boolean
   // Configuración
   config_bodegas: boolean
   config_categorias: boolean
@@ -361,6 +365,7 @@ export const MODULE_PERMISSION_MAP: Record<string, keyof UserPermissions> = {
   Turnos: "gestionturnos",
   "Programación de turnos": "programacionturnos",
   "Notificaciones al Personal": "notificaciones",
+  "Control de Toneladas": "control_toneladas",
   Visor: "visor",
   Bodegas: "config_bodegas",
   Categorías: "config_categorias",
