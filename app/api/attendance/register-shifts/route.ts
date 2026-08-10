@@ -74,6 +74,36 @@ export async function POST(request: NextRequest) {
       })
     }
 
+    // MARCACION REAL de cada persona hoy (tabla `asistencia`).
+    //
+    // Es la hora a la que la persona marcó y la foto que se le tomó en ese
+    // momento. Se necesita aqui porque la fila de `registroasistencia` puede
+    // estar creandose DESPUES de que la persona marcó: en ese caso
+    // `/api/attendance/register` no tuvo donde escribirlas.
+    //
+    // Antes esta fila nacia con `horaingreso` = la hora en que el SUPERVISOR
+    // pulsó el boton, que no es la hora de llegada de nadie. Eso desvirtuaba el
+    // control de llegadas tarde y alimentaba la liquidacion con una hora
+    // inventada.
+    const { data: marcacionesHoy, error: marcacionesError } = await supabaseAdmin
+      .from("asistencia")
+      .select("identificacion, hora, foto_ingreso")
+      .eq("fecha", colombiaDate)
+      .eq("idempresa", empresaId)
+      .in("identificacion", identificaciones)
+
+    if (marcacionesError) {
+      console.error("[v0] Error leyendo marcaciones de `asistencia`:", marcacionesError)
+    }
+
+    const marcacionPorIdent = new Map<string, { hora: string | null; foto: string | null }>()
+    for (const m of marcacionesHoy ?? []) {
+      marcacionPorIdent.set(m.identificacion, {
+        hora: m.hora ?? null,
+        foto: (m as any).foto_ingreso ?? null,
+      })
+    }
+
     // ────────────────────────────────────────────────────────────────
     // Path NOVEDAD
     // ────────────────────────────────────────────────────────────────
@@ -205,20 +235,30 @@ export async function POST(request: NextRequest) {
       return puesto.trim().toLowerCase() === "salvado" ? 10 : 8
     }
 
-    const records = otherShifts.map((shift: any) => ({
-      fecha: colombiaDate,
-      // `horaingreso` solo aplica para Presentes (Operaciones/Especialidades).
-      horaingreso: colombiaTime,
-      nombre: shift.nombre,
-      identificacion: shift.identificacion,
-      puesto: shift.puesto || null,
-      idempresa: empresaId,
-      especialidad: shift.type === "especialidades",
-      horasturno:
-        shift.type === "especialidades"
-          ? horasTurnoParaEspecialidad(shift.puesto)
-          : null,
-    }))
+    const records = otherShifts.map((shift: any) => {
+      const marcacion = marcacionPorIdent.get(shift.identificacion)
+      return {
+        fecha: colombiaDate,
+        // `horaingreso` solo aplica para Presentes (Operaciones/Especialidades).
+        //
+        // Manda la hora REAL de la marcacion. Solo si la persona no marcó se
+        // cae a la hora del request, que es el comportamiento anterior — pasa
+        // cuando el supervisor programa a alguien que aun no ha llegado.
+        horaingreso: marcacion?.hora ?? colombiaTime,
+        // La foto viaja con su hora: si la persona marcó antes de que existiera
+        // esta fila, es la unica forma de que la marcacion no quede sin imagen.
+        foto_ingreso: marcacion?.foto ?? null,
+        nombre: shift.nombre,
+        identificacion: shift.identificacion,
+        puesto: shift.puesto || null,
+        idempresa: empresaId,
+        especialidad: shift.type === "especialidades",
+        horasturno:
+          shift.type === "especialidades"
+            ? horasTurnoParaEspecialidad(shift.puesto)
+            : null,
+      }
+    })
 
     let data: unknown[] = []
     if (records.length > 0) {

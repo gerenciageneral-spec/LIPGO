@@ -118,6 +118,35 @@ export async function POST(request: Request) {
       )
     }
 
+    // La foto se sube ANTES de insertar, para que su URL quede guardada EN LA
+    // MISMA FILA de `asistencia`.
+    //
+    // Antes se subia despues y la URL solo se escribia en `registroasistencia`.
+    // Cuando la persona marcaba antes de que el supervisor le asignara turno,
+    // esa fila no existia y la URL SE DESCARTABA: la imagen quedaba huerfana en
+    // el bucket. `asistencia` en cambio siempre tiene fila al marcar.
+    const fotoIngresoUrl = await subirFotoAsistencia(foto, identificacion, "ingreso")
+
+    // Si la foto no se pudo GUARDAR, no se registra la marcacion.
+    //
+    // Ya se rechazaba la marcacion sin foto (arriba); esto cierra el otro
+    // extremo: que la foto llegue pero no quede almacenada. Una marcacion cuya
+    // imagen no se guardo es, para efectos de auditoria, una marcacion sin foto.
+    //
+    // CONTRAPARTIDA: si el storage esta caido, nadie puede marcar. Es
+    // deliberado — se prefiere frenar y que se note, a acumular registros sin
+    // respaldo. Para invertirlo basta con borrar este bloque.
+    if (!fotoIngresoUrl) {
+      return NextResponse.json(
+        {
+          success: false,
+          message:
+            "No se pudo guardar la foto, así que no se registró la marcación. Vuelve a intentar.",
+        },
+        { status: 502 },
+      )
+    }
+
     // Register attendance (tabla `asistencia` es la fuente de verdad
     // del INGRESO del dia: cada persona aparece aqui una sola vez por
     // dia con su hora de llegada).
@@ -128,6 +157,7 @@ export async function POST(request: Request) {
         identificacion,
         fecha,
         hora,
+        foto_ingreso: fotoIngresoUrl,
       })
       .select()
       .single()
@@ -151,18 +181,17 @@ export async function POST(request: Request) {
     //
     // Si la fila NO existe (el supervisor aun no ha procesado a esa
     // persona en Tabla Asistencia) NO la creamos aqui: este endpoint
-    // solo registra el evento de ingreso. La fila de
-    // `registroasistencia` se creara cuando el supervisor asigne turno
-    // o novedad, y en ese momento ya podra tomar la `hora` desde
-    // `asistencia` via el flujo de la tabla.
+    // solo registra el evento de ingreso. Crearla con `puesto` en null
+    // alteraria la liquidacion, porque `pagonomina` lee de esa tabla.
+    //
+    // Ya no se pierde nada por eso: la hora y la foto quedaron en
+    // `asistencia`, y `/api/attendance/register-shifts` las COPIA a la fila de
+    // turno en el momento en que el supervisor la crea.
     //
     // El UPDATE es best-effort: si falla por cualquier motivo, NO
     // bloqueamos la respuesta 200 del registro de ingreso (la fuente
     // de verdad ya quedo persistida en `asistencia`). Solo lo logueamos
     // para diagnostico.
-    // Foto de INGRESO (cámara del módulo). Falla-seguro: no bloquea el registro.
-    const fotoIngresoUrl = await subirFotoAsistencia(foto, identificacion, "ingreso")
-
     try {
       const { data: existingShift, error: shiftLookupError } = await supabase
         .from("registroasistencia")

@@ -57,9 +57,12 @@ export async function GET(request: Request) {
     }
 
     // Get today's attendance records
+    // `foto_ingreso` se lee tambien de aqui, no solo de `registroasistencia`:
+    // cuando la persona marca ANTES de que el supervisor le asigne turno, esta
+    // es la unica fila que existe y por tanto la unica que tiene la foto.
     const { data: attendanceData, error: attendanceError } = await supabaseAdmin
       .from("asistencia")
-      .select("identificacion, hora")
+      .select("identificacion, hora, foto_ingreso")
       .eq("idempresa", empresaId)
       .eq("fecha", colombiaDate)
 
@@ -157,14 +160,18 @@ export async function GET(request: Request) {
       })
     }
 
-    // Create a map of identificacion -> hora (de llegada).
-    const attendanceMap = new Map()
+    // Create a map of identificacion -> { hora, foto } (de llegada).
+    const attendanceMap = new Map<string, { hora: string | null; foto: string | null }>()
     attendanceData?.forEach((record) => {
-      attendanceMap.set(record.identificacion, record.hora)
+      attendanceMap.set(record.identificacion, {
+        hora: record.hora ?? null,
+        foto: (record as any).foto_ingreso ?? null,
+      })
     })
 
     const tableData = headcountData?.map((person) => {
-      const hora = attendanceMap.get(person.identificacion) || null
+      const marcacion = attendanceMap.get(person.identificacion)
+      const hora = marcacion?.hora || null
       const isPresent = hasValue(hora)
       // Lookup por llave compuesta (identificacion + nombre normalizado)
       // — ver comentario donde se construye `shiftMap` arriba.
@@ -205,7 +212,10 @@ export async function GET(request: Request) {
         puesto,
         asistencia,
         alreadyAssigned,
-        fotoIngreso: shift?.foto_ingreso ?? null,
+        // Manda la de `registroasistencia` si existe; si no, la de la marcacion.
+        // Sin este respaldo, quien marca antes de que le asignen turno aparece
+        // con hora de llegada pero sin foto — el sintoma reportado.
+        fotoIngreso: shift?.foto_ingreso ?? marcacion?.foto ?? null,
         fotoSalida: shift?.foto_salida ?? null,
       }
     })
