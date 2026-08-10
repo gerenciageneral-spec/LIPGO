@@ -548,27 +548,34 @@ export async function getNovedadesAsistenciaPortal(
 /**
  * Novedades de asistencia que NO descalifican para pedir anticipo.
  *
- * Las VACACIONES son un derecho programado, no una falla de asistencia: quien
- * las disfruta sigue vinculado, cobrando y con la misma capacidad de pago. Antes
- * contaban como novedad y dejaban a la persona sin poder pedir anticipo durante
- * el mes siguiente a volver, que no es lo que la regla busca castigar.
+ * El criterio: son DESCANSOS PROGRAMADOS, no fallas de asistencia. Quien los
+ * toma sigue vinculado, cobrando y con la misma capacidad de pago, asi que no
+ * es lo que la regla busca castigar. Antes contaban como novedad y dejaban a la
+ * persona sin poder pedir anticipo durante el mes siguiente a volver.
  *
- * Se compara por PATRON y no por el codigo exacto ("31- Vacaciones disfrutadas")
- * para tolerar variantes historicas del texto sin tener que enumerarlas.
+ *   · %vacacion% -> "31- Vacaciones disfrutadas".
+ *   · %descanso% -> "Descanso" y "Descanso compensatorio domingo anterior".
+ *
+ * Se comparan por PATRON y no por el codigo exacto para tolerar variantes
+ * historicas del texto sin tener que enumerarlas.
+ *
+ * SIGUEN BLOQUEANDO, que es el proposito de la regla: incapacidades, licencias
+ * (remuneradas y no), ausencias y retiro.
  */
-const NOVEDAD_NO_BLOQUEA_ANTICIPO = "%vacacion%"
+const NOVEDADES_NO_BLOQUEAN_ANTICIPO = ["%vacacion%", "%descanso%"]
 
 /**
  * Indica si el colaborador tiene al menos UNA novedad de asistencia en los
  * ultimos 30 dias contados desde hoy. Se usa como bloqueo para solicitar
  * anticipos: la regla de negocio dice que si el trabajador ha tenido alguna
  * novedad reciente (incapacidad, permiso, ausencia, etc.) no puede solicitar
- * anticipo. Las VACACIONES quedan fuera — ver NOVEDAD_NO_BLOQUEA_ANTICIPO.
+ * anticipo. Los descansos programados —vacaciones y descansos— quedan fuera;
+ * ver NOVEDADES_NO_BLOQUEAN_ANTICIPO.
  *
  * Filtramos en SQL por:
  *   - identificacion = X
  *   - asistencia not null y distinto de ""
- *   - asistencia que no sea de vacaciones
+ *   - asistencia que no sea de vacaciones ni descanso
  *   - fecha >= (hoy - 30 dias)
  *
  * Usamos `head: true` + `count: "exact"` para no traer filas; solo
@@ -589,16 +596,23 @@ export async function tieneNovedadesUltimos30Dias(
     hace30.setDate(hace30.getDate() - 30)
     const fechaIso = hace30.toISOString().slice(0, 10)
 
-    const { count, error } = await supabase
+    let query = supabase
       .from("registroasistencia")
       .select("id", { count: "exact", head: true })
       .eq("identificacion", identificacion)
       .not("asistencia", "is", null)
       .neq("asistencia", "")
-      // Las vacaciones no descalifican. Va despues del `is null` de arriba, que
-      // ya dejo fuera las filas sin novedad.
-      .not("asistencia", "ilike", NOVEDAD_NO_BLOQUEA_ANTICIPO)
       .gte("fecha", fechaIso)
+
+    // Los descansos programados no descalifican. Cada `not` es un filtro
+    // independiente y PostgREST los une con AND, que es justo lo que se quiere:
+    // la fila cuenta solo si NO coincide con NINGUNO de los patrones. Van
+    // despues del `is null` de arriba, que ya dejo fuera las filas sin novedad.
+    for (const patron of NOVEDADES_NO_BLOQUEAN_ANTICIPO) {
+      query = query.not("asistencia", "ilike", patron)
+    }
+
+    const { count, error } = await query
 
     if (error) {
       console.log("[v0] portal novedades30 error:", error.message)

@@ -216,8 +216,8 @@ export default function PortalAnticiposPage() {
           </AlertTitle>
           <AlertDescription className="text-red-800">
             Tienes novedades en asistencia en los últimos 30 días, no cumples
-            con el requisito para solicitar anticipo. Las vacaciones no cuentan
-            como novedad para este requisito.
+            con el requisito para solicitar anticipo. Las vacaciones y los
+            descansos no cuentan como novedad para este requisito.
           </AlertDescription>
         </Alert>
       ) : !loading && solicitudDelMes ? (
