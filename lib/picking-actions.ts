@@ -1074,8 +1074,16 @@ export async function registerHoraPicking(orderId: number) {
 
 /**
  * Pausa el proceso de cargue de una orden. Crea una nueva linea en la tabla
- * `pausas` con el numero de orden, la hora de inicio del paro (hora Colombia)
- * y activo = true. Solo deberia llamarse cuando la orden ya tiene iniciocargue.
+ * `pausas` con el numero de orden y la hora de inicio del paro (hora Colombia).
+ * Solo deberia llamarse cuando la orden ya tiene iniciocargue.
+ *
+ * NO se escribe `activo`: es una COLUMNA GENERADA en la base y Postgres rechaza
+ * el INSERT con "cannot insert a non-default value into column activo". La
+ * columna se agrego despues de escribirse esta funcion y el codigo seguia
+ * mandandola, asi que el boton Pausar fallaba siempre.
+ *
+ * El estado lo lleva `fin`: la pausa esta activa mientras `fin` sea null, y
+ * `reanudarOrden` la cierra escribiendo la hora. La base deriva `activo` de ahi.
  */
 export async function pausarOrden(ordenCargue: string) {
   const supabase = await createClient()
@@ -1085,7 +1093,6 @@ export async function pausarOrden(ordenCargue: string) {
     {
       ordendecargue: ordenCargue,
       inicio,
-      activo: true,
     },
   ])
 
@@ -1098,19 +1105,24 @@ export async function pausarOrden(ordenCargue: string) {
 }
 
 /**
- * Reanuda el proceso de cargue de una orden. Busca la linea de pausa activa
- * (activo = true y sin fin) de la orden y le escribe la hora de fin del paro.
+ * Reanuda el proceso de cargue de una orden. Busca la linea de pausa abierta
+ * (sin `fin`) de la orden y le escribe la hora de fin del paro.
  */
 export async function reanudarOrden(ordenCargue: string) {
   const supabase = await createClient()
   const fin = await getColombiaTime()
 
   // Buscar la pausa activa de la orden (la mas reciente que aun no tiene fin).
+  //
+  // Se filtra SOLO por `fin is null`, no por `activo`. `activo` es una columna
+  // GENERADA por la base a partir de otras: filtrar por ella ata este codigo a
+  // una expresion que no esta versionada aqui y que puede cambiar sin aviso.
+  // "Pausa abierta = pausa sin hora de fin" es la verdad del dominio, y es la
+  // unica columna de estado que esta funcion escribe.
   const { data: pausa, error: findError } = await supabase
     .from("pausas")
     .select("id")
     .eq("ordendecargue", ordenCargue)
-    .eq("activo", true)
     .is("fin", null)
     .order("id", { ascending: false })
     .limit(1)
@@ -1136,9 +1148,10 @@ export async function reanudarOrden(ordenCargue: string) {
 }
 
 /**
- * Devuelve los numeros de orden (ordendecargue) que tienen una pausa activa
- * (activo = true y aun sin fin). Sirve para que la UI muestre "Reanudar" en
- * vez de "Pausar" en esas ordenes.
+ * Devuelve los numeros de orden (ordendecargue) que tienen una pausa abierta
+ * (aun sin `fin`). Sirve para que la UI muestre "Reanudar" en vez de "Pausar"
+ * en esas ordenes. Mismo criterio que `reanudarOrden`: el estado lo marca
+ * `fin`, no la columna generada `activo`.
  */
 export async function getOrdenesPausadas(): Promise<string[]> {
   const supabase = await createClient()
@@ -1146,7 +1159,6 @@ export async function getOrdenesPausadas(): Promise<string[]> {
   const { data, error } = await supabase
     .from("pausas")
     .select("ordendecargue")
-    .eq("activo", true)
     .is("fin", null)
 
   if (error) {
