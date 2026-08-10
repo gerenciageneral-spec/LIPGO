@@ -480,15 +480,29 @@ export async function getNovedadesAsistenciaPortal(
 }
 
 /**
+ * Novedades de asistencia que NO descalifican para pedir anticipo.
+ *
+ * Las VACACIONES son un derecho programado, no una falla de asistencia: quien
+ * las disfruta sigue vinculado, cobrando y con la misma capacidad de pago. Antes
+ * contaban como novedad y dejaban a la persona sin poder pedir anticipo durante
+ * el mes siguiente a volver, que no es lo que la regla busca castigar.
+ *
+ * Se compara por PATRON y no por el codigo exacto ("31- Vacaciones disfrutadas")
+ * para tolerar variantes historicas del texto sin tener que enumerarlas.
+ */
+const NOVEDAD_NO_BLOQUEA_ANTICIPO = "%vacacion%"
+
+/**
  * Indica si el colaborador tiene al menos UNA novedad de asistencia en los
  * ultimos 30 dias contados desde hoy. Se usa como bloqueo para solicitar
  * anticipos: la regla de negocio dice que si el trabajador ha tenido alguna
  * novedad reciente (incapacidad, permiso, ausencia, etc.) no puede solicitar
- * anticipo.
+ * anticipo. Las VACACIONES quedan fuera — ver NOVEDAD_NO_BLOQUEA_ANTICIPO.
  *
  * Filtramos en SQL por:
  *   - identificacion = X
  *   - asistencia not null y distinto de ""
+ *   - asistencia que no sea de vacaciones
  *   - fecha >= (hoy - 30 dias)
  *
  * Usamos `head: true` + `count: "exact"` para no traer filas; solo
@@ -515,6 +529,9 @@ export async function tieneNovedadesUltimos30Dias(
       .eq("identificacion", identificacion)
       .not("asistencia", "is", null)
       .neq("asistencia", "")
+      // Las vacaciones no descalifican. Va despues del `is null` de arriba, que
+      // ya dejo fuera las filas sin novedad.
+      .not("asistencia", "ilike", NOVEDAD_NO_BLOQUEA_ANTICIPO)
       .gte("fecha", fechaIso)
 
     if (error) {
