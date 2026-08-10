@@ -680,7 +680,16 @@ export async function getPrefactura(
       if (!data || data.length === 0) break
       for (const o of data) {
         const on = String(o.ordendecargue || "").trim()
-        estadoPorOrden.set(on, { estado: o.estadofactura ?? null, facturasiigo: o.facturasiigo ?? null, pesovascula: num(o.pesovascula) })
+        // Un mismo `ordendecargue` puede tener MÁS DE UN `cabeceraoc` (ej. un
+        // descargue manual de terceros con dos pesajes/tiquetes bajo el mismo
+        // número de orden): sumar `pesovascula` en vez de sobreescribir, o el
+        // peso del segundo tiquete se pierde y la línea queda sub-facturada.
+        const previo = estadoPorOrden.get(on)
+        estadoPorOrden.set(on, {
+          estado: o.estadofactura ?? previo?.estado ?? null,
+          facturasiigo: o.facturasiigo ?? previo?.facturasiigo ?? null,
+          pesovascula: (previo?.pesovascula ?? 0) + num(o.pesovascula),
+        })
         if (o.fincargue && o.facturar !== false) procesadas.add(on)
       }
       if (data.length < 1000) break
@@ -1026,12 +1035,17 @@ export async function getControlFacturacion(
         for (const o of data) {
           const on = String(o.ordendecargue || "").trim()
           if (!on) continue
+          // Un mismo `ordendecargue` puede tener MÁS DE UN `cabeceraoc` (ej. un
+          // descargue manual de terceros con dos pesajes/tiquetes bajo el mismo
+          // número de orden): sumar `pesovascula` en vez de sobreescribir, o el
+          // peso del segundo tiquete se pierde y la línea queda sub-facturada.
+          const previo = estadoPorOrden.get(on)
           estadoPorOrden.set(on, {
-            estado: o.estadofactura ?? null,
-            facturasiigo: o.facturasiigo ?? null,
-            valorpago: o.valorpago ?? null,
-            pesovascula: num(o.pesovascula),
-            mediopago: o.mediopago ?? null,
+            estado: o.estadofactura ?? previo?.estado ?? null,
+            facturasiigo: o.facturasiigo ?? previo?.facturasiigo ?? null,
+            valorpago: o.valorpago ?? previo?.valorpago ?? null,
+            pesovascula: (previo?.pesovascula ?? 0) + num(o.pesovascula),
+            mediopago: o.mediopago ?? previo?.mediopago ?? null,
           })
           const procesada = o.fincargue && o.facturar !== false
           if (procesada) procesadas.add(on)
@@ -1434,7 +1448,11 @@ export async function getValoresNetosOrden(
         const { data } = await sb.from("cabeceraoc").select("ordendecargue, pesovascula, tipooperacion").eq("idempresa", idempresa).in("ordendecargue", chunk)
         for (const o of data || []) {
           const on = String(o.ordendecargue || "").trim()
-          pesoV.set(on, num(o.pesovascula))
+          // Un mismo `ordendecargue` puede tener MÁS DE UN `cabeceraoc` (ej. un
+          // descargue manual de terceros con dos pesajes/tiquetes bajo el mismo
+          // número de orden): sumar `pesovascula` en vez de sobreescribir, o el
+          // peso del segundo tiquete se pierde y "Valor Neto Orden" queda corto.
+          pesoV.set(on, (pesoV.get(on) || 0) + num(o.pesovascula))
           tipoOrden.set(on, String(o.tipooperacion ?? "").trim().toLowerCase())
         }
       }
