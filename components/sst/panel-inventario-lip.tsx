@@ -1208,80 +1208,56 @@ export function PanelInventarioLIP() {
                     </span>
                   </div>
                   <p className="text-[11px] text-muted-foreground">
-                    El kardex real vive por lote — cada lote tiene su propia ubicación y su propio saldo corrido. Agrupado por lote, orden cronológico dentro de cada uno.
+                    Saldo corrido único del producto, de comienzo a fin — el lote y la ubicación de cada movimiento se ven en sus propias columnas (y en el soporte PDF), pero ya no cortan el hilo del saldo.
                   </p>
-                  <div className="max-h-[78vh] space-y-3 overflow-auto">
-                    {(() => {
-                      const grupos: Record<string, any[]> = {}
-                      for (const mv of drill.movs) {
-                        const key = `${mv.lote || "(sin lote)"}||${mv.location || "(sin ubicación)"}`
-                        ;(grupos[key] = grupos[key] || []).push(mv)
-                      }
-                      const listas = Object.entries(grupos)
-                        .map(([key, movs]) => {
-                          const asc = [...movs].sort((a, b) => String(a.fecha || "").localeCompare(String(b.fecha || "")))
-                          const [lote, location] = key.split("||")
-                          return { lote, location, asc, primeraFecha: asc[0]?.fecha || "" }
-                        })
-                        .sort((a, b) => String(a.primeraFecha).localeCompare(String(b.primeraFecha)))
-                      return listas.map((grupo) => (
-                        <div key={`${grupo.lote}||${grupo.location}`} className="rounded-md border">
-                          <div className="flex flex-wrap items-center justify-between gap-2 bg-muted/40 px-3 py-1.5 text-xs">
-                            <span>
-                              <span className="font-semibold">Lote {grupo.lote}</span>
-                              <span className="text-muted-foreground"> · Ubicación {grupo.location}</span>
-                            </span>
-                            <span className="text-muted-foreground">
-                              Kardex inicial <span className="font-semibold tabular-nums text-foreground">{fmt(grupo.asc[0]?.saldoAntes)}</span>
-                              {" → "}saldo <span className="font-semibold tabular-nums" style={{ color: SST_TOKENS.navy }}>{fmt(grupo.asc[grupo.asc.length - 1]?.saldoDespues)}</span>
-                            </span>
-                          </div>
-                          <div className="overflow-x-auto">
-                          <table className="w-full min-w-[900px] text-sm">
-                            <thead>
-                              <tr className="border-b text-left text-[11px] uppercase text-muted-foreground">
-                                <th className="px-2 py-2">Fecha</th>
-                                <th className="px-2 py-2">Movimiento</th>
-                                <th className="px-2 py-2 text-right">Ingreso</th>
-                                <th className="px-2 py-2 text-right">Salida</th>
-                                <th className="px-2 py-2 text-right">Saldo</th>
-                                <th className="px-2 py-2">Usuario</th>
-                                <th className="px-2 py-2">Orden</th>
-                                <th className="px-2 py-2">Soportes</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {grupo.asc.map((mv: any, i: number) => (
-                                <tr key={i} className="border-b last:border-0 align-top">
-                                  <td className="px-2 py-1.5 text-xs">{fechaColombiaUI(mv.fecha)}</td>
-                                  <td className="px-2 py-1.5"><Badge variant="outline" className="text-[10px]">{mv.tipo}</Badge></td>
-                                  <td className="px-2 py-1.5 text-right font-medium tabular-nums" style={{ color: SST_TOKENS.ok }}>{mv.tipomov === "Entrada" ? fmt(mv.cantidad) : ""}</td>
-                                  <td className="px-2 py-1.5 text-right font-medium tabular-nums" style={{ color: SST_TOKENS.bad }}>{mv.tipomov !== "Entrada" ? fmt(mv.cantidad) : ""}</td>
-                                  <td className="px-2 py-1.5 text-right tabular-nums" title={mv.afectaSaldo ? undefined : "No aprobado: no afectó el saldo"}>
-                                    {mv.afectaSaldo ? (
-                                      <span className="font-semibold">{fmt(mv.saldoDespues)}</span>
-                                    ) : (
-                                      <span className="text-muted-foreground">{fmt(mv.saldoDespues)} *</span>
-                                    )}
-                                  </td>
-                                  <td className="px-2 py-1.5 text-xs">{mv.usuario || "—"}</td>
-                                  <td className="px-2 py-1.5 text-xs text-muted-foreground">{mv.ocargue}</td>
-                                  <td className="px-2 py-1.5">
-                                    <span className="flex flex-wrap gap-2">
-                                      {mv.pdf && <a href={mv.pdf} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs hover:underline" style={{ color: SST_TOKENS.navy }}><FileText className="h-3 w-3" /> Ingreso</a>}
-                                      {mv.pdfoc && <a href={mv.pdfoc} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs hover:underline" style={{ color: SST_TOKENS.navy }}><FileText className="h-3 w-3" /> Orden</a>}
-                                      {mv.doccargue && <a href={mv.doccargue} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs hover:underline" style={{ color: SST_TOKENS.navy }}><FileText className="h-3 w-3" /> Picking</a>}
-                                      {!mv.pdf && !mv.pdfoc && !mv.doccargue && <span className="text-xs text-muted-foreground">—</span>}
-                                    </span>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                          </div>
-                        </div>
-                      ))
-                    })()}
+                  <div className="max-h-[78vh] overflow-auto rounded-md border">
+                    <table className="w-full min-w-[1000px] text-sm">
+                      <thead>
+                        <tr className="border-b bg-muted/40 text-left text-[11px] uppercase text-muted-foreground">
+                          <th className="px-2 py-2">Fecha</th>
+                          <th className="px-2 py-2">Movimiento</th>
+                          <th className="px-2 py-2">Lote</th>
+                          <th className="px-2 py-2">Ubicación</th>
+                          <th className="px-2 py-2 text-right">Ingreso</th>
+                          <th className="px-2 py-2 text-right">Salida</th>
+                          <th className="px-2 py-2 text-right">Saldo</th>
+                          <th className="px-2 py-2">Usuario</th>
+                          <th className="px-2 py-2">Orden</th>
+                          <th className="px-2 py-2">Soportes</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...drill.movs]
+                          .sort((a: any, b: any) => String(a.fecha || "").localeCompare(String(b.fecha || "")))
+                          .map((mv: any, i: number) => (
+                            <tr key={i} className="border-b last:border-0 align-top">
+                              <td className="px-2 py-1.5 text-xs whitespace-nowrap">{fechaColombiaUI(mv.fecha)}</td>
+                              <td className="px-2 py-1.5"><Badge variant="outline" className="text-[10px]">{mv.tipo}</Badge></td>
+                              <td className="px-2 py-1.5 text-xs">{mv.lote || "—"}</td>
+                              <td className="px-2 py-1.5 text-xs text-muted-foreground">{mv.location || "—"}</td>
+                              <td className="px-2 py-1.5 text-right font-medium tabular-nums" style={{ color: SST_TOKENS.ok }}>{mv.tipomov === "Entrada" ? fmt(mv.cantidad) : ""}</td>
+                              <td className="px-2 py-1.5 text-right font-medium tabular-nums" style={{ color: SST_TOKENS.bad }}>{mv.tipomov !== "Entrada" ? fmt(mv.cantidad) : ""}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums" title={mv.afectaSaldo ? undefined : "No aprobado: no afectó el saldo"}>
+                                {mv.afectaSaldo ? (
+                                  <span className="font-semibold">{fmt(mv.saldoDespues)}</span>
+                                ) : (
+                                  <span className="text-muted-foreground">{fmt(mv.saldoDespues)} *</span>
+                                )}
+                              </td>
+                              <td className="px-2 py-1.5 text-xs">{mv.usuario || "—"}</td>
+                              <td className="px-2 py-1.5 text-xs text-muted-foreground">{mv.ocargue}</td>
+                              <td className="px-2 py-1.5">
+                                <span className="flex flex-wrap gap-2">
+                                  {mv.pdf && <a href={mv.pdf} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs hover:underline" style={{ color: SST_TOKENS.navy }}><FileText className="h-3 w-3" /> Ingreso</a>}
+                                  {mv.pdfoc && <a href={mv.pdfoc} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs hover:underline" style={{ color: SST_TOKENS.navy }}><FileText className="h-3 w-3" /> Orden</a>}
+                                  {mv.doccargue && <a href={mv.doccargue} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs hover:underline" style={{ color: SST_TOKENS.navy }}><FileText className="h-3 w-3" /> Picking</a>}
+                                  {!mv.pdf && !mv.pdfoc && !mv.doccargue && <span className="text-xs text-muted-foreground">—</span>}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
                   </div>
                   <p className="text-[10px] text-muted-foreground">* No aprobado (rechazado / lote paralelo) — no movió el saldo.</p>
                 </>
