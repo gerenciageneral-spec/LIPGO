@@ -9,7 +9,7 @@
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getMetasToneladas } from "@/lib/metas-toneladas-actions"
-import { pesoBaseCalculo, excluirAvimolDistribucion, liquidable } from "@/lib/nomina-calculo-utils"
+import { pesoBaseCalculo, excluirAvimolDistribucion, liquidable, normalizeName } from "@/lib/nomina-calculo-utils"
 
 // Nombres que empiezan/contienen "prueba" son auxiliares ficticios de pruebas
 // del sistema — nunca deben contar como personal real, en ningún reporte.
@@ -24,12 +24,16 @@ export interface OrdenTrabajador {
   tipooperacion: string
   planta: number
   placa: string | null
+  // Puesto donde quedó PROGRAMADO ese día (Programación de Turnos →
+  // registroasistencia.puesto). null si no hubo programación ese día/persona.
+  puesto: string | null
   tonPersona: number
 }
 
 export interface TonPorDia {
   fecha: string
   toneladas: number
+  vehiculos: string[]
 }
 
 export interface TrabajadorToneladas {
@@ -116,6 +120,28 @@ export async function getControlToneladas(
     const metaPorProyecto = new Map<number, number>()
     for (const m of metasRes.data || []) metaPorProyecto.set(m.idempresa, m.metaTonTrabajadorDia)
 
+    // 3b) Puesto donde quedó PROGRAMADO cada persona ese día — mismo cruce
+    //    (idempresa|fecha|nombre normalizado) que ya usa Revisión de Nómina
+    //    en getAuxiliaresVsAsistencia, contra registroasistencia.puesto
+    //    (Programación de Turnos). cabeceraoc no trae esta info.
+    const puestoMap = new Map<string, string>()
+    for (let off = 0; ; off += 1000) {
+      const { data, error } = await admin
+        .from("registroasistencia")
+        .select("nombre, idempresa, fecha, puesto")
+        .in("idempresa", emps)
+        .gte("fecha", desde)
+        .lte("fecha", hasta)
+        .range(off, off + 999)
+      if (error) return { success: false, message: error.message }
+      for (const r of data || []) {
+        if (!r.puesto) continue
+        const key = `${Number(r.idempresa)}|${String(r.fecha).slice(0, 10)}|${normalizeName(r.nombre)}`
+        if (!puestoMap.has(key)) puestoMap.set(key, r.puesto)
+      }
+      if (!data || data.length < 1000) break
+    }
+
     // 4) Procesar órdenes: reparto EXACTO de nómina (peso base ÷ n auxiliares).
     type Acc = {
       persona: string
@@ -125,6 +151,7 @@ export async function getControlToneladas(
       vehiculos: Set<string>
       ordenes: OrdenTrabajador[]
       tonPorDiaMap: Map<string, number>
+      vehiculosPorDiaMap: Map<string, Set<string>>
     }
     const porPersona = new Map<string, Acc>()
 
@@ -157,14 +184,20 @@ export async function getControlToneladas(
             vehiculos: new Set(),
             ordenes: [],
             tonPorDiaMap: new Map(),
+            vehiculosPorDiaMap: new Map(),
           }
           porPersona.set(key, c)
         }
         c.plantas.add(planta)
         c.tonAcumulada += tonPersona
         if (placa) c.vehiculos.add(placa)
-        c.ordenes.push({ fecha, orden: String(o.ordendecargue || ""), tipooperacion: tipo, planta, placa, tonPersona: round3(tonPersona) })
+        const puesto = puestoMap.get(`${planta}|${fecha}|${normalizeName(p)}`) || null
+        c.ordenes.push({ fecha, orden: String(o.ordendecargue || ""), tipooperacion: tipo, planta, placa, puesto, tonPersona: round3(tonPersona) })
         c.tonPorDiaMap.set(fecha, (c.tonPorDiaMap.get(fecha) || 0) + tonPersona)
+        if (placa) {
+          if (!c.vehiculosPorDiaMap.has(fecha)) c.vehiculosPorDiaMap.set(fecha, new Set())
+          c.vehiculosPorDiaMap.get(fecha)!.add(placa)
+        }
       }
     }
 
@@ -191,7 +224,11 @@ export async function getControlToneladas(
         vehiculos: [...c.vehiculos].sort(),
         ordenes: c.ordenes.sort((a, b) => a.fecha.localeCompare(b.fecha)),
         tonPorDia: [...c.tonPorDiaMap.entries()]
-          .map(([fecha, toneladas]) => ({ fecha, toneladas: round3(toneladas) }))
+          .map(([fecha, toneladas]) => ({
+            fecha,
+            toneladas: round3(toneladas),
+            vehiculos: [...(c.vehiculosPorDiaMap.get(fecha) || [])].sort(),
+          }))
           .sort((a, b) => a.fecha.localeCompare(b.fecha)),
       })
     }

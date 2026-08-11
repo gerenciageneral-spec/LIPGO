@@ -5,7 +5,6 @@
 // sincronas y ninguna de las dos actions ya-server puede re-exportar funciones
 // sync (Next.js exige que TODO export de un archivo "use server" sea async).
 
-const PLANTAS_BASCULA = new Set([1, 2]) // Indupan, Avimol — bascula fisica
 const CEDIS = new Set([3, 4]) // Cedi Funza, Cedi Medellin — sin bascula propia
 
 /** Replica exacta de `peso_base_calculo` (pagonomina_reemplazo.sql). */
@@ -51,3 +50,7 @@ export function liquidable(r: any): boolean {
   if (!String(r?.contratosiigo || "").trim()) return false
   return true
 }
+
+/** Normaliza un nombre para cruzar `cabeceraoc.auxiliares` (CSV libre) contra
+ * `registroasistencia.nombre` — mismo criterio en todos los cruces por nombre. */
+export const normalizeName = (n: string | null | undefined) => (n ?? "").trim().toLowerCase()

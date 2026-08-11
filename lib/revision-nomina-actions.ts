@@ -11,7 +11,7 @@
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getMetasToneladas } from "@/lib/metas-toneladas-actions"
-import { pesoBaseCalculo, excluirAvimolDistribucion, liquidable } from "@/lib/nomina-calculo-utils"
+import { pesoBaseCalculo, excluirAvimolDistribucion, liquidable, normalizeName } from "@/lib/nomina-calculo-utils"
 
 export interface ColaboradorRef {
   persona: string
@@ -1505,8 +1505,6 @@ export async function getHcPorDia(
 // mismo (idempresa, fecha), por nombre normalizado (igual que hace
 // app/api/attendance/table/route.ts) para recuperar la identificación.
 // ---------------------------------------------------------------------------
-
-const normalizeName = (n: string | null | undefined) => (n ?? "").trim().toLowerCase()
 
 export type ClasificacionAuxiliar = "ok" | "sin_marcar" | "con_novedad" | "sin_registro"
 
