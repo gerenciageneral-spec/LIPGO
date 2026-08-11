@@ -11,9 +11,12 @@ import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getMetasToneladas } from "@/lib/metas-toneladas-actions"
 import { pesoBaseCalculo, excluirAvimolDistribucion, liquidable, normalizeName } from "@/lib/nomina-calculo-utils"
 
-// Nombres que empiezan/contienen "prueba" son auxiliares ficticios de pruebas
-// del sistema — nunca deben contar como personal real, en ningún reporte.
-const esNombrePrueba = (nombre: string) => /prueba/i.test(nombre)
+// A diferencia de nómina (Revisión de Nómina, PILA, Bonos), aquí NO se
+// excluyen los "auxiliares de PRUEBA": a ellos se les paga aparte ("de una"),
+// pero sí participan físicamente en la operación y dividen el tonelaje de la
+// orden igual que cualquiera — excluirlos de este reporte le ocultaría al
+// coordinador parte real de lo programado/movido ese día. Por eso este
+// archivo, a propósito, NO importa ningún filtro de nombre "prueba".
 
 const num = (v: any) => Number(v || 0)
 const round3 = (v: number) => Math.round(v * 1000) / 1000
@@ -108,7 +111,7 @@ export async function getControlToneladas(
       if (error) return { success: false, message: error.message }
       for (const r of data || []) {
         const persona = String(r.nombre || "").trim()
-        if (!persona || esNombrePrueba(persona)) continue
+        if (!persona) continue
         activoPorNombre.set(persona.toUpperCase(), liquidable(r))
       }
       if (!data || data.length < 1000) break
@@ -172,7 +175,6 @@ export async function getControlToneladas(
       const placa = o.placa ? String(o.placa).trim() : null
 
       for (const p of auxiliares) {
-        if (esNombrePrueba(p)) continue // auxiliares ficticios de pruebas — nunca cuentan
         const key = p.toUpperCase()
         let c = porPersona.get(key)
         if (!c) {
