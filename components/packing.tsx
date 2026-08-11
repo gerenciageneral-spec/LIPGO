@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import { RefreshCw, FileText, UserPlus, ArrowLeft, Camera, Check } from "lucide-react"
+import { RefreshCw, FileText, UserPlus, ArrowLeft, Camera, Check, Pause, Play } from "lucide-react"
 import {
   getPendingUnloadOrders,
   getDistributionOrders,
@@ -21,6 +21,13 @@ import {
   type PackingItem,
   confirmPacking,
 } from "@/lib/packing-actions"
+// Las pausas viven en `lib/picking-actions` porque nacieron ahi, pero NO son
+// propias del picking: son pausas de una ORDEN, sobre la tabla `pausas`.
+//
+// Reutilizarlas aqui no cruza datos entre los dos modulos: picking solo lista
+// ordenes de `tipooperacion = 'Cargue'` y packing lista Descargue y
+// Distribucion, asi que un mismo `ordendecargue` nunca aparece en ambos.
+import { pausarOrden, reanudarOrden, getOrdenesPausadas } from "@/lib/picking-actions"
 import { updateOrderInitioCargue } from "@/lib/orders-actions"
 import { FacturarCheckbox } from "@/components/facturar-checkbox"
 import { useToast } from "@/hooks/use-toast"
@@ -44,6 +51,11 @@ export function Packing() {
   const [orders, setOrders] = useState<PendingLoadOrder[]>([])
   const [loading, setLoading] = useState(true)
   const [generatingPDF, setGeneratingPDF] = useState<number | null>(null)
+
+  // Ordenes con una pausa abierta (por `ordendecargue`) y la que se esta
+  // pausando/reanudando en este momento, para bloquear su boton.
+  const [pausedOrders, setPausedOrders] = useState<Set<string>>(new Set())
+  const [pausingOrder, setPausingOrder] = useState<string | null>(null)
 
   const [personnelDialogOpen, setPersonnelDialogOpen] = useState(false)
   const [selectedOrder, setSelectedOrder] = useState<PendingLoadOrder | null>(null)
@@ -146,6 +158,10 @@ export function Packing() {
       })
 
       setOrders(allOrders)
+
+      // Ordenes con pausa abierta, para mostrar "Reanudar" en vez de "Pausar".
+      const pausadas = await getOrdenesPausadas()
+      setPausedOrders(new Set(pausadas))
     } catch (error) {
       console.error("[v0] Error loading orders:", error)
       toast({
@@ -155,6 +171,35 @@ export function Packing() {
       })
     }
     setLoading(false)
+  }
+
+  /**
+   * Pausa o reanuda el descargue de una orden. Misma tabla `pausas` que usa
+   * Picking: `inicio` al pausar, `fin` al reanudar.
+   */
+  const handleTogglePausa = async (order: PendingLoadOrder) => {
+    const ordenCargue = order.ordendecargue
+    const estaPausada = pausedOrders.has(ordenCargue)
+    setPausingOrder(ordenCargue)
+
+    const result = estaPausada ? await reanudarOrden(ordenCargue) : await pausarOrden(ordenCargue)
+
+    if (result.success) {
+      setPausedOrders((prev) => {
+        const next = new Set(prev)
+        if (estaPausada) next.delete(ordenCargue)
+        else next.add(ordenCargue)
+        return next
+      })
+      toast({
+        title: estaPausada ? "Descargue reanudado" : "Descargue pausado",
+        description: result.message,
+      })
+    } else {
+      toast({ title: "Error", description: result.message, variant: "destructive" })
+    }
+
+    setPausingOrder(null)
   }
 
   useEffect(() => {
@@ -635,6 +680,33 @@ export function Packing() {
                           >
                             <Camera className="h-3 w-3 mr-1" />
                             Cargar Fotos
+                          </Button>
+                          {/* Pausar / Reanudar el descargue. Disponible desde que
+                              la orden arranca (`iniciocargue`, que escribe el PDF)
+                              y hasta que se cierra (`fincargue`): pausar algo que
+                              no ha empezado o que ya termino no significa nada. */}
+                          <Button
+                            onClick={() => handleTogglePausa(order)}
+                            disabled={
+                              !order.iniciocargue ||
+                              !!order.fincargue ||
+                              pausingOrder === order.ordendecargue
+                            }
+                            size="sm"
+                            variant="outline"
+                            className="gap-1 h-7 text-[10px] px-2"
+                          >
+                            {pausedOrders.has(order.ordendecargue) ? (
+                              <>
+                                <Play className="h-3 w-3" />
+                                Reanudar
+                              </>
+                            ) : (
+                              <>
+                                <Pause className="h-3 w-3" />
+                                Pausar
+                              </>
+                            )}
                           </Button>
                         </div>
                       </td>
