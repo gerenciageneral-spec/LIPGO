@@ -111,7 +111,12 @@ export function ProductionEntriesView() {
     const [transData, locData, prodData] = await Promise.all([
       getAllInventoryTransactions({
         ...filters,
-        origen: "ingreso producción",
+        tipomov: "Entrada",
+        // "ingreso producción" = registro manual (ID1/plantas que producen).
+        // "descargue" = ingreso automático de PT a un CEDI (id3/id4) al
+        // iniciar un descargue — antes quedaba afuera de esta vista aunque sí
+        // aparecía correctamente en "Aprobación de Ingresos de Producción".
+        origen: ["ingreso producción", "descargue"],
         idempresa: selectedEmpresaId,
       }),
       getLocations(),

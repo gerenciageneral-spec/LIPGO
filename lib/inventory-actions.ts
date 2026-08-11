@@ -1620,7 +1620,12 @@ export async function getAllInventoryTransactions(filters?: {
   location?: string
   tipomov?: string
   status?: string
-  origen?: string
+  // string = un solo ILIKE (comportamiento original, todos los llamadores
+  // existentes). string[] = ILIKE de CUALQUIERA de los textos (OR) — lo usa
+  // "Ver Ingresos de Producción" para incluir tanto "ingreso producción"
+  // (ID1, manual) como "descargue" (CEDIs id3/id4, automático), sin tocar el
+  // filtro de un solo texto que ya usan Tolva/Conciliación Avimol/QR.
+  origen?: string | string[]
   creadopor?: string
   fecha?: string
   idempresa?: number | null
@@ -1656,7 +1661,11 @@ export async function getAllInventoryTransactions(filters?: {
       }
     }
     if (filters?.origen) {
-      query = query.ilike("origen", `%${filters.origen}%`)
+      if (Array.isArray(filters.origen)) {
+        query = query.or(filters.origen.map((o) => `origen.ilike.%${o}%`).join(","))
+      } else {
+        query = query.ilike("origen", `%${filters.origen}%`)
+      }
     }
     if (filters?.creadopor) {
       query = query.ilike("creadopor", `%${filters.creadopor}%`)
@@ -1669,15 +1678,25 @@ export async function getAllInventoryTransactions(filters?: {
       query = query.gte("creado", startDate.toISOString()).lte("creado", endDate.toISOString())
     }
 
-    const { data, error } = await query.order("id", { ascending: false })
-
-    if (error) {
-      console.error("[v0] Error fetching all inventory transactions:", error)
-      return []
+    // Supabase topa cada respuesta en 1000 filas — sin paginar, cualquier
+    // vista/filtro que junte más de 1000 movimientos (ej. "Ver Ingresos de
+    // Producción" sin filtro de fecha) se corta en silencio. Orden estable
+    // por `id` (columna única) para que `.range()` no salte/duplique filas
+    // entre páginas.
+    const todas: InventoryTransactionRecord[] = []
+    for (let off = 0; ; off += 1000) {
+      const { data, error } = await query.order("id", { ascending: false }).range(off, off + 999)
+      if (error) {
+        console.error("[v0] Error fetching all inventory transactions:", error)
+        return todas
+      }
+      if (!data || data.length === 0) break
+      todas.push(...data)
+      if (data.length < 1000) break
     }
 
-    console.log("[v0] Production entries fetched:", data?.length)
-    return data || []
+    console.log("[v0] Production entries fetched:", todas.length)
+    return todas
   } catch (error) {
     console.error("[v0] Unexpected error fetching all inventory transactions:", error)
     return []
