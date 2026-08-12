@@ -20,7 +20,7 @@
  * lo reporta como "no pude leer", nunca en silencio.
  */
 
-import { readFileSync, writeFileSync } from "node:fs"
+import { readFileSync, writeFileSync, readdirSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { dirname, join } from "node:path"
 
@@ -28,6 +28,7 @@ const raiz = join(dirname(fileURLToPath(import.meta.url)), "..")
 const RUTA_GRUPOS = join(raiz, "lib", "dashboard-data.ts")
 const RUTA_CATALOGO = join(raiz, "lib", "aprendizaje-content.ts")
 const RUTA_BASELINE = join(raiz, "scripts", "aprendizaje-pendientes.json")
+const RUTA_AREAS = join(raiz, "lib", "aprendizaje")
 
 const rojo = (s) => `\x1b[31m${s}\x1b[0m`
 const verde = (s) => `\x1b[32m${s}\x1b[0m`
@@ -44,10 +45,17 @@ function leerModulosDelMenu() {
   return [...new Set(nombres)]
 }
 
-/** Guias escritas: entradas `modulo: "X"` en lib/aprendizaje-content.ts. */
+/** Guias escritas: entradas `modulo: "X"` en lib/aprendizaje-content.ts y lib/aprendizaje/*.ts. */
 function leerModulosDocumentados() {
-  const src = readFileSync(RUTA_CATALOGO, "utf8")
-  const nombres = [...src.matchAll(/^\s*modulo:\s*"([^"]+)"/gm)].map((m) => m[1])
+  let areas = []
+  try {
+    areas = readdirSync(RUTA_AREAS).filter((f) => f.endsWith(".ts")).map((f) => join(RUTA_AREAS, f))
+  } catch { /* carpeta aun no creada */ }
+  const nombres = []
+  for (const archivo of [RUTA_CATALOGO, ...areas]) {
+    const src = readFileSync(archivo, "utf8")
+    nombres.push(...[...src.matchAll(/^\s*modulo:\s*"([^"]+)"/gm)].map((m) => m[1]))
+  }
   return [...new Set(nombres)]
 }
 

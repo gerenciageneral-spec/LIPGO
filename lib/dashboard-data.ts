@@ -52,7 +52,7 @@ export type GroupKey =
  * aqui (el item del menu superior se filtra contra los grupos visibles), asi
  * que esta constante es el unico interruptor.
  */
-const APRENDIZAJE_HABILITADO = false
+const APRENDIZAJE_HABILITADO = true
 
 export const groups: Group[] = [
   {

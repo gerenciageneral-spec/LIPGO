@@ -25,6 +25,7 @@ export function LipbotDock({
   onOpenGroup?: (key: string) => void
 }) {
   const [open, setOpen] = useState(false)
+  const [preguntaInicial, setPreguntaInicial] = useState<string | null>(null)
   const nAlertas = alertas?.length ?? 0
 
   // Atajo de teclado: Ctrl/⌘+K abre/cierra; Esc cierra.
@@ -39,6 +40,21 @@ export function LipbotDock({
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
+  }, [])
+
+  // Canal global: cualquier pantalla puede abrir LIPbot con una pregunta ya
+  // escrita (ej. el botón "Pedir ayuda a LIPbot" del módulo Aprendizaje).
+  // Mismo patrón del evento "lipgo:navigate-module".
+  useEffect(() => {
+    const onAsk = (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      if (typeof detail === "string" && detail.trim()) {
+        setPreguntaInicial(detail.trim())
+        setOpen(true)
+      }
+    }
+    window.addEventListener("lipgo:lipbot-ask", onAsk)
+    return () => window.removeEventListener("lipgo:lipbot-ask", onAsk)
   }, [])
 
   return (
@@ -91,6 +107,8 @@ export function LipbotDock({
               alertas={alertas}
               onNavigate={onNavigate}
               onOpenGroup={onOpenGroup}
+              preguntaInicial={preguntaInicial ?? undefined}
+              onPreguntaInicialEnviada={() => setPreguntaInicial(null)}
             />
           </div>
         </div>

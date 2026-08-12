@@ -220,6 +220,12 @@ CONTEXTO ACTUAL (dónde está el usuario):
 ` : ""}
 ${guiaCompactaParaLIPbot()}
 
+CAPACITACIÓN (guía de uso de CUALQUIER módulo):
+
+    - Cuando te pregunten CÓMO usar, hacer o trabajar en cualquier módulo o submódulo de la app (ej. "¿cómo registro una novedad?", "¿cómo se factura un cargue?", "¿qué puedo hacer en Báscula?", "guíame en X") -> usa la herramienta 'consultar_guia_modulo' y explica paso a paso con esa guía real (qué se puede hacer, qué no, sus funcionalidades). Si el usuario no nombra el módulo, la herramienta usa el módulo/área donde está parado.
+    - Después de explicar, ofrece abrir el módulo (abrir_submodulo/abrir_modulo) si tiene sentido.
+    - Si piden aprender de forma general o pasearse por toda la app, menciona el módulo "Aprendizaje" (guía completa navegable con buscador).
+
 FUENTE DE VERDAD (INQUEBRANTABLE):
 
     - TODA la información vive en Supabase. NUNCA respondas cifras, totales ni hechos de memoria o suposición: SIEMPRE consulta la base con la herramienta y basa tu respuesta EXCLUSIVAMENTE en lo que ella devuelve. Si no consultaste, no afirmas.
@@ -824,6 +830,57 @@ export async function POST(req: Request) {
               }
             }
             return { permitido: true, navegar_a: modulo, mensaje: `Listo, te abro ${modulo}.` }
+          },
+        }),
+        // CAPACITACIÓN: guía de uso de un módulo (qué es, qué se puede/no se
+        // puede hacer, sus funcionalidades). Es la MISMA guía del módulo
+        // Aprendizaje, así que LIPbot y el documento in-app siempre dicen lo
+        // mismo. Respeta el mismo permiso que abrir_submodulo (los módulos
+        // sin permiso mapeado son universales -> se permiten).
+        consultar_guia_modulo: tool({
+          description:
+            "Trae la guía de uso de un módulo de la app: para qué sirve, qué se puede hacer, qué NO se puede hacer y sus funcionalidades. Úsala SIEMPRE que te pregunten CÓMO usar, hacer o trabajar en cualquier módulo/submódulo (ej. '¿cómo registro una novedad?', '¿cómo se factura un cargue?', '¿qué puedo hacer en Báscula?'). Si no te dan el nombre del módulo, omite 'modulo' para usar el módulo/área donde el usuario está parado ahora.",
+          inputSchema: z.object({
+            modulo: z
+              .string()
+              .optional()
+              .describe(
+                "Nombre del módulo o submódulo tal como aparece en el menú (no necesita ser exacto, se busca por coincidencia). Si se omite, se usa el módulo/área actual del usuario.",
+              ),
+          }),
+          execute: async ({ modulo }) => {
+            // Sin tildes/mayusculas, para que "bascula" encuentre "Báscula".
+            const normalizar = (s: string) => s.trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
+            const crudo = modulo?.trim() || contexto?.trim() || ""
+            const buscado = normalizar(crudo)
+            if (!buscado) {
+              return {
+                encontrado: false,
+                mensaje: "No sé de qué módulo preguntas. Dime el nombre del módulo o ábrelo primero.",
+              }
+            }
+            const { APRENDIZAJE_POR_MODULO, MODULOS_DOCUMENTADOS } = await import("@/lib/aprendizaje-content")
+            // 1) match exacto; 2) sin tildes/mayusculas exacto; 3) contiene el término (sin tildes).
+            let nombreReal =
+              MODULOS_DOCUMENTADOS.find((m) => m === crudo) ??
+              MODULOS_DOCUMENTADOS.find((m) => normalizar(m) === buscado) ??
+              MODULOS_DOCUMENTADOS.find((m) => normalizar(m).includes(buscado) || buscado.includes(normalizar(m)))
+            if (!nombreReal) {
+              return {
+                encontrado: false,
+                mensaje: `No tengo una guía escrita para "${modulo ?? contexto}" todavía.`,
+              }
+            }
+            const key = MODULE_PERMISSION_MAP[nombreReal]
+            const permitido = !key || permisos?.[key] === true
+            if (!permitido) {
+              return {
+                encontrado: false,
+                mensaje: `No tienes permiso para ver la guía de "${nombreReal}". Solicítalo en Gestión de Usuarios / Accesos de Usuario.`,
+              }
+            }
+            const guia = APRENDIZAJE_POR_MODULO[nombreReal]
+            return { encontrado: true, modulo: nombreReal, guia }
           },
         }),
         // ACCIÓN DE ESCRITURA (controlada): registrar una novedad a un

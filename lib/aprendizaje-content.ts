@@ -62,6 +62,9 @@ export const CATALOGO_APRENDIZAJE: ContenidoAprendizaje[] = [
     puedes: [
       "Consultar la guia de cualquier modulo que tengas habilitado.",
       "Buscar un modulo por nombre para llegar directo a su guia.",
+      "Abrir el modulo directamente desde su guia con el boton \"Abrir el modulo\".",
+      "Pedirle a LIPbot que te guie paso a paso en ese modulo con el boton \"Pedir ayuda a LIPbot\" (le abre el chat con la pregunta ya lista).",
+      "Preguntarle lo mismo a LIPbot desde cualquier pantalla de la app, sin pasar por este modulo: el sabe explicar cualquier modulo al que tengas acceso.",
     ],
     noPuedes: [
       "Ver la guia de modulos a los que no tienes acceso: el contenido se filtra con los mismos permisos del menu.",
@@ -72,6 +75,16 @@ export const CATALOGO_APRENDIZAJE: ContenidoAprendizaje[] = [
         nombre: "Filtrado por permisos",
         descripcion:
           "El listado se arma con los mismos modulos que ves en el menu lateral. Si te otorgan un permiso nuevo, su guia aparece aqui automaticamente.",
+      },
+      {
+        nombre: "Acciones desde la guia",
+        descripcion:
+          "Cada modulo documentado trae dos botones: \"Abrir el modulo\" te lleva directo a el, y \"Pedir ayuda a LIPbot\" abre el asistente con una pregunta ya escrita para que te explique como trabajar ahi paso a paso.",
+      },
+      {
+        nombre: "LIPbot capacitado",
+        descripcion:
+          "LIPbot conoce esta misma guia para todos los modulos: preguntale 'como hago X' o 'que puedo hacer en Y' desde cualquier pantalla y te respondera con la guia real de ese modulo, respetando tus permisos.",
       },
       {
         nombre: "Pendiente de documentar",
@@ -464,10 +477,45 @@ export const CATALOGO_APRENDIZAJE: ContenidoAprendizaje[] = [
   },
 ]
 
+// ---------------------------------------------------------------------------
+// Guias por AREA (lib/aprendizaje/*.ts) — un archivo por grupo del menu para
+// que el catalogo sea mantenible. Este archivo concatena todo; la API publica
+// (CATALOGO completo, indice y lista) no cambia para la UI ni para LIPbot.
+// NOTA: scripts/check-aprendizaje.mjs tambien escanea lib/aprendizaje/*.ts.
+// ---------------------------------------------------------------------------
+import { APRENDIZAJE_DESPACHOS } from "@/lib/aprendizaje/despachos"
+import { APRENDIZAJE_PEDIDOS } from "@/lib/aprendizaje/pedidos-torre"
+import { APRENDIZAJE_PRODUCCION } from "@/lib/aprendizaje/produccion"
+import { APRENDIZAJE_OPERACION_LIP } from "@/lib/aprendizaje/operacion-lip"
+import { APRENDIZAJE_FINANCIERA } from "@/lib/aprendizaje/financiera"
+import { APRENDIZAJE_RRHH_A } from "@/lib/aprendizaje/rrhh-seleccion-formacion"
+import { APRENDIZAJE_RRHH_B } from "@/lib/aprendizaje/rrhh-asistencia-nomina"
+import { APRENDIZAJE_COMPENSACION } from "@/lib/aprendizaje/compensacion"
+import { APRENDIZAJE_CERTIFICACIONES } from "@/lib/aprendizaje/certificaciones"
+import { APRENDIZAJE_SST } from "@/lib/aprendizaje/sst"
+import { APRENDIZAJE_CONFIGURACION } from "@/lib/aprendizaje/configuracion"
+import { APRENDIZAJE_MRP } from "@/lib/aprendizaje/mrp"
+
+const CATALOGO_COMPLETO: ContenidoAprendizaje[] = [
+  ...CATALOGO_APRENDIZAJE,
+  ...APRENDIZAJE_DESPACHOS,
+  ...APRENDIZAJE_PEDIDOS,
+  ...APRENDIZAJE_PRODUCCION,
+  ...APRENDIZAJE_OPERACION_LIP,
+  ...APRENDIZAJE_FINANCIERA,
+  ...APRENDIZAJE_RRHH_A,
+  ...APRENDIZAJE_RRHH_B,
+  ...APRENDIZAJE_COMPENSACION,
+  ...APRENDIZAJE_CERTIFICACIONES,
+  ...APRENDIZAJE_SST,
+  ...APRENDIZAJE_CONFIGURACION,
+  ...APRENDIZAJE_MRP,
+]
+
 /** Indice por nombre de modulo, para resolver la guia en O(1) desde la UI. */
 export const APRENDIZAJE_POR_MODULO: Record<string, ContenidoAprendizaje> = Object.fromEntries(
-  CATALOGO_APRENDIZAJE.map((c) => [c.modulo, c]),
+  CATALOGO_COMPLETO.map((c) => [c.modulo, c]),
 )
 
 /** Nombres de modulo que ya tienen guia escrita. */
-export const MODULOS_DOCUMENTADOS: string[] = CATALOGO_APRENDIZAJE.map((c) => c.modulo)
+export const MODULOS_DOCUMENTADOS: string[] = CATALOGO_COMPLETO.map((c) => c.modulo)

@@ -35,6 +35,11 @@ interface LipAiAssistantProps {
    *  preguntar/enfocar. Protagonista por tratamiento, no por tamaño — deja los
    *  módulos visibles. Patrón Raycast/Linear/Perplexity. */
   variant?: "card" | "bar"
+  /** Pregunta a enviar automáticamente UNA vez al montar/recibir (ej. botón
+   *  "Pedir ayuda a LIPbot" del módulo Aprendizaje). */
+  preguntaInicial?: string
+  /** Avisa al padre que ya se envió `preguntaInicial`, para que la limpie. */
+  onPreguntaInicialEnviada?: () => void
 }
 
 /**
@@ -44,7 +49,7 @@ interface LipAiAssistantProps {
  * usando el mismo backend Claude (/api/chat), gobernado por los permisos del
  * usuario. Reutilizable en Inicio y en cada submenú.
  */
-export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, onAlerta, onNavigate, onOpenGroup, groupKey, hero, variant = "card" }: LipAiAssistantProps) {
+export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, onAlerta, onNavigate, onOpenGroup, groupKey, hero, variant = "card", preguntaInicial, onPreguntaInicialEnviada }: LipAiAssistantProps) {
   const isBar = variant === "bar"
   // En modo barra: colapsada por defecto; se expande al enfocar o al haber chat.
   const [focused, setFocused] = useState(false)
@@ -166,6 +171,19 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
     sendMessage({ text: t })
     setInput("")
   }
+
+  // Pregunta precargada (ej. "Pedir ayuda a LIPbot" desde el módulo
+  // Aprendizaje): se envía UNA sola vez al llegar, con guarda anti-duplicado
+  // (mismo patrón de `navegadosRef`).
+  const preguntaEnviadaRef = useRef<string | null>(null)
+  useEffect(() => {
+    const t = preguntaInicial?.trim()
+    if (!t || preguntaEnviadaRef.current === t) return
+    preguntaEnviadaRef.current = t
+    enviar(t)
+    onPreguntaInicialEnviada?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preguntaInicial])
 
   // Limpia markdown para que la voz suene natural (sin *, #, `, enlaces…).
   const limpiarParaVoz = (t: string) =>

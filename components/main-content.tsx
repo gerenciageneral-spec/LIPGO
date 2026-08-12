@@ -47,6 +47,7 @@ import { Packing } from "@/components/packing"
 import DashboardOperacion from "@/components/dashboard-operacion"
 import { BatchHistory } from "@/components/batch-history"
 import { Aprendizaje } from "@/components/aprendizaje" // Guia de usuario (modulo universal, sin permiso)
+import { ModuloGuiaBar } from "@/components/modulo-guia-bar" // Guia embebida en la pantalla de cada modulo
 import { ProductionEntriesView } from "@/components/production-entries-view"
 import InventoryAudit from "@/components/inventory-audit"
 import { SanitaryInspectionHistory } from "@/components/sanitary-inspection-history"
@@ -344,6 +345,7 @@ export function MainContent({
           {/* KPIs del módulo, presentes en CUALQUIER submódulo del módulo (self-gated:
               solo pinta en submódulos de grupos con KPIs; null en home/portada). */}
           {selectedGroup && selectedModule ? <ModuleKpiHeader selectedModule={selectedModule} /> : null}
+          {selectedGroup && selectedModule ? <ModuloGuiaBar selectedModule={selectedModule} /> : null}
           {editingOrderId ? (
             <OrderEditPage {...({ orderId: editingOrderId, onBack: () => setEditingOrderId(null) } as any)} />
           ) : !selectedGroup ? (

@@ -5,9 +5,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
-import { BookOpen, Check, X, Lightbulb, Search, Loader2, FileQuestion } from "lucide-react"
+import { BookOpen, Search, Loader2, FileQuestion } from "lucide-react"
 import { groups, type Module } from "@/lib/dashboard-data"
 import { APRENDIZAJE_POR_MODULO, type ContenidoAprendizaje } from "@/lib/aprendizaje-content"
+import { GuiaModulo } from "@/components/guia-modulo-panel"
 
 interface UserModulesResponse {
   protectedModules: string[]
@@ -167,11 +168,16 @@ export function Aprendizaje() {
                   <AccordionItem key={modulo.name} value={modulo.name} className="border rounded-lg px-3">
                     <AccordionTrigger className="hover:no-underline py-3">
                       <div className="flex flex-1 items-center justify-between gap-3 pr-2 text-left">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <modulo.icon className="h-4 w-4 shrink-0 text-muted-foreground" />
-                          <span className="text-xs md:text-sm font-medium truncate">
-                            {modulo.label ?? modulo.name}
-                          </span>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <modulo.icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                            <span className="text-xs md:text-sm font-medium truncate">
+                              {modulo.label ?? modulo.name}
+                            </span>
+                          </div>
+                          {contenido && (
+                            <p className="mt-0.5 truncate pl-6 text-[11px] text-muted-foreground">{contenido.resumen}</p>
+                          )}
                         </div>
                         {!contenido && (
                           <Badge variant="outline" className="shrink-0 text-[10px] font-normal">
@@ -182,7 +188,7 @@ export function Aprendizaje() {
                     </AccordionTrigger>
                     <AccordionContent className="pb-4">
                       {contenido ? (
-                        <GuiaModulo contenido={contenido} />
+                        <GuiaModulo contenido={contenido} moduloName={modulo.name} etiqueta={modulo.label ?? modulo.name} />
                       ) : (
                         <div className="flex items-start gap-2 rounded-lg border border-dashed p-3 text-xs md:text-sm text-muted-foreground">
                           <FileQuestion className="h-4 w-4 shrink-0 mt-0.5" />
@@ -204,65 +210,3 @@ export function Aprendizaje() {
   )
 }
 
-/** Render de la guia de un modulo documentado. */
-function GuiaModulo({ contenido }: { contenido: ContenidoAprendizaje }) {
-  return (
-    <div className="space-y-4 text-xs md:text-sm">
-      <p className="text-muted-foreground leading-relaxed">{contenido.proposito}</p>
-
-      <div className="grid gap-3 md:grid-cols-2">
-        <div className="rounded-lg border border-green-200 bg-green-50 p-3 dark:border-green-900 dark:bg-green-950/30">
-          <h4 className="mb-2 font-semibold text-green-800 dark:text-green-300">Que puedes hacer</h4>
-          <ul className="space-y-1.5">
-            {contenido.puedes.map((item) => (
-              <li key={item} className="flex items-start gap-2">
-                <Check className="h-3.5 w-3.5 shrink-0 mt-0.5 text-green-600 dark:text-green-400" />
-                <span className="text-green-900 dark:text-green-200">{item}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <div className="rounded-lg border border-red-200 bg-red-50 p-3 dark:border-red-900 dark:bg-red-950/30">
-          <h4 className="mb-2 font-semibold text-red-800 dark:text-red-300">Que no puedes hacer</h4>
-          <ul className="space-y-1.5">
-            {contenido.noPuedes.map((item) => (
-              <li key={item} className="flex items-start gap-2">
-                <X className="h-3.5 w-3.5 shrink-0 mt-0.5 text-red-600 dark:text-red-400" />
-                <span className="text-red-900 dark:text-red-200">{item}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
-
-      <div>
-        <h4 className="mb-2 font-semibold">Funcionalidades</h4>
-        <div className="space-y-2">
-          {contenido.funcionalidades.map((f) => (
-            <div key={f.nombre} className="rounded-lg border p-3">
-              <p className="font-medium">{f.nombre}</p>
-              <p className="mt-1 text-muted-foreground leading-relaxed">{f.descripcion}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {contenido.consejos && contenido.consejos.length > 0 && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/30">
-          <h4 className="mb-2 flex items-center gap-1.5 font-semibold text-amber-800 dark:text-amber-300">
-            <Lightbulb className="h-4 w-4" />
-            Ten en cuenta
-          </h4>
-          <ul className="space-y-1.5">
-            {contenido.consejos.map((c) => (
-              <li key={c} className="text-amber-900 dark:text-amber-200">
-                {c}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
-  )
-}
