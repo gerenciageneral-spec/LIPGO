@@ -59,8 +59,14 @@ export default function Parafiscales() {
   const { selectedEmpresaId } = useAuth()
   const { toast } = useToast()
   const hoy = new Date()
-  const [anio, setAnio] = useState(hoy.getFullYear())
-  const [mes, setMes] = useState(hoy.getMonth() + 1)
+  // Seguridad Social y Parafiscales se pagan MES VENCIDO (la planilla PILA de
+  // un mes se liquida y paga al mes siguiente) — por defecto se abre en el mes
+  // anterior al actual, que es el que realmente hay que pagar hoy. El mes en
+  // curso todavía no cierra (personal con novedades a mitad de mes, días que
+  // aún no ocurren) y no es la cifra a girar.
+  const mesVencido = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1)
+  const [anio, setAnio] = useState(mesVencido.getFullYear())
+  const [mes, setMes] = useState(mesVencido.getMonth() + 1)
   const [consolidado, setConsolidado] = useState(false)
   const [data, setData] = useState<ParafiscalPersona[]>([])
   const [resumen, setResumen] = useState<ResumenParafiscales | null>(null)
@@ -100,6 +106,10 @@ export default function Parafiscales() {
   useEffect(() => {
     cargar()
   }, [cargar])
+
+  // El periodo elegido es el mes en curso (todavía no cierra) o incluso un mes
+  // futuro — en ninguno de los dos casos es la cifra a pagar hoy (mes vencido).
+  const periodoNoCerrado = anio > hoy.getFullYear() || (anio === hoy.getFullYear() && mes >= hoy.getMonth() + 1)
 
   // Contraste contra la norma vigente: "error" bloquea el guardado; "aviso"
   // (apartarse del valor de ley) exige confirmar que responde a una reforma.
@@ -287,6 +297,18 @@ export default function Parafiscales() {
               </span>
             )}
           </div>
+
+          {periodoNoCerrado && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>
+                <strong>{MESES[mes - 1]} {anio}</strong> todavía no cierra — Seguridad Social y Parafiscales se
+                pagan <strong>mes vencido</strong>, así que esto NO es la cifra a girar hoy. Los días que faltan del
+                mes aún no tienen novedades y el personal recién ingresado solo alcanza a mostrar sus días reales.
+                Para la planilla PILA que hay que pagar ahora, usa el mes anterior (ya cerrado).
+              </span>
+            </div>
+          )}
 
           {/* CUADRO DE MANDO: parámetros por año, contrastados contra la norma.
               Editable, pero cada valor muestra la norma que lo fija y su valor de

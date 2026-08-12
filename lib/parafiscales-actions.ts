@@ -208,7 +208,7 @@ export async function getParafiscales(
     for (let offset = 0; ; offset += hcPage) {
       let q = admin
         .from("headcount")
-        .select("identificacion, nombre, admin, salario, idempresa, contratosiigo, fecha_retiro, estado")
+        .select("identificacion, nombre, admin, salario, idempresa, contratosiigo, fecha_retiro, fechainicio, estado")
         .not("nombre", "ilike", "%prueba%") // fuera los auxiliares de PRUEBA (todos los ID): no cotizan
         .order("idempresa", { ascending: true })
         .order("identificacion", { ascending: true })
@@ -229,6 +229,8 @@ export async function getParafiscales(
         idempresa: number | null
         /** Fecha de retiro (ISO YYYY-MM-DD) o null si sigue activo. */
         fechaRetiro: string | null
+        /** Fecha de ingreso (ISO YYYY-MM-DD) — antes de esta fecha no hay nada que cotizar. */
+        fechaInicio: string | null
         /** true si la persona está ACTIVA en algún Head Count (reingreso): no se le corta por retiro. */
         esActivo: boolean
       }
@@ -238,15 +240,21 @@ export async function getParafiscales(
       // Sin contrato SIIGO no cotiza; y los auxiliares de PRUEBA nunca entran a PILA.
       if (!nombre || !String(h.contratosiigo || "").trim() || /prueba/i.test(nombre)) continue
       // Multi-empresa: una persona puede tener varias filas. Acumular esActivo (si
-      // está Activa en cualquiera) y conservar la fecha_retiro si alguna la trae.
+      // está Activa en cualquiera) y conservar fecha_retiro/fechainicio si alguna la trae
+      // (la más temprana de fechainicio, por si hay filas con el dato incompleto).
       const prev = infoPorNombre.get(nombre)
       const esActivoFila = String(h.estado || "").trim().toUpperCase() === "ACTIVO"
+      const fechaInicioFila = h.fechainicio ? String(h.fechainicio).slice(0, 10) : null
       infoPorNombre.set(nombre, {
         identificacion: String(h.identificacion || "").trim() || prev?.identificacion || "",
         esAdmin: h.admin === true || prev?.esAdmin || false,
         salario: Number(h.salario) || prev?.salario || 0,
         idempresa: h.idempresa ?? prev?.idempresa ?? null,
         fechaRetiro: h.fecha_retiro ? String(h.fecha_retiro).slice(0, 10) : (prev?.fechaRetiro ?? null),
+        fechaInicio:
+          fechaInicioFila && (!prev?.fechaInicio || fechaInicioFila < prev.fechaInicio)
+            ? fechaInicioFila
+            : (prev?.fechaInicio ?? null),
         esActivo: (prev?.esActivo ?? false) || esActivoFila,
       })
     }
@@ -302,21 +310,34 @@ export async function getParafiscales(
       // Día posterior al retiro: no cotiza. SALVAGUARDA: si la persona está Activa
       // en algún Head Count (reingreso / fecha_retiro vieja), no se corta.
       if (info.fechaRetiro && !info.esActivo && fecha > info.fechaRetiro) continue
+      // Día ANTERIOR al ingreso: tampoco cotiza — no puede haber aportes de un
+      // trabajador que todavía no existía en la empresa. Defensa en profundidad:
+      // `pagonomina` ya corta por `headcount.fechainicio` en el origen, pero ese
+      // corte NO es retroactivo (rige desde 16-jul-2026), así que un dato viejo
+      // podría colarse; este corte lo blinda aquí también, igual que fecha_retiro.
+      if (info.fechaInicio && fecha < info.fechaInicio) continue
+      // Un mes de LIP son SIEMPRE 30 días (igual que la nómina base): el día 31 de
+      // un mes de 31 no es un día ADICIONAL de cotización — su devengado (recargos/
+      // destajo, nunca hay "base" ese día) se suma igual al IBC, pero sin sumar un
+      // día 31° al conteo (si no, el piso de 1 SMLV y la mensualización a 30 días
+      // quedarían inflados por encima de un mes completo).
+      const diaMes = Number(fecha.slice(8, 10))
+      const esDia31 = diaMes === 31
       const a =
         acum.get(nombre) ||
         { ibcTrab: 0, diasTrab: 0, diasVac: 0, diasIncap: 0, diasAus: 0, diasLicr: 0, excQ1: 0, excQ2: 0 }
       switch (clasificarDiaCotizacion(r.novedad_reportada)) {
         case "VAC":
-          a.diasVac += 1
+          if (!esDia31) a.diasVac += 1
           break
         case "INCAP":
-          a.diasIncap += 1
+          if (!esDia31) a.diasIncap += 1
           break
         case "AUS":
-          a.diasAus += 1
+          if (!esDia31) a.diasAus += 1
           break
         case "LICR":
-          a.diasLicr += 1
+          if (!esDia31) a.diasLicr += 1
           break
         case "RETIRO":
           break // día de baja: no suma a ninguna base
@@ -329,10 +350,9 @@ export async function getParafiscales(
           // ya viene con signo desde pagonomina) y se aplica MAX(0,·) por quincena más
           // abajo — IDÉNTICO a como lo arma el archivo plano que ingiere Siigo.
           a.ibcTrab += Number(r.total_liquidado_dia || 0)
-          const diaMes = Number(fecha.slice(8, 10))
           if (diaMes <= 15) a.excQ1 += Number(r.bonif_prestacional || 0)
           else a.excQ2 += Number(r.bonif_prestacional || 0)
-          a.diasTrab += 1
+          if (!esDia31) a.diasTrab += 1
         }
       }
       acum.set(nombre, a)
