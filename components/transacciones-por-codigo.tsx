@@ -30,6 +30,8 @@ import {
   getLotesFromSaldoInvDetalleByLocationAndProduct,
   getProductsWithCodes,
   searchInventoryByQR,
+  getSaldoEnUbicacion,
+  type SaldoEnUbicacion,
 } from "@/lib/inventory-actions"
 import { QRCameraScanner } from "@/components/qr-camera-scanner"
 import { QrCode, Camera } from "lucide-react"
@@ -66,6 +68,12 @@ export function TransaccionesPorCodigo() {
   // Catálogos en cascada
   const [ubicaciones, setUbicaciones] = useState<string[]>([])
   const [ubicacionesDestino, setUbicacionesDestino] = useState<string[]>([])
+  // Saldo del producto en la ubicación elegida (total + desglose por lote).
+  const [saldo, setSaldo] = useState<SaldoEnUbicacion | null>(null)
+  const [cargandoSaldo, setCargandoSaldo] = useState(false)
+  // Se incrementa despues de ejecutar una transaccion para releer el saldo.
+  const [refrescoSaldo, setRefrescoSaldo] = useState(0)
+
   const [productos, setProductos] = useState<string[]>([])
   const [productosLibres, setProductosLibres] = useState<string[]>([])
   const [lotes, setLotes] = useState<string[]>([])
@@ -142,6 +150,33 @@ export function TransaccionesPorCodigo() {
     else setLote("")
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [producto])
+
+  // SALDO ACTUAL del producto en la ubicación elegida, con desglose por lote.
+  //
+  // Se consulta apenas hay ubicación + producto, sin esperar al lote: es el
+  // momento en que quien arma el movimiento necesita saber cuánto hay. El lote
+  // solo resalta la línea correspondiente cuando ya se eligió.
+  //
+  // Se relee tambien cuando cambia `codigo`: cada transaccion ejecutada mueve
+  // el saldo, y dejar en pantalla el de antes seria peor que no mostrarlo.
+  useEffect(() => {
+    let vigente = true
+    if (!location || !producto || !selectedEmpresaId) {
+      setSaldo(null)
+      return
+    }
+    setCargandoSaldo(true)
+    getSaldoEnUbicacion(location, producto, lote, selectedEmpresaId)
+      .then((r) => {
+        if (vigente) setSaldo(r)
+      })
+      .finally(() => {
+        if (vigente) setCargandoSaldo(false)
+      })
+    return () => {
+      vigente = false
+    }
+  }, [location, producto, lote, selectedEmpresaId, refrescoSaldo])
 
   // Buscar la estiba por QR y precargar ubicación/producto/lote.
   const aplicarLineaQr = (l: any) => {
@@ -225,6 +260,11 @@ export function TransaccionesPorCodigo() {
       toast({ title: `Movimiento ${codigo} registrado`, description: `${r.message} Movimientos invtrans: ${r.invtransIds?.join(", ")}` })
       limpiarCampos()
       setCodigo("")
+      // El movimiento acaba de cambiar el saldo. Hoy `limpiarCampos` borra
+      // ubicacion y producto, asi que el panel se vacia solo; esto lo deja
+      // amarrado igual si esa limpieza cambia — un saldo viejo en pantalla
+      // despues de mover inventario es peor que no mostrar ninguno.
+      setRefrescoSaldo((n) => n + 1)
     } else {
       toast({ title: "No se pudo ejecutar", description: r.message, variant: "destructive" })
     }
@@ -444,6 +484,90 @@ export function TransaccionesPorCodigo() {
                     </Select>
                   )}
                 </div>
+              </div>
+            )}
+
+            {/* SALDO ACTUAL en la ubicación. Aparece apenas hay ubicación +
+                producto, sin esperar al lote: es lo que hay que ver ANTES de
+                escribir la cantidad. Se muestran las tres cifras porque no son
+                lo mismo — `disponible` es lo que se puede mover, `reservado` lo
+                comprometido en órdenes y `total` el físico. */}
+            {fs.origen && location && producto && (
+              <div className="rounded-md border bg-muted/20 p-3">
+                {cargandoSaldo ? (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Consultando saldo…
+                  </div>
+                ) : !saldo || saldo.lotes.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    Sin saldo registrado para <strong>{producto}</strong> en <strong>{location}</strong>.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs">
+                      <span className="uppercase text-muted-foreground">
+                        Saldo en {location}
+                      </span>
+                      <span>
+                        <strong className="text-sm tabular-nums">
+                          {saldo.totalDisp.toLocaleString("es-CO")}
+                        </strong>{" "}
+                        disponible
+                      </span>
+                      <span className="text-muted-foreground tabular-nums">
+                        {saldo.totalRes.toLocaleString("es-CO")} reservado
+                      </span>
+                      <span className="text-muted-foreground tabular-nums">
+                        {saldo.totalActual.toLocaleString("es-CO")} total
+                      </span>
+                    </div>
+
+                    {/* Desglose por lote, del más viejo al más nuevo. El lote
+                        elegido queda resaltado para no tener que buscarlo. */}
+                    <div className="max-h-40 overflow-auto rounded border bg-background">
+                      <table className="w-full text-xs">
+                        <thead className="bg-muted/60">
+                          <tr className="text-left uppercase text-muted-foreground">
+                            <th className="px-2 py-1">Lote</th>
+                            <th className="px-2 py-1 text-right">Disponible</th>
+                            <th className="px-2 py-1 text-right">Reservado</th>
+                            <th className="px-2 py-1 text-right">Total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {saldo.lotes.map((l) => (
+                            <tr
+                              key={l.lote}
+                              className={`border-t ${l.lote === lote ? "bg-primary/10 font-medium" : ""}`}
+                            >
+                              <td className="px-2 py-1">{l.lote || "(sin lote)"}</td>
+                              <td className="px-2 py-1 text-right tabular-nums">
+                                {l.stockDisp.toLocaleString("es-CO")}
+                              </td>
+                              <td className="px-2 py-1 text-right tabular-nums text-muted-foreground">
+                                {l.stockRes.toLocaleString("es-CO")}
+                              </td>
+                              <td className="px-2 py-1 text-right tabular-nums text-muted-foreground">
+                                {l.stockActual.toLocaleString("es-CO")}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Aviso, no bloqueo: la validación real la hace el server
+                        action. Aquí solo se advierte antes de enviar. */}
+                    {saldo.loteSeleccionado &&
+                      Number(cantidad) > saldo.loteSeleccionado.stockDisp && (
+                        <p className="text-xs font-medium text-destructive">
+                          La cantidad ({Number(cantidad).toLocaleString("es-CO")}) supera lo
+                          disponible en el lote {saldo.loteSeleccionado.lote} (
+                          {saldo.loteSeleccionado.stockDisp.toLocaleString("es-CO")}).
+                        </p>
+                      )}
+                  </div>
+                )}
               </div>
             )}
 

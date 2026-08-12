@@ -977,6 +977,94 @@ export async function getCurrentStock(codproducto: string, lote: string, locatio
   }
 }
 
+/** Saldo de UN lote del producto en una ubicación. */
+export interface SaldoLoteUbicacion {
+  lote: string
+  stockActual: number
+  stockDisp: number
+  stockRes: number
+}
+
+/**
+ * Saldo del producto en una ubicación: el total y el desglose por lote.
+ */
+export interface SaldoEnUbicacion {
+  totalActual: number
+  totalDisp: number
+  totalRes: number
+  lotes: SaldoLoteUbicacion[]
+  /** El lote elegido en el formulario, si se paso y existe alli. */
+  loteSeleccionado: SaldoLoteUbicacion | null
+}
+
+/**
+ * Saldo ACTUAL de un producto en una ubicación, con el desglose por lote.
+ *
+ * Existe aparte de `getStockFromSaldoInvDetalle` por dos motivos:
+ *
+ *  1. No exige el LOTE. Al armar un movimiento se elige ubicación y producto
+ *     antes que el lote, y es justo ahi cuando hace falta saber cuanto hay.
+ *  2. Recibe la empresa como PARAMETRO en vez de leerla de la sesion. El modulo
+ *     de transacciones trabaja con el selector global, que puede apuntar a una
+ *     empresa distinta a la de la sesion; leyendo la de sesion se consultaria el
+ *     saldo de otra empresa sin que nadie lo note.
+ *
+ * Se devuelven las tres cifras porque no son lo mismo y en una salida importan
+ * las tres: `disp` es lo que se puede mover, `res` lo comprometido en ordenes y
+ * `actual` el fisico total.
+ */
+export async function getSaldoEnUbicacion(
+  location: string,
+  nombreproducto: string,
+  lote?: string | null,
+  empresaId?: number | null,
+): Promise<SaldoEnUbicacion | null> {
+  try {
+    if (!location || !nombreproducto) return null
+
+    const supabase = await createClient()
+    const idempresa = empresaId ?? (await getCurrentEmpresaId())
+
+    let query = supabase
+      .from("saldoinvdetalle")
+      .select("lote, stock_actual, stock_disp, stock_res")
+      .eq("nombreproducto", nombreproducto)
+      .eq("location", location)
+    if (idempresa) query = query.eq("idempresa", idempresa)
+
+    const { data, error } = await query
+    if (error) {
+      console.error("[v0] Error fetching saldo en ubicacion:", error)
+      return null
+    }
+
+    const num = (v: any) => Number(v) || 0
+    const lotes: SaldoLoteUbicacion[] = (data || [])
+      .map((r: any) => ({
+        lote: String(r.lote ?? ""),
+        stockActual: num(r.stock_actual),
+        stockDisp: num(r.stock_disp),
+        stockRes: num(r.stock_res),
+      }))
+      // Del lote mas viejo al mas nuevo: el lote codifica su fecha (AAAAMMDD),
+      // asi que el orden alfabetico ES el cronologico y deja arriba lo que
+      // deberia salir primero.
+      .sort((a, b) => a.lote.localeCompare(b.lote))
+
+    const loteBuscado = String(lote ?? "").trim()
+    return {
+      totalActual: lotes.reduce((s, l) => s + l.stockActual, 0),
+      totalDisp: lotes.reduce((s, l) => s + l.stockDisp, 0),
+      totalRes: lotes.reduce((s, l) => s + l.stockRes, 0),
+      lotes,
+      loteSeleccionado: loteBuscado ? lotes.find((l) => l.lote === loteBuscado) ?? null : null,
+    }
+  } catch (error) {
+    console.error("[v0] Unexpected error fetching saldo en ubicacion:", error)
+    return null
+  }
+}
+
 export async function getStockFromSaldoInvDetalle(
   nombreproducto: string,
   lote: string,
