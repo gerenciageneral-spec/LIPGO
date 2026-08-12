@@ -18,17 +18,28 @@ import { getLocations, getAlmacenes } from "@/lib/inventory-actions"
 import { getCurrentEmpresaIdForInsert } from "@/lib/user-context"
 import { useAuth } from "@/components/auth-provider"
 
-// Formatea el campo `creado` mostrando el valor EXACTO almacenado, sin
-// conversiones de zona horaria. El valor se guarda como la hora de Colombia
-// (wall-clock) en formato ISO "YYYY-MM-DDTHH:MM:SS+00:00"; extraemos sus
-// componentes directamente del string para mostrarlos tal cual.
+// `invtrans.creado` se guarda en UTC (verificado con datos reales: una fila
+// recién creada muestra su `creado` igual a la hora UTC del momento, 5 horas
+// adelante de Colombia) — hay que CONVERTIR, no leer el string crudo (eso
+// mostraba la hora de producción 5 horas adelantada). Mismo criterio que
+// `fechaColombiaDe`/`fechaColombiaUI` ya usados en Inventario/SIG.
 function formatCreadoExacto(creado: string | null | undefined): string {
   if (!creado) return "N/A"
-  // Coincide con la parte de fecha y hora del ISO, ignorando el offset.
-  const m = creado.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/)
-  if (!m) return creado
-  const [, yyyy, mm, dd, hh, min] = m
-  return `${dd}/${mm}/${yyyy} ${hh}:${min}`
+  try {
+    const partes = new Intl.DateTimeFormat("es-CO", {
+      timeZone: "America/Bogota",
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(new Date(creado))
+    const get = (t: string) => partes.find((p) => p.type === t)?.value ?? ""
+    return `${get("day")}/${get("month")}/${get("year")} ${get("hour")}:${get("minute")}`
+  } catch {
+    return creado
+  }
 }
 
 export function ProductionApproval() {
