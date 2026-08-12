@@ -41,22 +41,12 @@ import {
   createSolicitudPermiso,
   type SolicitudTrabajador,
 } from "@/lib/gestion-solicitudes-actions"
-
-/**
- * Calcula la fecha minima aceptable para fecha_inicio: hoy + 72h (3 dias
- * naturales). Se usa tanto para validar con Zod como para fijar el atributo
- * `min` del input[type=date] y evitar que el usuario pueda siquiera elegir
- * una fecha invalida.
- */
-function fechaMinimaInicio(): string {
-  const d = new Date()
-  d.setHours(d.getHours() + 72)
-  // YYYY-MM-DD en zona local
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, "0")
-  const day = String(d.getDate()).padStart(2, "0")
-  return `${y}-${m}-${day}`
-}
+import {
+  DIAS_ANTICIPACION_PERMISO,
+  cumpleAnticipacionPermiso,
+  fechaMinimaPermiso,
+  mensajeAnticipacionPermiso,
+} from "@/lib/permisos-anticipacion"
 
 const TIPOS_PERMISO = [
   { value: "personal", label: "Personal / Asuntos familiares" },
@@ -69,7 +59,7 @@ const TIPOS_PERMISO = [
 /**
  * Schema Zod:
  *  - tipo_permiso obligatorio.
- *  - fecha_inicio debe ser al menos 72h en el futuro.
+ *  - fecha_inicio con la anticipacion minima (ver lib/permisos-anticipacion.ts).
  *  - fecha_fin >= fecha_inicio.
  *  - comentarios opcional con minimo 10 caracteres si se llenan.
  */
@@ -86,14 +76,12 @@ const permisoSchema = z
       }),
   })
   .superRefine((values, ctx) => {
-    // Validacion critica: fecha_inicio >= ahora + 72h
-    const inicio = new Date(values.fecha_inicio + "T00:00:00")
-    const fin = new Date(values.fecha_fin + "T23:59:59")
-    const ahora = new Date()
-    const minimo = new Date()
-    minimo.setHours(ahora.getHours() + 72)
+    // Las fechas se comparan como texto YYYY-MM-DD: en ese formato el orden
+    // alfabetico es el cronologico, asi que no hay que construir `Date` ni
+    // arriesgar el desfase de un dia al parsear una fecha sin hora.
+    const esFecha = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(String(v ?? "").trim())
 
-    if (Number.isNaN(inicio.getTime())) {
+    if (!esFecha(values.fecha_inicio)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["fecha_inicio"],
@@ -101,14 +89,14 @@ const permisoSchema = z
       })
       return
     }
-    if (inicio < minimo) {
+    if (!cumpleAnticipacionPermiso(values.fecha_inicio)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["fecha_inicio"],
-        message: "La fecha debe ser al menos 72 horas (3 dias) en el futuro",
+        message: mensajeAnticipacionPermiso(),
       })
     }
-    if (!Number.isNaN(fin.getTime()) && fin < inicio) {
+    if (esFecha(values.fecha_fin) && values.fecha_fin < values.fecha_inicio) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["fecha_fin"],
@@ -127,7 +115,7 @@ export default function PortalPermisosPage() {
   const [isPending, startTransition] = useTransition()
 
   // Fecha minima memoizada (se calcula una vez por render)
-  const minFecha = useMemo(() => fechaMinimaInicio(), [])
+  const minFecha = useMemo(() => fechaMinimaPermiso(), [])
 
   const {
     register,
@@ -200,8 +188,11 @@ export default function PortalPermisosPage() {
               <CardDescription className="mt-1">
                 Completa el formulario para registrar una ausencia. Debes solicitar con
                 al menos{" "}
-                <span className="font-semibold text-foreground">72 horas (3 dias)</span>{" "}
-                de anticipacion.
+                <span className="font-semibold text-foreground">
+                  {DIAS_ANTICIPACION_PERMISO} días de anticipación contando hoy
+                </span>
+                : la fecha más próxima es el{" "}
+                <span className="font-semibold text-foreground">{minFecha}</span>.
               </CardDescription>
             </div>
           </div>
@@ -261,13 +252,13 @@ export default function PortalPermisosPage() {
               </div>
             </div>
 
-            {/* Aviso 72h */}
+            {/* Aviso de anticipación mínima */}
             <div className="flex items-start gap-2 rounded-md bg-amber-50 border border-amber-200 px-3 py-2.5 text-xs text-amber-800">
               <Info className="h-4 w-4 shrink-0 mt-0.5" />
               <p>
-                Las solicitudes con menos de 72 horas de anticipacion no podran ser
-                procesadas automaticamente. Para emergencias contacta directamente a tu
-                jefe inmediato.
+                Las solicitudes con menos de {DIAS_ANTICIPACION_PERMISO} días de
+                anticipación (contando hoy) no podrán ser procesadas automáticamente.
+                Para emergencias contacta directamente a tu jefe inmediato.
               </p>
             </div>
 

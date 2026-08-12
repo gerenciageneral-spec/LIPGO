@@ -5,6 +5,10 @@ import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getCurrentEmpresaIdForInsert } from "@/lib/user-context"
 import { numeroALetrasPesos, formatearPesos } from "@/lib/numero-a-letras"
 import { getColombiaDate } from "@/lib/date-utils"
+import {
+  cumpleAnticipacionPermiso,
+  mensajeAnticipacionPermiso,
+} from "@/lib/permisos-anticipacion"
 
 /**
  * Registro de solicitud_trabajadores con datos del colaborador (JOIN headcount).
@@ -800,8 +804,9 @@ export async function createSolicitudAnticipo(
 }
 
 /**
- * Crea una solicitud de PERMISO. Valida que la fecha_inicio sea al menos 72h
- * (3 dias) en el futuro y que fecha_fin >= fecha_inicio.
+ * Crea una solicitud de PERMISO. Valida la anticipacion minima —3 dias de
+ * calendario CONTANDO HOY, ver lib/permisos-anticipacion.ts— y que
+ * fecha_fin >= fecha_inicio.
  */
 export async function createSolicitudPermiso(
   colaboradorId: number,
@@ -820,21 +825,20 @@ export async function createSolicitudPermiso(
     if (!fecha_inicio || !fecha_fin) {
       return { success: false, error: "Las fechas son obligatorias" }
     }
-    const inicio = new Date(fecha_inicio + "T00:00:00")
-    const fin = new Date(fecha_fin + "T23:59:59")
-    if (Number.isNaN(inicio.getTime()) || Number.isNaN(fin.getTime())) {
+    // Las fechas se comparan como texto YYYY-MM-DD: en ese formato el orden
+    // alfabetico es el cronologico, asi que no hace falta construir `Date` — y
+    // se evita el desfase de un dia al parsear una fecha sin hora, que en el
+    // servidor (UTC) es un error facil de cometer.
+    const esFecha = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(String(v ?? "").trim())
+    if (!esFecha(fecha_inicio) || !esFecha(fecha_fin)) {
       return { success: false, error: "Fechas invalidas" }
     }
-    // Validacion critica: inicio debe ser >= ahora + 72h
-    const minimo = new Date()
-    minimo.setHours(minimo.getHours() + 72)
-    if (inicio < minimo) {
-      return {
-        success: false,
-        error: "La fecha de inicio debe ser al menos 72 horas (3 dias) en el futuro",
-      }
+    // Validacion critica. Misma funcion que usa el formulario del portal, para
+    // que cliente y servidor no puedan discrepar sobre que fecha es valida.
+    if (!cumpleAnticipacionPermiso(fecha_inicio)) {
+      return { success: false, error: mensajeAnticipacionPermiso() }
     }
-    if (fin < inicio) {
+    if (fecha_fin < fecha_inicio) {
       return { success: false, error: "La fecha fin no puede ser anterior al inicio" }
     }
 
