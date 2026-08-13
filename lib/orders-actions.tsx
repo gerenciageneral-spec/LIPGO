@@ -2294,12 +2294,22 @@ export async function deleteLoadOrder(orderId: number) {
 
     console.log("[v0] Deleted cabeceraoc record for order:", orderId)
 
-    // Step 4: Clear fields in pedidoscabecera where ocargue matches ordenDeCargue
+    // Step 4: Clear fields in pedidoscabecera where ocargue matches ordenDeCargue.
+    // `estado` vuelve a "aprobado" (no a null): un pedido SIEMPRE pasa por
+    // approveOrder ("aprobado") ANTES de poder entrar a generateLoadOrder
+    // (que le asigna `ocargue` y, si sus líneas quedan cerradas, lo marca
+    // "entregado"/"parcial" vía checkAndUpdatePedidoCabeceraStatus). Si esta
+    // orden se elimina — típicamente por error humano después de finalizar
+    // el vehículo — el pedido debe recuperar exactamente ESE estado previo
+    // ("aprobado", listo para volver a cargarse), no quedar en null (que en
+    // otras pantallas significa "recién creado, nunca aprobado") ni seguir
+    // marcado "entregado" de una entrega que nunca ocurrió porque la orden
+    // se borró.
     const { error: pedidosUpdateError } = await supabase
       .from("pedidoscabecera")
       .update({
         ocargue: null,
-        estado: null,
+        estado: "aprobado",
         vehiculo: null,
         transporte: null,
         fechaordencargue: null,
