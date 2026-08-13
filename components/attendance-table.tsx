@@ -270,9 +270,10 @@ export default function AttendanceTable() {
       nombre: record.nombre,
       idempresa: selectedEmpresaId,
       puestoNuevo: puesto,
-      // El grupo se deduce de la lista a la que pertenece el puesto elegido,
-      // igual que en el alta: es lo que define `especialidad` y `horasturno`.
-      tipoNuevo: ESPECIALIDADES_OPTIONS.includes(puesto) ? "especialidades" : "operaciones",
+      // El grupo NO se manda desde aquí: el server lo resuelve contra
+      // `tarifasturnos`, que es el maestro. Estas listas son solo para armar el
+      // desplegable y pueden desalinearse del maestro; la bandera `especialidad`
+      // decide cómo se liquida el día, así que no puede salir del cliente.
       motivo,
     })
     setReasignando(false)

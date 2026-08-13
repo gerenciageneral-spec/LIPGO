@@ -34,8 +34,6 @@ export interface ReasignarPuestoInput {
   idempresa: number
   /** Puesto destino, tal como aparece en las listas de Tabla Asistencia. */
   puestoNuevo: string
-  /** Grupo del puesto destino. Decide `especialidad` y `horasturno`. */
-  tipoNuevo: "operaciones" | "especialidades"
   motivo: string
 }
 
@@ -44,9 +42,36 @@ export interface ReasignarPuestoInput {
  * "Salvado" cumple 10 h y el resto de especialidades 8 h. En Operaciones se
  * deja null para no ensuciar el campo con un valor que no aplica.
  */
-function horasTurnoPara(tipo: "operaciones" | "especialidades", puesto: string): number | null {
-  if (tipo !== "especialidades") return null
+function horasTurnoPara(esEspecialidad: boolean, puesto: string): number | null {
+  if (!esEspecialidad) return null
   return puesto.trim().toLowerCase() === "salvado" ? 10 : 8
+}
+
+/**
+ * ¿El puesto es de ESPECIALIDAD? Se resuelve EN EL SERVIDOR contra
+ * `tarifasturnos`, que es el maestro — nunca desde la lista del componente.
+ *
+ * Es la misma decisión que toma `lib/programacion-turnos-actions.ts`, y por la
+ * misma razón que documenta allí: si la bandera viniera del cliente se podría
+ * marcar como especialidad un puesto que en el maestro no lo es. Y esa bandera
+ * no es cosmética — decide si `pagonomina` liquida el día por base de turno o
+ * por destajo.
+ *
+ * El catálogo de puestos es transversal, así que NO se filtra por empresa: un
+ * puesto cuya tarifa se creó bajo otra empresa igual debe resolver bien.
+ *
+ * Devuelve `null` cuando el puesto no existe en el maestro; el caller decide.
+ */
+async function resolverEspecialidad(admin: any, puesto: string): Promise<boolean | null> {
+  const { data, error } = await admin
+    .from("tarifasturnos")
+    .select("puesto, especialidad, fechaini")
+    .eq("puesto", puesto)
+    .order("fechaini", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error || !data) return null
+  return data.especialidad === true
 }
 
 export async function reasignarPuestoDelDia(
@@ -55,13 +80,10 @@ export async function reasignarPuestoDelDia(
   const identificacion = String(input?.identificacion ?? "").trim()
   const puestoNuevo = String(input?.puestoNuevo ?? "").trim()
   const motivo = String(input?.motivo ?? "").trim()
-  const { idempresa, tipoNuevo } = input ?? ({} as ReasignarPuestoInput)
+  const { idempresa } = input ?? ({} as ReasignarPuestoInput)
 
   if (!identificacion || !idempresa) return { success: false, message: "Datos incompletos." }
   if (!puestoNuevo) return { success: false, message: "Selecciona el puesto nuevo." }
-  if (tipoNuevo !== "operaciones" && tipoNuevo !== "especialidades") {
-    return { success: false, message: "Tipo de puesto inválido." }
-  }
   if (motivo.length < MOTIVO_MIN) {
     return {
       success: false,
@@ -113,13 +135,27 @@ export async function reasignarPuestoDelDia(
 
     const usuario = await getCurrentUsuarioForInsert()
 
+    // La bandera se resuelve contra `tarifasturnos`, no contra la lista del
+    // componente. Si el puesto no esta en el maestro se asume NO especialidad
+    // —misma convencion que programacion-turnos— pero se avisa en la respuesta:
+    // es una decision que afecta la liquidacion y no debe pasar inadvertida.
+    const especialidadMaestro = await resolverEspecialidad(admin, puestoNuevo)
+    const esEspecialidad = especialidadMaestro === true
+    const tipoNuevo: "operaciones" | "especialidades" = esEspecialidad
+      ? "especialidades"
+      : "operaciones"
+
     // 1) El puesto y lo que se deriva de él.
+    //
+    // `especialidad` se escribe como TEXTO "true"/"false": la columna de
+    // `registroasistencia` es TEXT y `pagonomina` la compara contra
+    // `'true'::text`. Mandar un booleano dependeria de la coercion de PostgREST.
     const { error: errUpdate } = await admin
       .from("registroasistencia")
       .update({
         puesto: puestoNuevo,
-        especialidad: tipoNuevo === "especialidades",
-        horasturno: horasTurnoPara(tipoNuevo, puestoNuevo),
+        especialidad: esEspecialidad ? "true" : "false",
+        horasturno: horasTurnoPara(esEspecialidad, puestoNuevo),
       })
       .eq("id", fila.id)
 
@@ -177,12 +213,16 @@ export async function reasignarPuestoDelDia(
       }
     }
 
-    return {
-      success: true,
-      message: puestoAnterior
-        ? `Puesto cambiado de ${puestoAnterior} a ${puestoNuevo}.`
-        : `Puesto asignado: ${puestoNuevo}.`,
-    }
+    const base = puestoAnterior
+      ? `Puesto cambiado de ${puestoAnterior} a ${puestoNuevo}`
+      : `Puesto asignado: ${puestoNuevo}`
+    const nota =
+      especialidadMaestro === null
+        ? ` — OJO: "${puestoNuevo}" no está en tarifasturnos, así que se registró como NO especialidad. Verifica el maestro de puestos.`
+        : esEspecialidad
+          ? " (especialidad: sí)."
+          : " (especialidad: no)."
+    return { success: true, message: base + nota }
   } catch (e: any) {
     return { success: false, message: e?.message || "Error al cambiar el puesto." }
   }
