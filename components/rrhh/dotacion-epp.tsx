@@ -31,6 +31,9 @@ import {
 } from "@/lib/rrhh-actions"
 import { Trash2, Edit2, Plus, Paperclip, ExternalLink, Loader2 } from "lucide-react"
 import { useAuth } from "@/components/auth-provider"
+// Cliente de navegador: sube el PDF directo a Supabase con la URL firmada que
+// emite /api/epp/upload, sin pasar por la función serverless y su tope de 4,5 MB.
+import { supabase } from "@/lib/supabase"
 
 interface Colaborador {
   id: string
@@ -201,20 +204,80 @@ export default function DotacionEPP() {
       toast({ title: "Error", description: "Solo se permiten archivos PDF", variant: "destructive" })
       return
     }
+    // Tope de seguridad, muy por encima de lo que pesa una evidencia normal.
+    // El límite real lo pone el bucket de Supabase (`file_size_limit`); esto
+    // solo evita que alguien arrastre un archivo enorme por error y espere.
+    const MAX_MB = 50
+    if (file.size > MAX_MB * 1024 * 1024) {
+      toast({
+        title: "El archivo es muy pesado",
+        description: `Pesa ${(file.size / 1024 / 1024).toFixed(1)} MB y el máximo son ${MAX_MB} MB.`,
+        variant: "destructive",
+      })
+      e.target.value = ""
+      return
+    }
     setUploadingFile(true)
     try {
-      const fd = new FormData()
-      fd.append("file", file)
-      const res = await fetch("/api/epp/upload", { method: "POST", body: fd })
-      const json = await res.json()
-      if (json.url) {
-        setEvidenciaPathname(json.url)
-        toast({ title: "Archivo subido", description: "El PDF fue cargado correctamente" })
-      } else {
-        toast({ title: "Error", description: json.error || "Error al subir el archivo", variant: "destructive" })
+      // 1) El servidor emite una URL FIRMADA. El archivo NO viaja en esta
+      //    petición: solo el nombre.
+      //
+      //    Antes el PDF se mandaba dentro de la petición a la función
+      //    serverless, cuyo cuerpo se corta alrededor de 4,5 MB — un límite de
+      //    la plataforma, no configurable. Un PDF escaneado lo pasa fácil, y
+      //    cuando pasaba, el archivo ni llegaba al servidor: la respuesta no era
+      //    JSON y el error salía como un genérico sin causa.
+      const resFirma = await fetch("/api/epp/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nombre: file.name }),
+      })
+      const cuerpoFirma = await resFirma.text()
+      let firma: any = null
+      try {
+        firma = cuerpoFirma ? JSON.parse(cuerpoFirma) : null
+      } catch {
+        firma = null
       }
-    } catch {
-      toast({ title: "Error", description: "Error al subir el archivo", variant: "destructive" })
+
+      if (!resFirma.ok || !firma?.token || !firma?.path) {
+        console.error("[v0] epp upload firma:", resFirma.status, cuerpoFirma)
+        toast({
+          title: `No se pudo preparar la subida (${resFirma.status})`,
+          description: firma?.error || cuerpoFirma.slice(0, 200) || "Respuesta inesperada del servidor.",
+          variant: "destructive",
+        })
+        return
+      }
+
+      // 2) El archivo va del navegador DIRECTO a Supabase Storage. El tope de la
+      //    función serverless deja de aplicar; el único límite es el del bucket.
+      const { error: errSubida } = await supabase.storage
+        .from("archivos")
+        .uploadToSignedUrl(firma.path, firma.token, file, {
+          contentType: "application/pdf",
+        })
+
+      if (errSubida) {
+        console.error("[v0] epp upload a Supabase:", errSubida)
+        toast({
+          title: "Error al subir el archivo",
+          description: errSubida.message || "El almacenamiento rechazó el archivo.",
+          variant: "destructive",
+        })
+        return
+      }
+
+      setEvidenciaPathname(firma.url)
+      toast({ title: "Archivo subido", description: "El PDF fue cargado correctamente" })
+    } catch (err: any) {
+      // Aquí solo deberían llegar fallos de red reales.
+      console.error("[v0] epp upload excepción:", err)
+      toast({
+        title: "Error de conexión",
+        description: err?.message || "No se pudo contactar al servidor.",
+        variant: "destructive",
+      })
     } finally {
       setUploadingFile(false)
       e.target.value = ""
