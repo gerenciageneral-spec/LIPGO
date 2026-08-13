@@ -2091,8 +2091,15 @@ export async function annulOrder(idpedido: number, password: string, observacion
 
   console.log("[v0] Annul order attempt:", { idpedido, password })
 
-  // Validate password
-  if (password !== "LIP123456") {
+  // Validate password — "LIP123456" (clave general histórica) o "Avimol2026"
+  // (Maria Camila Furnieles / Gestión de Pedidos ID2 Avimol, autorizada a
+  // anular incluso pedidos ya aprobados por gerencia, con la misma clave que
+  // usa para Cartera/Gerencia). Mismo alcance que ya tienen cartera/gerencia
+  // en este módulo: no hay chequeo de empresa a nivel de mutación, la
+  // protección real es que en Gestionar Pedidos cada usuario solo ve/puede
+  // accionar los pedidos de su empresa asignada (perfil_acceso_empresas).
+  const CLAVES_ANULAR = ["LIP123456", "Avimol2026"]
+  if (!CLAVES_ANULAR.includes(password)) {
     console.log("[v0] Password validation failed")
     return { success: false, message: "Contraseña incorrecta" }
   }
