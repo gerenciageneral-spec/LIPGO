@@ -9,8 +9,12 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useAuth } from "@/components/auth-provider"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Loader2, Clock, Users, Save, AlertTriangle } from "lucide-react"
+import { Loader2, Clock, Users, Save, AlertTriangle, Repeat } from "lucide-react"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
+import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
 import { useToast } from "@/hooks/use-toast"
+import { reasignarPuestoDelDia } from "@/lib/reasignacion-puesto-actions"
 
 interface AttendanceRecord {
   identificacion: string
@@ -138,6 +142,16 @@ export default function AttendanceTable() {
   const [error, setError] = useState<string | null>(null)
   const [shiftAssignments, setShiftAssignments] = useState<Map<string, ShiftAssignment>>(new Map())
 
+  // Cambio de puesto de una persona YA asignada hoy. Exige motivo escrito
+  // porque el puesto decide quién puede asignarse en Picking/Packing y cómo
+  // liquida `pagonomina` ese día (ver lib/reasignacion-puesto-actions.ts).
+  const [reasignar, setReasignar] = useState<{
+    record: AttendanceRecord
+    puesto: string
+    motivo: string
+  } | null>(null)
+  const [reasignando, setReasignando] = useState(false)
+
   // Hora actual en Colombia (America/Bogota) expresada como minutos
   // desde 00:00. Se usa para marcar con la alerta "Registrar novedad"
   // a las personas que ya pasaron su hora programada de entrada y
@@ -245,6 +259,30 @@ export default function AttendanceTable() {
 
       return newMap
     })
+  }
+
+  const confirmarReasignacion = async () => {
+    if (!reasignar || !selectedEmpresaId) return
+    const { record, puesto, motivo } = reasignar
+    setReasignando(true)
+    const r = await reasignarPuestoDelDia({
+      identificacion: record.identificacion,
+      nombre: record.nombre,
+      idempresa: selectedEmpresaId,
+      puestoNuevo: puesto,
+      // El grupo se deduce de la lista a la que pertenece el puesto elegido,
+      // igual que en el alta: es lo que define `especialidad` y `horasturno`.
+      tipoNuevo: ESPECIALIDADES_OPTIONS.includes(puesto) ? "especialidades" : "operaciones",
+      motivo,
+    })
+    setReasignando(false)
+    if (r.success) {
+      toast({ title: "Puesto cambiado", description: r.message })
+      setReasignar(null)
+      await fetchAttendanceData()
+    } else {
+      toast({ title: "No se pudo cambiar", description: r.message, variant: "destructive" })
+    }
   }
 
   const handleRegisterShifts = async () => {
@@ -510,15 +548,33 @@ export default function AttendanceTable() {
                         </TableCell>
                         <TableCell>
                           {record.puesto ? (
-                            // Badge outline mas compacta (text-[10px],
-                            // padding reducido) para no inflar el ancho
-                            // de la columna cuando el puesto es largo.
-                            <Badge
-                              variant="outline"
-                              className="font-medium text-[10px] px-1.5 py-0 leading-4"
-                            >
-                              {record.puesto}
-                            </Badge>
+                            <div className="flex items-center gap-1">
+                              {/* Badge outline mas compacta (text-[10px],
+                                  padding reducido) para no inflar el ancho
+                                  de la columna cuando el puesto es largo. */}
+                              <Badge
+                                variant="outline"
+                                className="font-medium text-[10px] px-1.5 py-0 leading-4"
+                              >
+                                {record.puesto}
+                              </Badge>
+                              {/* Cambiar el puesto del día. Solo tiene sentido
+                                  sobre alguien ya asignado y sin novedad: una
+                                  novedad significa que no está trabajando. */}
+                              {!record.asistencia && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
+                                  title="Cambiar puesto (exige motivo)"
+                                  onClick={() =>
+                                    setReasignar({ record, puesto: "", motivo: "" })
+                                  }
+                                >
+                                  <Repeat className="h-3 w-3" />
+                                </Button>
+                              )}
+                            </div>
                           ) : (
                             <span className="text-muted-foreground">-</span>
                           )}
@@ -677,6 +733,91 @@ export default function AttendanceTable() {
           )}
         </CardContent>
       </Card>
+
+      {/* Cambio de puesto del día. El motivo es obligatorio: el puesto decide
+          quién puede asignarse en Picking/Packing y cómo liquida la nómina ese
+          día, así que el cambio tiene que quedar justificado y trazado. */}
+      <Dialog open={!!reasignar} onOpenChange={(open) => !open && setReasignar(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Cambiar puesto del día</DialogTitle>
+            <DialogDescription>
+              {reasignar?.record.nombre} · actualmente en{" "}
+              <strong>{reasignar?.record.puesto}</strong>
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label>Puesto nuevo</Label>
+              <Select
+                value={reasignar?.puesto || ""}
+                onValueChange={(v) => setReasignar((p) => (p ? { ...p, puesto: v } : p))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecciona el puesto" />
+                </SelectTrigger>
+                <SelectContent>
+                  {[...OPERACIONES_OPTIONS, ...ESPECIALIDADES_OPTIONS]
+                    .filter((p) => p !== reasignar?.record.puesto)
+                    .map((p) => (
+                      <SelectItem key={p} value={p}>
+                        {p}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Motivo del cambio</Label>
+              <Textarea
+                value={reasignar?.motivo || ""}
+                onChange={(e) => setReasignar((p) => (p ? { ...p, motivo: e.target.value } : p))}
+                placeholder="Por qué se reasigna a esta persona"
+                rows={3}
+              />
+              <p className="text-xs text-muted-foreground">
+                Mínimo 10 caracteres. Queda registrado con tu usuario y la hora.
+              </p>
+            </div>
+
+            {/* La persona sin llegada confirmada NO aparece en Picking/Packing
+                aunque se le cambie el puesto. Se avisa aquí para que nadie
+                interprete el cambio como un fallo del sistema. */}
+            {reasignar && !reasignar.record.horaLlegada && (
+              <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                Esta persona aún no ha marcado su llegada, así que no aparecerá en los
+                selectores de Picking y Packing hasta que lo haga. El cambio de puesto sí
+                queda guardado.
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReasignar(null)} disabled={reasignando}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={confirmarReasignacion}
+              disabled={
+                reasignando ||
+                !reasignar?.puesto ||
+                (reasignar?.motivo.trim().length ?? 0) < 10
+              }
+            >
+              {reasignando ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Guardando...
+                </>
+              ) : (
+                "Cambiar puesto"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
