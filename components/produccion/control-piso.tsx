@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase"
 import { fetchAllRows } from "@/lib/fetch-all-rows"
 import { useAuth } from "@/components/auth-provider"
 import { getParos, type ParoComentario } from "@/lib/paros-actions"
+import { getHorarioTolva } from "@/lib/horario-tolva-actions"
 import { detectarParos } from "@/lib/paros-produccion"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
@@ -131,6 +132,21 @@ const BUCKET_MIN = 2
 // (turno nocturno, arranque adelantado) el inicio se corre hacia atras hasta esa
 // lectura, para no ocultar nunca produccion.
 const VELOCIDAD_INICIO_HORA = 6
+
+/** "HH:MM" (o "HH:MM:SS") -> minutos desde medianoche. null si no parsea. */
+function horaAMinutos(t: string | null | undefined): number | null {
+  const m = String(t ?? "").match(/^(\d{1,2}):(\d{2})/)
+  if (!m) return null
+  const h = Number(m[1])
+  const min = Number(m[2])
+  if (h < 0 || h > 23 || min < 0 || min > 59) return null
+  return h * 60 + min
+}
+
+/** Minutos desde medianoche -> "HH:MM". */
+function minutosAHora(min: number): string {
+  return `${pad2(Math.floor(min / 60))}:${pad2(min % 60)}`
+}
 
 // Reglas de ritmo: meta de bultos por hora y meta de velocidad por
 // intervalo de 2 min (unidades producidas en cada lectura del contador).
@@ -414,6 +430,12 @@ function LiveTab() {
   // Paros comentados (desde el módulo Reporte de Paros) para reflejarlos aquí.
   const { selectedEmpresaId } = useAuth()
   const [parosComentados, setParosComentados] = useState<Record<string, ParoComentario>>({})
+  // Ventana del grafico de velocidad, tomada del "Horario de Tolva" que se
+  // configura en Programacion de turnos. null mientras carga o si el dia no
+  // tiene horario definido (ahi se cae al respaldo de VELOCIDAD_INICIO_HORA).
+  const [ventanaTolva, setVentanaTolva] = useState<{ desdeMin: number; hastaMin: number } | null>(
+    null,
+  )
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000)
@@ -502,6 +524,44 @@ function LiveTab() {
       clearInterval(t)
     }
   }, [loadHistorial, isToday])
+
+  // HORARIO DE TOLVA del día (Programación de turnos → "Horario de Tolva").
+  //
+  // Define la ventana del gráfico de velocidad: arranca en la hora de INICIO
+  // del Turno 1 y termina en la hora de FIN más tardía entre Turno 1 y Turno 2.
+  // Es la jornada real de la tolva, configurada por quien programa los turnos,
+  // en vez de una hora fija en el código.
+  //
+  // Si el día no tiene horario configurado se deja en null y el gráfico cae al
+  // respaldo de siempre (VELOCIDAD_INICIO_HORA), para no quedarse vacío.
+  useEffect(() => {
+    let active = true
+    if (!selectedEmpresaId) {
+      setVentanaTolva(null)
+      return
+    }
+    getHorarioTolva(selectedEmpresaId, selectedDate).then((r) => {
+      if (!active) return
+      if (!r.success || !r.data) {
+        setVentanaTolva(null)
+        return
+      }
+      const { turno1, turno2 } = r.data
+      // Si el Turno 1 no está configurado se usa el inicio del Turno 2: es
+      // preferible acotar por lo que sí se definió a ignorar el horario entero.
+      const desdeMin = horaAMinutos(turno1.horaInicio) ?? horaAMinutos(turno2.horaInicio)
+      const fines = [horaAMinutos(turno1.horaFin), horaAMinutos(turno2.horaFin)].filter(
+        (m): m is number => m != null,
+      )
+      const hastaMin = fines.length > 0 ? Math.max(...fines) : null
+      setVentanaTolva(
+        desdeMin != null && hastaMin != null && hastaMin > desdeMin ? { desdeMin, hastaMin } : null,
+      )
+    })
+    return () => {
+      active = false
+    }
+  }, [selectedDate, selectedEmpresaId])
 
   // Paros comentados del día (Reporte de Paros) para reflejarlos en la cobertura.
   useEffect(() => {
@@ -764,27 +824,65 @@ function LiveTab() {
     return { total: lista.length, comentados, sinComentar: lista.length - comentados }
   }, [histRows, now, isToday, selectedDate, shiftStart, shiftEnd, parosComentados])
 
-  // Velocidad de produccion: un punto por lectura de 2 min del contador, desde
-  // VELOCIDAD_INICIO_HORA (06:00) en adelante. Ver el comentario de esa
-  // constante: el contador registra las 24 horas y sin el piso el eje X nacia a
-  // las 00:00. Si hay produccion real mas temprano, el inicio se corre hacia
-  // atras hasta esa lectura. Los contadores de "intervalos en meta" se calculan
-  // sobre lo que se GRAFICA, para que el ratio no cargue los ceros de la noche.
+  // Velocidad de produccion: un punto por lectura de 2 min del contador, dentro
+  // de la ventana del HORARIO DE TOLVA del dia — inicio del Turno 1 hasta el fin
+  // mas tardio entre Turno 1 y Turno 2 (ver el useEffect de `ventanaTolva`).
+  //
+  // El acote existe porque el contador registra las 24 HORAS: sin el, el eje X
+  // nace a las 00:00 y la jornada real queda comprimida contra el borde derecho.
+  // Antes el limite era una hora fija en el codigo (VELOCIDAD_INICIO_HORA), que
+  // sigue como respaldo para los dias sin horario configurado.
+  //
+  // `fueraDeVentana` cuenta las lecturas CON PRODUCCION que quedaron afuera. No
+  // se ocultan en silencio: la pantalla lo advierte, porque produccion fuera del
+  // turno programado es justo lo que alguien querria saber.
+  //
+  // Los contadores de "intervalos en meta" se calculan sobre lo que se GRAFICA,
+  // para que el ratio no cargue los ceros de las horas sin turno.
   const velocidad = useMemo(() => {
-    const horaLiteral = (h: HistorialRow) => parseTs(h.fecha_hora).getUTCHours()
-    const primeraProduccion = histRows.find((h) => (h.produccion_2min || 0) > 0)
-    const desde = primeraProduccion
-      ? Math.min(VELOCIDAD_INICIO_HORA, horaLiteral(primeraProduccion))
-      : VELOCIDAD_INICIO_HORA
+    const minutosLiteral = (h: HistorialRow) => {
+      const d = parseTs(h.fecha_hora)
+      return d.getUTCHours() * 60 + d.getUTCMinutes()
+    }
+
+    let desdeMin: number
+    let hastaMin: number | null
+    if (ventanaTolva) {
+      desdeMin = ventanaTolva.desdeMin
+      hastaMin = ventanaTolva.hastaMin
+    } else {
+      // Respaldo (sin horario configurado): piso fijo y sin tope superior. Si
+      // hay produccion antes de esa hora, el inicio se corre hacia atras para
+      // no ocultarla.
+      const primeraProduccion = histRows.find((h) => (h.produccion_2min || 0) > 0)
+      desdeMin = primeraProduccion
+        ? Math.min(VELOCIDAD_INICIO_HORA * 60, minutosLiteral(primeraProduccion))
+        : VELOCIDAD_INICIO_HORA * 60
+      hastaMin = null
+    }
+
+    const dentro = (m: number) => m >= desdeMin && (hastaMin == null || m <= hastaMin)
+
     const puntos = histRows
-      .filter((h) => horaLiteral(h) >= desde)
+      .filter((h) => dentro(minutosLiteral(h)))
       .map((h) => ({
         hora: HORA_FMT.format(parseTs(h.fecha_hora)),
         unidades: h.produccion_2min || 0,
       }))
+    const fueraDeVentana = histRows.filter(
+      (h) => (h.produccion_2min || 0) > 0 && !dentro(minutosLiteral(h)),
+    ).length
     const cumplidos = puntos.filter((p) => p.unidades >= META_2MIN).length
-    return { puntos, cumplidos, total: puntos.length, desde }
-  }, [histRows])
+    return {
+      puntos,
+      cumplidos,
+      total: puntos.length,
+      desdeMin,
+      hastaMin,
+      fueraDeVentana,
+      segunHorario: !!ventanaTolva,
+    }
+  }, [histRows, ventanaTolva])
 
   // Disponibilidad = tiempo trabajando vs parado (cada celda = 2 min).
   const disponibilidad = useMemo(() => {
@@ -1091,13 +1189,33 @@ function LiveTab() {
           <div className="flex items-center gap-2">
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
             <h2 className="text-sm font-semibold text-card-foreground">
-              Velocidad de Producción cada 2 min (desde {pad2(velocidad.desde)}:00)
+              Velocidad de Producción cada 2 min (
+              {velocidad.hastaMin != null
+                ? `${minutosAHora(velocidad.desdeMin)} – ${minutosAHora(velocidad.hastaMin)}`
+                : `desde ${minutosAHora(velocidad.desdeMin)}`}
+              )
             </h2>
+            {/* De dónde sale la ventana: del Horario de Tolva del día o del
+                respaldo. Importa para saber si hay que ir a configurarlo. */}
+            <span className="text-[11px] text-muted-foreground">
+              {velocidad.segunHorario ? "· Horario de Tolva" : "· sin horario configurado"}
+            </span>
           </div>
           <span className="text-xs text-muted-foreground">
             {velocidad.cumplidos.toLocaleString("es-CO")}/{velocidad.total.toLocaleString("es-CO")} intervalos en meta
           </span>
         </div>
+
+        {/* Producción fuera de la ventana del turno. No se oculta en silencio:
+            que la máquina produzca fuera del horario programado es justo lo que
+            alguien necesita saber. */}
+        {velocidad.fueraDeVentana > 0 && (
+          <div className="mb-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200">
+            Hay <strong>{velocidad.fueraDeVentana.toLocaleString("es-CO")}</strong> lectura(s) con
+            producción fuera del horario programado, que no se grafican. Revisa el Horario de Tolva
+            del día en Programación de turnos si la jornada real fue otra.
+          </div>
+        )}
         {loading ? (
           <EmptyState loading text="" />
         ) : velocidad.total === 0 ? (
