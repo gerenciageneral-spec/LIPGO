@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getColombiaTime } from "@/lib/date-utils"
+import { generarIngresoProduccionDesdeDescargue } from "@/lib/orders-actions"
 
 // Subimos un solo archivo (o pocos) por request para evitar el limite
 // duro de ~4.5MB por body en Vercel serverless. Cuando un movil envia
@@ -69,6 +70,12 @@ export async function POST(request: NextRequest) {
           { status: 500 },
         )
       }
+
+      // Cierre real de la orden (fincargue ya quedó grabado arriba). Si es un
+      // descargue de PT en un CEDI (id3/id4), esto crea el ingreso pendiente en
+      // Producción → "Aprobación de ingreso". No-op para cualquier otro caso
+      // (falla-seguro internamente, no bloquea la respuesta de cierre).
+      await generarIngresoProduccionDesdeDescargue(supabaseAdmin, Number.parseInt(orderId))
 
       return NextResponse.json({ success: true, count: urls.length })
     }

@@ -3500,9 +3500,13 @@ export async function updateTolva(
 }
 
 // INGRESO DE PT AL INVENTARIO DEL CEDI desde un DESCARGUE. Los CEDIs (id3/id4) NO
-// producen: reciben Producto Terminado de las plantas (o de terceros) vía DESCARGUE. Al
-// DAR INICIO al descargue (mismo evento que pone el PDF/iniciocargue), el producto entra
-// a Producción → "Aprobación de ingreso" como PENDIENTE por aprobar:
+// producen: reciben Producto Terminado de las plantas (o de terceros) vía DESCARGUE. El
+// clon de descargue queda para GESTIONAR en Packing (PDF -> Personal -> Fotos); solo
+// cuando Packing lo CIERRA (mismo evento que graba `fincargue`, en el modo "finalize" de
+// /api/upload-picking-photos) el producto entra a Producción → "Aprobación de ingreso"
+// como PENDIENTE por aprobar. Antes de eso el clon es solo un placeholder de producto en
+// tránsito y NO debe aparecer ahí (si aparece antes de gestionarse, se pide aprobar el
+// ingreso de algo que fisicamente aún no ha llegado):
 //   - `invtrans` tipomov="Entrada", status=null (idéntico a un ingreso manual, así el
 //     submódulo lo lista solo). Una fila por producto+lote+cantidad.
 //   - LOTE: se conserva el de la bodega ORIGEN. Tres fuentes, en este orden:
@@ -3518,7 +3522,7 @@ export async function updateTolva(
 //   - `origen`/`ocargue` = código del descargue → trazabilidad + IDEMPOTENCIA (no duplica).
 // A futuro, el QR de la estiba se engancha a ESTA fila (campo `qrestiba`) — NO crea un
 // ingreso nuevo, así el producto entra al inventario UNA sola vez.
-async function generarIngresoProduccionDesdeDescargue(supabase: any, orderId: number) {
+export async function generarIngresoProduccionDesdeDescargue(supabase: any, orderId: number) {
   try {
     const { data: oh } = await supabase
       .from("cabeceraoc")
@@ -3668,13 +3672,9 @@ export async function updateOrderInitioCargue(orderId: number) {
 
     console.log("[v0] updateOrderInitioCargue: Iniciocargue updated successfully")
 
-    // Descargue de PT en un CEDI (id3/id4): al INICIAR, el producto entra a Producción →
-    // "Aprobación de ingreso" como pendiente. Falla-seguro (no bloquea el inicio).
-    try {
-      await generarIngresoProduccionDesdeDescargue(supabase, orderId)
-    } catch (ingErr) {
-      console.error("[v0] Error generando ingreso de producción desde descargue:", ingErr)
-    }
+    // El ingreso pendiente de Producción NO se crea aquí (esto solo marca el INICIO,
+    // el primer clic en Packing): se crea al CERRAR la orden (fincargue), ver
+    // `generarIngresoProduccionDesdeDescargue`.
 
     return { success: true, message: "Hora de inicio registrada" }
   } catch (error) {
