@@ -322,6 +322,31 @@ export async function programarTurnos(
 
   const yaProgramados = new Set<string>()
 
+  // 2b) MARCACION YA REGISTRADA de esas personas ese dia (tabla `asistencia`).
+  //
+  // Programar a futuro es el caso normal y ahi no hay marcacion: la fila nace
+  // sin `horaingreso` y se llena cuando la persona marque
+  // (/api/attendance/register). Pero programar EL MISMO DIA, despues de que la
+  // persona ya marco, dejaba la fila con `horaingreso` VACIA PARA SIEMPRE:
+  // el endpoint de marcacion ya paso y no vuelve, y aqui no se consultaba.
+  //
+  // Sintoma: en Tabla Asistencia se ve la hora de llegada —que sale de
+  // `asistencia`— pero en `registroasistencia` la persona aparece sin hora.
+  const { data: marcaciones } = await supabaseAdmin
+    .from("asistencia")
+    .select("identificacion, hora, foto_ingreso")
+    .eq("fecha", fecha)
+    .eq("idempresa", empresaId)
+    .in("identificacion", identificaciones)
+
+  const marcacionPorIdent = new Map<string, { hora: string | null; foto: string | null }>()
+  for (const m of marcaciones || []) {
+    marcacionPorIdent.set(String(m.identificacion), {
+      hora: (m as any).hora ?? null,
+      foto: (m as any).foto_ingreso ?? null,
+    })
+  }
+
   const records = programaciones
     .filter((p) => {
       // Modo NOVEDAD siempre usa turno=null (una novedad reemplaza el dia
@@ -359,6 +384,11 @@ export async function programarTurnos(
       // Persistimos cadenas explicitas ("true"/"false") para que sea
       // facil consultar/filtrar por SQL sin depender de truthiness
       // de strings en JS.
+      // Si la persona YA marco hoy, la fila nace con su hora y su foto reales.
+      // Si no ha marcado quedan en null, que es lo correcto: aun no ha llegado
+      // y `/api/attendance/register` las escribira cuando marque.
+      const marcacion = marcacionPorIdent.get(p.identificacion)
+
       return {
         fecha,
         nombre: p.nombre,
@@ -366,6 +396,8 @@ export async function programarTurnos(
         puesto: p.puesto || null,
         horaentradaprogramada: p.horaentradaprogramada || null,
         horasalidaprogramada: p.horasalidaprogramada || null,
+        horaingreso: marcacion?.hora ?? null,
+        foto_ingreso: marcacion?.foto ?? null,
         asistencia: null,
         especialidad:
           p.puesto && especialidadByPuesto.get(p.puesto) === true

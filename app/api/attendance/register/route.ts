@@ -193,39 +193,44 @@ export async function POST(request: Request) {
     // de verdad ya quedo persistida en `asistencia`). Solo lo logueamos
     // para diagnostico.
     try {
-      const { data: existingShift, error: shiftLookupError } = await supabase
+      // Se actualizan TODAS las filas de la persona ese dia, no solo una.
+      //
+      // Antes se hacia `.select("id").limit(1)` y se actualizaba `[0]`. Un
+      // "Auxiliar Mixto" con doble jornada tiene DOS filas el mismo dia (columna
+      // `turno` = 1 y 2, ver lib/programacion-turnos-actions.ts), asi que una
+      // quedaba con `horaingreso` y la otra vacia — y sin ORDER BY, cual de las
+      // dos se llenaba era arbitrario. Ese es el caso de "en Tabla Asistencia se
+      // ve la hora pero en registroasistencia esta vacia": la hora que se ve
+      // sale de `asistencia`, no de la fila que quedo sin llenar.
+      //
+      // Filtrar por las tres llaves directamente en el UPDATE cubre N filas.
+      const cambios: Record<string, unknown> = { horaingreso: hora }
+      if (fotoIngresoUrl) cambios.foto_ingreso = fotoIngresoUrl
+
+      const { error: shiftUpdateError } = await supabase
         .from("registroasistencia")
-        .select("id")
+        .update(cambios)
         .eq("idempresa", idempresa)
         .eq("identificacion", identificacion)
         .eq("fecha", fecha)
-        .limit(1)
 
-      if (shiftLookupError) {
+      if (shiftUpdateError) {
         console.error(
-          "[v0] Error looking up registroasistencia for horaingreso sync:",
-          shiftLookupError,
+          "[v0] Error updating registroasistencia.horaingreso:",
+          shiftUpdateError,
         )
-      } else if (existingShift && existingShift.length > 0) {
-        // Foto de ingreso en update SEPARADO best-effort (no rompe la sync de hora
-        // si la columna aún no existe).
+        // Reintento SOLO con la hora: si el UPDATE fallo porque `foto_ingreso`
+        // no existe en esta instancia, la hora —que es lo critico— igual queda.
         if (fotoIngresoUrl) {
-          try {
-            await supabase.from("registroasistencia").update({ foto_ingreso: fotoIngresoUrl }).eq("id", existingShift[0].id)
-          } catch (fe) {
-            console.error("[v0] Error guardando foto_ingreso:", fe)
+          const { error: soloHora } = await supabase
+            .from("registroasistencia")
+            .update({ horaingreso: hora })
+            .eq("idempresa", idempresa)
+            .eq("identificacion", identificacion)
+            .eq("fecha", fecha)
+          if (soloHora) {
+            console.error("[v0] Error updating horaingreso (reintento):", soloHora)
           }
-        }
-        const { error: shiftUpdateError } = await supabase
-          .from("registroasistencia")
-          .update({ horaingreso: hora })
-          .eq("id", existingShift[0].id)
-
-        if (shiftUpdateError) {
-          console.error(
-            "[v0] Error updating registroasistencia.horaingreso:",
-            shiftUpdateError,
-          )
         }
       }
     } catch (syncErr) {
