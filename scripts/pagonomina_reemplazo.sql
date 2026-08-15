@@ -37,22 +37,33 @@
 --     El descanso dominical de quien NO trabajó no cambia: se paga completo.
 --     PISO 16-jul-2026 — no se mueven las quincenas ya pagadas.
 --
---   - RECARGO REFORZADO CUANDO NO HUBO DESCANSO (nuevo). Si la persona trabajó
---     el domingo/festivo y NO descansó en los 6 días anteriores NI tiene
---     compensatorio en los 6 siguientes, el recargo pasa de `pct` a `1 + pct`
---     — de 0,90 a 1,90 hoy. Nunca recibió el descanso semanal, así que el día se
---     le compensa completo DENTRO del recargo. Si sí descansó (antes o después),
---     el recargo sigue siendo el pct normal.
+--   - CUÁNTO VALE EL RECARGO. El festivo y el domingo NO siguen la misma regla:
+--
+--       · FESTIVO trabajado: SIEMPRE `1 + pct` = 1,90 hoy, descansara o no esa
+--         semana. El festivo no pertenece al ciclo de descanso semanal — es un
+--         día que la ley da como no laborable —, así que trabajarlo se compensa
+--         completo. Haber tomado el descanso dominical no rebaja lo que se debe
+--         por el festivo: son derechos distintos.
+--
+--       · DOMINGO trabajado: `1 + pct` (1,90) solo si NO descansó en los 6 días
+--         anteriores NI tiene compensatorio en los 6 siguientes — nunca recibió
+--         su descanso semanal, así que el día se le compensa completo DENTRO del
+--         recargo. Si sí descansó, el recargo es el `pct` normal (0,90).
+--
+--     Un domingo que además es festivo entra por la primera regla: 1,90.
 --     El factor se ata a `pct_recargo_dominical`: si cambia la ley, se mueve solo.
 --
---   - FESTIVO TRABAJADO = mismo tratamiento que el domingo (CORREGIDO). Antes
---     las dos ramas del recargo exigían `dia_semana = 0`, así que un festivo
---     ENTRE SEMANA no entraba a ninguna: se pagaba 1,0 (la base, por la rama
---     `es_festivo`) y el recargo quedaba en CERO. Verificado con el viernes
---     07-ago-2026. La condición de "trabajó" pasa a ser `trabajo_efectivo`
---     —turno, toneladas o puesto, sin novedad— en vez de `asistio_ok` más la
---     exclusión del texto 'Festivo': en un festivo `asistio_ok` vale 1 para todos
---     por la sola fecha, y ese texto tapaba justamente a quien sí trabajó.
+--   - EL FESTIVO ENTRA AL RECARGO (CORREGIDO). Antes las dos ramas exigían
+--     `dia_semana = 0`, así que un festivo ENTRE SEMANA no entraba a ninguna: se
+--     pagaba 1,0 (la base, por la rama `es_festivo`) y el recargo quedaba en
+--     CERO — trabajar un festivo valía lo mismo que descansarlo. Verificado con
+--     el viernes 07-ago-2026. La condición de "trabajó" pasa a ser
+--     `trabajo_efectivo` —turno, toneladas o puesto, sin novedad— en vez de
+--     `asistio_ok` más la exclusión del texto 'Festivo': en un festivo
+--     `asistio_ok` vale 1 para todos por la sola fecha, y ese texto tapaba
+--     justamente a quien sí trabajó.
+--     CUÁNTO paga cada uno está en la viñeta anterior: el festivo siempre 1,90;
+--     el domingo, según haya descansado o no.
 --   - CORTE por FECHA DE INGRESO (headcount.fechainicio): no liquida días
 --     ANTERIORES al inicio de actividades. `headcount.fechainicio` es la FUENTE
 --     DE VERDAD del ingreso (el filtro de vínculo contra colaboradores_th falla
@@ -543,15 +554,23 @@ create or replace view public.pagonomina as
                     -- ninguna: se pagaba 1,0 (la base, por la rama `es_festivo`) y el
                     -- recargo quedaba en CERO. Verificado con el viernes 07-ago-2026.
                     --
-                    -- CUÁNTO SE PAGA — dos casos:
+                    -- CUÁNTO SE PAGA — el FESTIVO y el DOMINGO no siguen la misma regla:
                     --
-                    --   · Si la persona NO descansó en los 6 días anteriores NI tiene
-                    --     compensatorio en los 6 siguientes, el recargo vale
-                    --     (1 + pct) = 1,90 hoy. Nunca recibió el descanso semanal, así
-                    --     que el día se le compensa completo dentro del recargo.
+                    --   · FESTIVO trabajado: SIEMPRE (1 + pct) = 1,90 hoy, descansara o
+                    --     no esa semana. El festivo no pertenece al ciclo de descanso
+                    --     semanal: es un día que la ley da como no laborable, así que
+                    --     trabajarlo se compensa completo y punto. El descanso
+                    --     dominical de esa semana es un derecho aparte, y haberlo tomado
+                    --     no rebaja lo que se debe por el festivo.
                     --
-                    --   · Si sí descansó (antes o después), el recargo es el pct
-                    --     normal = 0,90. El descanso ya se lo pagó por otro lado.
+                    --   · DOMINGO trabajado: depende del descanso. (1 + pct) = 1,90 si
+                    --     NO descansó en los 6 días anteriores NI tiene compensatorio en
+                    --     los 6 siguientes — nunca recibió su descanso semanal, así que
+                    --     el día se le compensa completo dentro del recargo. Si sí
+                    --     descansó (antes o después), el recargo es el pct normal =
+                    --     0,90, porque el descanso ya se lo pagaron por otro lado.
+                    --
+                    -- Un domingo que ADEMÁS es festivo entra por la primera regla: 1,90.
                     --
                     -- El factor se ata a `pct_recargo_dominical`, que viene de la
                     -- vigencia (80% hasta 15-jul-2026, 90% desde el 16): así el 1,90 se
@@ -571,9 +590,14 @@ create or replace view public.pagonomina as
                         END
                         *
                         CASE
+                            -- FESTIVO: siempre completo, sin mirar el descanso semanal.
+                            WHEN (calculo_nomina_base.es_festivo = 1)
+                                THEN ((1)::numeric + (calculo_nomina_base.pct_recargo_dominical / 100.0))
+                            -- DOMINGO sin descanso ni compensatorio: también completo.
                             WHEN ((COALESCE(calculo_nomina_base.descansos_semana_anterior, 0) = 0)
                               AND (COALESCE(calculo_nomina_base.tiene_compensatorio_posterior, 0) = 0))
                                 THEN ((1)::numeric + (calculo_nomina_base.pct_recargo_dominical / 100.0))
+                            -- DOMINGO con descanso: solo el recargo.
                             ELSE (calculo_nomina_base.pct_recargo_dominical / 100.0)
                         END
                     )
