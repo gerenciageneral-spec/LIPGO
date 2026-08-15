@@ -757,7 +757,24 @@ create or replace view public.pagonomina as
                        WHERE (TRIM(BOTH FROM hi2.nombre) = TRIM(BOTH FROM pc.persona))
                          AND (hi2.fechainicio IS NOT NULL))
     )
-  ORDER BY persona, fecha DESC;
+  ;
+-- SIN `ORDER BY` — quitado a proposito.
+--
+-- La vista terminaba en `ORDER BY persona, fecha DESC`. Un ORDER BY DENTRO de
+-- una vista obliga a Postgres a ORDENAR EL RESULTADO INTEGRO en CADA consulta,
+-- sin importar el WHERE ni el LIMIT de afuera, y sobre filas anchas (26
+-- columnas, varias numeric). No aportaba nada: el orden de las filas de una
+-- vista no es un contrato y cada consumidor pide el suyo o agrega.
+--
+-- Es lo que hacia caer por timeout (57014) a los modulos que la consultan desde
+-- el navegador, donde el limite es mucho mas corto que en el editor SQL:
+-- "Ver Liquidacion" y, sobre todo, la pestaña "Archivo plano" — `archivoplano`
+-- se construye SOBRE esta vista, asi que heredaba el sort completo y ni siquiera
+-- acotar por mes lo evitaba (`mes` es derivada y esta detras de las funciones de
+-- ventana: el filtro no se puede empujar hacia adentro).
+--
+-- Los consumidores no cambian: `archivoplano` agrega (el orden le da igual) y la
+-- app pide `.order(...)` explicito en cada consulta.
 
 -- Limpieza: ya no se necesita la vista de verificacion.
 drop view if exists public.pagonomina_v2;

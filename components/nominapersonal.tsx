@@ -375,7 +375,17 @@ export default function Nominapersonal() {
           // Se muestra el motivo REAL. El generico anterior hacia
           // indistinguibles un timeout (57014), un problema de permisos y una
           // columna inexistente: los tres se veian como una tabla vacia.
-          console.error("[v0] Error loading archivoplano:", error)
+          //
+          // Los campos se imprimen SUELTOS, no el objeto: la consola muestra un
+          // objeto como "Object" colapsado y el motivo queda escondido detras de
+          // un click que nadie da.
+          console.error(
+            "[v0] Error loading archivoplano —",
+            "message:", error.message,
+            "| code:", error.code,
+            "| details:", (error as any).details,
+            "| hint:", (error as any).hint,
+          )
           setArchivoplanos([])
           toast({
             title: "No se pudo cargar el archivo plano",
