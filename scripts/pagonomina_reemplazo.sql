@@ -26,16 +26,33 @@
 --     contra Siigo. En excedente sale por la novedad 71 y además queda sujeto al
 --     Ajuste de Proyecciones.
 --     Aplica a TODO el histórico (sin piso de vigencia), por decisión del negocio.
---   - DOMINGO TRABAJADO = 1 + recargo (1,90 hoy), DESDE EL 16-JUL-2026: el día
---     trabajado lo cubre la base y encima va el RECARGO dominical; NO se paga
---     además el día de descanso. Se separa del TONELAJE: aplica igual venga el
---     día por toneladas o por turno (antes el recargo solo lo cobraba el
---     personal de turno con cero toneladas, y un domingo de tolva con tonelaje
---     en cero quedaba sin recargo y sin novedad en el plano). El % sale de la
---     vigencia (80% hasta 15-jul-2026, 90% desde el 16). Cruza al peso contra la
---     novedad "25- Recargo dominical o festivo" del archivo plano.
+--   - DOMINGO TRABAJADO, DESDE EL 16-JUL-2026: el día trabajado lo cubre la base
+--     y encima va el RECARGO dominical; NO se paga además el día de descanso.
+--     Se separa del TONELAJE: aplica igual venga el día por toneladas o por
+--     turno (antes el recargo solo lo cobraba el personal de turno con cero
+--     toneladas, y un domingo de tolva con tonelaje en cero quedaba sin recargo
+--     y sin novedad en el plano). El % sale de la vigencia (80% hasta
+--     15-jul-2026, 90% desde el 16). Cruza al peso contra la novedad
+--     "25- Recargo dominical o festivo" del archivo plano.
 --     El descanso dominical de quien NO trabajó no cambia: se paga completo.
 --     PISO 16-jul-2026 — no se mueven las quincenas ya pagadas.
+--
+--   - RECARGO REFORZADO CUANDO NO HUBO DESCANSO (nuevo). Si la persona trabajó
+--     el domingo/festivo y NO descansó en los 6 días anteriores NI tiene
+--     compensatorio en los 6 siguientes, el recargo pasa de `pct` a `1 + pct`
+--     — de 0,90 a 1,90 hoy. Nunca recibió el descanso semanal, así que el día se
+--     le compensa completo DENTRO del recargo. Si sí descansó (antes o después),
+--     el recargo sigue siendo el pct normal.
+--     El factor se ata a `pct_recargo_dominical`: si cambia la ley, se mueve solo.
+--
+--   - FESTIVO TRABAJADO = mismo tratamiento que el domingo (CORREGIDO). Antes
+--     las dos ramas del recargo exigían `dia_semana = 0`, así que un festivo
+--     ENTRE SEMANA no entraba a ninguna: se pagaba 1,0 (la base, por la rama
+--     `es_festivo`) y el recargo quedaba en CERO. Verificado con el viernes
+--     07-ago-2026. La condición de "trabajó" pasa a ser `trabajo_efectivo`
+--     —turno, toneladas o puesto, sin novedad— en vez de `asistio_ok` más la
+--     exclusión del texto 'Festivo': en un festivo `asistio_ok` vale 1 para todos
+--     por la sola fecha, y ese texto tapaba justamente a quien sí trabajó.
 --   - CORTE por FECHA DE INGRESO (headcount.fechainicio): no liquida días
 --     ANTERIORES al inicio de actividades. `headcount.fechainicio` es la FUENTE
 --     DE VERDAD del ingreso (el filtro de vínculo contra colaboradores_th falla
@@ -296,6 +313,29 @@ create or replace view public.pagonomina as
                     WHEN (((ct.base_turno IS NOT NULL) OR (COALESCE(p.toneladas_dia, (0)::numeric) > (0)::numeric) OR (a.puesto IS NOT NULL) OR (f.fecha IS NOT NULL)) AND ((a.asistencia IS NULL) OR (TRIM(BOTH FROM a.asistencia) = ''::text))) THEN 1
                     ELSE 0
                 END AS asistio_ok,
+                -- TRABAJO EFECTIVO: igual que `asistio_ok` pero SIN el término
+                -- `f.fecha IS NOT NULL`. La diferencia importa justo en los
+                -- festivos: ahí `asistio_ok` vale 1 para TODO el mundo por el
+                -- solo hecho de que el día sea festivo, haya trabajado o no.
+                --
+                -- Antes eso se compensaba excluyendo `actividad_registrada =
+                -- 'Festivo'`, pero ese texto es un proxy imperfecto: quien tiene
+                -- puesto asignado y trabaja un festivo sin toneladas y sin turno
+                -- de especialidad TAMBIÉN queda etiquetado 'Festivo' (la rama de
+                -- festivo se evalúa antes que la de puesto, arriba) y perdía el
+                -- recargo. Aquí la prueba es directa: hay turno, hay toneladas o
+                -- hay puesto, y no hay novedad.
+                CASE
+                    WHEN (((ct.base_turno IS NOT NULL) OR (COALESCE(p.toneladas_dia, (0)::numeric) > (0)::numeric) OR (a.puesto IS NOT NULL)) AND ((a.asistencia IS NULL) OR (TRIM(BOTH FROM a.asistencia) = ''::text))) THEN 1
+                    ELSE 0
+                END AS trabajo_efectivo,
+                -- ¿Ese día la persona DESCANSÓ? Sirve para la ventana semanal de
+                -- abajo. Solo cuentan los códigos de descanso: una licencia no
+                -- remunerada o un retiro no son descanso compensado.
+                CASE
+                    WHEN (TRIM(BOTH FROM COALESCE(a.asistencia, ''::text)) = ANY (ARRAY['Descanso'::text, 'Descanso compensatorio domingo anterior'::text])) THEN 1
+                    ELSE 0
+                END AS es_descanso,
                 CASE
                     WHEN (f.fecha IS NOT NULL) THEN 1
                     ELSE 0
@@ -351,8 +391,13 @@ create or replace view public.pagonomina as
             consolidado_completo.bloquea_domingo,
             consolidado_completo.es_sin_registro,
             consolidado_completo.asistio_ok,
+            consolidado_completo.trabajo_efectivo,
             consolidado_completo.es_festivo,
             consolidado_completo.bono_no_prestacional,
+            -- ¿Descansó en los 6 días anteriores? Si NO descansó antes y tampoco
+            -- tiene compensatorio después, el domingo/festivo trabajado se paga
+            -- reforzado (ver `recargodominical`).
+            sum(consolidado_completo.es_descanso) OVER (PARTITION BY consolidado_completo.persona ORDER BY consolidado_completo.fecha ROWS BETWEEN 6 PRECEDING AND 1 PRECEDING) AS descansos_semana_anterior,
             sum(consolidado_completo.cuenta_como_falta) OVER (PARTITION BY consolidado_completo.persona ORDER BY consolidado_completo.fecha ROWS BETWEEN 6 PRECEDING AND 1 PRECEDING) AS faltas_semana_anterior,
             sum(consolidado_completo.es_sin_registro) OVER (PARTITION BY consolidado_completo.persona ORDER BY consolidado_completo.fecha ROWS BETWEEN 6 PRECEDING AND 1 PRECEDING) AS vacios_semana_anterior,
             sum(consolidado_completo.bloquea_domingo) OVER (PARTITION BY consolidado_completo.persona ORDER BY consolidado_completo.fecha ROWS BETWEEN 6 PRECEDING AND 1 PRECEDING) AS novedades_semana_anterior,
@@ -396,8 +441,10 @@ create or replace view public.pagonomina as
             calculo_nomina_base.bloquea_domingo,
             calculo_nomina_base.es_sin_registro,
             calculo_nomina_base.asistio_ok,
+            calculo_nomina_base.trabajo_efectivo,
             calculo_nomina_base.es_festivo,
             calculo_nomina_base.bono_no_prestacional,
+            calculo_nomina_base.descansos_semana_anterior,
             calculo_nomina_base.faltas_semana_anterior,
             calculo_nomina_base.vacios_semana_anterior,
             calculo_nomina_base.novedades_semana_anterior,
@@ -484,25 +531,54 @@ create or replace view public.pagonomina as
                 CASE
                     -- DÍA 31: sin recargo dominical (mismo criterio que arriba).
                     WHEN (EXTRACT(day FROM calculo_nomina_base.fecha) = (31)::numeric) THEN (0)::numeric
-                    -- DOMINGO TRABAJADO (desde 16-jul-2026): SIEMPRE paga el recargo,
-                    -- venga el día por toneladas o por turno. Antes solo lo cobraba el
-                    -- personal de turno CON CERO toneladas, así que el destajo quedaba
-                    -- por fuera y, peor, un domingo de tolva con el tonelaje en cero
-                    -- caía en un limbo: ni recargo aquí ni novedad en el plano.
-                    -- El % sale de la vigencia (80% hasta 15-jul-2026, 90% desde el 16),
-                    -- así que el día trabajado queda en 1 + pct = 1,90 hoy.
-                    -- Cruza exactamente contra la novedad "25- Recargo dominical o
-                    -- festivo" del archivo plano, que Siigo valora a ese mismo pct.
+                    --
+                    -- DOMINGO o FESTIVO TRABAJADO (desde 16-jul-2026).
+                    --
+                    -- Paga SIEMPRE el recargo, venga el día por toneladas o por turno.
+                    -- Cruza contra la novedad "25- Recargo dominical o festivo" del
+                    -- archivo plano.
+                    --
+                    -- EL FESTIVO ENTRA AQUÍ (corregido). Antes las dos ramas exigían
+                    -- `dia_semana = 0`, así que un festivo ENTRE SEMANA no entraba a
+                    -- ninguna: se pagaba 1,0 (la base, por la rama `es_festivo`) y el
+                    -- recargo quedaba en CERO. Verificado con el viernes 07-ago-2026.
+                    --
+                    -- CUÁNTO SE PAGA — dos casos:
+                    --
+                    --   · Si la persona NO descansó en los 6 días anteriores NI tiene
+                    --     compensatorio en los 6 siguientes, el recargo vale
+                    --     (1 + pct) = 1,90 hoy. Nunca recibió el descanso semanal, así
+                    --     que el día se le compensa completo dentro del recargo.
+                    --
+                    --   · Si sí descansó (antes o después), el recargo es el pct
+                    --     normal = 0,90. El descanso ya se lo pagó por otro lado.
+                    --
+                    -- El factor se ata a `pct_recargo_dominical`, que viene de la
+                    -- vigencia (80% hasta 15-jul-2026, 90% desde el 16): así el 1,90 se
+                    -- mueve solo si cambia la ley, sin tocar esta vista.
+                    --
+                    -- La condición de trabajo es `trabajo_efectivo`, no
+                    -- `asistio_ok` + `actividad_registrada <> 'Festivo'`: en un festivo
+                    -- `asistio_ok` vale 1 para todos por el solo hecho de la fecha, y el
+                    -- texto 'Festivo' tapaba a quien sí trabajó (ver `trabajo_efectivo`).
                     WHEN ((calculo_nomina_base.fecha >= DATE '2026-07-16')
-                      AND (calculo_nomina_base.dia_semana = (0)::numeric)
-                      AND (calculo_nomina_base.asistio_ok = 1)
-                      AND (calculo_nomina_base.actividad_registrada <> ALL (ARRAY['Festivo'::text, 'Sin Registro'::text]))) THEN
+                      AND ((calculo_nomina_base.dia_semana = (0)::numeric) OR (calculo_nomina_base.es_festivo = 1))
+                      AND (calculo_nomina_base.trabajo_efectivo = 1)) THEN
                     (
                         CASE
                             WHEN ((calculo_nomina_base.especialidad = true) AND (calculo_nomina_base.base_turno IS NOT NULL)) THEN calculo_nomina_base.base_turno
                             ELSE calculo_nomina_base.valor_diario_ley
-                        END * (calculo_nomina_base.pct_recargo_dominical / 100.0)
+                        END
+                        *
+                        CASE
+                            WHEN ((COALESCE(calculo_nomina_base.descansos_semana_anterior, 0) = 0)
+                              AND (COALESCE(calculo_nomina_base.tiene_compensatorio_posterior, 0) = 0))
+                                THEN ((1)::numeric + (calculo_nomina_base.pct_recargo_dominical / 100.0))
+                            ELSE (calculo_nomina_base.pct_recargo_dominical / 100.0)
+                        END
                     )
+                    -- Histórico (antes del 16-jul-2026): se conserva EXACTAMENTE como
+                    -- estaba para no reescribir quincenas ya pagadas y conciliadas.
                     WHEN ((calculo_nomina_base.dia_semana = (0)::numeric) AND (calculo_nomina_base.asistio_ok = 1) AND (calculo_nomina_base.especialidad = true) AND (COALESCE(calculo_nomina_base.toneladas, (0)::numeric) = (0)::numeric)) THEN (calculo_nomina_base.valor_diario_ley * (calculo_nomina_base.pct_recargo_dominical / 100.0))
                     ELSE (0)::numeric
                 END AS recargodominical

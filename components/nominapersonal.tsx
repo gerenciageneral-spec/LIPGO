@@ -121,9 +121,22 @@ export default function Nominapersonal() {
   const [currentPageLiquidacion, setCurrentPageLiquidacion] = useState(1)
   const ITEMS_PER_PAGE = 50
 
-  // Archivo Plano view states
+  // Archivo Plano view states.
+  //
+  // `filtroMes` arranca en el MES EN CURSO, no en "Todos": `archivoplano` se
+  // construye sobre `pagonomina`, que recalcula un calendario persona×día
+  // completo en cada consulta. Traer todo el histórico de una vez se pasa del
+  // tiempo límite y la pestaña quedaba vacía con un aviso genérico.
   const [archivoplanos, setArchivoplanos] = useState<any[]>([])
-  const [filtroMes, setFiltroMes] = useState("")
+  const [filtroMes, setFiltroMes] = useState(() =>
+    String(
+      Number(
+        new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota", month: "2-digit" }).format(
+          new Date(),
+        ),
+      ),
+    ),
+  )
   const [filtroQuincena, setFiltroQuincena] = useState("")
 
   /**
@@ -312,13 +325,29 @@ export default function Nominapersonal() {
     }
   }
 
-  const loadArchivoplanano = async () => {
+  /**
+   * Carga el archivo plano ACOTADO POR MES en la base.
+   *
+   * `archivoplano` se construye sobre `pagonomina`, que arma un calendario
+   * persona×día completo en cada consulta. Traer todo el histórico —que es lo
+   * que hacía antes— se pasa del tiempo límite: la consulta fallaba, la tabla
+   * quedaba en "No hay registros" y el aviso decía solo "Error al cargar datos",
+   * sin distinguir un timeout de un problema de permisos o de datos.
+   *
+   * El mes viaja como texto Y como texto con cero a la izquierda ("8" y "08"):
+   * la columna puede venir de un `to_char(...,'MM')`, y así el filtro acierta
+   * sin depender de ese detalle.
+   */
+  const loadArchivoplanano = async (
+    mes: string = filtroMes,
+    quincena: string = filtroQuincena,
+  ) => {
     if (!selectedEmpresaId) return
     setLoading(true)
     try {
       const supabase = await createClient()
-      console.log("[v0] Nominapersonal: Starting loadArchivoplanano for empresa:", selectedEmpresaId)
-      
+      console.log("[v0] Nominapersonal: Starting loadArchivoplanano for empresa:", selectedEmpresaId, "mes:", mes, "quincena:", quincena)
+
       let allData: any[] = []
       let offset = 0
       const pageSize = 1000
@@ -326,17 +355,35 @@ export default function Nominapersonal() {
 
       // Fetch all data using pagination with offset
       while (hasMore) {
-        const { data, error } = await supabase
+        let query = supabase
           .from("archivoplano")
           .select("identificacionempleado, nombreempleado, contratoempleado, nombrenovedad, tiponovedad, cantidadvalor, nominaproyectada, fechainicio, fechafin, diasnohabiles, mes, quincena")
           .eq("idempresa", selectedEmpresaId)
+
+        if (mes) {
+          const n = Number(mes)
+          query = query.in("mes", [String(n), String(n).padStart(2, "0")])
+        }
+        if (quincena) query = query.eq("quincena", Number(quincena))
+
+        const { data, error } = await query
           .order("mes", { ascending: false })
           .order("quincena", { ascending: false })
           .range(offset, offset + pageSize - 1)
 
         if (error) {
+          // Se muestra el motivo REAL. El generico anterior hacia
+          // indistinguibles un timeout (57014), un problema de permisos y una
+          // columna inexistente: los tres se veian como una tabla vacia.
           console.error("[v0] Error loading archivoplano:", error)
-          toast({ title: "Error", description: "Error al cargar datos", variant: "destructive" })
+          setArchivoplanos([])
+          toast({
+            title: "No se pudo cargar el archivo plano",
+            description: [error.message, error.code ? `(${error.code})` : null]
+              .filter(Boolean)
+              .join(" "),
+            variant: "destructive",
+          })
           return
         }
 
@@ -713,11 +760,15 @@ export default function Nominapersonal() {
     }
   }, [selectedEmpresaId, viewMode])
 
+  // Los filtros de mes/quincena se aplican EN LA BASE, así que cambiarlos
+  // reconsulta. Antes solo filtraban en memoria sobre un dataset que muchas
+  // veces ni llegaba a cargar.
   useEffect(() => {
     if (selectedEmpresaId && viewMode === "archivoplano") {
-      loadArchivoplanano()
+      loadArchivoplanano(filtroMes, filtroQuincena)
     }
-  }, [selectedEmpresaId, viewMode])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedEmpresaId, viewMode, filtroMes, filtroQuincena])
 
   // Reset pagination when filters change
   useEffect(() => {
@@ -1817,7 +1868,8 @@ export default function Nominapersonal() {
             <Button
               variant="outline"
               size="sm"
-              onClick={loadArchivoplanano}
+              // Se envuelve para no pasarle el evento del click como `mes`.
+              onClick={() => loadArchivoplanano(filtroMes, filtroQuincena)}
               disabled={loading}
               className="text-xs h-8 gap-2 bg-transparent"
             >
