@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useAuth } from "@/components/auth-provider"
 import { createClient } from "@/lib/supabase-client"
+import { getArchivoPlano } from "@/lib/archivo-plano-actions"
 import { useToast } from "@/components/ui/use-toast"
 import { Download, RefreshCw } from "lucide-react"
 import { Search } from "lucide-react" // Declare the Search variable
@@ -75,6 +76,8 @@ export default function Nominapersonal() {
   const [viewMode, setViewMode] = useState<"total" | "detalle" | "liquidacion" | "archivoplano">("total")
   const [loading, setLoading] = useState(false)
   const [currentPageArchivoplanano, setCurrentPageArchivoplanano] = useState(1) // Declare the variable here
+  // El archivo plano se lee desde el SERVIDOR: ver el comentario de
+  // `loadArchivoplanano` — desde el navegador se caia por statement timeout.
   
   // Total view states
   const [totales, setTotales] = useState<TotalAuxiliar[]>([])
@@ -326,17 +329,20 @@ export default function Nominapersonal() {
   }
 
   /**
-   * Carga el archivo plano ACOTADO POR MES en la base.
+   * Carga el archivo plano DESDE EL SERVIDOR (lib/archivo-plano-actions.ts).
    *
-   * `archivoplano` se construye sobre `pagonomina`, que arma un calendario
-   * persona×día completo en cada consulta. Traer todo el histórico —que es lo
-   * que hacía antes— se pasa del tiempo límite: la consulta fallaba, la tabla
-   * quedaba en "No hay registros" y el aviso decía solo "Error al cargar datos",
-   * sin distinguir un timeout de un problema de permisos o de datos.
+   * Antes se consultaba `archivoplano` directo desde el navegador y fallaba
+   * siempre con 57014 (statement timeout). La vista se construye sobre
+   * `pagonomina` —calendario persona×día cruzado contra headcount, tarifas y
+   * parámetros legales— y Supabase le da a los roles del navegador un tiempo
+   * límite corto, del orden de 8 segundos, frente al margen mucho mayor del
+   * rol de servicio. Por eso en el editor SQL de Supabase los datos SÍ se
+   * veían: ese editor no consulta con el rol del navegador.
    *
-   * El mes viaja como texto Y como texto con cero a la izquierda ("8" y "08"):
-   * la columna puede venir de un `to_char(...,'MM')`, y así el filtro acierta
-   * sin depender de ese detalle.
+   * Los otros SIETE módulos que leen `pagonomina` (revisión de nómina, cierre
+   * financiero, parafiscales, liquidaciones, conciliación Avimol, análisis
+   * financiero, cierre diario) ya lo hacían desde el servidor. Esta pestaña era
+   * la excepción, y era la que fallaba.
    */
   const loadArchivoplanano = async (
     mes: string = filtroMes,
@@ -345,80 +351,22 @@ export default function Nominapersonal() {
     if (!selectedEmpresaId) return
     setLoading(true)
     try {
-      const supabase = await createClient()
-      console.log("[v0] Nominapersonal: Starting loadArchivoplanano for empresa:", selectedEmpresaId, "mes:", mes, "quincena:", quincena)
-
-      let allData: any[] = []
-      let offset = 0
-      const pageSize = 1000
-      let hasMore = true
-
-      // Fetch all data using pagination with offset
-      while (hasMore) {
-        let query = supabase
-          .from("archivoplano")
-          .select("identificacionempleado, nombreempleado, contratoempleado, nombrenovedad, tiponovedad, cantidadvalor, nominaproyectada, fechainicio, fechafin, diasnohabiles, mes, quincena")
-          .eq("idempresa", selectedEmpresaId)
-
-        if (mes) {
-          const n = Number(mes)
-          query = query.in("mes", [String(n), String(n).padStart(2, "0")])
-        }
-        if (quincena) query = query.eq("quincena", Number(quincena))
-
-        const { data, error } = await query
-          .order("mes", { ascending: false })
-          .order("quincena", { ascending: false })
-          .range(offset, offset + pageSize - 1)
-
-        if (error) {
-          // Se muestra el motivo REAL. El generico anterior hacia
-          // indistinguibles un timeout (57014), un problema de permisos y una
-          // columna inexistente: los tres se veian como una tabla vacia.
-          //
-          // Los campos se imprimen SUELTOS, no el objeto: la consola muestra un
-          // objeto como "Object" colapsado y el motivo queda escondido detras de
-          // un click que nadie da.
-          console.error(
-            "[v0] Error loading archivoplano —",
-            "message:", error.message,
-            "| code:", error.code,
-            "| details:", (error as any).details,
-            "| hint:", (error as any).hint,
-          )
-          setArchivoplanos([])
-          toast({
-            title: "No se pudo cargar el archivo plano",
-            description: [error.message, error.code ? `(${error.code})` : null]
-              .filter(Boolean)
-              .join(" "),
-            variant: "destructive",
-          })
-          return
-        }
-
-        if (!data || data.length === 0) {
-          hasMore = false
-        } else {
-          if (offset === 0 && data.length > 0) {
-            console.log("[v0] Nominapersonal: Archivoplanano data sample:", data[0])
-          }
-          allData = [...allData, ...data]
-          console.log("[v0] Nominapersonal: Loaded archivoplano batch at offset", offset, "records count:", data.length)
-          
-          if (data.length < pageSize) {
-            hasMore = false
-          } else {
-            offset += pageSize
-          }
-        }
+      const r = await getArchivoPlano(selectedEmpresaId, mes, quincena)
+      if (!r.success) {
+        console.error("[v0] Error loading archivoplano —", r.message)
+        setArchivoplanos([])
+        toast({
+          title: "No se pudo cargar el archivo plano",
+          description: r.message || "Error al cargar datos",
+          variant: "destructive",
+        })
+        return
       }
-
-      console.log("[v0] Nominapersonal: Total archivoplano loaded:", allData.length)
-      setArchivoplanos(allData)
-    } catch (error) {
+      console.log("[v0] Nominapersonal: Total archivoplano loaded:", r.data.length)
+      setArchivoplanos(r.data)
+    } catch (error: any) {
       console.error("[v0] Error:", error)
-      toast({ title: "Error", description: "Error inesperado", variant: "destructive" })
+      toast({ title: "Error", description: error?.message || "Error inesperado", variant: "destructive" })
     } finally {
       setLoading(false)
     }
