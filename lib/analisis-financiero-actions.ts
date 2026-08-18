@@ -261,11 +261,28 @@ async function realPorCodigo(
 
   // Clasifica una línea al código de actividad del acuerdo (misma lógica por
   // ID que antes; ahora se usa para AGRUPAR el valor real, no solo el volumen).
-  const codigoDe = (op: string, transporte: unknown, subcategoria: unknown, placa: unknown, cliente: unknown): string | null => {
+  // Devuelve un array cuando UNA misma línea debe sumar su tonelaje completo
+  // (sin partir) a MÁS DE UN actividad_codigo (caso Distribución de Avimol).
+  const codigoDe = (
+    op: string,
+    transporte: unknown,
+    subcategoria: unknown,
+    placa: unknown,
+    cliente: unknown,
+    owner: unknown,
+  ): string | string[] | null => {
     if (idempresa === 1 || idempresa === 2) {
       if (op === "CARGUE") return esSubproducto(subcategoria) ? "cargue_subproducto" : "aux_cargue_descargue"
       if (op === "TOLVA") return "tolva"
       if (op === "TOLVA F") return "tolva_domingo"
+      // Distribución de Avimol (ID2, ago-2026): el mismo tonelaje real reporta
+      // AMBAS actividades del acuerdo ("Distribución Cargue" + "Distribución
+      // Descargue", 300+300 t/mes) — es un solo tramo de trabajo, no dos
+      // movimientos separados. Ya está cubierto por el fijo mensual de
+      // "Distribución Turno" en Cargos Fijos, por eso el déficit de estas 2
+      // actividades nunca genera "$ a facturar adicional" (ver más abajo).
+      // No aplica a id1 (Indupan no tiene esta actividad en el acuerdo).
+      if (idempresa === 2 && op === "DISTRIBUCION") return ["distribucion_cargue", "distribucion_descargue"]
       return null
     }
     if (idempresa === 3) {
@@ -276,15 +293,18 @@ async function realPorCodigo(
     }
     if (idempresa === 4) {
       const esSusanita = norm(transporte) === "SUSANITA" || norm(cliente).includes("SUSANITA")
-      // Cargue + Distribución del vehículo propio (LWY393) cuentan como UNA
-      // sola actividad del acuerdo ("Cargue y Distribución Propio", 480 t/mes)
-      // — mismo criterio (esPlacaDistribucion) que grupoResumen en
-      // getPrefactura (lib/facturacion-control-actions.ts). El cargue que se
-      // realice en ID4 para Susanita (cliente exclusivo de LIP) TAMBIÉN suma
-      // aquí, solo en este análisis (confirmado por el usuario: ese volumen
-      // sube el cumplimiento del proyecto ID4).
-      if (op === "CARGUE" || op === "DISTRIBUCION") {
-        if (esPlacaDistribucion(idempresa, placa as any) || esSusanita) return "cargue_distribucion_propio"
+      // Cargue y Distribución del vehículo propio (LWY393) se reportan como
+      // DOS actividades separadas del acuerdo desde ago-2026 ("Cargue Propio"
+      // + "Descargue Propio", antes una sola "Cargue y Distribución Propio") —
+      // el dato real no cambia, solo la forma de reportarlo. Mismo criterio
+      // (esPlacaDistribucion) que grupoResumen en getPrefactura
+      // (lib/facturacion-control-actions.ts). El cargue que se realice en ID4
+      // para Susanita (cliente exclusivo de LIP) TAMBIÉN suma aquí, solo en
+      // este análisis (confirmado por el usuario: ese volumen sube el
+      // cumplimiento del proyecto ID4).
+      if (esPlacaDistribucion(idempresa, placa as any) || esSusanita) {
+        if (op === "CARGUE") return "cargue_propio"
+        if (op === "DISTRIBUCION") return "descargue_propio"
       }
       // Cargue Cliente Recoge = el cliente manda su propio transporte a recoger
       // a bodega — TERCEROS o ZAMUDIO (nombre de transportadora, mismo caso).
@@ -296,11 +316,19 @@ async function realPorCodigo(
         const tr = norm(transporte)
         return tr === "TERCEROS" || tr === "ZAMUDIO" ? "cargue_cliente_recoge" : null
       }
-      // Descargue Terceros = el descargue del CEDI que no es de Susanita (ese
-      // cliente tiene su propio acuerdo/tarifa, no forma parte de este cupo de
-      // 993 t/mes) — confirmado con el cierre real del usuario (422,57 t exacto
-      // excluyendo Susanita).
-      if (op === "DESCARGUE") return esSusanita ? null : "descargue_terceros"
+      // Descargue Terceros (ago-2026: partido por owner del producto) = el
+      // descargue del CEDI que no es de Susanita (ese cliente tiene su propio
+      // acuerdo/tarifa, no forma parte de este cupo) — confirmado con el
+      // cierre real del usuario (422,57 t exacto excluyendo Susanita). Molinos
+      // y Avimol/"La Insuperable" tienen cupos separados en el acuerdo nuevo;
+      // cualquier otro owner cae en el código genérico para no perder tonelaje.
+      if (op === "DESCARGUE") {
+        if (esSusanita) return null
+        const ow = norm(owner)
+        if (ow === "AVIMOL") return "descargue_pt_avimol"
+        if (ow.includes("MOLINOS")) return "descargue_pt_molinos"
+        return "descargue_terceros"
+      }
       return null
     }
     return null
@@ -360,12 +388,12 @@ async function realPorCodigo(
     const cl = norm(r.cliente)
     if (placasExcluidas.has(placa) && !cl.includes("SUSANITA")) continue // WMP446 salvo Susanita
     const op = norm(r.tipooperacion)
-    const codigo = codigoDe(op, r.transporte, r.subcategoria, r.placa, r.cliente)
+    const owner = ownerDeLinea(idempresa, r.placa, String(r.owner || "SIN OWNER"))
+    const codigos = codigoDe(op, r.transporte, r.subcategoria, r.placa, r.cliente, owner)
     const ton = num(r.toneladas)
     ordenTotalDet.set(on, (ordenTotalDet.get(on) || 0) + ton)
-    if (!codigo) continue // producto/operación fuera del acuerdo (no se pierde del denominador, sí de la salida)
+    if (!codigos) continue // producto/operación fuera del acuerdo (no se pierde del denominador, sí de la salida)
 
-    const owner = ownerDeLinea(idempresa, r.placa, String(r.owner || "SIN OWNER"))
     const tarifa = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
     // Avimol (id2) placa propia: cubierto por el fijo de 600 ton/mes, no se
     // factura por tonelada aquí (ya está en Cargos Fijos, no se duplica). Con
@@ -373,11 +401,16 @@ async function realPorCodigo(
     // Avimol) — para el margen del PROYECTO Avimol esa plata sigue contando.
     // Mismo criterio que getControlFacturacion — ver lib/facturacion-billed-party.ts.
     const fa = facturadoAOwner(idempresa, owner, r.tipooperacion, r.transporte)
-    const k = `${on}|||${codigo}`
-    const a = accMap.get(k) || { on, codigo, op, tonDet: 0, valorDet: 0 }
-    a.tonDet += ton
-    a.valorDet += fa.cubiertoPorFijo ? 0 : ton * tarifa
-    accMap.set(k, a)
+    // Una línea puede alimentar MÁS DE UN código (Distribución de Avimol: el
+    // mismo tonelaje/valor completo se registra en cargue Y descargue, no se
+    // parte a la mitad) — ver codigoDe().
+    for (const codigo of Array.isArray(codigos) ? codigos : [codigos]) {
+      const k = `${on}|||${codigo}`
+      const a = accMap.get(k) || { on, codigo, op, tonDet: 0, valorDet: 0 }
+      a.tonDet += ton
+      a.valorDet += fa.cubiertoPorFijo ? 0 : ton * tarifa
+      accMap.set(k, a)
+    }
   }
 
   for (const a of accMap.values()) {
@@ -588,7 +621,12 @@ export async function getAnalisisFinanciero(
       const lista: ActividadAnalisis[] = []
       for (const acc of actividades.values()) {
         const r = real.get(acc.codigo) || { ton: 0, valor: 0 }
-        const deficit = Math.max(0, acc.volAcordado - r.ton)
+        // Distribución de Avimol: ya facturada completa por el fijo mensual
+        // de "Distribución Turno" (Cargos Fijos) — no existe un concepto de
+        // "$ a facturar adicional" por déficit para esta actividad, es
+        // puramente informativa (volumenReal/% cumplimiento sí se muestran).
+        const sinDeficitFacturable = acc.codigo === "distribucion_cargue" || acc.codigo === "distribucion_descargue"
+        const deficit = sinDeficitFacturable ? 0 : Math.max(0, acc.volAcordado - r.ton)
         lista.push({
           actividad: acc.actividad,
           codigo: acc.codigo,
