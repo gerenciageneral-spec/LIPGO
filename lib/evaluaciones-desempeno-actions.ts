@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase-client"
 import { getCurrentEmpresaIdForInsert } from "@/lib/user-context"
 import { getCurrentUser } from "@/lib/auth-actions"
+import { liquidable } from "@/lib/nomina-calculo-utils"
 
 /**
  * Evaluaciones de Desempeno - server actions
@@ -85,13 +86,20 @@ export async function getColaboradoresConUltimaEvaluacion(
     //      tecnicos/QA que no deben aparecer en la operacion real de
     //      evaluaciones.
     //   3) Filtro por empresa (como antes).
+    //   4) Solo personal ACTIVO Y CONTRATADO: `liquidable()`
+    //      (lib/nomina-calculo-utils, misma regla que nómina — estado !=
+    //      inactivo, sin fecha_retiro, con contratosiigo) + fuera el
+    //      placeholder literal "SIN AUXILIAR" (no es una persona). Mismo
+    //      criterio en todos los ID, igual que /api/evaluaciones-alerts.
+    //      Antes los retirados seguian apareciendo como "pendientes"
+    //      (casos reales: FELIPE PEREZ VEGA, JUAN DAVID GAMEZ TATIS, ID1).
     //
     // Traemos `fechainicio` aunque el shape publico de
     // ColaboradorConEvaluacion no lo exponga (no rompe nada: el .map de
     // abajo solo proyecta los campos del contrato).
-    const { data: headcount, error: errHeadcount } = await supabase
+    const { data: headcountRaw, error: errHeadcount } = await supabase
       .from("headcount")
-      .select("id, idempresa, nombre, cargo, estado, identificacion, fechainicio")
+      .select("id, idempresa, nombre, cargo, estado, identificacion, fechainicio, contratosiigo, fecha_retiro")
       .eq("idempresa", empresaId)
       .not("nombre", "ilike", "%PRUEBA%")
       .order("fechainicio", { ascending: false, nullsFirst: false })
@@ -99,6 +107,10 @@ export async function getColaboradoresConUltimaEvaluacion(
     if (errHeadcount) {
       return { success: false, data: [], error: errHeadcount.message }
     }
+
+    const headcount = (headcountRaw || []).filter(
+      (h) => liquidable(h) && h.nombre?.trim().toUpperCase() !== "SIN AUXILIAR",
+    )
 
     const ids = (headcount || []).map((h) => h.id)
     if (ids.length === 0) {
