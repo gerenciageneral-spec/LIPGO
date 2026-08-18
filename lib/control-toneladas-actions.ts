@@ -8,8 +8,9 @@
 // coordinador nunca diverja del que ya usa Revisión de Nómina.
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
-import { getMetasToneladas } from "@/lib/metas-toneladas-actions"
 import { pesoBaseCalculo, excluirAvimolDistribucion, liquidable, normalizeName } from "@/lib/nomina-calculo-utils"
+import { getHcYHorasRealPorDia } from "@/lib/meta-productividad-actions"
+import { TON_MES_CARGUE_DESCARGUE, DIAS_OPERACION_MES, duracionHoras } from "@/lib/meta-productividad-utils"
 
 // A diferencia de nómina (Revisión de Nómina, PILA, Bonos), aquí NO se
 // excluyen los "auxiliares de PRUEBA": a ellos se les paga aparte ("de una"),
@@ -117,21 +118,28 @@ export async function getControlToneladas(
       if (!data || data.length < 1000) break
     }
 
-    // 3) Meta de toneladas por proyecto — YA EXISTE (Financiera › Tarifas › Metas),
-    //    no se inventa una regla nueva.
-    const metasRes = await getMetasToneladas()
-    const metaPorProyecto = new Map<number, number>()
-    for (const m of metasRes.data || []) metaPorProyecto.set(m.idempresa, m.metaTonTrabajadorDia)
+    // 3) Meta DINÁMICA ton/trabajador/hora por (fecha, proyecto) — real,
+    //    a partir del headcount con asistencia real de ese día (ver
+    //    lib/meta-productividad-actions.ts). Reemplaza la meta plana fija
+    //    que antes venía de Financiera › Tarifas › Metas.
+    const hcHorasPorDia = await getHcYHorasRealPorDia(emps, desde, hasta)
+    const metaPorHoraPorDia = new Map<string, number>()
+    for (const [key, { horasTotales }] of hcHorasPorDia) {
+      const emp = Number(key.split("|")[1])
+      const metaTonDia = (TON_MES_CARGUE_DESCARGUE[emp] || 0) / DIAS_OPERACION_MES
+      metaPorHoraPorDia.set(key, horasTotales > 0 ? metaTonDia / horasTotales : 0)
+    }
 
-    // 3b) Puesto donde quedó PROGRAMADO cada persona ese día — mismo cruce
+    // 3b) Puesto y horas PROGRAMADAS de cada persona ese día — mismo cruce
     //    (idempresa|fecha|nombre normalizado) que ya usa Revisión de Nómina
     //    en getAuxiliaresVsAsistencia, contra registroasistencia.puesto
     //    (Programación de Turnos). cabeceraoc no trae esta info.
     const puestoMap = new Map<string, string>()
+    const horasPersonaPorDia = new Map<string, number>()
     for (let off = 0; ; off += 1000) {
       const { data, error } = await admin
         .from("registroasistencia")
-        .select("nombre, idempresa, fecha, puesto")
+        .select("nombre, idempresa, fecha, puesto, horaentradaprogramada, horasalidaprogramada")
         .in("idempresa", emps)
         .gte("fecha", desde)
         .lte("fecha", hasta)
@@ -141,6 +149,9 @@ export async function getControlToneladas(
         if (!r.puesto) continue
         const key = `${Number(r.idempresa)}|${String(r.fecha).slice(0, 10)}|${normalizeName(r.nombre)}`
         if (!puestoMap.has(key)) puestoMap.set(key, r.puesto)
+        if (!horasPersonaPorDia.has(key) && r.horaentradaprogramada && r.horasalidaprogramada) {
+          horasPersonaPorDia.set(key, duracionHoras(String(r.horaentradaprogramada), String(r.horasalidaprogramada)))
+        }
       }
       if (!data || data.length < 1000) break
     }
@@ -154,6 +165,9 @@ export async function getControlToneladas(
       vehiculos: Set<string>
       ordenes: OrdenTrabajador[]
       tonPorDiaMap: Map<string, number>
+      // Meta INDIVIDUAL de esa persona ese día = meta/hora del proyecto ese
+      // día × sus horas programadas ese día (0 si no hay programación).
+      metaPorDiaMap: Map<string, number>
       vehiculosPorDiaMap: Map<string, Set<string>>
     }
     const porPersona = new Map<string, Acc>()
@@ -186,6 +200,7 @@ export async function getControlToneladas(
             vehiculos: new Set(),
             ordenes: [],
             tonPorDiaMap: new Map(),
+            metaPorDiaMap: new Map(),
             vehiculosPorDiaMap: new Map(),
           }
           porPersona.set(key, c)
@@ -196,6 +211,11 @@ export async function getControlToneladas(
         const puesto = puestoMap.get(`${planta}|${fecha}|${normalizeName(p)}`) || null
         c.ordenes.push({ fecha, orden: String(o.ordendecargue || ""), tipooperacion: tipo, planta, placa, puesto, tonPersona: round3(tonPersona) })
         c.tonPorDiaMap.set(fecha, (c.tonPorDiaMap.get(fecha) || 0) + tonPersona)
+        if (!c.metaPorDiaMap.has(fecha)) {
+          const horasPersona = horasPersonaPorDia.get(`${planta}|${fecha}|${normalizeName(p)}`) || 0
+          const metaPorHoraDia = metaPorHoraPorDia.get(`${fecha}|${planta}`) || 0
+          c.metaPorDiaMap.set(fecha, metaPorHoraDia * horasPersona)
+        }
         if (placa) {
           if (!c.vehiculosPorDiaMap.has(fecha)) c.vehiculosPorDiaMap.set(fecha, new Set())
           c.vehiculosPorDiaMap.get(fecha)!.add(placa)
@@ -209,9 +229,11 @@ export async function getControlToneladas(
     for (const c of porPersona.values()) {
       const diasTrabajados = c.tonPorDiaMap.size
       const tonPromedioDia = diasTrabajados > 0 ? c.tonAcumulada / diasTrabajados : 0
-      // Si trabajó en más de un proyecto en el periodo (raro), promedia sus metas.
-      const metas = [...c.plantas].map((p) => metaPorProyecto.get(p) || 0).filter((m) => m > 0)
-      const metaDia = metas.length > 0 ? metas.reduce((a, b) => a + b, 0) / metas.length : 0
+      // Meta DINÁMICA: promedio de la meta individual (horas programadas de
+      // ESA persona ese día × meta/hora real del proyecto ese día) sobre los
+      // días con meta calculable — ya no es un número plano igual para todos.
+      const metasDelPeriodo = [...c.metaPorDiaMap.values()].filter((m) => m > 0)
+      const metaDia = metasDelPeriodo.length > 0 ? metasDelPeriodo.reduce((a, b) => a + b, 0) / metasDelPeriodo.length : 0
       const pctCumplimiento = metaDia > 0 ? Math.round((tonPromedioDia / metaDia) * 1000) / 10 : 0
       totalToneladas += c.tonAcumulada
       trabajadores.push({

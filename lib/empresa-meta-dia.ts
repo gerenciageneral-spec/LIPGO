@@ -1,3 +1,5 @@
+import { TON_MES_CARGUE_DESCARGUE, DIAS_OPERACION_MES } from "@/lib/meta-productividad-utils"
+
 /**
  * Meta de toneladas por dia, fija por empresa.
  *
@@ -11,25 +13,27 @@
  * (Dashboard Operacion del dia + Dashboard Operacion / LIP) y en el
  * indicador de volumen del BSC (IND-CD-06, lib/sig-actions.ts).
  *
- * Si en el futuro hay que cambiar el valor de una empresa basta con
- * editar este archivo: es la unica fuente de verdad.
- *
- * id1-4 (ago-2026): meta mensual = suma de `acuerdo_volumenes` por
- * proceso vigente (Distribucion de Avimol cuenta UNA vez, no
- * duplicada entre distribucion_cargue/distribucion_descargue) /
- * 24,7 dias habiles (mes menos domingos y festivos):
- *   id1 Indupan       7.800 t/mes -> 315,8
- *   id2 Avimol        9.025 t/mes -> 365,4 (vigencia jul-dic-2026)
- *   id3 Cedi Funza     2.200 t/mes -> 89,1
- *   id4 Cedi Medellin  1.693 t/mes -> 68,5
+ * id1-4: se derivan de `TON_MES_CARGUE_DESCARGUE` (lib/meta-productividad-utils.ts)
+ * / 24,7 dias habiles — MISMA fuente que usa Control de Toneladas y Revision
+ * de Nomina, para que "meta diaria" sea un solo numero en toda la app.
+ * Corregido 2026-08-18 a pedido del usuario: SOLO Cargue y Distribución
+ * cuentan para la meta diaria — Producción (Tolva, Estibado PT, Salvado)
+ * tiene su PROPIO indicador OEE de Producción y no suma acá (antes esta
+ * constante incluía Tolva en id1 por error, y excluía Distribución en id2
+ * por error — el mecanismo de facturación de una actividad, ej. Distribución
+ * de Avimol se cobra vía fijo mensual, no decide si cuenta como tarea diaria):
+ *   id1 Indupan       4.500 t/mes -> 182,2 (Indupan no tiene distribución en el acuerdo)
+ *   id2 Avimol        4.525 t/mes -> 183,2 (vigencia jul-dic-2026; incluye distribución)
+ *   id3 Cedi Funza    2.200 t/mes -> 89,1
+ *   id4 Cedi Medellin 1.693 t/mes -> 68,5
  * id5/id6 son proyectos de prueba, no participan del acuerdo — se
- * dejan sin cambios.
+ * dejan con su valor propio, sin relación con acuerdo_volumenes.
  */
 export const EMPRESA_META_DIA_TON: Record<number, number> = {
-  1: 315.8,
-  2: 365.4,
-  3: 89.1,
-  4: 68.5,
+  1: Math.round((TON_MES_CARGUE_DESCARGUE[1] / DIAS_OPERACION_MES) * 10) / 10,
+  2: Math.round((TON_MES_CARGUE_DESCARGUE[2] / DIAS_OPERACION_MES) * 10) / 10,
+  3: Math.round((TON_MES_CARGUE_DESCARGUE[3] / DIAS_OPERACION_MES) * 10) / 10,
+  4: Math.round((TON_MES_CARGUE_DESCARGUE[4] / DIAS_OPERACION_MES) * 10) / 10,
   5: 120,
   6: 100,
 }
