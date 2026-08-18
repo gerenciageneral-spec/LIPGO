@@ -21,6 +21,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Loader2, Plus, Trash2, ArrowLeft } from "lucide-react"
 import { toast } from "@/hooks/use-toast"
+import { useAuth } from "@/components/auth-provider"
 
 interface OrderEditPageProps {
   order: any
@@ -44,6 +45,9 @@ interface ProductLine {
 }
 
 function OrderEditPage({ order, onSave, onCancel }: OrderEditPageProps) {
+  // Proyecto activo del selector global — mismo criterio que order-entry-form.tsx,
+  // sin esto getClientes() caia a la empresa del PERFIL del usuario.
+  const { selectedEmpresaId } = useAuth()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [orderData, setOrderData] = useState<any>(null)
@@ -84,7 +88,7 @@ function OrderEditPage({ order, onSave, onCancel }: OrderEditPageProps) {
 
   useEffect(() => {
     loadData()
-  }, [order])
+  }, [order, selectedEmpresaId])
 
   const loadData = async () => {
     setLoading(true)
@@ -93,7 +97,7 @@ function OrderEditPage({ order, onSave, onCancel }: OrderEditPageProps) {
       const [vendedoresData, clientesData, condicionesData, tiposData, categoriasData, productosData, detailsResult] =
         await Promise.all([
           getVendedores(),
-          getClientes(),
+          getClientes(selectedEmpresaId ?? undefined),
           getCondicionesPago(),
           getTiposDespacho(),
           getCategorias(),

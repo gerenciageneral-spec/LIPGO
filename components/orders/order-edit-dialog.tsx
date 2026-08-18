@@ -23,6 +23,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Loader2, Plus, Trash2 } from "lucide-react"
 import { toast } from "@/hooks/use-toast"
 import { getCurrentEmpresaIdForInsert } from "@/lib/user-context"
+import { useAuth } from "@/components/auth-provider"
 
 interface OrderEditDialogProps {
   isOpen: boolean
@@ -46,6 +47,9 @@ interface ProductLine {
 }
 
 export function OrderEditDialog({ isOpen, onClose, order, onSave }: OrderEditDialogProps) {
+  // Proyecto activo del selector global — mismo criterio que order-entry-form.tsx,
+  // sin esto getClientes() caia a la empresa del PERFIL del usuario.
+  const { selectedEmpresaId } = useAuth()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
@@ -86,7 +90,7 @@ export function OrderEditDialog({ isOpen, onClose, order, onSave }: OrderEditDia
     if (isOpen && order) {
       loadData()
     }
-  }, [isOpen, order])
+  }, [isOpen, order, selectedEmpresaId])
 
   const loadData = async () => {
     setLoading(true)
@@ -95,7 +99,7 @@ export function OrderEditDialog({ isOpen, onClose, order, onSave }: OrderEditDia
       const [vendedoresData, clientesData, condicionesData, tiposData, categoriasData, productosData, detailsResult] =
         await Promise.all([
           getVendedores(),
-          getClientes(),
+          getClientes(selectedEmpresaId ?? undefined),
           getCondicionesPago(),
           getTiposDespacho(),
           getCategorias(),
