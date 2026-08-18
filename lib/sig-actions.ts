@@ -3862,7 +3862,12 @@ export async function getPanelOperacionLIP(
     // dejando sin tipo de vehículo (y por lo tanto sin SLA) a las órdenes cuya cita
     // caía fuera de la primera página — el "SLA en 0" reportado para Avimol.
     const citasSla = await pagAll((from, to) =>
-      supabase.from("citasvehiculos").select("ocargue,tipovehiculo").in("idempresa", clientes).range(from, to),
+      supabase
+        .from("citasvehiculos")
+        .select("ocargue,tipovehiculo")
+        .in("idempresa", clientes)
+        .order("ocargue", { ascending: true })
+        .range(from, to),
     )
     const tipoPorOc: Record<string, string> = {}
     for (const c of citasSla ?? []) if (c.ocargue) tipoPorOc[String(c.ocargue)] = c.tipovehiculo
@@ -3874,7 +3879,10 @@ export async function getPanelOperacionLIP(
     for (const r of rows) {
       if (!r.iniciocargue || !r.fincargue) continue
       const tv = tipoPorOc[String(r.ordendecargue)]
-      const max = getSlaCargueMin(tv, "PT")
+      // SLA ajustado por sitio (CEDIs +15%/+35%), igual que _computeIndicadoresValores
+      // (el BSC): antes no se pasaba `r.idempresa` y el panel medía a los CEDIs con el
+      // tiempo base de planta, sin el ajuste acordado — más estricto de lo real.
+      const max = getSlaCargueMin(tv, "PT", r.idempresa)
       if (!max) continue
       const real = aMin(r.fincargue) - aMin(r.iniciocargue)
       if (real <= 0 || real > 600) continue
