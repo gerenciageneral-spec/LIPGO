@@ -3730,17 +3730,31 @@ export async function getPanelOperacionLIP(
       for (const e of emps ?? []) nombres[e.id] = e.nombre
     }
 
+    // Lee TODAS las filas paginando (Supabase topa en 1000 SIEMPRE, incluso pidiendo
+    // `.limit(10000)` explícito — verificado con Avimol: 1.702 órdenes reales, la
+    // consulta con `.limit(10000)` solo traía 1.000). Mismo patrón que
+    // `_computeIndicadoresValores` más arriba en este archivo.
+    const pagAll = async (make: (from: number, to: number) => any): Promise<any[]> => {
+      const acc: any[] = []
+      for (let f = 0; ; f += 1000) {
+        const { data } = await make(f, f + 999)
+        acc.push(...(data ?? []))
+        if (!data || data.length < 1000) break
+        if (f > 500000) break
+      }
+      return acc
+    }
+
     // --- Órdenes (cabeceraoc): traer columnas necesarias y agregar en memoria ---
-    let q = supabase
-      .from("cabeceraoc")
-      .select("idempresa,fechaorden,tipooperacion,pesovascula,iniciocargue,fincargue,fotospicking,pdfoc,doccargue,status,ordendecargue,estadofactura,fechacargue,placa,cliente,transporte,facturar")
-      .in("idempresa", clientes)
-      .limit(10000)
-    if (desde) q = q.gte("fechaorden", desde)
-    if (hasta) q = q.lte("fechaorden", hasta)
-    const { data: rowsRaw, error } = await q
-    if (error) return { success: false, error: error.message }
-    const rows: any[] = rowsRaw ?? []
+    const rows: any[] = await pagAll((from, to) => {
+      let q = supabase
+        .from("cabeceraoc")
+        .select("idempresa,fechaorden,tipooperacion,pesovascula,iniciocargue,fincargue,fotospicking,pdfoc,doccargue,status,ordendecargue,estadofactura,fechacargue,placa,cliente,transporte,facturar")
+        .in("idempresa", clientes)
+      if (desde) q = q.gte("fechaorden", desde)
+      if (hasta) q = q.lte("fechaorden", hasta)
+      return q.order("id", { ascending: true }).range(from, to)
+    })
 
     const aMin = (s: string) => {
       const [h, m, sec] = String(s).split(":").map(Number)
@@ -3844,10 +3858,12 @@ export async function getPanelOperacionLIP(
     // --- SLA de tiempos por vehículo (Acuerdos de Servicio acordados) ---
     // Tiempo efectivo (fincargue−iniciocargue) vs el SLA acordado para el tipo
     // de vehículo. Tipo desde citasvehiculos (ocargue = cabeceraoc.ordendecargue).
-    const { data: citasSla } = await supabase
-      .from("citasvehiculos")
-      .select("ocargue,tipovehiculo")
-      .in("idempresa", clientes)
+    // Paginado: Avimol solo tiene 1.537 citas y ya topaba las 1.000 por defecto,
+    // dejando sin tipo de vehículo (y por lo tanto sin SLA) a las órdenes cuya cita
+    // caía fuera de la primera página — el "SLA en 0" reportado para Avimol.
+    const citasSla = await pagAll((from, to) =>
+      supabase.from("citasvehiculos").select("ocargue,tipovehiculo").in("idempresa", clientes).range(from, to),
+    )
     const tipoPorOc: Record<string, string> = {}
     for (const c of citasSla ?? []) if (c.ocargue) tipoPorOc[String(c.ocargue)] = c.tipovehiculo
     const slaTipoMap: Record<string, { sumaReal: number; n: number; ok: number; sla: number }> = {}
