@@ -24,6 +24,7 @@ import {
   getProductWeight, // Imported for getting product weight
 } from "@/lib/actions"
 import { getAccessibleEmpresesFromPermisos } from "@/lib/orders-actions"
+import { useAuth } from "@/components/auth-provider"
 import { generateAndUploadOrderPDF } from "@/lib/pdf-actions" // Imported for PDF generation
 import { toast } from "@/components/ui/use-toast"
 import { Button } from "@/components/ui/button"
@@ -62,6 +63,13 @@ interface OrderEntryFormProps {
 }
 
 function OrderEntryForm({ onManageOrders, editOrderId }: OrderEntryFormProps = {}) {
+  // Proyecto activo del selector global (top bar) — mismo valor que usa el
+  // módulo Clientes al crear un cliente nuevo (GenericCrudTable). Sin esto,
+  // getClientes() caía a getCurrentEmpresaId() (la empresa del PERFIL del
+  // usuario), que puede ser distinta del proyecto activo — un cliente
+  // creado en el proyecto activo (ej. Avimol/ID2) no aparecía aquí. Ver
+  // components/generate-load-orders.tsx para el mismo patrón ya correcto.
+  const { selectedEmpresaId: activeEmpresaId } = useAuth()
   const [vendedores, setVendedores] = useState<{ nombre: string }[]>([])
   const [selectedVendedor, setSelectedVendedor] = useState<string>("")
 
@@ -135,7 +143,7 @@ function OrderEntryForm({ onManageOrders, editOrderId }: OrderEntryFormProps = {
           getCondicionesPago(),
           getTiposDespacho(),
           getDestinos(),
-          getClientes(),
+          getClientes(activeEmpresaId ?? undefined),
           getCategorias(),
           getProductos(),
           getEmpresas(),
@@ -172,7 +180,7 @@ function OrderEntryForm({ onManageOrders, editOrderId }: OrderEntryFormProps = {
     }
 
     loadInitialData()
-  }, [])
+  }, [activeEmpresaId])
 
   useEffect(() => {
     async function loadOrderData() {
