@@ -185,11 +185,14 @@ export function LipAiAssistant({ contextLabel, empresaLabel, onOpen, alertas, on
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preguntaInicial])
 
-  // Limpia markdown para que la voz suene natural (sin *, #, `, enlaces…).
+  // Limpia markdown y emojis para que la voz suene natural (sin *, #, `,
+  // enlaces… ni el sintetizador leyendo "cara feliz", "cohete", etc.).
   const limpiarParaVoz = (t: string) =>
     t
       .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
       .replace(/[*_`#>]/g, "")
+      .replace(/[\p{Extended_Pictographic}\p{Regional_Indicator}]/gu, "")
+      .replace(/[\u200D\uFE0F]/g, "") // zero-width joiner / variation selector sueltos de emojis compuestos
       .replace(/\s+/g, " ")
       .trim()
 
