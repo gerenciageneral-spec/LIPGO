@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { liquidable } from "@/lib/nomina-calculo-utils"
 
 /**
  * Evaluaciones de Desempeno - Alertas de pendientes.
@@ -28,7 +29,7 @@ export async function GET(request: NextRequest) {
     // 1) Trae el headcount total de la empresa
     const { data: headcount, error: errHeadcount } = await supabase
       .from("headcount")
-      .select("id, nombre, cargo, fechainicio")
+      .select("id, nombre, cargo, fechainicio, estado, contratosiigo, fecha_retiro")
       .eq("idempresa", empresaIdNum)
       .order("nombre", { ascending: true })
 
@@ -37,18 +38,20 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ alerts: [], count: 0 })
     }
 
-    // Excluimos del listado a cualquier colaborador cuyo NOMBRE
-    // contenga la palabra "AUXILIAR" (case-insensitive). Estos
-    // registros representan auxiliares de cargue / transitorios que
-    // no entran en el ciclo de evaluacion de desempeno, asi que no
-    // deben generar ruido en el badge de alertas. El filtro va aqui
-    // (post-fetch) en vez de en la query de Supabase porque
-    // "AUXILIAR" puede aparecer en cualquier parte del nombre, no
-    // solo al inicio. NOTA: el filtro se aplica unicamente sobre
-    // `nombre`, no sobre `cargo`, para no excluir colaboradores con
-    // cargos legitimos que contengan esa palabra.
+    // Solo personal ACTIVO y CONTRATADO: `liquidable()` (lib/nomina-calculo-utils,
+    // misma regla que nómina) exige estado != inactivo, sin fecha_retiro y con
+    // contratosiigo diligenciado — así los retirados nunca generan una alerta de
+    // evaluación pendiente. Aparte, excluye "auxiliares de PRUEBA" por nombre
+    // (mismo criterio que `getColaboradoresConUltimaEvaluacion` en
+    // evaluaciones-desempeno-actions.ts, la fuente real del módulo: ahí NO se
+    // excluye a los auxiliares reales, solo a los de PRUEBA — antes esta ruta
+    // excluía a cualquiera con "AUXILIAR" en el nombre, lo que tapaba del badge a
+    // la mayoría del personal operativo real) y al registro placeholder literal
+    // "SIN AUXILIAR" (headcount id 92, ID4) — no es una persona, es el relleno que
+    // usan las órdenes sin auxiliar asignado; tiene contratosiigo fabricado ("13-1")
+    // así que sin este filtro pasaba `liquidable()` como si fuera un colaborador real.
     const headcountList = (headcount || []).filter(
-      (h) => !(h.nombre || "").toUpperCase().includes("AUXILIAR"),
+      (h) => liquidable(h) && !/prueba/i.test(h.nombre || "") && h.nombre?.trim().toUpperCase() !== "SIN AUXILIAR",
     )
     if (headcountList.length === 0) {
       return NextResponse.json({ alerts: [], count: 0 })
