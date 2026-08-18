@@ -154,7 +154,7 @@ export default function DashboardGerencia() {
               key="objetivos"
               className="animate-in fade-in slide-in-from-bottom-2 duration-500"
             >
-              <ObjetivosEstrategicosSection />
+              <ObjetivosEstrategicosSection toneladasDelMes={payload?.toneladasDelMes} />
             </div>
           )}
           {section === "satisfaccion" && (

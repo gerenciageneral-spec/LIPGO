@@ -30,6 +30,11 @@ export interface ObjetivoEstrategico {
 
 interface Props {
   objetivos?: ObjetivoEstrategico[]
+  /** Real acumulado del mes (metadia + EMPRESA_META_DIA_TON) — reemplaza el
+   *  dato de ejemplo de la tarjeta "Toneladas del Mes" cuando se provee. Las
+   *  demas tarjetas (OTIF/Productividad/Asistencia/Exactitud/NPS) siguen
+   *  siendo de ejemplo hasta que tengan su propia fuente real. */
+  toneladasDelMes?: { actual: number; meta: number }
 }
 
 const DEMO_OBJETIVOS: ObjetivoEstrategico[] = [
@@ -95,8 +100,16 @@ const DEMO_OBJETIVOS: ObjetivoEstrategico[] = [
   },
 ]
 
-export function ObjetivosEstrategicosSection({ objetivos }: Props) {
-  const items = objetivos && objetivos.length > 0 ? objetivos : DEMO_OBJETIVOS
+export function ObjetivosEstrategicosSection({ objetivos, toneladasDelMes }: Props) {
+  const base = objetivos && objetivos.length > 0 ? objetivos : DEMO_OBJETIVOS
+  const items =
+    toneladasDelMes && toneladasDelMes.meta > 0
+      ? base.map((o) =>
+          o.id === "toneladas"
+            ? { ...o, actual: toneladasDelMes.actual, meta: toneladasDelMes.meta, delta: undefined }
+            : o,
+        )
+      : base
 
   const cumplidos = items.filter((o) => o.actual >= o.meta).length
   const enProgreso = items.filter((o) => o.actual >= o.meta * 0.85 && o.actual < o.meta).length

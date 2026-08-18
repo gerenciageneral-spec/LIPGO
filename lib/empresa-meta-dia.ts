@@ -8,16 +8,28 @@
  * (necesario para los filtros y graficas), pero el numero "meta"
  * que se compara contra el ejecutado se sobrescribe con este mapa
  * para garantizar el mismo objetivo en todos los dashboards
- * (Dashboard Operacion del dia + Dashboard Operacion / LIP).
+ * (Dashboard Operacion del dia + Dashboard Operacion / LIP) y en el
+ * indicador de volumen del BSC (IND-CD-06, lib/sig-actions.ts).
  *
  * Si en el futuro hay que cambiar el valor de una empresa basta con
  * editar este archivo: es la unica fuente de verdad.
+ *
+ * id1-4 (ago-2026): meta mensual = suma de `acuerdo_volumenes` por
+ * proceso vigente (Distribucion de Avimol cuenta UNA vez, no
+ * duplicada entre distribucion_cargue/distribucion_descargue) /
+ * 24,7 dias habiles (mes menos domingos y festivos):
+ *   id1 Indupan       7.800 t/mes -> 315,8
+ *   id2 Avimol        9.025 t/mes -> 365,4 (vigencia jul-dic-2026)
+ *   id3 Cedi Funza     2.200 t/mes -> 89,1
+ *   id4 Cedi Medellin  1.693 t/mes -> 68,5
+ * id5/id6 son proyectos de prueba, no participan del acuerdo — se
+ * dejan sin cambios.
  */
 export const EMPRESA_META_DIA_TON: Record<number, number> = {
-  1: 182,
-  2: 210,
-  3: 110,
-  4: 80,
+  1: 315.8,
+  2: 365.4,
+  3: 89.1,
+  4: 68.5,
   5: 120,
   6: 100,
 }

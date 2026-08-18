@@ -11,6 +11,7 @@
 
 import { createClient } from "@/lib/supabase-client"
 import { getCurrentEmpresaId } from "@/lib/company-filter"
+import { getMetaDiaForEmpresa, rewriteMetaDiaRows } from "@/lib/empresa-meta-dia"
 
 // ============================================================================
 // Tipos
@@ -86,6 +87,14 @@ export interface AlertaInteligente {
   hace: string // "hace 5m"
 }
 
+export interface ToneladasDelMes {
+  /** Real acumulado del mes en curso (hasta hoy), suma de `metadia`. */
+  actual: number
+  /** EMPRESA_META_DIA_TON x dias con dato en el mes (mismo criterio que
+   *  el Dashboard Operacion/LIP: acumulado a la fecha, no proyeccion). */
+  meta: number
+}
+
 export interface DashboardGerenciaPayload {
   kpis: GerenciaKpis
   recibo: ReciboVehiculo[]
@@ -94,6 +103,7 @@ export interface DashboardGerenciaPayload {
   productividadSemanal: ProductividadDia[]
   pickingPacking: PickingPacking
   alertas: AlertaInteligente[]
+  toneladasDelMes: ToneladasDelMes
   /** ISO string del instante en el que se genero el payload */
   generatedAt: string
 }
@@ -458,6 +468,31 @@ async function fetchAlertas(
   return alertas.slice(0, 8)
 }
 
+/**
+ * Toneladas del Mes (real acumulado vs meta acumulada) — mismo criterio que
+ * el Dashboard Operacion/LIP (`app/api/lip-dashboard?mode=monthly`): suma de
+ * `metadia` del 1 del mes a hoy, con `Meta Dia` sobrescrita por
+ * EMPRESA_META_DIA_TON (lib/empresa-meta-dia.ts, la unica fuente de verdad
+ * de la meta diaria). Reemplaza los datos de ejemplo de "Objetivos
+ * Estrategicos" en el Dashboard Gerencia.
+ */
+async function fetchToneladasDelMes(empresaId: number, today: string): Promise<ToneladasDelMes> {
+  const supabase = await createClient()
+  const inicioMes = `${today.slice(0, 7)}-01`
+  const { data } = await supabase
+    .from("metadia")
+    .select("*")
+    .eq("IdEmpresa", empresaId)
+    .gte("Fecha", inicioMes)
+    .lte("Fecha", today)
+
+  const metaDiaTon = getMetaDiaForEmpresa(empresaId)
+  const rows = rewriteMetaDiaRows(data, metaDiaTon)
+  const actual = rows.reduce((s, r) => s + (Number(r["Total Toneladas Procesadas"]) || 0), 0)
+  const meta = rows.reduce((s, r) => s + (Number(r["Meta Dia"]) || 0), 0)
+  return { actual: Math.round(actual * 10) / 10, meta: Math.round(meta * 10) / 10 }
+}
+
 // ============================================================================
 // Entrypoint: una sola llamada devuelve todo el payload
 // ============================================================================
@@ -474,12 +509,13 @@ export async function getGerenciaDashboardData(
     const today = getColombiaDate()
 
     // Consultas en paralelo.
-    const [recibo, almacen, rutas, productividadSemanal, pickingPacking] = await Promise.all([
+    const [recibo, almacen, rutas, productividadSemanal, pickingPacking, toneladasDelMes] = await Promise.all([
       fetchRecibo(empresaId, today),
       fetchOcupacion(empresaId),
       fetchRutas(empresaId, today),
       fetchProductividad(empresaId),
       fetchPickingPacking(empresaId, today),
+      fetchToneladasDelMes(empresaId, today),
     ])
 
     // Derivar KPIs a partir de todo lo anterior + algunos scalar queries.
@@ -534,6 +570,7 @@ export async function getGerenciaDashboardData(
         productividadSemanal,
         pickingPacking,
         alertas,
+        toneladasDelMes,
         generatedAt: new Date().toISOString(),
       },
     }
