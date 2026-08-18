@@ -729,8 +729,12 @@ function OrderEntryForm({ onManageOrders, editOrderId }: OrderEntryFormProps = {
                               key={c.id}
                               value={c.nombre}
                               onSelect={(currentValue) => {
+                                // cmdk entrega el value recortado (trim) y en minusculas —
+                                // nombres con espacios al inicio/final (dato real: hay
+                                // clientes guardados con un espacio de mas) nunca calzaban
+                                // con la comparacion sin trim, y la seleccion no hacia nada.
                                 const cliente = clientes.find(
-                                  (cl) => cl.nombre.toLowerCase() === currentValue.toLowerCase(),
+                                  (cl) => cl.nombre.trim().toLowerCase() === currentValue.trim().toLowerCase(),
                                 )
                                 if (cliente) {
                                   setSelectedCliente(cliente.nombre)
