@@ -69,6 +69,20 @@
 --     DE VERDAD del ingreso (el filtro de vínculo contra colaboradores_th falla
 --     hacia pagar y dejaba pasar festivos previos al ingreso). Con PISO DE
 --     VIGENCIA 2026-07-16 para no reescribir quincenas ya pagadas/reportadas.
+--   - HORAS EXTRA: SOLO LAS APROBADAS. Las horas las calcula el trigger
+--     `calcular_y_asignar_horas_extras` y quedan en `registroasistencia`, pero
+--     estar registradas no es estar autorizadas: eso lo dice la columna
+--     `aprobado`, que la vista ignoraba — liquidaba toda hora registrada.
+--     Ahora las horas de una fila NO aprobada entran en CERO.
+--     EL ÚNICO VALOR VÁLIDO ES 'aprobado' (confirmado por el negocio). Vacío,
+--     null, 'true', 'si' o cualquier otra cosa NO cuentan. Se normalizan
+--     mayúsculas y espacios, nada más.
+--     OJO: scripts/recalcular_horas_extra_retroactivo_16jul.sql usa un criterio
+--     MÁS AMPLIO sobre esta misma columna; aquí se descartó a propósito.
+--     SIN PISO DE VIGENCIA: aplica a TODO el histórico, así que al reemplazar la
+--     vista bajan las quincenas ya pagadas que tuvieran horas sin aprobar. Para
+--     acotarlo hacia adelante, añadir `AND fecha >= DATE '...'` a la condición.
+--     Medir ANTES con scripts/verificar_horas_extra_aprobadas.sql.
 --   - BONOS no prestacionales (módulo Compensación › Bonos): la CTE `bonos_dia`
 --     agrega por (fecha, persona) los bonos APROBADOS de `bonos_nomina` y los
 --     expone en la columna `bonif_no_prestacional` (antes muerta en 0). NO se
@@ -156,11 +170,40 @@ create or replace view public.pagonomina as
                     WHEN (registroasistencia.especialidad = 'true'::text) THEN true
                     ELSE false
                 END AS especialidad,
-            COALESCE(registroasistencia.hed, (0)::numeric) AS cant_hed,
-            COALESCE(registroasistencia.hedf, (0)::numeric) AS cant_hedf,
-            COALESCE(registroasistencia.hen, (0)::numeric) AS cant_hen,
-            COALESCE(registroasistencia.hef, (0)::numeric) AS cant_hef,
-            COALESCE(registroasistencia.hn, (0)::numeric) AS cant_hn,
+            -- HORAS EXTRA: SOLO LAS APROBADAS.
+            --
+            -- Las horas se registran en `registroasistencia` (las calcula el trigger
+            -- `calcular_y_asignar_horas_extras`) pero eso no significa que estén
+            -- autorizadas. La autorización vive en la columna `aprobado`, y hasta
+            -- ahora la vista la ignoraba: liquidaba TODA hora registrada, aprobada
+            -- o no.
+            --
+            -- EL ÚNICO VALOR VÁLIDO ES 'aprobado', confirmado por el negocio.
+            -- Cualquier otra cosa —vacío, null, 'true', 'si', 'pendiente'— NO
+            -- cuenta como aprobación y esas horas no se liquidan.
+            --
+            -- OJO si se compara contra otros scripts:
+            -- scripts/recalcular_horas_extra_retroactivo_16jul.sql acepta además
+            -- 'true' y 'si'. Ese criterio quedó descartado aquí a propósito.
+            --
+            -- `LOWER(TRIM(...))` solo normaliza mayúsculas y espacios sobrantes del
+            -- digitado — 'Aprobado ' sigue siendo la misma palabra —, no admite
+            -- otros valores. `::text` porque la columna puede ser boolean en
+            -- algunas instancias.
+            --
+            -- La bandera se evalúa POR FILA, antes del colapso multi-turno de
+            -- `datos_asistencia`: un Auxiliar Mixto puede tener el Turno 1 aprobado
+            -- y el Turno 2 no, y solo deben sumarse las horas del aprobado.
+            CASE WHEN (LOWER(TRIM(registroasistencia.aprobado::text)) = 'aprobado'::text)
+                 THEN COALESCE(registroasistencia.hed, (0)::numeric) ELSE (0)::numeric END AS cant_hed,
+            CASE WHEN (LOWER(TRIM(registroasistencia.aprobado::text)) = 'aprobado'::text)
+                 THEN COALESCE(registroasistencia.hedf, (0)::numeric) ELSE (0)::numeric END AS cant_hedf,
+            CASE WHEN (LOWER(TRIM(registroasistencia.aprobado::text)) = 'aprobado'::text)
+                 THEN COALESCE(registroasistencia.hen, (0)::numeric) ELSE (0)::numeric END AS cant_hen,
+            CASE WHEN (LOWER(TRIM(registroasistencia.aprobado::text)) = 'aprobado'::text)
+                 THEN COALESCE(registroasistencia.hef, (0)::numeric) ELSE (0)::numeric END AS cant_hef,
+            CASE WHEN (LOWER(TRIM(registroasistencia.aprobado::text)) = 'aprobado'::text)
+                 THEN COALESCE(registroasistencia.hn, (0)::numeric) ELSE (0)::numeric END AS cant_hn,
                 CASE
                     WHEN ((registroasistencia.asistencia IS NULL) OR (TRIM(BOTH FROM registroasistencia.asistencia) = ''::text)) THEN 0
                     WHEN (TRIM(BOTH FROM registroasistencia.asistencia) = ANY (ARRAY['13- Incapacidad por enfermedad general al 100%'::text, '31- Vacaciones disfrutadas'::text, '15- Incapacidad por enfermedad general al 66%- ingreso'::text, '14- Incapacidad por enfermedad general al 50'::text, 'Descanso'::text, 'Descanso compensatorio domingo anterior'::text, '38- Licencia no remunerada- Deducción'::text, 'Retiro'::text])) THEN 0
