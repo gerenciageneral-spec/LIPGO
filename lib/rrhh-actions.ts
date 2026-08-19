@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase-server"
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getCurrentEmpresaIdForInsert } from "@/lib/user-context"
+import { cargoCanonico } from "@/lib/headcount-cargos"
 
 // COLABORADORES - Fetch from headcount table filtered by empresa
 export async function getColaboradoresFromHeadcount(selectedEmpresaId?: number | null) {
@@ -139,8 +140,26 @@ function mapColaboradorToHeadcount(colaborador: Record<string, any>) {
     celular: colaborador.numero_celular || colaborador.numero_telefono_celular || null,
     fechainicio: colaborador.fecha_inicio_contrato || null,
     salario: Number.isNaN(sueldo as number) ? null : sueldo,
-    cargo: colaborador.cargo || null,
+    // `cargo` NO va aqui a proposito — ver `cargoParaAlta` abajo.
+    //
+    // Este mapa se usa TAMBIEN para ACTUALIZAR el espejo de headcount, y hasta
+    // ahora incluia el cargo: cada vez que alguien guardaba al colaborador en
+    // TH, el cargo elegido en Head Count quedaba pisado por el del catalogo de
+    // TH, que es otro y mucho mas largo ("COORDINADOR SST", "COORDINADORA SST").
+    // El cargo de Head Count solo se elige en Head Count.
   }
+}
+
+/**
+ * Cargo con el que NACE un registro nuevo de headcount creado desde TH.
+ *
+ * Solo se siembra si el cargo del colaborador corresponde a uno de los tres
+ * validos (ver lib/headcount-cargos.ts); cualquier otra cosa entra en null para
+ * que Head Count lo defina. En una ACTUALIZACION no se usa: ahi el cargo no se
+ * toca nunca.
+ */
+function cargoParaAlta(colaborador: Record<string, any>): string | null {
+  return cargoCanonico(colaborador?.cargo)
 }
 
 // Crea o actualiza el registro espejo en headcount para un colaborador.
@@ -183,7 +202,8 @@ async function syncHeadcountForColaborador(
 
     const { data, error } = await supabase
       .from("headcount")
-      .insert({ ...hcFields, idempresa: empresaId })
+      // El cargo solo se siembra en el ALTA, y solo si es uno de los validos.
+      .insert({ ...hcFields, cargo: cargoParaAlta(colaborador), idempresa: empresaId })
       .select("id")
       .single()
     if (error) throw error

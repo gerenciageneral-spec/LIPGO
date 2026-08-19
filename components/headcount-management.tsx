@@ -27,9 +27,12 @@ import { useToast } from "@/hooks/use-toast"
 import type { HeadcountPerson } from "@/lib/headcount-actions"
 import { Upload, Trash2, Eye, Plus, Edit, ShieldCheck, ArrowRight, Users, Briefcase, Search } from "lucide-react"
 import { useAuth } from "@/components/auth-provider"
+import { CARGOS_HEADCOUNT } from "@/lib/headcount-cargos"
 
-// Listado fijo de cargos para Headcount.
-const CARGOS_OPTIONS = ["AUXILIAR LOGÍSTICO", "COORDINADOR"]
+// Listado fijo de cargos para Headcount. Vive en lib/headcount-cargos.ts
+// porque los server actions que sincronizan desde otros modulos tambien lo
+// necesitan: es la lista que decide que valor puede quedar en `cargo`.
+const CARGOS_OPTIONS = CARGOS_HEADCOUNT
 
 const DOCUMENT_FIELDS = [
   { key: "hoja_de_vida", label: "Hoja de Vida" },
@@ -699,8 +702,9 @@ export default function HeadcountManagement() {
                 />
               ) : (
                 /*
-                  El cargo se elige de un listado fijo de dos opciones:
-                  AUXILIAR LOGÍSTICO o COORDINADOR. Para no perder valores
+                  El cargo se elige del listado fijo de lib/headcount-cargos.ts
+                  (AUXILIAR LOGÍSTICO, COORDINADOR, MONTACARGUISTA) y ningun
+                  otro modulo lo puede cambiar. Para no perder valores
                   legacy guardados como texto libre, si `formData.cargo`
                   tiene un valor que NO esta en el listado lo agregamos como
                   SelectItem "fantasma" al inicio.
@@ -713,7 +717,7 @@ export default function HeadcountManagement() {
                     <SelectValue placeholder="Selecciona un cargo" />
                   </SelectTrigger>
                   <SelectContent>
-                    {formData.cargo && !CARGOS_OPTIONS.includes(formData.cargo) ? (
+                    {formData.cargo && !(CARGOS_OPTIONS as readonly string[]).includes(formData.cargo) ? (
                       <SelectItem value={formData.cargo}>
                         {formData.cargo} (valor actual)
                       </SelectItem>

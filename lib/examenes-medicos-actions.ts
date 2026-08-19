@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase-client"
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getCurrentEmpresaIdForInsert } from "@/lib/user-context"
+import { cargoCanonico } from "@/lib/headcount-cargos"
 
 export interface ExamenMedico {
   id: string
@@ -286,7 +287,11 @@ export async function promoverAHeadCount(cedula: string, empresaId: number) {
     identificacion: ced,
     nombre: nombre || ced,
     estado: "activo",
-    cargo: hoja?.cargo_aspirado || null,
+    // Solo si corresponde a uno de los cargos validos de Head Count. Antes se
+    // sembraba `cargo_aspirado` tal cual —texto libre que escribe el aspirante
+    // en su hoja de vida—, asi que el registro nacia con un cargo fuera del
+    // listado. Ver lib/headcount-cargos.ts.
+    cargo: cargoCanonico(hoja?.cargo_aspirado),
     correo: hoja?.correo || null,
     celular: hoja?.telefono || null,
     ...docs,
