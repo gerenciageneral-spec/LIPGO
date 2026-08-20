@@ -16,12 +16,12 @@
 // exportar funciones async).
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
-import { TON_MES_CARGUE_DESCARGUE, DIAS_OPERACION_MES, duracionHoras, normNombreMeta, esPuestoCargueDescargue } from "@/lib/meta-productividad-utils"
+import { TON_MES_CARGUE_DESCARGUE, DIAS_OPERACION_MES, duracionHorasNetas, normNombreMeta, esPuestoCargueDescargue } from "@/lib/meta-productividad-utils"
 
 export interface HcYHorasDia {
   /** Cantidad de auxiliares de Cargue/Descargue con asistencia real ese dia. */
   headcount: number
-  /** Suma de horas programadas (salida - entrada) de esos auxiliares ese dia. */
+  /** Suma de horas programadas NETAS (salida - entrada - 1h de almuerzo) de esos auxiliares ese dia. */
   horasTotales: number
 }
 
@@ -71,7 +71,7 @@ export async function getHcYHorasRealPorDia(
       const acc = out.get(key) || { headcount: 0, horasTotales: 0 }
       acc.headcount += 1
       if (r.horaentradaprogramada && r.horasalidaprogramada) {
-        acc.horasTotales += duracionHoras(String(r.horaentradaprogramada), String(r.horasalidaprogramada))
+        acc.horasTotales += duracionHorasNetas(String(r.horaentradaprogramada), String(r.horasalidaprogramada))
       }
       out.set(key, acc)
     }

@@ -46,6 +46,14 @@ export const TON_MES_CARGUE_DESCARGUE: Record<number, number> = {
 /** Dias habiles/mes (lunes a sabado, sin domingos ni festivos) — mismo criterio en toda la app. */
 export const DIAS_OPERACION_MES = 24.7
 
+/** Muelles/cupos de cargue que se pueden atender SIMULTÁNEAMENTE por proyecto — confirmado por el usuario 2026-08-18. */
+export const MUELLES_SIMULTANEOS: Record<number, number> = {
+  1: 3, // Indupan
+  2: 5, // Avimol
+  3: 4, // Cedi Funza
+  4: 1, // Cedi Medellín
+}
+
 function normPuesto(s: unknown): string {
   return String(s ?? "")
     .normalize("NFD")
@@ -56,17 +64,24 @@ function normPuesto(s: unknown): string {
 }
 
 /**
- * Puestos (registroasistencia.puesto) que cuentan para el headcount de la
+ * Puestos (registroasistencia.puesto) que cuentan para el HEADCOUNT de la
  * meta diaria de Cargue/Distribución, por proyecto — confirmado con el
  * usuario 2026-08-18. Puestos de producción (Estibado PT, Salvado,
  * Montacargas de producción) y líneas ajenas al acuerdo (Arrume Negro,
  * Cargue/Descargue Huevos, Clasificación huevos, Cosedor, Mantenimiento
  * Estibas, Montacargas de cargue, Pacas, Reempaque — todas de Avimol, sin
  * actividad_codigo propio en el acuerdo) quedan FUERA a propósito.
+ *
+ * OJO: "Distribución Turno" (Avimol) NO cuenta para el headcount aunque su
+ * tonelaje SÍ cuente para `TON_MES_CARGUE_DESCARGUE` — confirmado con el
+ * usuario: esas personas no están en Cargue, son un pool aparte (cubierto
+ * por el fijo mensual de Cargos Fijos). El tonelaje de Distribución cuenta
+ * como TAREA del proyecto, pero no diluye la meta/hora de los auxiliares de
+ * Cargue/Descargue con más gente de la que realmente hace ese trabajo.
  */
 const PUESTOS_CARGUE_DESCARGUE: Record<number, Set<string>> = {
   1: new Set(["CARGUE/DESCARGUE", "AUXILIAR MIXTO"]),
-  2: new Set(["CARGUE/DESCARGUE", "DISTRIBUCION TURNO"]),
+  2: new Set(["CARGUE/DESCARGUE"]),
   3: new Set(["CARGUE/DESCARGUE"]),
   4: new Set(["CARGUE/DESCARGUE"]),
 }
@@ -85,6 +100,11 @@ export function duracionHoras(entrada: string, salida: string): number {
   let minSalida = hs * 60 + (ms || 0)
   if (minSalida <= minEntrada) minSalida += 24 * 60
   return (minSalida - minEntrada) / 60
+}
+
+/** Jornada NETA (descuenta 1h de almuerzo, confirmado por el usuario 2026-08-18: todos los trabajadores almuerzan 1h/día). Para calcular capacidad/meta-hora, no para "horas transcurridas" en vivo. */
+export function duracionHorasNetas(entrada: string, salida: string): number {
+  return Math.max(0, duracionHoras(entrada, salida) - 1)
 }
 
 export function normNombreMeta(s: unknown): string {
