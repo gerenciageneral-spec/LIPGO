@@ -7,8 +7,8 @@
 // sale del acuerdo real por proceso (TON_MES_CARGUE_DESCARGUE, lib/
 // meta-productividad-utils.ts) y el HC se recalcula cada día con la
 // asistencia real (lib/meta-productividad-actions.ts) — el mismo cálculo que
-// ya usan Control de Toneladas ("Avance en Vivo") y Revisión de Nómina, para
-// que los tres NUNCA diverjan entre sí.
+// ya usan Centro de Coordinación (avance en vivo del turno) y Revisión de
+// Nómina, para que los tres NUNCA diverjan entre sí.
 //
 // La tabla `meta_toneladas_proyecto` (histórica) NO se borra ni se migra —
 // simplemente la app dejó de leerla y escribirla.

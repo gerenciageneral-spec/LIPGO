@@ -14,7 +14,6 @@ import {
   Check,
   ArrowLeft,
   Camera,
-  Upload,
   AlertTriangle,
   Pause,
   Play,
@@ -54,6 +53,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { QRCameraScanner } from "@/components/qr-camera-scanner"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { useAuth } from "@/components/auth-provider"
+import { PickingPhotoUploadDialog } from "@/components/picking-photo-upload-dialog"
 
 interface ExtendedPickingItem extends PickingItem {
   verificationType?: "simple" | "qr"
@@ -65,65 +65,6 @@ interface ExtendedPickingItem extends PickingItem {
     allProductsInQR?: any[] // Added to store all products from the QR scan
   }>
   qrAccumulatedQuantity?: number
-}
-
-// Compress image using Canvas API
-const compressImage = (file: File, maxWidth: number = 1200, quality: number = 0.7): Promise<File> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      const img = new Image()
-      img.crossOrigin = "anonymous"
-      img.onload = () => {
-        const canvas = document.createElement("canvas")
-        let width = img.width
-        let height = img.height
-
-        // Scale down if larger than maxWidth
-        if (width > maxWidth) {
-          height = Math.round((height * maxWidth) / width)
-          width = maxWidth
-        }
-
-        canvas.width = width
-        canvas.height = height
-
-        const ctx = canvas.getContext("2d")
-        if (!ctx) {
-          resolve(file) // Return original if canvas fails
-          return
-        }
-
-        ctx.drawImage(img, 0, 0, width, height)
-
-        canvas.toBlob(
-          (blob) => {
-            if (!blob) {
-              resolve(file)
-              return
-            }
-            const compressedFile = new File([blob], file.name, {
-              type: "image/jpeg",
-              lastModified: Date.now(),
-            })
-            resolve(compressedFile)
-          },
-          "image/jpeg",
-          quality
-        )
-      }
-      img.onerror = () => resolve(file) // Return original on error
-      img.src = e.target?.result as string
-    }
-    reader.onerror = () => resolve(file)
-    reader.readAsDataURL(file)
-  })
-}
-
-// Compress multiple images
-const compressImages = async (files: File[], maxWidth: number = 1200, quality: number = 0.7): Promise<File[]> => {
-  const compressed = await Promise.all(files.map((file) => compressImage(file, maxWidth, quality)))
-  return compressed
 }
 
 function Picking() {
@@ -199,9 +140,6 @@ function Picking() {
 
   const [photoDialogOpen, setPhotoDialogOpen] = useState(false)
   const [selectedPhotosOrder, setSelectedPhotosOrder] = useState<PendingLoadOrder | null>(null)
-  const [selectedPhotos, setSelectedPhotos] = useState<File[]>([])
-  const [uploadingPhotos, setUploadingPhotos] = useState(false)
-  const [photoPreviewUrls, setPhotoPreviewUrls] = useState<string[]>([])
 
   // Numeros de orden (ordendecargue) que tienen una pausa activa.
   const [pausedOrders, setPausedOrders] = useState<Set<string>>(new Set())
@@ -264,7 +202,15 @@ const loadOrders = async () => {
 
   const handleAssignPersonnel = async (order: PendingLoadOrder) => {
     setSelectedOrder(order)
-    setSelectedPersonnel([])
+    // Precarga los auxiliares YA asignados (si los hay) para poder agregar o
+    // quitar sobre lo existente — el personal se puede editar mientras la
+    // orden siga abierta, no solo la primera vez.
+    setSelectedPersonnel(
+      String(order.auxiliares || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+    )
     setPersonnelDialogOpen(true)
 
     setLoadingPersonnel(true)
@@ -1008,142 +954,14 @@ const loadOrders = async () => {
 
   const handleUploadPhotos = (order: PendingLoadOrder) => {
     setSelectedPhotosOrder(order)
-    setSelectedPhotos([])
-    setPhotoPreviewUrls([])
     setPhotoDialogOpen(true)
   }
 
-  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || [])
-
-    if (files.length + selectedPhotos.length > 30) {
-      toast({
-        title: "Error",
-        description: "Máximo 30 fotos permitidas",
-        variant: "destructive",
-      })
-      return
-    }
-
-    // Create preview URLs
-    const newPreviewUrls = files.map((file) => URL.createObjectURL(file))
-    setPhotoPreviewUrls([...photoPreviewUrls, ...newPreviewUrls])
-    setSelectedPhotos([...selectedPhotos, ...files])
-  }
-
-  const handleRemovePhoto = (index: number) => {
-    const newPhotos = selectedPhotos.filter((_, i) => i !== index)
-    const newPreviews = photoPreviewUrls.filter((_, i) => i !== index)
-
-    // Revoke the object URL to free memory
-    URL.revokeObjectURL(photoPreviewUrls[index])
-
-    setSelectedPhotos(newPhotos)
-    setPhotoPreviewUrls(newPreviews)
-  }
-
-  const handleSavePhotos = async () => {
-    if (!selectedPhotosOrder || selectedPhotos.length === 0) {
-      toast({
-        title: "Error",
-        description: "Debe seleccionar al menos una foto",
-        variant: "destructive",
-      })
-      return
-    }
-
-    setUploadingPhotos(true)
-
-    try {
-      // 1) Compresion siempre (no solo si hay >10). Las camaras de
-      //    celular generan archivos de 3-5MB; sumarlos en un mismo
-      //    POST excede el limite ~4.5MB de Vercel y la peticion ni
-      //    siquiera entra al endpoint, por eso a los usuarios "se
-      //    les queda pegado el dialog". Bajar a maxWidth 1280 + 0.6
-      //    deja fotos legibles de ~250-400KB cada una.
-      toast({
-        title: "Optimizando fotos",
-        description: `Procesando ${selectedPhotos.length} foto(s)...`,
-      })
-      const photosToUpload = await compressImages(selectedPhotos, 1280, 0.6)
-
-      // 2) Subimos foto por foto en peticiones independientes. Asi
-      //    nunca acumulamos peso en un solo body y el cliente puede
-      //    mostrar progreso real. Si falla una, abortamos con un
-      //    mensaje claro y NO finalizamos la orden.
-      const orderId = selectedPhotosOrder.id.toString()
-      const urls: string[] = []
-      for (let i = 0; i < photosToUpload.length; i++) {
-        const photo = photosToUpload[i]
-        toast({
-          title: "Subiendo fotos",
-          description: `Subiendo ${i + 1} de ${photosToUpload.length}...`,
-        })
-        const fd = new FormData()
-        fd.append("orderId", orderId)
-        fd.append("mode", "append")
-        fd.append("files", photo)
-        const res = await fetch("/api/upload-picking-photos", {
-          method: "POST",
-          body: fd,
-        })
-        const data = await res.json().catch(() => ({}))
-        if (!res.ok || !data?.success || !Array.isArray(data?.urls)) {
-          throw new Error(
-            data?.error ||
-              data?.details ||
-              `Error subiendo la foto ${i + 1}. Intenta nuevamente.`,
-          )
-        }
-        urls.push(...data.urls)
-      }
-
-      // 3) Finalizamos la orden enviando la lista completa de URLs.
-      //    Este request no contiene archivos: solo el JSON de URLs,
-      //    asi que pesa pocos KB y no toca el limite del body.
-      const finalizeFd = new FormData()
-      finalizeFd.append("orderId", orderId)
-      finalizeFd.append("mode", "finalize")
-      finalizeFd.append("urls", JSON.stringify(urls))
-      const finalizeRes = await fetch("/api/upload-picking-photos", {
-        method: "POST",
-        body: finalizeFd,
-      })
-      const finalizeData = await finalizeRes.json().catch(() => ({}))
-      if (!finalizeRes.ok || !finalizeData?.success) {
-        throw new Error(
-          finalizeData?.error ||
-            finalizeData?.details ||
-            "No se pudo cerrar la orden tras subir las fotos",
-        )
-      }
-
+  const handlePhotosUploaded = async () => {
+    if (selectedPhotosOrder) {
       setOrdersWithPhotos((prev) => new Set([...prev, selectedPhotosOrder.id]))
-
-      toast({
-        title: "Éxito",
-        description: `${urls.length} foto(s) cargadas exitosamente`,
-      })
-
-      // Liberar memoria de los previews
-      photoPreviewUrls.forEach((url) => URL.revokeObjectURL(url))
-
-      setSelectedPhotos([])
-      setPhotoPreviewUrls([])
-      setPhotoDialogOpen(false)
-      await loadOrders()
-    } catch (error: any) {
-      console.error("[v0] Error saving photos:", error)
-      toast({
-        title: "Error",
-        description: error?.message || "Error al guardar las fotos",
-        variant: "destructive",
-      })
-    } finally {
-      // Pase lo que pase liberamos el lock — antes si el endpoint
-      // colgaba el dialog se quedaba bloqueado sin poder cerrar.
-      setUploadingPhotos(false)
     }
+    await loadOrders()
   }
 
   const allItemsVerified = pickingItems.length > 0 && verifiedItems.size === pickingItems.length
@@ -1935,7 +1753,10 @@ const loadOrders = async () => {
                                 bloqueamos por `iniciocargue` porque el PDF lo
                                 escribe; solo evitamos doble generacion).
                               - Asignar Personal requiere `iniciocargue` (PDF ya
-                                generado) y que NO haya `auxiliares` aun.
+                                generado). Se puede volver a abrir cuantas veces
+                                haga falta para agregar o quitar gente mientras
+                                la orden siga abierta — no se bloquea despues de
+                                la primera vez.
                               - Cargar fotos requiere `auxiliares` (personal ya
                                 asignado). El cargue de fotos cierra la orden
                                 (escribe `fincargue`), por eso es el paso final.
@@ -1965,11 +1786,11 @@ const loadOrders = async () => {
                             size="sm"
                             variant="outline"
                             onClick={() => handleAssignPersonnel(order)}
-                            disabled={!order.iniciocargue || !!order.auxiliares}
+                            disabled={!order.iniciocargue}
                             className="gap-1 h-7 text-[10px] px-2"
                           >
                             <UserPlus className="h-3 w-3" />
-                            Asignar Personal
+                            {order.auxiliares ? "Editar Personal" : "Asignar Personal"}
                           </Button>
                           <Button
                             size="sm"
@@ -2084,11 +1905,11 @@ const loadOrders = async () => {
                     size="sm"
                     variant="outline"
                     onClick={() => handleAssignPersonnel(order)}
-                    disabled={!order.iniciocargue || !!order.auxiliares}
+                    disabled={!order.iniciocargue}
                     className="text-xs h-9"
                   >
                     <UserPlus className="h-3 w-3 mr-1" />
-                    Personal
+                    {order.auxiliares ? "Editar" : "Personal"}
                   </Button>
                   <Button
                     size="sm"
@@ -2130,10 +1951,12 @@ const loadOrders = async () => {
       <Dialog open={personnelDialogOpen} onOpenChange={setPersonnelDialogOpen}>
         <DialogContent className="max-w-md w-[95vw]">
           <DialogHeader>
-            <DialogTitle className="text-base">Asignar Personal</DialogTitle>
-            <DialogDescription className="text-sm">
-              <div>Orden: {selectedOrder?.ordendecargue}</div>
-              <div className="mt-1">Usuario: {profile?.usuario || "Usuario desconocido"}</div>
+            <DialogTitle className="text-base">{selectedOrder?.auxiliares ? "Editar Personal" : "Asignar Personal"}</DialogTitle>
+            <DialogDescription className="text-sm" asChild>
+              <span className="block">
+                <span className="block">Orden: {selectedOrder?.ordendecargue}</span>
+                <span className="mt-1 block">Usuario: {profile?.usuario || "Usuario desconocido"}</span>
+              </span>
             </DialogDescription>
           </DialogHeader>
 
@@ -2196,70 +2019,15 @@ const loadOrders = async () => {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={photoDialogOpen} onOpenChange={setPhotoDialogOpen}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Cargar Fotos de Picking - {selectedPhotosOrder?.ordendecargue}</DialogTitle>
-            <DialogDescription>
-              Seleccione hasta 30 fotos del proceso de picking. Puede usar la cámara de su dispositivo móvil o
-              seleccionar archivos.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            {/* File input */}
-            <div className="flex items-center gap-4">
-              <Label htmlFor="photo-upload" className="cursor-pointer">
-                <div className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90">
-                  <Upload className="h-4 w-4" />
-                  <span>Seleccionar Fotos</span>
-                </div>
-              </Label>
-              <Input
-                id="photo-upload"
-                type="file"
-                accept="image/*"
-                multiple
-                className="hidden"
-                onChange={handlePhotoChange}
-              />
-              <span className="text-sm text-muted-foreground">{selectedPhotos.length} / 30 fotos seleccionadas</span>
-            </div>
-
-            {/* Photo previews */}
-            {photoPreviewUrls.length > 0 && (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {photoPreviewUrls.map((url, index) => (
-                  <div key={index} className="relative group">
-                    <img
-                      src={url || "/placeholder.svg"}
-                      alt={`Preview ${index + 1}`}
-                      className="w-full h-32 object-cover rounded-md border"
-                    />
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      className="absolute top-1 right-1 h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                      onClick={() => handleRemovePhoto(index)}
-                    >
-                      ×
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPhotoDialogOpen(false)} disabled={uploadingPhotos}>
-              Cancelar
-            </Button>
-            <Button onClick={handleSavePhotos} disabled={uploadingPhotos || selectedPhotos.length === 0}>
-              {uploadingPhotos ? "Guardando..." : "Guardar Fotos"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {selectedPhotosOrder && (
+        <PickingPhotoUploadDialog
+          open={photoDialogOpen}
+          onOpenChange={setPhotoDialogOpen}
+          orderId={selectedPhotosOrder.id}
+          orderLabel={selectedPhotosOrder.ordendecargue}
+          onUploaded={handlePhotosUploaded}
+        />
+      )}
 
       {/* Confirmación al verificar una cantidad menor a la del pedido */}
       <Dialog open={lowQtyConfirm !== null} onOpenChange={(open) => !open && setLowQtyConfirm(null)}>

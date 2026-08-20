@@ -151,6 +151,11 @@ export interface UserPermissions {
   // operativa del coordinador: toneladas por dia y acumuladas por
   // trabajador, para gestionar personal (no es un modulo de pago).
   control_toneladas: boolean
+  // Permiso del modulo "Centro de Coordinación" (Operación Lip). Une en una
+  // sola pantalla la gestión que hoy está dispersa en Picking, Packing y el
+  // control de muelles/SLA: el coordinador ve los muelles en vivo, asigna
+  // personal, inicia y cierra órdenes de Cargue/Descargue/Distribución.
+  centro_coordinacion: boolean
   // Configuración
   config_bodegas: boolean
   config_categorias: boolean
@@ -366,6 +371,7 @@ export const MODULE_PERMISSION_MAP: Record<string, keyof UserPermissions> = {
   "Programación de turnos": "programacionturnos",
   "Notificaciones al Personal": "notificaciones",
   "Control de Toneladas": "control_toneladas",
+  "Centro de Coordinación": "centro_coordinacion",
   Visor: "visor",
   Bodegas: "config_bodegas",
   Categorías: "config_categorias",

@@ -19,8 +19,8 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { ChevronRight, Loader2, Scale, Truck, Users, Gauge, LayoutGrid, Clock, CheckCircle2 } from "lucide-react"
-import { getControlToneladas, getRitmoEnVivo, type TrabajadorToneladas, type RitmoEnVivo } from "@/lib/control-toneladas-actions"
+import { ChevronRight, Loader2, Scale, Truck, Users } from "lucide-react"
+import { getControlToneladas, type TrabajadorToneladas } from "@/lib/control-toneladas-actions"
 
 const TODOS = "__todos__"
 const BOGOTA_TZ = "America/Bogota"
@@ -69,7 +69,6 @@ export default function ControlToneladas() {
   const [cargado, setCargado] = useState(false)
   const [trabajadores, setTrabajadores] = useState<TrabajadorToneladas[]>([])
   const [expand, setExpand] = useState<Set<string>>(new Set())
-  const [ritmo, setRitmo] = useState<RitmoEnVivo | null>(null)
 
   const consultar = async () => {
     if (!selectedEmpresaId) return
@@ -92,28 +91,6 @@ export default function ControlToneladas() {
   useEffect(() => {
     consultar()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedEmpresaId])
-
-  // Avance en Vivo / Estado de Muelles — siempre es HOY, independiente del
-  // filtro de fechas de la tabla histórica de abajo. Refresco cada 60s
-  // (mismo intervalo que ya usa Dashboard Gerencia) para que el coordinador
-  // no tenga que recargar la página a mano durante el turno.
-  useEffect(() => {
-    if (!selectedEmpresaId) {
-      setRitmo(null)
-      return
-    }
-    let activo = true
-    const consultarRitmo = async () => {
-      const r = await getRitmoEnVivo(selectedEmpresaId, hoyISO())
-      if (activo) setRitmo(r.success && r.data ? r.data : null)
-    }
-    consultarRitmo()
-    const id = setInterval(consultarRitmo, 60_000)
-    return () => {
-      activo = false
-      clearInterval(id)
-    }
   }, [selectedEmpresaId])
 
   const aplicarPreset = (preset: "hoy" | "mes" | "mesAnterior" | "trimestre" | "anio") => {
@@ -186,150 +163,6 @@ export default function ControlToneladas() {
         </p>
       ) : (
         <>
-          {ritmo && (
-            <Card>
-              <CardHeader className="pb-2">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <CardTitle className="flex items-center gap-2 text-base">
-                    <Gauge className="h-4 w-4 text-primary" />
-                    Avance en Vivo — hoy {fechaCorta(hoyISO())}
-                  </CardTitle>
-                  <Badge
-                    className={
-                      ritmo.estado === "adelantado"
-                        ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-400"
-                        : ritmo.estado === "cerca"
-                          ? "bg-amber-100 text-amber-700 hover:bg-amber-100 dark:bg-amber-950/40 dark:text-amber-400"
-                          : ritmo.estado === "atrasado"
-                            ? "bg-rose-100 text-rose-700 hover:bg-rose-100 dark:bg-rose-950/40 dark:text-rose-400"
-                            : "bg-muted text-muted-foreground hover:bg-muted"
-                    }
-                  >
-                    {ritmo.estado === "adelantado"
-                      ? "Adelantado"
-                      : ritmo.estado === "cerca"
-                        ? "Cerca"
-                        : ritmo.estado === "atrasado"
-                          ? "Atrasado"
-                          : "Sin datos aún"}
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                  <span className="text-3xl font-bold tabular-nums">{t2(ritmo.tonMovido)}</span>
-                  <span className="text-xs text-muted-foreground">t hoy (órdenes ya cerradas)</span>
-                  <span className="ml-auto text-right text-xs text-muted-foreground">
-                    esperado a esta hora{" "}
-                    <span className="font-semibold tabular-nums text-foreground">{t2(ritmo.metaEsperadaAhora)} t</span>
-                    {" · "}meta del día{" "}
-                    <span className="font-semibold tabular-nums text-foreground">{t2(ritmo.metaTonDia)} t</span>
-                  </span>
-                </div>
-                <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-                  <div
-                    className={`h-full rounded-full ${
-                      ritmo.estado === "atrasado" ? "bg-rose-500" : ritmo.estado === "cerca" ? "bg-amber-500" : "bg-emerald-500"
-                    }`}
-                    style={{ width: `${Math.min(100, (ritmo.tonMovido / Math.max(ritmo.metaTonDia, 0.01)) * 100)}%` }}
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                  <div className="rounded-md border bg-background p-2">
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Personal real</div>
-                    <div className="text-sm font-semibold tabular-nums">{ritmo.headcountReal} aux.</div>
-                  </div>
-                  <div className="rounded-md border bg-background p-2">
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Capacidad</div>
-                    <div className="text-sm font-semibold tabular-nums">{t2(ritmo.capacidadTonHora)} t/h</div>
-                  </div>
-                  <div className="rounded-md border bg-background p-2">
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Ritmo real</div>
-                    <div className="text-sm font-semibold tabular-nums">{t2(ritmo.ritmoTonHoraReloj)} t/h</div>
-                  </div>
-                  <div className="rounded-md border bg-background p-2">
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Pendiente</div>
-                    <div className="text-sm font-semibold tabular-nums">
-                      {ritmo.tonPendienteEstimada > 0 ? `${t2(ritmo.tonPendienteEstimada)} t` : "—"}
-                    </div>
-                  </div>
-                </div>
-                {ritmo.vehiculosEnProceso + ritmo.vehiculosEnCola > 0 ? (
-                  <p className="flex items-center gap-1.5 border-t pt-2 text-xs text-amber-700 dark:text-amber-400">
-                    <Clock className="h-3.5 w-3.5 shrink-0" />
-                    {ritmo.vehiculosEnProceso} en proceso + {ritmo.vehiculosEnCola} en cola (~{t2(ritmo.tonPendienteEstimada)} t)
-                    {ritmo.proyeccionHoraFinCola ? (
-                      <>
-                        {" "}
-                        — patio despejado proyectado <strong className="tabular-nums">{ritmo.proyeccionHoraFinCola}</strong>
-                      </>
-                    ) : (
-                      " — al ritmo actual no alcanza a despejarse hoy"
-                    )}
-                  </p>
-                ) : (
-                  <p className="flex items-center gap-1.5 border-t pt-2 text-xs text-emerald-700 dark:text-emerald-400">
-                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                    Sin vehículos pendientes — patio despejado
-                  </p>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
-          {ritmo && ritmo.muelles.length > 0 && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <LayoutGrid className="h-4 w-4 text-primary" />
-                  Estado de Muelles — {ritmo.muelles.filter((m) => !m.ocupado).length}/{ritmo.muelles.length} libres
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="flex flex-wrap gap-2">
-                  {ritmo.muelles.map((m) => {
-                    const vencido = m.ocupado && m.libreDesde !== null && m.libreDesde < ritmo.horaActual
-                    return (
-                      <div
-                        key={m.muelle}
-                        className={`min-w-[112px] flex-1 rounded-lg border p-2.5 ${
-                          !m.ocupado
-                            ? "border-emerald-200 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/30"
-                            : vencido
-                              ? "border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30"
-                              : "border-rose-200 bg-rose-50 dark:border-rose-900 dark:bg-rose-950/30"
-                        }`}
-                      >
-                        <div
-                          className={`text-[10px] font-bold uppercase tracking-wide ${
-                            !m.ocupado
-                              ? "text-emerald-700 dark:text-emerald-400"
-                              : vencido
-                                ? "text-amber-700 dark:text-amber-400"
-                                : "text-rose-700 dark:text-rose-400"
-                          }`}
-                        >
-                          Muelle {m.muelle}
-                        </div>
-                        {!m.ocupado ? (
-                          <div className="mt-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">Libre</div>
-                        ) : (
-                          <>
-                            <div className="mt-1 font-mono text-xs font-semibold">{m.placa}</div>
-                            <div className="text-[10px] text-muted-foreground">{m.tipovehiculo || "—"}</div>
-                            <div className={`text-[10px] ${vencido ? "font-medium text-amber-700 dark:text-amber-400" : "text-muted-foreground"}`}>
-                              {vencido ? `SLA vencido (${m.libreDesde})` : `Libre aprox. ${m.libreDesde}`}
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
           <Card>
             <CardContent className="flex flex-wrap items-end gap-3 pt-6">
               <div className="space-y-1">
@@ -516,7 +349,8 @@ export default function ControlToneladas() {
                   Ordenado de menor a mayor tonelaje acumulado. <strong>% cumplimiento</strong> compara el promedio
                   real de toneladas/día contra la meta dinámica del proyecto (toneladas de Cargue/Distribución
                   acordadas ÷ personal real y horas realmente programadas ese día — no un número fijo; ver
-                  "Avance en Vivo" arriba, — si el proyecto no tiene datos de asistencia ese día). "Inactivo hoy"
+                  Centro de Coordinación para el avance en vivo del turno — si el proyecto no tiene datos de
+                  asistencia ese día). "Inactivo hoy"
                   marca a quien ya no está en Head Count (se retiró después
                   del periodo consultado) — su tonelaje real del periodo se sigue mostrando. Amplía el rango de
                   fechas (o usa "Historial del año") y elige un trabajador puntual para revisar su historial

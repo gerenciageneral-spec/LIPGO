@@ -136,6 +136,7 @@ import { IndicadoresSIG } from "@/components/sst/indicadores-sig"
 import { EvaluacionAreas } from "@/components/sst/evaluacion-areas"
 import { PanelOperacionLIP } from "@/components/sst/panel-operacion-lip"
 import ControlToneladas from "@/components/control-toneladas"
+import CentroCoordinacion from "@/components/centro-coordinacion"
 import { MapaInteraccionProceso } from "@/components/sst/mapa-interaccion-proceso"
 import { PanelInventarioLIP } from "@/components/sst/panel-inventario-lip"
 import { CuadreInventario } from "@/components/sst/cuadre-inventario"
@@ -931,6 +932,10 @@ export function MainContent({
           ) : selectedModule === "Control de Toneladas" ? (
             <PermissionGuard moduleName="Control de Toneladas">
               <ControlToneladas />
+            </PermissionGuard>
+          ) : selectedModule === "Centro de Coordinación" ? (
+            <PermissionGuard moduleName="Centro de Coordinación">
+              <CentroCoordinacion onNavigate={onNavigateModule} />
             </PermissionGuard>
           ) : selectedModule === "Mapa de Interacción del Proceso" ? (
             <PermissionGuard moduleName="Mapa de Interacción del Proceso">

@@ -3,8 +3,8 @@
 // Financiera › Tarifas › Metas — SOLO LECTURA desde ago-2026.
 // meta ton/día = Ton/mes (Cargue + Distribución del acuerdo) ÷ 24,7 días
 // hábiles. El HC ya no es un número fijo: se recalcula cada día con la
-// asistencia real — ver "Avance en Vivo" en Operación LIP › Control de
-// Toneladas para el detalle día a día por proyecto.
+// asistencia real — ver Operación LIP › Centro de Coordinación para el
+// avance en vivo del turno, día a día por proyecto.
 
 import { useCallback, useEffect, useState } from "react"
 import { useToast } from "@/components/ui/use-toast"
@@ -40,8 +40,8 @@ export function MetasToneladas() {
         <Target className="h-4 w-4 text-primary" />
         <span>
           <strong>meta/día = Ton mes (Cargue + Distribución del acuerdo) ÷ 24,7 días hábiles.</strong> El personal
-          (HC) ya no es un número fijo — se recalcula cada día con la asistencia real. Ver "Avance en Vivo" en
-          Operación LIP › Control de Toneladas para el detalle día a día.
+          (HC) ya no es un número fijo — se recalcula cada día con la asistencia real. Ver Operación LIP › Centro
+          de Coordinación para el avance en vivo del turno.
         </span>
       </div>
 

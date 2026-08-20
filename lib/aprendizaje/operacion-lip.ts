@@ -326,6 +326,91 @@ export const APRENDIZAJE_OPERACION_LIP: ContenidoAprendizaje[] = [
     ],
   },
 
+  {
+    modulo: "Centro de Coordinación",
+    resumen: "El puesto de trabajo del coordinador: muelles en vivo, SLA, personal y las acciones de Picking/Packing en un solo lugar.",
+    proposito:
+      "Une en una sola pantalla lo que antes estaba repartido entre Picking, Packing y el control de muelles: cada muelle del proyecto (Cargue, Descargue o Distribucion, comparten los mismos muelles fisicos) se ve como una tarjeta con semaforo (verde libre, amarillo ocupado, rojo fuera de tiempo), toneladas contra la capacidad real del vehiculo, ritmo, proyeccion de cuando queda libre y la linea de 5 pasos del proceso (Muelle asignado, Realizar Picking o Packing, Generar PDF, Asignar Personal, Cargar fotos). Los dos primeros pasos operativos los hace el operario de montacargas desde su celular en Picking/Packing (aqui solo se ve el avance en vivo); el coordinador actua desde aqui en asignar muelle, asignar personal, pausar/reanudar, reasignar o liberar un muelle y cerrar con fotos.",
+    puedes: [
+      "Ver los 6 indicadores del turno: toneladas cargadas contra la meta del dia (con semaforo adelantado/cerca/atrasado y comparacion contra ayer a la misma hora), ritmo real, cumplimiento de SLA, personal en piso, muelles ocupados y la proyeccion de hora de cierre.",
+      "Filtrar la grilla de muelles por tipo de operacion (Cargue, Descargue, Distribucion) o activar 'Solo atencion' para ver unicamente los muelles que necesitan accion.",
+      "Abrir un muelle para ver la linea de los 5 pasos, quien es responsable de cada uno y el panel de accion del paso actual.",
+      "Asignar una orden de la cola al primer muelle libre (dispara el mismo Generar PDF/inicio que usan Picking y Packing), reasignar una orden activa a otro muelle o liberar un muelle antes de iniciar.",
+      "Asignar personal a la orden (mismo flujo y mismo personal disponible que Picking/Packing), pausar o reanudar el cargue, y cerrar con fotos (el mismo paso que cierra la orden en Picking/Packing).",
+      "Ver la sugerencia de reforzar con un auxiliar cuando una orden esta vencida o a punto de vencer el SLA, y la sugerencia del siguiente vehiculo de patio para el proximo muelle libre.",
+      "Abrir el Parte de Turno: resumen para el proximo coordinador con toneladas del turno, ordenes cerradas y en curso, SLA vencidos y los pendientes puntuales por muelle.",
+    ],
+    noPuedes: [
+      "Escanear el QR de picking ni verificar linea por linea desde aqui: eso solo se hace en Picking/Packing, en el celular del operario de montacargas; el Centro de Coordinacion solo muestra el avance.",
+      "Cerrar una orden sin personal asignado, salvo el caso de distribucion marcada como no facturable (igual que en Packing).",
+      "Ver o gestionar muelles de otro proyecto: la grilla sigue el selector global de proyecto.",
+    ],
+    funcionalidades: [
+      {
+        nombre: "Semaforo de 3 colores por muelle",
+        descripcion:
+          "Verde = muelle libre, amarillo = ocupado dentro de tiempo (cargando, alistando o pausado), rojo = fuera de tiempo (SLA vencido). Antes de vencer, si queda poca holgura (80% o mas del SLA consumido) la insignia del muelle pulsa en amarillo como aviso temprano.",
+      },
+      {
+        nombre: "Muelle real",
+        descripcion:
+          "El numero de muelle es un campo real de la orden (antes era una simulacion): el coordinador lo asigna a mano y puede reasignarlo o liberarlo mientras la orden no haya iniciado.",
+      },
+      {
+        nombre: "Linea de 5 pasos con responsable",
+        descripcion:
+          "Muelle asignado y Asignar Personal/Cargar fotos son del coordinador; Realizar Picking (o Packing) y Generar PDF son del operario de montacargas. Cuando el paso actual es del operario, el panel de esa orden queda en solo lectura con el avance en vivo.",
+      },
+      {
+        nombre: "Toneladas contra capacidad del vehiculo",
+        descripcion:
+          "La barra de avance de cada muelle muestra el objetivo de la orden y, si hay cita de vehiculo con capacidad registrada, el porcentaje contra esa capacidad real; mientras la orden esta en curso el avance se estima por lineas verificadas (Cargue) porque LIPgo no registra un peso en vivo antes del cierre.",
+      },
+      {
+        nombre: "Parte de turno",
+        descripcion:
+          "Resumen bajo demanda con lo cargado en el turno, ordenes cerradas y en curso, SLA vencidos en el momento y una lista de pendientes (muelles pausados, sin personal, ordenes sin muelle) para dejarle el contexto listo al siguiente coordinador.",
+      },
+    ],
+    consejos: [
+      "Si un muelle esta en rojo por falta de personal, la sugerencia de reforzar con auxiliar y la lista de 'Personal disponible' del panel derecho son el mismo dato en vivo — no hace falta ir a otra pantalla.",
+    ],
+  },
+
+  {
+    modulo: "Control de Toneladas",
+    resumen: "Toneladas por trabajador, por dia y acumuladas, para gestionar personal (quien rinde y quien no).",
+    proposito:
+      "Vista operativa para que el coordinador gestione personal: toneladas cargadas por cada trabajador en un periodo, comparadas contra la meta dinamica del proyecto (toneladas de Cargue/Distribucion del acuerdo entre dias habiles del mes, dividida entre el personal y las horas realmente programadas cada dia). Sirve para identificar quien mueve menos, quien es mas eficiente y en que ordenes/vehiculos trabajo cada quien.",
+    puedes: [
+      "Consultar un rango de fechas (con atajos: hoy, este mes, mes anterior, ultimos 3 meses, historial del ano) y ver el total de toneladas y trabajadores del periodo.",
+      "Ver por trabajador: dias trabajados, toneladas acumuladas, promedio por dia, meta del dia y el porcentaje de cumplimiento contra esa meta.",
+      "Filtrar por un trabajador puntual para ver su historial completo dia a dia.",
+      "Abrir el detalle de un trabajador: cada orden en la que participo (fecha, orden, tipo de operacion, puesto programado, placa, toneladas asignadas) y sus vehiculos por dia.",
+    ],
+    noPuedes: [
+      "Editar toneladas, metas o asistencia desde aqui: es una vista de solo lectura que se recalcula sola con lo registrado en Picking/Packing/Packing y en Programacion de turnos.",
+      "Ver otros proyectos a la vez: sigue el selector global (o Todo LIP si se tiene ese acceso).",
+    ],
+    funcionalidades: [
+      {
+        nombre: "Meta dinamica por dia",
+        descripcion:
+          "La meta no es un numero fijo: sale de las toneladas del acuerdo del mes dividida en dias habiles, y luego entre el personal y las horas que ESE dia realmente tuvo programadas cada trabajador — la misma formula que usa Revision de Nomina y el Centro de Coordinacion, para que el numero nunca diverja entre pantallas.",
+      },
+      {
+        nombre: "Detalle expandible por trabajador",
+        descripcion:
+          "Al tocar un trabajador se despliega su tabla de ordenes y su resumen de toneladas/vehiculos por dia, sin salir de la pantalla.",
+      },
+      {
+        nombre: "Ordenado por menor rendimiento primero",
+        descripcion:
+          "El listado arranca ordenado de menor a mayor tonelaje acumulado, para que lo primero que vea el coordinador sea quien necesita seguimiento.",
+      },
+    ],
+  },
+
   // ==========================================================================
   // OPERACION LIP · Facturacion
   // ==========================================================================

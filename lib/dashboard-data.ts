@@ -1,4 +1,4 @@
-import { Gift, Truck, Forklift, Scale, ClipboardCheck, Package, FileText, CheckCircle, Box, PackagePlus, BarChart3, Package2, ArrowRightLeft, History, Search, LayoutDashboard, Activity, FileCheck, Receipt, Clock, Users, Eye, Settings, Type as type, LucideIcon, CreditCard, UserCheck, Store, Tag, Layers, MapPin, Warehouse, Gauge, QrCode, Sparkles, BadgeCheck, BookOpen, Lock, ClipboardList, CalendarDays, NotebookPen, GraduationCap, Wallet, Banknote, Calculator, CalendarClock, FolderOpen, FolderArchive, UserCog, HeartHandshake, ShieldCheck, Stethoscope, AlertTriangle, Star, Send, Landmark, UserPlus } from "lucide-react"
+import { Gift, Truck, Forklift, Scale, ClipboardCheck, Package, FileText, CheckCircle, Box, PackagePlus, BarChart3, Package2, ArrowRightLeft, History, Search, LayoutDashboard, Activity, FileCheck, Receipt, Clock, Users, Eye, Settings, Type as type, LucideIcon, CreditCard, UserCheck, Store, Tag, Layers, MapPin, Warehouse, Gauge, QrCode, Sparkles, BadgeCheck, BookOpen, Lock, ClipboardList, CalendarDays, NotebookPen, GraduationCap, Wallet, Banknote, Calculator, CalendarClock, FolderOpen, FolderArchive, UserCog, HeartHandshake, ShieldCheck, Stethoscope, AlertTriangle, Star, Send, Landmark, UserPlus, LayoutGrid } from "lucide-react"
 
 export interface Module {
   name: string
@@ -197,6 +197,11 @@ export const groups: Group[] = [
           // operacion logistica.
           { name: "Dashboard Operaciones LIP", icon: LayoutDashboard },
           { name: "Panel LIP Operación", icon: BarChart3, label: "Tablero del Coordinador" },
+          // Une en una sola pantalla lo que hoy está disperso en Picking,
+          // Packing y el control de muelles/SLA: el coordinador ve los
+          // muelles en vivo (Cargue/Descargue/Distribución), asigna
+          // personal, inicia y cierra órdenes desde ahí mismo.
+          { name: "Centro de Coordinación", icon: LayoutGrid },
           // Toneladas por día y acumuladas por trabajador (mismo cálculo que
           // paga nómina): para que el coordinador gestione personal — quién
           // mueve menos, quién es más eficiente, qué vehículos atendió.

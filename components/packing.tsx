@@ -210,7 +210,15 @@ export function Packing() {
 
   const handleAssignPersonnel = async (order: PendingLoadOrder) => {
     setSelectedOrder(order)
-    setSelectedPersonnel([])
+    // Precarga los auxiliares YA asignados (si los hay) para poder agregar o
+    // quitar sobre lo existente — el personal se puede editar mientras la
+    // orden siga abierta, no solo la primera vez.
+    setSelectedPersonnel(
+      String(order.auxiliares || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+    )
     setAuxiliaresInput("")
     setPersonnelDialogOpen(true)
 
@@ -659,13 +667,15 @@ export function Packing() {
                             // Una DISTRIBUCIÓN ("…D") marcada "no facturar" NO lleva
                             // auxiliares (si no se factura, no se paga entrega) → se BLOQUEA
                             // asignar personal. La orden se cierra igual con "Cargar Fotos".
-                            disabled={!order.iniciocargue || !!order.auxiliares || esDistribucionNoFacturable(order)}
+                            // Fuera de ese caso, se puede reabrir para agregar o quitar
+                            // gente mientras la orden siga abierta (no solo la primera vez).
+                            disabled={!order.iniciocargue || esDistribucionNoFacturable(order)}
                             size="sm"
                             variant="secondary"
                             className="h-7 text-[10px] px-2"
                           >
                             <UserPlus className="h-3 w-3 mr-1" />
-                            Asignar Personal
+                            {order.auxiliares ? "Editar Personal" : "Asignar Personal"}
                           </Button>
                           <Button
                             onClick={() => handleUploadPhotos(order)}
@@ -723,7 +733,9 @@ export function Packing() {
       <Dialog open={personnelDialogOpen} onOpenChange={setPersonnelDialogOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Asignar Personal - {selectedOrder?.ordendecargue}</DialogTitle>
+            <DialogTitle>
+              {selectedOrder?.auxiliares ? "Editar Personal" : "Asignar Personal"} - {selectedOrder?.ordendecargue}
+            </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div>
