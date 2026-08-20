@@ -1,102 +1,46 @@
 "use server"
 
-// Metas de toneladas por proyecto (Financiera › Tarifas › Metas). Referencia de
-// productividad: lo mínimo que cada trabajador debe mover/día para "ganarse" la base.
-// Alimenta el módulo Revisión de nómina (solo indicador; no cambia la liquidación).
-// Tabla: meta_toneladas_proyecto (ver scripts/create_meta_toneladas_proyecto.sql).
+// Metas de toneladas por proyecto (Financiera › Tarifas › Metas) — SOLO LECTURA.
+//
+// Hasta ago-2026 esta pantalla era un CRUD manual (Ton mes + HC + Días
+// operación, editados a mano). Se reemplazó por una meta DINÁMICA: el Ton/mes
+// sale del acuerdo real por proceso (TON_MES_CARGUE_DESCARGUE, lib/
+// meta-productividad-utils.ts) y el HC se recalcula cada día con la
+// asistencia real (lib/meta-productividad-actions.ts) — el mismo cálculo que
+// ya usan Control de Toneladas ("Avance en Vivo") y Revisión de Nómina, para
+// que los tres NUNCA diverjan entre sí.
+//
+// La tabla `meta_toneladas_proyecto` (histórica) NO se borra ni se migra —
+// simplemente la app dejó de leerla y escribirla.
 
-import { getSupabaseAdmin } from "@/lib/supabase-admin"
+import { TON_MES_CARGUE_DESCARGUE, DIAS_OPERACION_MES } from "@/lib/meta-productividad-utils"
 
-export interface MetaToneladas {
+export interface MetaToneladasResumen {
   idempresa: number
   proyecto: string
   toneladasMes: number
   diasOperacion: number
-  hc: number
-  // derivados
-  toneladasDia: number
-  metaTonTrabajadorDia: number
+  metaTonDia: number
 }
 
-const num = (v: any) => Number(v || 0)
-
-/** Deriva ton/día y meta/trabajador desde los inputs (local; no es server action). */
-function derivarMeta(toneladasMes: number, diasOperacion: number, hc: number) {
-  const toneladasDia = diasOperacion > 0 ? toneladasMes / diasOperacion : 0
-  const metaTonTrabajadorDia = hc > 0 ? toneladasDia / hc : 0
-  return { toneladasDia, metaTonTrabajadorDia }
+const NOMBRE_PROYECTO: Record<number, string> = {
+  1: "Harinera Indupan",
+  2: "Avimol",
+  3: "Cedi Funza",
+  4: "Cedi Medellín",
 }
 
-function rowToMeta(r: any): MetaToneladas {
-  const toneladasMes = num(r.toneladas_mes)
-  const diasOperacion = num(r.dias_operacion) || 24.7
-  const hc = Number(r.hc) || 0
-  const { toneladasDia, metaTonTrabajadorDia } = derivarMeta(toneladasMes, diasOperacion, hc)
-  return {
-    idempresa: Number(r.idempresa),
-    proyecto: String(r.proyecto || "").trim(),
-    toneladasMes,
-    diasOperacion,
-    hc,
-    toneladasDia,
-    metaTonTrabajadorDia,
-  }
-}
-
-/** Lista las metas por proyecto (ordenadas por idempresa). */
-export async function getMetasToneladas(): Promise<{ success: boolean; data: MetaToneladas[]; message?: string }> {
-  try {
-    const admin: any = await getSupabaseAdmin()
-    const { data, error } = await admin
-      .from("meta_toneladas_proyecto")
-      .select("*")
-      .order("idempresa", { ascending: true })
-    if (error) return { success: false, data: [], message: error.message }
-    return { success: true, data: (data || []).map(rowToMeta) }
-  } catch (e: any) {
-    return { success: false, data: [], message: e?.message || "Error al leer las metas." }
-  }
-}
-
-/** Guarda (upsert por idempresa) una meta de proyecto. */
-export async function guardarMetaToneladas(m: {
-  idempresa: number
-  proyecto: string
-  toneladasMes: number
-  diasOperacion: number
-  hc: number
-}): Promise<{ success: boolean; message?: string }> {
-  if (!m?.idempresa) return { success: false, message: "Proyecto (idempresa) inválido." }
-  if (!(m.hc > 0)) return { success: false, message: "El head count (HC) debe ser mayor que 0." }
-  if (!(m.diasOperacion > 0)) return { success: false, message: "Los días de operación deben ser mayores que 0." }
-  try {
-    const admin: any = await getSupabaseAdmin()
-    const { error } = await admin.from("meta_toneladas_proyecto").upsert(
-      {
-        idempresa: m.idempresa,
-        proyecto: m.proyecto,
-        toneladas_mes: m.toneladasMes,
-        dias_operacion: m.diasOperacion,
-        hc: m.hc,
-        actualizado_at: new Date().toISOString(),
-      },
-      { onConflict: "idempresa" },
-    )
-    if (error) return { success: false, message: error.message }
-    return { success: true }
-  } catch (e: any) {
-    return { success: false, message: e?.message || "Error al guardar la meta." }
-  }
-}
-
-/** Elimina la meta de un proyecto. */
-export async function eliminarMetaToneladas(idempresa: number): Promise<{ success: boolean; message?: string }> {
-  try {
-    const admin: any = await getSupabaseAdmin()
-    const { error } = await admin.from("meta_toneladas_proyecto").delete().eq("idempresa", idempresa)
-    if (error) return { success: false, message: error.message }
-    return { success: true }
-  } catch (e: any) {
-    return { success: false, message: e?.message || "Error al eliminar la meta." }
-  }
+/** Resumen de solo lectura — mismos números que EMPRESA_META_DIA_TON (lib/empresa-meta-dia.ts) y Avance en Vivo. */
+export async function getMetasToneladasResumen(): Promise<{ success: boolean; data: MetaToneladasResumen[] }> {
+  const data = [1, 2, 3, 4].map((idempresa) => {
+    const toneladasMes = TON_MES_CARGUE_DESCARGUE[idempresa] || 0
+    return {
+      idempresa,
+      proyecto: NOMBRE_PROYECTO[idempresa] || `Proyecto ${idempresa}`,
+      toneladasMes,
+      diasOperacion: DIAS_OPERACION_MES,
+      metaTonDia: Math.round((toneladasMes / DIAS_OPERACION_MES) * 10) / 10,
+    }
+  })
+  return { success: true, data }
 }

@@ -450,9 +450,9 @@ function Resultado({
                     tone={mr.diasBajo > 0 ? "down" : "up"}
                   />
                   <Kpi
-                    label="HC real promedio/día"
+                    label="HC real promedio/día (pagonomina)"
                     value={ton1(mr.hcPromedioReal)}
-                    hint={`planeado (config): ${mr.hcConfigurado || "—"} · el HC varía según el volumen`}
+                    hint={`con asistencia real (registroasistencia): ${mr.hcConfigurado || "—"} · el HC varía según el volumen`}
                     tone={
                       mr.hcConfigurado > 0
                         ? mr.hcPromedioReal > mr.hcConfigurado
@@ -466,7 +466,8 @@ function Resultado({
                 </div>
                 <p className="mt-2 text-xs text-muted-foreground">
                   Indicador de productividad: mide si el trabajador mueve el mínimo para justificar la base fija. No
-                  cambia la liquidación ni el bono. La meta se configura en Financiera › Tarifas › Metas.
+                  cambia la liquidación ni el bono. La meta se calcula sola cada día (personal real con asistencia ×
+                  sus horas programadas), no se configura a mano.
                 </p>
               </CardContent>
             </Card>
@@ -2434,8 +2435,8 @@ function HcPorDia() {
                     <TableHead>Fecha</TableHead>
                     <TableHead>ID</TableHead>
                     <TableHead>Proyecto</TableHead>
-                    <TableHead className="text-right">HC real</TableHead>
-                    <TableHead className="text-right">HC plan</TableHead>
+                    <TableHead className="text-right">HC real (pagonomina)</TableHead>
+                    <TableHead className="text-right">HC asist. (real)</TableHead>
                     <TableHead className="text-right">Toneladas</TableHead>
                     <TableHead className="text-right">Ton/trab</TableHead>
                     <TableHead className="text-right">Meta</TableHead>

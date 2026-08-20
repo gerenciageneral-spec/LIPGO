@@ -10,8 +10,9 @@
 // escribe nada. Mismo patrón que parafiscales-actions / liquidaciones-actions.
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
-import { getMetasToneladas } from "@/lib/metas-toneladas-actions"
 import { pesoBaseCalculo, excluirAvimolDistribucion, liquidable, normalizeName } from "@/lib/nomina-calculo-utils"
+import { getHcYHorasRealPorDia } from "@/lib/meta-productividad-actions"
+import { TON_MES_CARGUE_DESCARGUE, DIAS_OPERACION_MES, duracionHorasNetas, esPuestoCargueDescargue } from "@/lib/meta-productividad-utils"
 
 export interface ColaboradorRef {
   persona: string
@@ -35,14 +36,15 @@ export interface DiaRevision {
   total: number
   esDestajo: boolean
   anomalia: boolean // Cargue/Descargue con 0 toneladas (a corregir)
-  meta: number // meta de toneladas del proyecto ese día (0 si no configurada)
+  meta: number // meta INDIVIDUAL de ese día = ton/hora real del proyecto × horas programadas de esta persona ese día (0 si no hay datos)
   cumpleMeta: boolean // solo destajo: toneladas >= meta
-  hcDia: number // HC real: trabajadores que movieron toneladas ese día en el proyecto
+  hcDia: number // HC real (pagonomina): trabajadores que movieron toneladas ese día en el proyecto
+  hcAsistenciaDia: number // HC real (registroasistencia): auxiliares de Cargue/Distribución con asistencia real ese día
 }
 
 export interface MetaResumen {
   configurada: boolean
-  metaReferencia: number // meta ton/trab/día del proyecto principal del colaborador
+  metaReferencia: number // promedio de la meta INDIVIDUAL diaria (ton/hora real del proyecto × horas de esta persona) en los días de destajo
   diasDestajo: number
   diasCumple: number
   diasBajo: number
@@ -50,7 +52,7 @@ export interface MetaResumen {
   toneladasMeta: number // meta acumulada del período (Σ meta de los días de destajo)
   promedioDia: number
   pctCumplimiento: number // días que cumplió la meta / días de destajo
-  hcConfigurado: number // head count planeado del proyecto (tab Metas)
+  hcConfigurado: number // HC real de asistencia promedio (registroasistencia, pool Cargue/Distribución) — ya NO es un valor "configurado"
   hcPromedioReal: number // head count real promedio (trabajadores que asistieron a destajo)
 }
 
@@ -216,7 +218,12 @@ interface CtxRevision {
   quincena: 1 | 2
   desde: string
   hasta: string
-  metaObjPorEmpresa: Map<number, { meta: number; hc: number }>
+  /** ton/hora del proyecto ese día — "fecha|idempresa" (ver lib/meta-productividad-actions.ts). */
+  metaPorHoraPorDia: Map<string, number>
+  /** Horas programadas NETAS de esa persona ese día — "idempresa|fecha|nombreNormalizado". */
+  horasPersonaPorDia: Map<string, number>
+  /** Headcount real de asistencia (registroasistencia) del pool Cargue/Distribución — "fecha|idempresa". */
+  hcAsistenciaPorDia: Map<string, number>
   hcReal: (fecha: string, emp: number) => number
   vig: any | null
 }
@@ -238,10 +245,44 @@ async function armarContexto(
   hasta: string,
   proyectos: Set<number>,
 ): Promise<CtxRevision> {
-  // Metas de toneladas por proyecto (idempresa) — indicador de productividad.
-  const metasRes = await getMetasToneladas()
-  const metaObjPorEmpresa = new Map<number, { meta: number; hc: number }>()
-  for (const m of metasRes.data || []) metaObjPorEmpresa.set(m.idempresa, { meta: m.metaTonTrabajadorDia, hc: m.hc })
+  // Meta DINÁMICA ton/trabajador/hora por (fecha, proyecto) — real, a partir
+  // del headcount con asistencia real de ese día (ver
+  // lib/meta-productividad-actions.ts — mismo módulo que ya usa Control de
+  // Toneladas, para que ambos indicadores NUNCA diverjan entre sí).
+  const proyectosArr = Array.from(proyectos)
+  const hcHorasPorDia = await getHcYHorasRealPorDia(proyectosArr, desde, hasta)
+  const metaPorHoraPorDia = new Map<string, number>()
+  const hcAsistenciaPorDia = new Map<string, number>()
+  for (const [key, { headcount, horasTotales }] of hcHorasPorDia) {
+    const emp = Number(key.split("|")[1])
+    const metaTonDia = (TON_MES_CARGUE_DESCARGUE[emp] || 0) / DIAS_OPERACION_MES
+    metaPorHoraPorDia.set(key, horasTotales > 0 ? metaTonDia / horasTotales : 0)
+    hcAsistenciaPorDia.set(key, headcount)
+  }
+
+  // Horas programadas NETAS de CADA persona ese día — para que la meta
+  // individual sea proporcional a SUS horas, no un número plano igual para
+  // todos (alguien con turno de 6h no se compara contra quien tiene 11h).
+  const horasPersonaPorDia = new Map<string, number>()
+  if (proyectosArr.length > 0) {
+    const asistRows = await fetchAllRows((f, t) =>
+      admin
+        .from("registroasistencia")
+        .select("nombre, idempresa, fecha, puesto, horaentradaprogramada, horasalidaprogramada")
+        .in("idempresa", proyectosArr)
+        .gte("fecha", desde)
+        .lte("fecha", hasta)
+        .range(f, t),
+    )
+    for (const r of asistRows) {
+      if (!esPuestoCargueDescargue(Number(r.idempresa), r.puesto)) continue
+      if (!r.horaentradaprogramada || !r.horasalidaprogramada) continue
+      const key = `${Number(r.idempresa)}|${String(r.fecha).slice(0, 10)}|${normalizeName(r.nombre)}`
+      if (!horasPersonaPorDia.has(key)) {
+        horasPersonaPorDia.set(key, duracionHorasNetas(String(r.horaentradaprogramada), String(r.horasalidaprogramada)))
+      }
+    }
+  }
 
   // HC REAL por día: trabajadores que movieron toneladas ese día en el proyecto
   // (asistencia ya ratificada en pagonomina). El HC varía a diario según el volumen.
@@ -284,7 +325,9 @@ async function armarContexto(
     quincena,
     desde,
     hasta,
-    metaObjPorEmpresa,
+    metaPorHoraPorDia,
+    horasPersonaPorDia,
+    hcAsistenciaPorDia,
     hcReal: (fecha: string, emp: number) => hcPorFechaEmp.get(fecha + "|" + emp)?.size || 0,
     vig: vig || null,
   }
@@ -302,7 +345,7 @@ function armarPersona(
   planoRows: any[],
   ctx: CtxRevision,
 ): RevisionNominaData {
-  const { anio, mes, quincena, desde, hasta, metaObjPorEmpresa, hcReal } = ctx
+  const { anio, mes, quincena, desde, hasta, metaPorHoraPorDia, horasPersonaPorDia, hcAsistenciaPorDia, hcReal } = ctx
   const identificacion = String(hc?.identificacion || "").trim()
   const salario = num(hc?.salario)
   const baseDia = salario > 0 ? salario / 30 : 58364
@@ -360,10 +403,16 @@ function armarPersona(
       // Proyecto del día (idempresaliquidacion = donde se movió el tonelaje).
       const empDia =
         r.idempresaliquidacion != null ? Number(r.idempresaliquidacion) : r.idempresa != null ? Number(r.idempresa) : 0
-      // Meta de toneladas del proyecto de ese día (indicador de productividad).
-      const metaDia = empDia ? metaObjPorEmpresa.get(empDia)?.meta || 0 : 0
+      const fechaStr = String(r.fecha).slice(0, 10)
+      // Meta INDIVIDUAL de ese día = ton/hora real del proyecto ese día × las
+      // horas programadas de ESTA persona ese día (0 si no hay programación,
+      // no un número plano igual para todos — ver lib/meta-productividad-actions.ts).
+      const metaPorHoraDia = empDia ? metaPorHoraPorDia.get(`${fechaStr}|${empDia}`) || 0 : 0
+      const horasPersonaEseDia = empDia ? horasPersonaPorDia.get(`${empDia}|${fechaStr}|${normalizeName(persona)}`) || 0 : 0
+      const metaDia = metaPorHoraDia * horasPersonaEseDia
       const cumpleMeta = esDestajo && metaDia > 0 ? ton >= metaDia : false
-      const hcDia = esDestajo ? hcReal(String(r.fecha).slice(0, 10), empDia) : 0
+      const hcDia = esDestajo ? hcReal(fechaStr, empDia) : 0
+      const hcAsistenciaDia = esDestajo && empDia ? hcAsistenciaPorDia.get(`${fechaStr}|${empDia}`) || 0 : 0
 
       // Descomposición del total del día: base = total − recargos − dominical
       const basePortion = Math.max(0, total - recargos - domingo)
@@ -407,17 +456,24 @@ function armarPersona(
         meta: metaDia,
         cumpleMeta,
         hcDia,
+        hcAsistenciaDia,
       })
     }
 
-    // Resumen de cumplimiento de META (productividad). La meta de referencia es la
-    // del proyecto principal del colaborador (su empresa); días con meta configurada.
-    const metaReferencia = empresa != null ? metaObjPorEmpresa.get(empresa)?.meta || 0 : 0
-    const hcConfigurado = empresa != null ? metaObjPorEmpresa.get(empresa)?.hc || 0 : 0
-    const diasConMeta = dias.filter((x) => x.esDestajo && x.meta > 0).length
+    // Resumen de cumplimiento de META (productividad). La meta ya no es un
+    // número plano por proyecto: varía cada día según el personal real y sus
+    // horas — la "meta de referencia" que se muestra es el PROMEDIO de la
+    // meta individual de los días con destajo (mismo criterio que
+    // promedioDia, que también promedia lo real).
+    const diasConMetaArr = dias.filter((x) => x.esDestajo && x.meta > 0)
+    const diasConMeta = diasConMetaArr.length
+    const metaReferencia = diasConMeta > 0 ? diasConMetaArr.reduce((a, x) => a + x.meta, 0) / diasConMeta : 0
     const diasDestajoArr = dias.filter((x) => x.esDestajo && x.hcDia > 0)
     const hcPromedioReal =
       diasDestajoArr.length > 0 ? diasDestajoArr.reduce((a, x) => a + x.hcDia, 0) / diasDestajoArr.length : 0
+    const diasAsistArr = dias.filter((x) => x.esDestajo && x.hcAsistenciaDia > 0)
+    const hcAsistenciaPromedio =
+      diasAsistArr.length > 0 ? diasAsistArr.reduce((a, x) => a + x.hcAsistenciaDia, 0) / diasAsistArr.length : 0
     const metaResumen: MetaResumen = {
       configurada: metaReferencia > 0 || diasConMeta > 0,
       metaReferencia,
@@ -428,7 +484,7 @@ function armarPersona(
       toneladasMeta,
       promedioDia: diasDestajo > 0 ? toneladasMovidas / diasDestajo : 0,
       pctCumplimiento: diasConMeta > 0 ? (diasCumpleMeta / diasConMeta) * 100 : 0,
-      hcConfigurado,
+      hcConfigurado: Math.round(hcAsistenciaPromedio * 10) / 10,
       hcPromedioReal,
     }
 
@@ -1412,9 +1468,16 @@ export interface HcDiaProyecto {
   proyecto: string
   hcReal: number
   toneladas: number
-  hcConfig: number
+  hcConfig: number // HC real de asistencia ese día (registroasistencia) — ya NO es un valor "configurado", ver comentario abajo
   meta: number
   tonPorTrabajador: number // toneladas ÷ hcReal (promedio real por trabajador ese día)
+}
+
+const NOMBRE_PROYECTO: Record<number, string> = {
+  1: "Harinera Indupan",
+  2: "Avimol",
+  3: "Cedi Funza",
+  4: "Cedi Medellín",
 }
 
 export async function getHcPorDia(
@@ -1426,11 +1489,20 @@ export async function getHcPorDia(
     const desde = `${anio}-${String(mes).padStart(2, "0")}-01`
     const hasta = `${anio}-${String(mes).padStart(2, "0")}-${String(fin(anio, mes)).padStart(2, "0")}`
 
-    // Metas por proyecto (nombre + HC planeado + meta)
-    const metasRes = await getMetasToneladas()
-    const metaObj = new Map<number, { proyecto: string; hc: number; meta: number }>()
-    for (const m of metasRes.data || [])
-      metaObj.set(m.idempresa, { proyecto: m.proyecto, hc: m.hc, meta: m.metaTonTrabajadorDia })
+    // Meta DINÁMICA por (fecha, proyecto) — mismo módulo que armarContexto,
+    // para no divergir. "hcConfig" pasa a ser el HC real de asistencia de
+    // ese día (registroasistencia), y "meta" es el reparto del target del
+    // día entre esos trabajadores reales (sin desglose por hora individual,
+    // a diferencia de la meta persona-por-persona de armarPersona — esta
+    // tabla es agregada por proyecto/día, no por persona).
+    const idsProyecto = [1, 2, 3, 4]
+    const hcHorasPorDia = await getHcYHorasRealPorDia(idsProyecto, desde, hasta)
+    const metaObj = new Map<string, { proyecto: string; hc: number; meta: number }>()
+    for (const [key, { headcount }] of hcHorasPorDia) {
+      const emp = Number(key.split("|")[1])
+      const metaTonDia = (TON_MES_CARGUE_DESCARGUE[emp] || 0) / DIAS_OPERACION_MES
+      metaObj.set(key, { proyecto: NOMBRE_PROYECTO[emp] || `Proyecto ${emp}`, hc: headcount, meta: headcount > 0 ? metaTonDia / headcount : 0 })
+    }
 
     // pagonomina del mes con toneladas (destajo). Paginado.
     const rows: any[] = []
@@ -1463,7 +1535,7 @@ export async function getHcPorDia(
 
     const data: HcDiaProyecto[] = []
     for (const g of grupo.values()) {
-      const cfg = metaObj.get(g.emp)
+      const cfg = metaObj.get(g.fecha + "|" + g.emp)
       const hcReal = g.personas.size
       const d = new Date(g.fecha + "T12:00:00Z")
       data.push({
