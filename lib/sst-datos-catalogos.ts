@@ -33,6 +33,16 @@ export const MESES: Opcion[] = [
   ["Septiembre", "Septiembre"], ["Octubre", "Octubre"], ["Noviembre", "Noviembre"], ["Diciembre", "Diciembre"],
 ]
 
+/**
+ * Proyecto (idempresa) -> centro de trabajo. Se usa como RESPALDO: el centro
+ * real de una persona vive en su ficha MEDEVAC, pero quien todavia no tiene
+ * ficha no tiene centro en ninguna parte, y en el informe de cobertura es
+ * justo a esa persona a la que hay que ubicar para ir a buscarla.
+ */
+export const CENTRO_POR_EMPRESA: Record<number, string> = {
+  1: "HARINERA INDUPAN", 2: "AVIMOL", 3: "CEDI FUNZA", 4: "CEDI MEDELLIN", 100: "ADMINISTRATIVO",
+}
+
 export const CENTROS_TRABAJO: string[] = [
   "ADMINISTRATIVO", "AVIMOL", "CEDI FUNZA", "CEDI MEDELLIN", "HARINERA INDUPAN", "POSTOBON CUCUTA",
 ]
