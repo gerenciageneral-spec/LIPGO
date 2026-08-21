@@ -128,9 +128,30 @@ export async function savePerfilSociodemografico(
   const { error } = await supabase
     .from("sst_perfil_sociodemografico")
     .upsert([payload], { onConflict: "documento_norm" })
-  if (error) {
-    console.error("[v0] savePerfilSociodemografico:", error.message, error.code, error.details, error.hint)
-    return { success: false, message: error.message }
+  if (!error) return { success: true }
+
+  // `requiere_revision` y `revision_nota` las agrega scripts/sig/45_...sql. Si
+  // el código se despliega antes de que ese script corra, la tabla todavía no
+  // las tiene y el guardado fallaría entero — incluido el de MEDEVAC, que ya
+  // está en uso. Guardar el perfil sin esas dos columnas es mucho mejor que no
+  // guardarlo: son control de calidad de una carga masiva, no datos del censo.
+  const columnaFaltante =
+    error.code === "PGRST204" || error.code === "42703" ||
+    /requiere_revision|revision_nota/.test(String(error.message ?? ""))
+  if (columnaFaltante) {
+    const { requiere_revision, revision_nota, ...sinCalidad } = payload as Record<string, any>
+    const reintento = await supabase
+      .from("sst_perfil_sociodemografico")
+      .upsert([sinCalidad], { onConflict: "documento_norm" })
+    if (!reintento.error) {
+      console.warn("[v0] savePerfilSociodemografico: la tabla aún no tiene requiere_revision/revision_nota. " +
+        "Se guardó sin ellas. Corre scripts/sig/45_perfil_sociodemografico_carga.sql")
+      return { success: true }
+    }
+    console.error("[v0] savePerfilSociodemografico reintento:", reintento.error.message, reintento.error.code)
+    return { success: false, message: reintento.error.message }
   }
-  return { success: true }
+
+  console.error("[v0] savePerfilSociodemografico:", error.message, error.code, error.details, error.hint)
+  return { success: false, message: error.message }
 }
