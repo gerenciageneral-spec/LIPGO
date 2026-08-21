@@ -132,3 +132,27 @@ export const TURNO_OPCIONES: Opcion[] = [
 
 /** Convierte una lista de textos en pares [valor, etiqueta] para los `Select`. */
 export const comoOpciones = (xs: string[]): Opcion[] => xs.map((x) => [x, x])
+
+/**
+ * Edad en anos cumplidos a partir de una fecha `YYYY-MM-DD`.
+ *
+ * Vive aqui, y no dentro de cada accion, porque el portal del trabajador y el
+ * modulo de SST escriben en la MISMA columna `edad`: si cada uno la calculara
+ * a su manera, la misma persona tendria una edad distinta segun quien guardo
+ * de ultimo.
+ *
+ * Compara por texto contra la fecha de hoy en Colombia. NO usa
+ * `new Date("YYYY-MM-DD")`: ese constructor interpreta la cadena como UTC y en
+ * Colombia (UTC-5) devuelve el dia anterior, con lo que quien cumple anos hoy
+ * quedaria con un ano menos.
+ */
+export function edadDesdeFechaISO(fechaISO: string | null | undefined, hoyISO?: string): number | null {
+  const f = String(fechaISO ?? "").trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(f)) return null
+  const hoy = hoyISO ?? new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" })
+  const [ay, am, ad] = f.split("-").map(Number)
+  const [hy, hm, hd] = hoy.split("-").map(Number)
+  let edad = hy - ay
+  if (hm < am || (hm === am && hd < ad)) edad--
+  return edad >= 0 && edad < 120 ? edad : null
+}

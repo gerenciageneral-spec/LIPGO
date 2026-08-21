@@ -3,6 +3,7 @@
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getCurrentEmpresaIdForInsert } from "@/lib/user-context"
 import type { PerfilSociodemograficoRow } from "@/lib/sst-evidencia-types"
+import { edadDesdeFechaISO } from "@/lib/sst-datos-catalogos"
 
 // Cliente admin server-side (la tabla tiene RLS; el acceso lo controla PermissionGuard).
 async function resolveEmpresaId(fromClient?: number | null): Promise<number | null> {
@@ -69,6 +70,27 @@ export async function listPerfilSociodemografico(
 }
 
 /**
+ * El perfil de UNA persona, por documento. El módulo MEDEVAC lo usa para
+ * editar el registro completo de alguien sin tener que traerse el censo
+ * entero, que es de cientos de filas.
+ */
+export async function getPerfilPorDocumento(
+  documento: string,
+): Promise<PerfilSociodemograficoRow | null> {
+  const doc = normalizarDocumentoPerfil(documento)
+  if (!doc) return null
+  const supabase: any = await getSupabaseAdmin()
+  const { data, error } = await supabase
+    .from("sst_perfil_sociodemografico").select("*")
+    .eq("documento_norm", doc).limit(1).maybeSingle()
+  if (error) {
+    console.error("[v0] getPerfilPorDocumento:", error.message, error.code, error.details, error.hint)
+    return null
+  }
+  return (data ?? null) as PerfilSociodemograficoRow | null
+}
+
+/**
  * Alta o actualización del perfil de una persona. Upsert por documento: el
  * documento es la llave que enlaza este perfil con su tarjeta MEDEVAC y con el
  * head count, así que una persona no puede tener dos perfiles.
@@ -84,8 +106,14 @@ export async function savePerfilSociodemografico(
 
   if (!limpio.documento) return { success: false, message: "El N° de documento es obligatorio: es la llave que enlaza al colaborador." }
 
+  // La edad se DERIVA de la fecha de nacimiento, nunca se guarda lo que venga
+  // en el formulario: una edad capturada a mano deja de ser cierta al año
+  // siguiente, y la fecha no. Mismo helper que usa el portal.
+  const edadCalculada = edadDesdeFechaISO(limpio.fecha_nacimiento)
+
   const payload = {
     ...limpio,
+    edad: edadCalculada ?? limpio.edad ?? null,
     idempresa: limpio.idempresa ?? empresaId ?? 100,
     origen: (row as any).origen ?? "sst",
     actualizado_en: new Date().toISOString(),

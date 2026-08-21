@@ -46,19 +46,62 @@ async function resolveEmpresaId(fromClient?: number | null): Promise<number | nu
   return await getCurrentEmpresaIdForInsert()
 }
 
+// Misma regla que usa el portal para decidir quien puede entrar
+// (lib/portal-actions.ts): un solo criterio de "activo" en toda la app.
+function esHeadcountActivo(estado: unknown): boolean {
+  return String(estado ?? "").trim().toUpperCase() === "ACTIVO"
+}
+
+/**
+ * El directorio MEDEVAC, cruzado contra el head count por documento.
+ *
+ * El cruce importa: un directorio de emergencias que muestra como vigente a
+ * alguien que ya se retiro hace llamar en una emergencia a un contacto que ya
+ * no corresponde. Cada fila sale con `estado_headcount`, que es "Activo",
+ * "Inactivo" o "Sin head count" (la persona no aparece en el head count: puede
+ * ser un documento escrito distinto, y eso lo corrige Gestion Humana).
+ *
+ * Si la consulta del head count falla, las fichas se devuelven igual con el
+ * estado en null: quedarse sin directorio de emergencias por no poder resolver
+ * un estado seria peor que mostrarlo sin esa marca.
+ */
 export async function listMedevac(empresaIdFromClient?: number | null): Promise<MedevacRow[]> {
   const supabase: any = await getSupabaseAdmin()
   const empresaId = await resolveEmpresaId(empresaIdFromClient)
-  const q = supabase.from("sst_medevac").select("*").order("nombres", { ascending: true })
   // SST transversal (LIP): se listan TODOS los registros MEDEVAC sin filtrar por
   // el ID del cliente; la info de SST es la misma para todos los proyectos.
   void empresaId
-  const { data, error } = await q
-  if (error) {
-    console.error("[v0] listMedevac:", error.message, error.code, error.details, error.hint)
+
+  const [med, hc] = await Promise.all([
+    supabase.from("sst_medevac").select("*").order("nombres", { ascending: true }),
+    supabase.from("headcount").select("identificacion, estado, cargo"),
+  ])
+
+  if (med.error) {
+    console.error("[v0] listMedevac:", med.error.message, med.error.code, med.error.details, med.error.hint)
     return []
   }
-  return (data ?? []) as MedevacRow[]
+  const filas = (med.data ?? []) as MedevacRow[]
+
+  if (hc.error) {
+    console.error("[v0] listMedevac headcount:", hc.error.message, hc.error.code, hc.error.details, hc.error.hint)
+    return filas.map((r) => ({ ...r, estado_headcount: null, cargo_headcount: null }))
+  }
+
+  const porDocumento = new Map<string, { estado: string; cargo: string | null }>()
+  for (const h of hc.data ?? []) {
+    const k = normalizarDocumento(h.identificacion)
+    if (k) porDocumento.set(k, { estado: h.estado ?? "", cargo: h.cargo ?? null })
+  }
+
+  return filas.map((r) => {
+    const h = porDocumento.get(normalizarDocumento(r.documento))
+    return {
+      ...r,
+      estado_headcount: !h ? "Sin head count" : esHeadcountActivo(h.estado) ? "Activo" : "Inactivo",
+      cargo_headcount: h?.cargo ?? null,
+    }
+  })
 }
 
 /**

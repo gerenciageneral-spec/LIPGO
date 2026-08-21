@@ -12,6 +12,7 @@
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import type { MedevacRow, PerfilSociodemograficoRow } from "@/lib/sst-evidencia-types"
+import { edadDesdeFechaISO } from "@/lib/sst-datos-catalogos"
 
 function normalizar(v: unknown): string {
   return String(v ?? "").replace(/[^0-9A-Za-z]/g, "").toUpperCase()
@@ -248,24 +249,6 @@ export interface PerfilPortalInput {
   turno: string
 }
 
-/**
- * Calcula la edad en años a partir de una fecha `YYYY-MM-DD`, comparando por
- * texto contra la fecha de hoy en Colombia.
- *
- * No usa `new Date("YYYY-MM-DD")`: ese constructor interpreta la cadena como
- * UTC y en Colombia (UTC-5) devuelve el día anterior, lo que hace que alguien
- * que cumple años hoy aparezca con un año menos.
- */
-function edadDesde(fechaISO: string | null): number | null {
-  if (!fechaISO || !/^\d{4}-\d{2}-\d{2}$/.test(fechaISO)) return null
-  const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" }) // YYYY-MM-DD
-  const [ay, am, ad] = fechaISO.split("-").map(Number)
-  const [hy, hm, hd] = hoy.split("-").map(Number)
-  let edad = hy - ay
-  if (hm < am || (hm === am && hd < ad)) edad--
-  return edad >= 0 && edad < 120 ? edad : null
-}
-
 export async function guardarPerfilPortal(
   identificacion: string,
   datos: PerfilPortalInput,
@@ -281,7 +264,7 @@ export async function guardarPerfilPortal(
   if (!nacimiento || !/^\d{4}-\d{2}-\d{2}$/.test(nacimiento)) {
     return { success: false, error: "La fecha de nacimiento es obligatoria." }
   }
-  const edad = edadDesde(nacimiento)
+  const edad = edadDesdeFechaISO(nacimiento)
   if (edad === null) return { success: false, error: "La fecha de nacimiento no es válida." }
 
   const faltan: string[] = []

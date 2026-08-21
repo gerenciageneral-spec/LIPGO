@@ -64,6 +64,12 @@ export interface MedevacRow {
   // corregir a mano (telefono incompleto, correo invalido, campo perdido).
   requiere_revision?: boolean | null
   revision_nota?: string | null
+  // NO son columnas de sst_medevac: los resuelve `listMedevac` cruzando el
+  // documento contra `headcount`. Sirven para que el directorio de emergencias
+  // muestre a quien ya no trabaja aqui en vez de darlo por vigente.
+  //   "Activo" | "Inactivo" | "Sin head count"
+  estado_headcount?: string | null
+  cargo_headcount?: string | null
 }
 
 export interface PerfilSociodemograficoRow {

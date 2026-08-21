@@ -14,6 +14,7 @@ import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useToast } from "@/hooks/use-toast"
@@ -24,11 +25,18 @@ import {
   resolverRevisionMedevac, getCoberturaMedevac, type CoberturaMedevac,
 } from "@/lib/sst-medevac-actions"
 import type { MedevacRow } from "@/lib/sst-evidencia-types"
+import { getPerfilPorDocumento, savePerfilSociodemografico } from "@/lib/sst-perfil-actions"
+import type { PerfilSociodemograficoRow } from "@/lib/sst-evidencia-types"
 import {
   RH_OPCIONES, DOCUMENTO_TIPOS, MESES, CENTROS_TRABAJO, EPS_OPCIONES,
-  ARL_OPCIONES, PARENTESCO_OPCIONES, comoOpciones,
+  ARL_OPCIONES, PARENTESCO_OPCIONES, AFP_OPCIONES, SEXO_OPCIONES,
+  ESCOLARIDAD_OPCIONES, ESTADO_CIVIL_OPCIONES, SI_NO, TIPO_VIVIENDA_OPCIONES,
+  CARACTERISTICAS_VIVIENDA_OPCIONES, ZONA_OPCIONES, ESTRATO_OPCIONES,
+  TRANSPORTE_OPCIONES, INGRESOS_OPCIONES, GRUPO_ETNICO_OPCIONES,
+  ACTIVIDAD_FISICA_OPCIONES, FRECUENCIA_CONSUMO_OPCIONES, TURNO_OPCIONES,
+  comoOpciones, edadDesdeFechaISO,
 } from "@/lib/sst-datos-catalogos"
-import { HeartPulse, FileText, Trash2, Search, FileDown, Pencil, X, AlertTriangle, Check, Users } from "lucide-react"
+import { HeartPulse, FileText, Trash2, Search, FileDown, Pencil, X, AlertTriangle, Check, Users, Filter } from "lucide-react"
 
 const CENTRO_POR_EMPRESA: Record<number, string> = {
   1: "HARINERA INDUPAN", 2: "AVIMOL", 3: "CEDI FUNZA", 4: "CEDI MEDELLIN", 100: "ADMINISTRATIVO",
@@ -85,6 +93,7 @@ interface Columna {
 }
 const COLUMNAS: Columna[] = [
   { k: "nombres",             l: "Colaborador",        tipo: "texto", min: "15rem", ph: "Nombre…" },
+  { k: "estado_headcount",    l: "Estado",             tipo: "lista", min: "9rem"  },
   { k: "documento",           l: "Documento",          tipo: "texto", min: "9rem",  ph: "Cédula…" },
   { k: "documento_tipo",      l: "Tipo doc.",          tipo: "lista", min: "11rem" },
   { k: "cargo",               l: "Cargo",              tipo: "lista", min: "13rem" },
@@ -109,6 +118,26 @@ const comparable = (v: unknown) =>
 
 const celda = (r: MedevacRow, k: keyof MedevacRow) => String(r[k] ?? "").trim()
 
+// Respuestas que significan "no tiene alergias". El campo es texto libre, asi
+// que llegan de varias formas; sin esta lista, alguien que escribio "No"
+// aparecia contado COMO alergico, que en una emergencia es justo al reves.
+// Una ficha de alguien que ya no trabaja aqui no se borra -sigue siendo
+// evidencia de lo que existia- pero tampoco puede leerse como vigente: en una
+// emergencia se llamaria a un contacto que ya no corresponde.
+const estaInactivo = (r: MedevacRow) => r.estado_headcount === "Inactivo"
+const FONDO_INACTIVO = "#e9edf2"
+
+const SIN_ALERGIA = new Set(["", "ninguna", "ninguno", "no", "n/a", "na", "-", "nada"])
+const tieneAlergia = (r: MedevacRow) => !SIN_ALERGIA.has(comparable(r.alergias))
+
+// Mes de hoy en Colombia, escrito como lo guardan los datos ("Agosto", no
+// "agosto"): es lo que permite que al hacer clic en la tarjeta de cumpleanos
+// el filtro de esa columna case exactamente.
+function mesDeHoy(): string {
+  const hoy = comparable(new Date().toLocaleDateString("es-CO", { month: "long", timeZone: "America/Bogota" }))
+  return MESES.find(([v]) => comparable(v) === hoy)?.[0] ?? ""
+}
+
 // Alto exacto del encabezado, en pixeles. La fila de filtros se ancla justo
 // debajo con este mismo valor: si se dejara al alto natural habria que
 // adivinarlo y la fila quedaria montada sobre el encabezado o despegada.
@@ -120,6 +149,18 @@ const vacio = (empresaId?: number | null): Record<string, any> => ({
   nombres: "", documento_tipo: "Cedula de ciudadanía", documento: "", cargo: "",
   celular: "", alergias: "Ninguna", rh: "O+", arl: "Sura", eps: "",
   contacto_nombre: "", contacto_telefono: "", contacto_parentesco: "", email: "", mes_cumple: "",
+})
+
+// Perfil Sociodemografico (SST-FOR-32) en blanco. Se captura desde aqui para
+// poder crear el registro COMPLETO de una persona -ficha de emergencia y
+// perfil- sin esperar a que el trabajador entre al portal a diligenciarlo.
+const perfilVacio = (): Record<string, any> => ({
+  fecha_nacimiento: "", sexo: "", pais_nacimiento: "Colombia", depto_nacimiento: "",
+  municipio_residencia: "", grupo_etnico: "", nivel_escolaridad: "", estado_civil: "",
+  cabeza_familia: "", num_hijos: "", personas_hogar: "", ingresos_familiares: "",
+  tipo_vivienda: "", caracteristicas_vivienda: "", zona: "", direccion: "",
+  transporte: "", estrato: "", consume_alcohol: "", actividad_fisica: "", fumador: "",
+  afp: "", turno: "",
 })
 
 /** Lista de sugerencias para un `<input list=…>`: lo del catálogo más lo que ya
@@ -143,11 +184,18 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
   // Un filtro por columna. Vive en un solo objeto -y no en una variable por
   // campo- para que agregar una columna a COLUMNAS no obligue a tocar el estado.
   const [filtros, setFiltros] = useState<Record<string, string>>({})
+  // Filtro aparte del de columnas: "tiene alguna alergia" no se puede expresar
+  // como "el texto de la columna contiene X", porque lo que lo define es
+  // justamente que NO sea una de las formas de decir "ninguna".
+  const [soloAlergias, setSoloAlergias] = useState(false)
   const [form, setForm] = useState<Record<string, any>>(() => vacio(empresaId))
+  const [perfil, setPerfil] = useState<Record<string, any>>(perfilVacio)
+  const [conPerfil, setConPerfil] = useState(false)
   const [saving, setSaving] = useState(false)
   const [card, setCard] = useState<MedevacRow | null>(null)
   const [buscando, setBuscando] = useState(false)
   const set = (k: string, v: any) => setForm((f) => ({ ...f, [k]: v }))
+  const setP = (k: string, v: any) => setPerfil((f) => ({ ...f, [k]: v }))
   const editando = !!form.id
 
   // Autorrelleno por N° de documento desde head count / Trabajadores (valida el proyecto del selector)
@@ -171,6 +219,7 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
         arl: !esUrl(r.data.arl) && r.data.arl ? r.data.arl : f.arl,
         centro_trabajo: centro || f.centro_trabajo,
       }))
+      cargarPerfilDe(doc)
       toast({ title: "Datos autocompletados", description: `${r.data.nombres} — verifica EPS y ARL` })
     } else {
       toast({ title: "No encontrado", description: r.message || "El documento no está en el head count del proyecto" })
@@ -188,7 +237,31 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [empresaId])
 
+  /** Trae el perfil de esa persona, si ya lo tiene, para no volver a pedirlo. */
+  async function cargarPerfilDe(documento: string) {
+    const doc = String(documento || "").trim()
+    if (!doc) return
+    const pr = await getPerfilPorDocumento(doc)
+    if (!pr) { setPerfil(perfilVacio()); setConPerfil(false); return }
+    setPerfil({
+      fecha_nacimiento: pr.fecha_nacimiento ?? "", sexo: pr.sexo ?? "",
+      pais_nacimiento: pr.pais_nacimiento ?? "Colombia", depto_nacimiento: pr.depto_nacimiento ?? "",
+      municipio_residencia: pr.municipio_residencia ?? "", grupo_etnico: pr.grupo_etnico ?? "",
+      nivel_escolaridad: pr.nivel_escolaridad ?? "", estado_civil: pr.estado_civil ?? "",
+      cabeza_familia: pr.cabeza_familia ?? "",
+      num_hijos: pr.num_hijos == null ? "" : String(pr.num_hijos),
+      personas_hogar: pr.personas_hogar == null ? "" : String(pr.personas_hogar),
+      ingresos_familiares: pr.ingresos_familiares ?? "", tipo_vivienda: pr.tipo_vivienda ?? "",
+      caracteristicas_vivienda: pr.caracteristicas_vivienda ?? "", zona: pr.zona ?? "",
+      direccion: pr.direccion ?? "", transporte: pr.transporte ?? "", estrato: pr.estrato ?? "",
+      consume_alcohol: pr.consume_alcohol ?? "", actividad_fisica: pr.actividad_fisica ?? "",
+      fumador: pr.fumador ?? "", afp: pr.afp ?? "", turno: pr.turno ?? "",
+    })
+    setConPerfil(true)
+  }
+
   function editar(r: MedevacRow) {
+    cargarPerfilDe(r.documento ?? "")
     setForm({
       id: r.id,
       centro_trabajo: r.centro_trabajo ?? "", nombres: r.nombres ?? "",
@@ -207,11 +280,47 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
     setSaving(true)
     const { id, ...datos } = form
     const res = await saveMedevac({ ...datos, idempresa: empresaId ?? undefined } as Partial<MedevacRow>, empresaId)
+    if (!res.success) {
+      setSaving(false)
+      toast({ title: "Error al guardar", description: res.message })
+      return
+    }
+
+    // El perfil se guarda DESPUES y solo si la ficha entro bien: las dos filas
+    // se enlazan por el documento, y un perfil sin su ficha de emergencia seria
+    // un registro suelto que nadie ve desde este modulo.
+    let avisoPerfil = ""
+    if (conPerfil) {
+      const nombreCompleto = String(form.nombres ?? "").trim().split(/\s+/)
+      const rp = await savePerfilSociodemografico(
+        {
+          ...perfil,
+          documento: form.documento,
+          documento_tipo: form.documento_tipo,
+          // El head count guarda "Apellidos Nombres" en un solo campo; el censo
+          // se lee ordenado por apellido, asi que se parte por las dos primeras
+          // palabras. Es una aproximacion, no una regla exacta.
+          apellidos: nombreCompleto.slice(0, 2).join(" ") || null,
+          nombres: nombreCompleto.slice(2).join(" ") || null,
+          cargo: form.cargo,
+          centro_trabajo: form.centro_trabajo,
+          eps: form.eps,
+          arl: form.arl,
+          estado: "activo",
+          idempresa: empresaId ?? undefined,
+        } as Partial<PerfilSociodemograficoRow>,
+        empresaId,
+      )
+      if (!rp.success) avisoPerfil = ` La ficha se guardo, pero el perfil no: ${rp.message}`
+    }
     setSaving(false)
-    if (res.success) {
-      toast({ title: editando ? "Ficha actualizada" : "Colaborador agregado al MEDEVAC" })
-      setForm(vacio(empresaId)); cargar(); setTab("directorio")
-    } else toast({ title: "Error al guardar", description: res.message })
+
+    toast({
+      title: editando ? "Ficha actualizada" : "Colaborador agregado al MEDEVAC",
+      description: avisoPerfil || (conPerfil ? "Se guardaron la ficha de emergencia y el perfil sociodemografico." : undefined),
+    })
+    setForm(vacio(empresaId)); setPerfil(perfilVacio()); setConPerfil(false)
+    cargar(); setTab("directorio")
   }
 
   async function eliminar(id?: number) {
@@ -304,24 +413,26 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
     const activos = COLUMNAS
       .map((c) => ({ c, v: filtros[c.k as string] ?? "" }))
       .filter(({ c, v }) => (c.tipo === "lista" ? v && v !== TODOS : v.trim() !== ""))
-    if (!activos.length) return rows
-    return rows.filter((r) =>
-      activos.every(({ c, v }) =>
+    if (!activos.length && !soloAlergias) return rows
+    return rows.filter((r) => {
+      if (soloAlergias && !tieneAlergia(r)) return false
+      return activos.every(({ c, v }) =>
         c.tipo === "lista"
           ? celda(r, c.k) === v
           : comparable(celda(r, c.k)).includes(comparable(v)),
-      ),
-    )
-  }, [rows, filtros])
+      )
+    })
+  }, [rows, filtros, soloAlergias])
 
   const filtrosActivos = COLUMNAS.filter((c) => {
     const v = filtros[c.k as string] ?? ""
     return c.tipo === "lista" ? v && v !== TODOS : v.trim() !== ""
   })
-  const hayFiltro = filtrosActivos.length > 0
-  const resumenFiltros = filtrosActivos
-    .map((c) => `${c.l}: ${filtros[c.k as string]}`)
-    .join(" · ")
+  const hayFiltro = filtrosActivos.length > 0 || soloAlergias
+  const resumenFiltros = [
+    ...(soloAlergias ? ["Solo con alergias"] : []),
+    ...filtrosActivos.map((c) => `${c.l}: ${filtros[c.k as string]}`),
+  ].join(" · ")
 
   const setFiltro = (k: string, v: string) =>
     setFiltros((f) => {
@@ -333,18 +444,45 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
 
   function limpiarFiltros() {
     setFiltros({})
+    setSoloAlergias(false)
+  }
+
+  // Un desplegable de columna siempre debe incluir el valor que tiene puesto,
+  // aunque ninguna fila lo use: si no, al filtrar por un mes en el que nadie
+  // cumple, el desplegable se veria vacio y no habria como quitar el filtro.
+  const opcionesDe = (k: string) => {
+    const base = opciones[k] ?? []
+    const sel = filtros[k]
+    return sel && sel !== TODOS && !base.includes(sel) ? [sel, ...base] : base
+  }
+
+  // Las dos tarjetas que filtran. Alternan: un segundo clic quita el filtro.
+  // Llevan al Directorio porque desde Cobertura o Por corregir no se veria el
+  // efecto de lo que se acaba de pulsar.
+  function alternarSoloAlergias() {
+    setSoloAlergias((v) => !v)
+    setTab("directorio")
+  }
+
+  function alternarCumpleDelMes() {
+    const mes = mesDeHoy()
+    if (!mes) return
+    setFiltro("mes_cumple", filtros.mes_cumple === mes ? "" : mes)
+    setTab("directorio")
   }
 
   const pendientes = useMemo(() => rows.filter((r) => r.requiere_revision), [rows])
 
-  const mesActual = new Date().toLocaleDateString("es-CO", { month: "long", timeZone: "America/Bogota" }).toLowerCase()
+  const mesActual = mesDeHoy()
   const kpis = useMemo(() => {
     const base = hayFiltro ? filtered : rows
     const n = base.length
     const conRH = base.filter((r) => (r.rh ?? "").trim()).length
     const conContacto = base.filter((r) => (r.contacto_telefono ?? "").trim()).length
-    const conAlergia = base.filter((r) => (r.alergias ?? "").trim() && (r.alergias ?? "").toLowerCase() !== "ninguna").length
-    const cumple = base.filter((r) => (r.mes_cumple ?? "").toLowerCase().includes(mesActual)).length
+    // Mismos criterios que usan los filtros de las tarjetas: si la tarjeta
+    // dijera 5 y al pulsarla quedaran 3 filas, el numero no seria creible.
+    const conAlergia = base.filter(tieneAlergia).length
+    const cumple = base.filter((r) => comparable(r.mes_cumple) === comparable(mesActual)).length
     return {
       n,
       rh: n ? Math.round((100 * conRH) / n) : 0,
@@ -373,8 +511,21 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
         <Kpi t={hayFiltro ? "Colaboradores (filtrados)" : "Colaboradores"} v={kpis.n} />
         <Kpi t="RH registrado" v={`${kpis.rh}%`} c={kpis.rh >= 95 ? SST_TOKENS.ok : SST_TOKENS.warn} />
         <Kpi t="Contacto emergencia" v={`${kpis.contacto}%`} c={kpis.contacto >= 95 ? SST_TOKENS.ok : SST_TOKENS.warn} />
-        <Kpi t="Con alergias" v={kpis.alergia} c={kpis.alergia ? SST_TOKENS.warn : SST_TOKENS.ok} />
-        <Kpi t="Cumpleaños del mes" v={kpis.cumple} />
+        <KpiFiltro
+          t="Con alergias"
+          v={kpis.alergia}
+          c={kpis.alergia ? SST_TOKENS.warn : SST_TOKENS.ok}
+          activo={soloAlergias}
+          onClick={alternarSoloAlergias}
+          titulo={soloAlergias ? "Quitar el filtro de alergias" : "Ver solo a quienes tienen alguna alergia"}
+        />
+        <KpiFiltro
+          t={mesActual ? `Cumpleaños de ${mesActual}` : "Cumpleaños del mes"}
+          v={kpis.cumple}
+          activo={filtros.mes_cumple === mesActual && !!mesActual}
+          onClick={alternarCumpleDelMes}
+          titulo={filtros.mes_cumple === mesActual ? "Quitar el filtro de cumpleaños" : `Ver solo a quienes cumplen en ${mesActual}`}
+        />
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
@@ -453,7 +604,7 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
                             small
                             v={filtros[c.k as string] ?? TODOS}
                             on={(v) => setFiltro(c.k as string, v)}
-                            o={[[TODOS, "Todos"], ...comoOpciones(opciones[c.k as string] ?? [])]}
+                            o={[[TODOS, "Todos"], ...comoOpciones(opcionesDe(c.k as string))]}
                           />
                         ) : (
                           <Input
@@ -478,9 +629,10 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
                   {filtered.map((r, i) => {
                     // El fondo se repite en las celdas fijas: sin esto se
                     // verian transparentes y el contenido pasaria por debajo.
-                    const bg = i % 2 ? "#f7fafc" : "#ffffff"
+                    const inactivo = estaInactivo(r)
+                    const bg = inactivo ? FONDO_INACTIVO : i % 2 ? "#f7fafc" : "#ffffff"
                     return (
-                      <tr key={r.id}>
+                      <tr key={r.id} className={inactivo ? "text-muted-foreground" : ""}>
                         {COLUMNAS.map((c, idx) => (
                           <td
                             key={String(c.k)}
@@ -498,6 +650,8 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
                                   />
                                 )}
                               </span>
+                            ) : c.k === "estado_headcount" ? (
+                              <EtiquetaEstado v={r.estado_headcount} />
                             ) : c.k === "rh" ? (
                               <Badge style={{ background: SST_TOKENS.bad, color: "white" }}>{celda(r, "rh") || "—"}</Badge>
                             ) : (
@@ -645,7 +799,7 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
             {editando && (
               <div className="flex items-center justify-between rounded-md px-3 py-2 text-xs" style={{ background: SST_TOKENS.light }}>
                 <span>Editando la ficha de <b>{form.nombres}</b>. El documento es la llave: si lo cambias, se creará una ficha nueva.</span>
-                <Button variant="ghost" size="sm" onClick={() => { setForm(vacio(empresaId)); }}>
+                <Button variant="ghost" size="sm" onClick={() => { setForm(vacio(empresaId)); setPerfil(perfilVacio()); setConPerfil(false) }}>
                   <X className="mr-1 h-3.5 w-3.5" /> Cancelar edición
                 </Button>
               </div>
@@ -713,8 +867,94 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
                 </Field>
               </Row3>
             </Sec>
+            {/* Registro completo: la ficha de emergencia y el perfil
+                sociodemografico son los dos formatos que el SG-SST exige de
+                cada persona y comparten llave -el documento-. Capturarlos
+                juntos evita depender de que el trabajador entre al portal. */}
+            <div className="rounded-md border p-3" style={{ background: conPerfil ? SST_TOKENS.light : undefined }}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold" style={{ color: SST_TOKENS.navy }}>
+                    Perfil Sociodemográfico (SST-FOR-32)
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Actívalo para dejar el <b>registro completo</b> de la persona en un solo paso.
+                    Si lo dejas apagado, solo se guarda la ficha de emergencia y el trabajador
+                    tendrá que completar su perfil desde el portal.
+                  </p>
+                </div>
+                <Switch checked={conPerfil} onCheckedChange={setConPerfil} aria-label="Capturar el perfil sociodemográfico" />
+              </div>
+
+              {conPerfil && (
+                <div className="mt-4 space-y-5">
+                  <Sec n="Datos personales">
+                    <Row3>
+                      <Field l="Fecha de nacimiento">
+                        <Input type="date" value={perfil.fecha_nacimiento} onChange={(e) => setP("fecha_nacimiento", e.target.value)} />
+                      </Field>
+                      <Field l="Edad">
+                        {/* Solo lectura: se deriva de la fecha. Una edad escrita
+                            a mano deja de ser cierta al año siguiente. */}
+                        <Input readOnly value={edadDesdeFechaISO(perfil.fecha_nacimiento) ?? ""} placeholder="Se calcula sola" className="bg-muted" />
+                      </Field>
+                      <Field l="Sexo"><Sel v={perfil.sexo || ""} on={(v) => setP("sexo", v)} o={SEXO_OPCIONES} /></Field>
+                      <Field l="País de nacimiento"><Input value={perfil.pais_nacimiento} onChange={(e) => setP("pais_nacimiento", e.target.value)} /></Field>
+                      <Field l="Departamento de nacimiento"><Input value={perfil.depto_nacimiento} onChange={(e) => setP("depto_nacimiento", e.target.value)} /></Field>
+                      <Field l="Grupo étnico"><Sel v={perfil.grupo_etnico || ""} on={(v) => setP("grupo_etnico", v)} o={GRUPO_ETNICO_OPCIONES} /></Field>
+                      <Field l="Nivel de escolaridad"><Sel v={perfil.nivel_escolaridad || ""} on={(v) => setP("nivel_escolaridad", v)} o={ESCOLARIDAD_OPCIONES} /></Field>
+                      <Field l="Turno"><Sel v={perfil.turno || ""} on={(v) => setP("turno", v)} o={TURNO_OPCIONES} /></Field>
+                      <Field l="Fondo de pensiones (AFP)">
+                        <Input list="medevac-afp" value={perfil.afp} onChange={(e) => setP("afp", e.target.value)} />
+                        <datalist id="medevac-afp">{AFP_OPCIONES.map((v) => <option key={v} value={v} />)}</datalist>
+                      </Field>
+                    </Row3>
+                  </Sec>
+
+                  <Sec n="Familia">
+                    <Row3>
+                      <Field l="Estado civil"><Sel v={perfil.estado_civil || ""} on={(v) => setP("estado_civil", v)} o={ESTADO_CIVIL_OPCIONES} /></Field>
+                      <Field l="Cabeza de familia"><Sel v={perfil.cabeza_familia || ""} on={(v) => setP("cabeza_familia", v)} o={SI_NO} /></Field>
+                      <Field l="N° de hijos"><Input type="number" min={0} value={perfil.num_hijos} onChange={(e) => setP("num_hijos", e.target.value)} /></Field>
+                      <Field l="Personas en el hogar"><Input type="number" min={1} value={perfil.personas_hogar} onChange={(e) => setP("personas_hogar", e.target.value)} /></Field>
+                      <Field l="Ingresos del hogar"><Sel v={perfil.ingresos_familiares || ""} on={(v) => setP("ingresos_familiares", v)} o={INGRESOS_OPCIONES} /></Field>
+                    </Row3>
+                  </Sec>
+
+                  <Sec n="Vivienda y desplazamiento">
+                    <Row3>
+                      <Field l="Tipo de vivienda"><Sel v={perfil.tipo_vivienda || ""} on={(v) => setP("tipo_vivienda", v)} o={TIPO_VIVIENDA_OPCIONES} /></Field>
+                      <Field l="Características de la vivienda"><Sel v={perfil.caracteristicas_vivienda || ""} on={(v) => setP("caracteristicas_vivienda", v)} o={CARACTERISTICAS_VIVIENDA_OPCIONES} /></Field>
+                      <Field l="Zona"><Sel v={perfil.zona || ""} on={(v) => setP("zona", v)} o={ZONA_OPCIONES} /></Field>
+                      <Field l="Estrato"><Sel v={perfil.estrato || ""} on={(v) => setP("estrato", v)} o={ESTRATO_OPCIONES} /></Field>
+                      <Field l="Municipio de residencia"><Input value={perfil.municipio_residencia} onChange={(e) => setP("municipio_residencia", e.target.value)} /></Field>
+                      <Field l="Dirección"><Input value={perfil.direccion} onChange={(e) => setP("direccion", e.target.value)} /></Field>
+                      <Field l="Medio de transporte"><Sel v={perfil.transporte || ""} on={(v) => setP("transporte", v)} o={TRANSPORTE_OPCIONES} /></Field>
+                    </Row3>
+                  </Sec>
+
+                  <Sec n="Hábitos y estilo de vida">
+                    <Row3>
+                      <Field l="Actividad física"><Sel v={perfil.actividad_fisica || ""} on={(v) => setP("actividad_fisica", v)} o={ACTIVIDAD_FISICA_OPCIONES} /></Field>
+                      <Field l="Consumo de alcohol"><Sel v={perfil.consume_alcohol || ""} on={(v) => setP("consume_alcohol", v)} o={FRECUENCIA_CONSUMO_OPCIONES} /></Field>
+                      <Field l="Fumador"><Sel v={perfil.fumador || ""} on={(v) => setP("fumador", v)} o={FRECUENCIA_CONSUMO_OPCIONES} /></Field>
+                    </Row3>
+                  </Sec>
+
+                  <p className="text-[11px] text-muted-foreground">
+                    La EPS, la ARL, el cargo y el centro de trabajo se toman de la ficha de arriba:
+                    no se piden dos veces.
+                  </p>
+                </div>
+              )}
+            </div>
+
             <Button onClick={guardar} disabled={saving} style={{ background: SST_TOKENS.navy, color: "white" }}>
-              {saving ? "Guardando…" : editando ? "Guardar cambios" : "Agregar al MEDEVAC"}
+              {saving
+                ? "Guardando…"
+                : editando
+                  ? conPerfil ? "Guardar ficha y perfil" : "Guardar cambios"
+                  : conPerfil ? "Crear registro completo" : "Agregar al MEDEVAC"}
             </Button>
           </Card>
         </TabsContent>
@@ -756,6 +996,47 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
         </DialogContent>
       </Dialog>
     </div>
+  )
+}
+
+/** Estado de la persona en el head count. "Sin head count" no es lo mismo que
+ *  inactivo: significa que el documento no aparece alli -normalmente porque
+ *  esta escrito distinto- y eso lo corrige Gestion Humana, no SST. */
+function EtiquetaEstado({ v }: { v?: string | null }) {
+  if (!v) return <span className="text-muted-foreground">—</span>
+  if (v === "Activo") return <Badge style={{ background: SST_TOKENS.ok, color: "white" }}>Activo</Badge>
+  if (v === "Inactivo") return <Badge style={{ background: "#64748b", color: "white" }}>Inactivo</Badge>
+  return <Badge variant="outline" className="font-normal">Sin head count</Badge>
+}
+
+/** Tarjeta de indicador que ademas filtra la tabla al pulsarla. Se queda en
+ *  este archivo -y no en `sst-form-ui`- porque el `Kpi` compartido lo usan los
+ *  demas modulos de SST, donde las tarjetas no filtran nada. */
+function KpiFiltro({
+  t, v, c, activo, onClick, titulo,
+}: { t: string; v: React.ReactNode; c?: string; activo: boolean; onClick: () => void; titulo: string }) {
+  const color = c ?? SST_TOKENS.navy
+  return (
+    <Card
+      role="button"
+      tabIndex={0}
+      title={titulo}
+      aria-pressed={activo}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick() }
+      }}
+      className="cursor-pointer p-4 transition hover:shadow-md focus:outline-none"
+      style={activo ? { boxShadow: `0 0 0 2px ${color}`, background: SST_TOKENS.light } : undefined}
+    >
+      <div className="text-2xl font-bold" style={{ color }}>{v}</div>
+      <div className="flex items-center gap-1 text-xs text-muted-foreground">
+        <span className="truncate">{t}</span>
+        {activo
+          ? <X className="h-3 w-3 shrink-0" style={{ color }} />
+          : <Filter className="h-3 w-3 shrink-0 opacity-50" />}
+      </div>
+    </Card>
   )
 }
 
