@@ -4,7 +4,7 @@ import Link from "next/link"
 import Image from "next/image"
 import { usePathname, useRouter } from "next/navigation"
 import { useEffect, type ReactNode } from "react"
-import { Home, FileText, Wallet, CalendarClock, BarChart3, AlertCircle, GraduationCap, LogOut, Target, type LucideIcon } from "lucide-react"
+import { Home, FileText, Wallet, CalendarClock, BarChart3, AlertCircle, GraduationCap, LogOut, Target, HeartPulse, type LucideIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { usePortal } from "@/components/portal/portal-provider"
 import { verificarAccesoPortal } from "@/lib/portal-actions"
@@ -38,6 +38,13 @@ const MENU: MenuItem[] = [
   // quepa comodo en el menu inferior movil. La pagina filtra por el
   // nombre del colaborador autenticado contra `pagonomina`.
   { label: "Balance", href: "/portal/balance", icon: BarChart3 },
+  // "Mis datos" reune los dos formatos que el SG-SST exige de cada trabajador:
+  // la ficha de emergencia MEDEVAC (SST-FOR-33) y el perfil sociodemografico
+  // (SST-FOR-32). Van juntos porque comparten llave -el documento- y porque
+  // para el trabajador son una sola tarea: "completar mis datos". Mientras le
+  // falte alguno, la guarda de `datos-completos-guard` no lo deja entrar a
+  // Anticipos, Permisos ni Certificados.
+  { label: "Mis datos", href: "/portal/mis-datos", icon: HeartPulse },
 ]
 
 export function PortalShell({ children }: { children: ReactNode }) {

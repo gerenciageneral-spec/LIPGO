@@ -21,6 +21,7 @@ import {
   createSolicitudCertificado,
   type SolicitudTrabajador,
 } from "@/lib/gestion-solicitudes-actions"
+import { DatosCompletosGuard } from "@/components/portal/datos-completos-guard"
 
 /**
  * Pagina de Certificados del Portal del Trabajador.
@@ -33,7 +34,7 @@ import {
  *  - Listado inferior con el historial: estado visual del tramite y boton
  *    verde de descarga cuando ya hay url_documento_final.
  */
-export default function PortalCertificadosPage() {
+function PortalCertificadosPage() {
   const { colaborador } = usePortal()
   const { toast } = useToast()
   const [loading, setLoading] = useState(true)
@@ -256,4 +257,17 @@ function formatFecha(iso: string): string {
   } catch {
     return iso
   }
+}
+
+/**
+ * El tramite queda detras de la guarda de datos personales: no se puede
+ * solicitar un certificado sin tener la ficha MEDEVAC y el perfil sociodemografico
+ * completos. La guarda falla-abierto, asi que un error de red no bloquea a nadie.
+ */
+export default function Page() {
+  return (
+    <DatosCompletosGuard tramite="solicitar un certificado">
+      <PortalCertificadosPage />
+    </DatosCompletosGuard>
+  )
 }

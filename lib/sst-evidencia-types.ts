@@ -53,6 +53,17 @@ export interface MedevacRow {
   mes_cumple: string | null
   marca_temporal: string | null
   created_at?: string | null
+  // Llave de enlace con el Perfil Sociodemografico, el headcount y el portal
+  // del trabajador: el documento sin puntos ni espacios, en mayuscula. Es una
+  // columna GENERADA en Postgres, asi que NUNCA se escribe desde la app.
+  documento_norm?: string | null
+  origen?: string | null            // carga_csv | portal | sst
+  actualizado_en?: string | null
+  actualizado_por?: string | null
+  // Control de calidad de la carga masiva: la fila entro pero hay algo que
+  // corregir a mano (telefono incompleto, correo invalido, campo perdido).
+  requiere_revision?: boolean | null
+  revision_nota?: string | null
 }
 
 export interface PerfilSociodemograficoRow {
@@ -94,6 +105,12 @@ export interface PerfilSociodemograficoRow {
   actividad_fisica: string | null
   fumador: string | null
   marca_temporal: string | null
+  created_at?: string | null
+  // Misma llave de enlace que MEDEVAC. Columna GENERADA: no se escribe.
+  documento_norm?: string | null
+  origen?: string | null            // portal | sst
+  actualizado_en?: string | null
+  actualizado_por?: string | null
 }
 
 export interface IpevrRow {

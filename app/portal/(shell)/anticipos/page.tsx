@@ -51,6 +51,7 @@ import {
   type SolicitudTrabajador,
 } from "@/lib/gestion-solicitudes-actions"
 import { tieneNovedadesUltimos30Dias } from "@/lib/portal-actions"
+import { DatosCompletosGuard } from "@/components/portal/datos-completos-guard"
 
 /**
  * Schema Zod: monto obligatorio, positivo y no mayor a 300.000 COP.
@@ -79,7 +80,7 @@ function esDelMesActual(iso: string | null | undefined): boolean {
   return d.getMonth() === ahora.getMonth() && d.getFullYear() === ahora.getFullYear()
 }
 
-export default function PortalAnticiposPage() {
+function PortalAnticiposPage() {
   const { colaborador } = usePortal()
   const { toast } = useToast()
   const [loading, setLoading] = useState(true)
@@ -837,5 +838,18 @@ function FirmarAnticipoDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+/**
+ * El tramite queda detras de la guarda de datos personales: no se puede
+ * pedir un anticipo sin tener la ficha MEDEVAC y el perfil sociodemografico
+ * completos. La guarda falla-abierto, asi que un error de red no bloquea a nadie.
+ */
+export default function Page() {
+  return (
+    <DatosCompletosGuard tramite="pedir un anticipo">
+      <PortalAnticiposPage />
+    </DatosCompletosGuard>
   )
 }

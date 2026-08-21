@@ -47,6 +47,7 @@ import {
   fechaMinimaPermiso,
   mensajeAnticipacionPermiso,
 } from "@/lib/permisos-anticipacion"
+import { DatosCompletosGuard } from "@/components/portal/datos-completos-guard"
 
 const TIPOS_PERMISO = [
   { value: "personal", label: "Personal / Asuntos familiares" },
@@ -107,7 +108,7 @@ const permisoSchema = z
 
 type PermisoForm = z.infer<typeof permisoSchema>
 
-export default function PortalPermisosPage() {
+function PortalPermisosPage() {
   const { colaborador } = usePortal()
   const { toast } = useToast()
   const [loading, setLoading] = useState(true)
@@ -449,4 +450,17 @@ function formatRango(ini: string | null, fin: string | null): string {
   if (ini && fin) return `${fmt(ini)} - ${fmt(fin)}`
   if (ini) return fmt(ini)
   return "Sin fechas"
+}
+
+/**
+ * El tramite queda detras de la guarda de datos personales: no se puede
+ * pedir un permiso sin tener la ficha MEDEVAC y el perfil sociodemografico
+ * completos. La guarda falla-abierto, asi que un error de red no bloquea a nadie.
+ */
+export default function Page() {
+  return (
+    <DatosCompletosGuard tramite="pedir un permiso">
+      <PortalPermisosPage />
+    </DatosCompletosGuard>
+  )
 }

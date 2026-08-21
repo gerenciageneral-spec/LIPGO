@@ -1524,13 +1524,13 @@ Gestión de exámenes médicos ocupacionales con su aptitud, que actúa como req
 
 *En el menú aparece como «MEDEVAC (Plan de Emergencias Médicas)».*
 
-Plan de emergencias médicas: rutas, contactos y centros de atención por sede. Genera el documento del plan.
+Directorio de emergencias médicas por colaborador: grupo sanguíneo, alergias, EPS/ARL y a quién avisar. Filtra por colaborador, cargo, centro de trabajo, EPS y ARL, y exporta lo filtrado. La llave de cada persona es su documento, que es lo que enlaza esta ficha con su Perfil Sociodemográfico, con el head count y con lo que el trabajador diligencia desde el portal. Incluye la cobertura contra el head count —quién no tiene ficha— y las fichas pendientes por corregir.
 
 - **Archivo:** `components/sst/medevac.tsx`
 - **Permiso:** `sst_medevac`
 - **Escribe en:** `sst_medevac`
-- **Lee de:** `headcount`
-- **Genera:** PDF
+- **Lee de:** `headcount`, `vw_sst_datos_colaborador`
+- **Genera:** PDF (tarjeta individual y directorio)
 
 #### Perfil Sociodemográfico
 
