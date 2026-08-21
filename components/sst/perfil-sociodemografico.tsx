@@ -12,9 +12,22 @@ import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { SST_TOKENS } from "@/components/sst/sst-utils"
 import { Kpi } from "@/components/sst/sst-form-ui"
-import { listPerfilSociodemografico } from "@/lib/sst-perfil-actions"
+import {
+  listPerfilSociodemografico, savePerfilSociodemografico, getPerfilPorDocumento,
+} from "@/lib/sst-perfil-actions"
+import { buscarColaboradorMedevac } from "@/lib/sst-medevac-actions"
+import { Input } from "@/components/ui/input"
+import { useToast } from "@/hooks/use-toast"
+import { Sec, Row3, Field, Sel } from "@/components/sst/sst-form-ui"
+import {
+  DOCUMENTO_TIPOS, CENTROS_TRABAJO, EPS_OPCIONES, ARL_OPCIONES, AFP_OPCIONES,
+  SEXO_OPCIONES, ESCOLARIDAD_OPCIONES, ESTADO_CIVIL_OPCIONES, SI_NO,
+  TIPO_VIVIENDA_OPCIONES, CARACTERISTICAS_VIVIENDA_OPCIONES, ZONA_OPCIONES,
+  ESTRATO_OPCIONES, TRANSPORTE_OPCIONES, INGRESOS_OPCIONES, GRUPO_ETNICO_OPCIONES,
+  TURNO_OPCIONES, CENTRO_POR_EMPRESA, edadDesdeFechaISO,
+} from "@/lib/sst-datos-catalogos"
 import type { PerfilSociodemograficoRow } from "@/lib/sst-evidencia-types"
-import { Users, Loader2 } from "lucide-react"
+import { Users, Loader2, Search, Pencil, X, UserPlus } from "lucide-react"
 import {
   ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
 } from "recharts"
@@ -77,6 +90,38 @@ const ingParts = (r: PerfilSociodemograficoRow) => {
   return { anio: /^\d{4}$/.test(y) ? y : "", mes: mNum >= 1 && mNum <= 12 ? String(mNum).padStart(2, "0") : "" }
 }
 
+// Registro en blanco. `documento` es la llave: enlaza este perfil con la ficha
+// MEDEVAC de la misma persona y con su head count.
+const formVacio = (empresaId?: number | null): Record<string, any> => ({
+  documento: "", documento_tipo: "Cedula de ciudadanía", nombres: "", apellidos: "",
+  fecha_nacimiento: "", sexo: "", eps: "", afp: "", arl: "Sura",
+  centro_trabajo: (empresaId && CENTRO_POR_EMPRESA[empresaId]) || "", turno: "", cargo: "",
+  fecha_ingreso: "", pais_nacimiento: "Colombia", depto_nacimiento: "", municipio_residencia: "",
+  grupo_etnico: "", nivel_escolaridad: "", estado_civil: "", cabeza_familia: "",
+  num_hijos: "", personas_hogar: "", ingresos_familiares: "", tipo_vivienda: "",
+  caracteristicas_vivienda: "", zona: "", direccion: "", transporte: "", estrato: "",
+  consume_alcohol: "", actividad_fisica: "", fumador: "", estado: "activo",
+})
+
+/**
+ * Antiguedad en la empresa a partir de `fecha_ingreso` (AAAA-MM-DD).
+ *
+ * El formulario original traia tres columnas -Dia, Mes y Ano- con este mismo
+ * calculo ya hecho. NO se guardaron: una antiguedad guardada queda desactualizada
+ * al dia siguiente, y la fecha de ingreso no.
+ */
+function antiguedad(fechaISO: string | null | undefined, hoyISO?: string) {
+  const f = String(fechaISO ?? "").trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(f)) return null
+  const hoy = hoyISO ?? new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" })
+  const [ay, am, ad] = f.split("-").map(Number)
+  const [hy, hm, hd] = hoy.split("-").map(Number)
+  let anios = hy - ay, meses = hm - am, dias = hd - ad
+  if (dias < 0) { meses--; dias += new Date(hy, hm - 1, 0).getDate() }
+  if (meses < 0) { anios--; meses += 12 }
+  return anios < 0 ? null : { anios, meses, dias }
+}
+
 export function PerfilSociodemografico({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaId?: number | null }) {
   const { selectedEmpresaId: ctxEmpresaId } = useAuth()
   const empresaId = propEmpresaId ?? ctxEmpresaId ?? null
@@ -87,6 +132,12 @@ export function PerfilSociodemografico({ selectedEmpresaId: propEmpresaId }: { s
   const [filtros, setFiltros] = useState<Record<string, string>>({}) // por columna
   const [mesF, setMesF] = useState("")
   const [anioF, setAnioF] = useState("")
+  const { toast } = useToast()
+  const [form, setForm] = useState<Record<string, any>>(() => formVacio(empresaId))
+  const [guardando, setGuardando] = useState(false)
+  const [buscando, setBuscando] = useState(false)
+  const editando = !!form._existe
+  const setF = (k: string, v: any) => setForm((f) => ({ ...f, [k]: v }))
 
   async function cargar() {
     setLoading(true)
@@ -97,6 +148,91 @@ export function PerfilSociodemografico({ selectedEmpresaId: propEmpresaId }: { s
     cargar()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [empresaId])
+
+  /**
+   * Trae lo que ya se sabe de esa persona: su perfil si existe, y si no, al
+   * menos el nombre y el cargo del head count. Evita volver a digitar datos
+   * que la empresa ya tiene y, sobre todo, evita crear un perfil con el nombre
+   * escrito distinto al de su ficha MEDEVAC.
+   */
+  async function buscarPorDocumento() {
+    const doc = String(form.documento || "").trim()
+    if (!doc) return
+    setBuscando(true)
+    const [pr, hc] = await Promise.all([getPerfilPorDocumento(doc), buscarColaboradorMedevac(doc, null)])
+    setBuscando(false)
+
+    if (pr) {
+      cargarEnFormulario(pr)
+      toast({ title: "Ya tiene perfil", description: `${pr.apellidos ?? ""} ${pr.nombres ?? ""} — se cargó para editarlo.` })
+      return
+    }
+    if (hc.found && hc.data) {
+      // El head count guarda "Apellidos Nombres" en un solo campo. Se parte por
+      // las dos primeras palabras, que es como se lee el censo (por apellido).
+      const partes = String(hc.data.nombres ?? "").trim().split(/\s+/)
+      setForm((f) => ({
+        ...f,
+        apellidos: partes.slice(0, 2).join(" ") || f.apellidos,
+        nombres: partes.slice(2).join(" ") || f.nombres,
+        cargo: hc.data.cargo || f.cargo,
+        centro_trabajo: CENTRO_POR_EMPRESA[hc.data.idempresa] ?? f.centro_trabajo,
+      }))
+      toast({ title: "Sin perfil todavía", description: `${hc.data.nombres} — se tomaron nombre y cargo del head count.` })
+      return
+    }
+    toast({ title: "No se encontró", description: "Ese documento no está en el head count. Revísalo antes de crear el perfil." })
+  }
+
+  function cargarEnFormulario(r: PerfilSociodemograficoRow) {
+    setForm({
+      _existe: true,
+      documento: r.documento ?? "", documento_tipo: r.documento_tipo ?? "Cedula de ciudadanía",
+      nombres: r.nombres ?? "", apellidos: r.apellidos ?? "",
+      fecha_nacimiento: r.fecha_nacimiento ?? "", sexo: r.sexo ?? "",
+      eps: r.eps ?? "", afp: r.afp ?? "", arl: r.arl ?? "Sura",
+      centro_trabajo: r.centro_trabajo ?? "", turno: r.turno ?? "", cargo: r.cargo ?? "",
+      fecha_ingreso: r.fecha_ingreso ?? "", pais_nacimiento: r.pais_nacimiento ?? "Colombia",
+      depto_nacimiento: r.depto_nacimiento ?? "", municipio_residencia: r.municipio_residencia ?? "",
+      grupo_etnico: r.grupo_etnico ?? "", nivel_escolaridad: r.nivel_escolaridad ?? "",
+      estado_civil: r.estado_civil ?? "", cabeza_familia: r.cabeza_familia ?? "",
+      num_hijos: r.num_hijos == null ? "" : String(r.num_hijos),
+      personas_hogar: r.personas_hogar == null ? "" : String(r.personas_hogar),
+      ingresos_familiares: r.ingresos_familiares ?? "", tipo_vivienda: r.tipo_vivienda ?? "",
+      caracteristicas_vivienda: r.caracteristicas_vivienda ?? "", zona: r.zona ?? "",
+      direccion: r.direccion ?? "", transporte: r.transporte ?? "", estrato: r.estrato ?? "",
+      consume_alcohol: r.consume_alcohol ?? "", actividad_fisica: r.actividad_fisica ?? "",
+      fumador: r.fumador ?? "", estado: r.estado ?? "activo",
+    })
+    setTab("registrar")
+  }
+
+  async function guardar() {
+    if (!String(form.documento || "").trim()) {
+      toast({ title: "Falta el N° de documento", description: "Es la llave que enlaza el perfil con su ficha MEDEVAC." })
+      return
+    }
+    if (!String(form.apellidos || "").trim() && !String(form.nombres || "").trim()) {
+      toast({ title: "Falta el nombre del colaborador" })
+      return
+    }
+    setGuardando(true)
+    const { _existe, ...datos } = form
+    // `requiere_revision` se limpia: guardar a mano ES la revision.
+    const res = await savePerfilSociodemografico(
+      { ...datos, requiere_revision: false, revision_nota: null, idempresa: empresaId ?? undefined } as any,
+      empresaId,
+    )
+    setGuardando(false)
+    if (res.success) {
+      toast({ title: editando ? "Perfil actualizado" : "Perfil creado" })
+      setForm(formVacio(empresaId))
+      cargar()
+      setTab("listado")
+    } else {
+      toast({ title: "Error al guardar", description: res.message })
+    }
+  }
 
   const base = useMemo(() => rows.filter((r) => estado === "todos" || (r.estado ?? "activo") === estado), [rows, estado])
   // Opciones (valores presentes) por CADA columna.
@@ -211,7 +347,138 @@ export function PerfilSociodemografico({ selectedEmpresaId: propEmpresaId }: { s
         <TabsList>
           <TabsTrigger value="analisis">Análisis (dashboards)</TabsTrigger>
           <TabsTrigger value="listado">Tabla / Análisis detallado</TabsTrigger>
+          <TabsTrigger value="registrar">{editando ? "Editar registro" : "Crear registro"}</TabsTrigger>
         </TabsList>
+
+        {/* Captura manual. El modulo era de solo lectura: el censo dependia por
+            completo de que el trabajador lo diligenciara en el portal o de una
+            carga masiva. Aqui SST puede crear y corregir registros uno a uno. */}
+        <TabsContent value="registrar" className="pt-3">
+          <Card className="space-y-6 p-4">
+            {editando && (
+              <div className="flex items-center justify-between rounded-md px-3 py-2 text-xs" style={{ background: SST_TOKENS.light }}>
+                <span>
+                  Editando el perfil de <b>{form.apellidos} {form.nombres}</b>. El documento es la llave:
+                  si lo cambias, se crea un registro nuevo en vez de actualizar este.
+                </span>
+                <Button variant="ghost" size="sm" onClick={() => setForm(formVacio(empresaId))}>
+                  <X className="mr-1 h-3.5 w-3.5" /> Cancelar
+                </Button>
+              </div>
+            )}
+
+            <Sec n="Identificación">
+              <p className="-mt-1 text-[11px] text-muted-foreground">
+                Digita el <b>N° de documento</b> y pulsa buscar. Si la persona ya tiene perfil se carga
+                para editarlo; si no, se traen su nombre y cargo del <b>head count</b> para no digitarlos
+                ni arriesgarse a escribirlos distinto a como están en su ficha MEDEVAC.
+              </p>
+              <Row3>
+                <Field l="N° de documento">
+                  <div className="flex gap-1">
+                    <Input
+                      value={form.documento}
+                      onChange={(e) => setF("documento", e.target.value)}
+                      onBlur={buscarPorDocumento}
+                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); buscarPorDocumento() } }}
+                      placeholder="Cédula…"
+                    />
+                    <Button type="button" variant="outline" size="sm" className="shrink-0" disabled={buscando} onClick={buscarPorDocumento}>
+                      {buscando ? "…" : <Search className="h-4 w-4" />}
+                    </Button>
+                  </div>
+                </Field>
+                <Field l="Tipo de documento"><Sel v={form.documento_tipo} on={(v) => setF("documento_tipo", v)} o={DOCUMENTO_TIPOS} /></Field>
+                <Field l="Apellidos"><Input value={form.apellidos} onChange={(e) => setF("apellidos", e.target.value)} /></Field>
+                <Field l="Nombres"><Input value={form.nombres} onChange={(e) => setF("nombres", e.target.value)} /></Field>
+                <Field l="Estado"><Sel v={form.estado || "activo"} on={(v) => setF("estado", v)} o={[["activo", "Activo"], ["retirado", "Retirado"]]} /></Field>
+              </Row3>
+            </Sec>
+
+            <Sec n="Datos personales">
+              <Row3>
+                <Field l="Fecha de nacimiento"><Input type="date" value={form.fecha_nacimiento} onChange={(e) => setF("fecha_nacimiento", e.target.value)} /></Field>
+                <Field l="Edad">
+                  {/* Solo lectura: se deriva de la fecha. Una edad escrita a
+                      mano deja de ser cierta al año siguiente. */}
+                  <Input readOnly className="bg-muted" value={edadDesdeFechaISO(form.fecha_nacimiento) ?? ""} placeholder="Se calcula sola" />
+                </Field>
+                <Field l="Sexo"><Sel v={form.sexo || ""} on={(v) => setF("sexo", v)} o={SEXO_OPCIONES} /></Field>
+                <Field l="País de nacimiento"><Input value={form.pais_nacimiento} onChange={(e) => setF("pais_nacimiento", e.target.value)} /></Field>
+                <Field l="Departamento de nacimiento"><Input value={form.depto_nacimiento} onChange={(e) => setF("depto_nacimiento", e.target.value)} /></Field>
+                <Field l="Grupo étnico"><Sel v={form.grupo_etnico || ""} on={(v) => setF("grupo_etnico", v)} o={GRUPO_ETNICO_OPCIONES} /></Field>
+                <Field l="Nivel de escolaridad"><Sel v={form.nivel_escolaridad || ""} on={(v) => setF("nivel_escolaridad", v)} o={ESCOLARIDAD_OPCIONES} /></Field>
+              </Row3>
+            </Sec>
+
+            <Sec n="Vinculación">
+              <Row3>
+                <Field l="Cargo"><Input value={form.cargo} onChange={(e) => setF("cargo", e.target.value)} /></Field>
+                <Field l="Centro de trabajo">
+                  <Input list="perfil-centros" value={form.centro_trabajo} onChange={(e) => setF("centro_trabajo", e.target.value)} />
+                  <datalist id="perfil-centros">{CENTROS_TRABAJO.map((v) => <option key={v} value={v} />)}</datalist>
+                </Field>
+                <Field l="Turno de trabajo"><Sel v={form.turno || ""} on={(v) => setF("turno", v)} o={TURNO_OPCIONES} /></Field>
+                <Field l="Fecha de ingreso"><Input type="date" value={form.fecha_ingreso} onChange={(e) => setF("fecha_ingreso", e.target.value)} /></Field>
+                <Field l="Antigüedad">
+                  {/* Igual que la edad: se deriva. El formulario original traía
+                      Día/Mes/Año ya calculados y quedaban desactualizados. */}
+                  <Input readOnly className="bg-muted" placeholder="Se calcula sola"
+                    value={(() => {
+                      const a = antiguedad(form.fecha_ingreso)
+                      return a ? `${a.anios} años, ${a.meses} meses, ${a.dias} días` : ""
+                    })()} />
+                </Field>
+                <Field l="EPS">
+                  <Input list="perfil-eps" value={form.eps} onChange={(e) => setF("eps", e.target.value)} />
+                  <datalist id="perfil-eps">{EPS_OPCIONES.map((v) => <option key={v} value={v} />)}</datalist>
+                </Field>
+                <Field l="Fondo de pensiones (AFP)">
+                  <Input list="perfil-afp" value={form.afp} onChange={(e) => setF("afp", e.target.value)} />
+                  <datalist id="perfil-afp">{AFP_OPCIONES.map((v) => <option key={v} value={v} />)}</datalist>
+                </Field>
+                <Field l="ARL">
+                  <Input list="perfil-arl" value={form.arl} onChange={(e) => setF("arl", e.target.value)} />
+                  <datalist id="perfil-arl">{ARL_OPCIONES.map((v) => <option key={v} value={v} />)}</datalist>
+                </Field>
+              </Row3>
+            </Sec>
+
+            <Sec n="Familia">
+              <Row3>
+                <Field l="Estado civil"><Sel v={form.estado_civil || ""} on={(v) => setF("estado_civil", v)} o={ESTADO_CIVIL_OPCIONES} /></Field>
+                <Field l="Cabeza de familia"><Sel v={form.cabeza_familia || ""} on={(v) => setF("cabeza_familia", v)} o={SI_NO} /></Field>
+                <Field l="N° de hijos"><Input type="number" min={0} value={form.num_hijos} onChange={(e) => setF("num_hijos", e.target.value)} /></Field>
+                <Field l="Personas en el hogar"><Input type="number" min={1} value={form.personas_hogar} onChange={(e) => setF("personas_hogar", e.target.value)} /></Field>
+                <Field l="Ingresos familiares mensuales"><Sel v={form.ingresos_familiares || ""} on={(v) => setF("ingresos_familiares", v)} o={INGRESOS_OPCIONES} /></Field>
+              </Row3>
+            </Sec>
+
+            <Sec n="Vivienda y desplazamiento">
+              <Row3>
+                <Field l="Tipo de vivienda"><Sel v={form.tipo_vivienda || ""} on={(v) => setF("tipo_vivienda", v)} o={TIPO_VIVIENDA_OPCIONES} /></Field>
+                <Field l="Tenencia de la vivienda"><Sel v={form.caracteristicas_vivienda || ""} on={(v) => setF("caracteristicas_vivienda", v)} o={CARACTERISTICAS_VIVIENDA_OPCIONES} /></Field>
+                <Field l="Zona"><Sel v={form.zona || ""} on={(v) => setF("zona", v)} o={ZONA_OPCIONES} /></Field>
+                <Field l="Estrato de servicios públicos"><Sel v={form.estrato || ""} on={(v) => setF("estrato", v)} o={ESTRATO_OPCIONES} /></Field>
+                <Field l="Municipio de residencia"><Input value={form.municipio_residencia} onChange={(e) => setF("municipio_residencia", e.target.value)} /></Field>
+                <Field l="Dirección de residencia"><Input value={form.direccion} onChange={(e) => setF("direccion", e.target.value)} /></Field>
+                <Field l="Transporte para ir al trabajo"><Sel v={form.transporte || ""} on={(v) => setF("transporte", v)} o={TRANSPORTE_OPCIONES} /></Field>
+              </Row3>
+            </Sec>
+
+            <Sec n="Hábitos y estilo de vida">
+              <Row3>
+                <Field l="Consume bebidas alcohólicas"><Sel v={form.consume_alcohol || ""} on={(v) => setF("consume_alcohol", v)} o={SI_NO} /></Field>
+                <Field l="Actividad física (3 veces/semana, 30 min)"><Sel v={form.actividad_fisica || ""} on={(v) => setF("actividad_fisica", v)} o={SI_NO} /></Field>
+                <Field l="Es fumador"><Sel v={form.fumador || ""} on={(v) => setF("fumador", v)} o={SI_NO} /></Field>
+              </Row3>
+            </Sec>
+
+            <Button onClick={guardar} disabled={guardando} style={{ background: SST_TOKENS.navy, color: "white" }}>
+              {guardando ? "Guardando…" : editando ? "Guardar cambios" : "Crear perfil"}
+            </Button>
+          </Card>
+        </TabsContent>
 
         <TabsContent value="analisis" className="pt-3">
           {base.length === 0 ? (
@@ -281,6 +548,7 @@ export function PerfilSociodemografico({ selectedEmpresaId: propEmpresaId }: { s
               <thead className="sticky top-0">
                 <tr style={{ background: SST_TOKENS.navy, color: "white" }}>
                   {COLS.map((c) => (<th key={c.k as string} className="whitespace-nowrap px-2 pt-2 text-left">{c.l}</th>))}
+                  <th className="whitespace-nowrap px-2 pt-2 text-center">Editar</th>
                 </tr>
                 <tr style={{ background: SST_TOKENS.navy }}>
                   {COLS.map((c) => {
@@ -308,6 +576,7 @@ export function PerfilSociodemografico({ selectedEmpresaId: propEmpresaId }: { s
                       </th>
                     )
                   })}
+                  <th className="px-2 pb-2" />
                 </tr>
               </thead>
               <tbody>
@@ -322,10 +591,21 @@ export function PerfilSociodemografico({ selectedEmpresaId: propEmpresaId }: { s
                         )}
                       </td>
                     ))}
+                    <td className="whitespace-nowrap p-2 text-center">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-muted-foreground"
+                        title="Abrir para corregir"
+                        onClick={() => cargarEnFormulario(r)}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                    </td>
                   </tr>
                 ))}
                 {filtradas.length === 0 && (
-                  <tr><td colSpan={COLS.length} className="p-6 text-center text-muted-foreground">Sin colaboradores para estos filtros.</td></tr>
+                  <tr><td colSpan={COLS.length + 1} className="p-6 text-center text-muted-foreground">Sin colaboradores para estos filtros.</td></tr>
                 )}
               </tbody>
             </table>

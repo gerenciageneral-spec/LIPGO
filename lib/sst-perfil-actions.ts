@@ -21,6 +21,7 @@ const CAMPOS_ESCRIBIBLES = [
   "cabeza_familia", "num_hijos", "personas_hogar", "ingresos_familiares",
   "tipo_vivienda", "caracteristicas_vivienda", "zona", "direccion", "transporte",
   "estrato", "consume_alcohol", "actividad_fisica", "fumador",
+  "requiere_revision", "revision_nota",
 ] as const
 
 // Sin `export`: en un archivo "use server" todo lo exportado debe ser una
@@ -114,6 +115,10 @@ export async function savePerfilSociodemografico(
   const payload = {
     ...limpio,
     edad: edadCalculada ?? limpio.edad ?? null,
+    // Guardar a mano ES la revisión: si alguien abrió el perfil, lo revisó y lo
+    // guardó, la marca que dejó la carga masiva ya no aplica.
+    requiere_revision: limpio.requiere_revision ?? false,
+    revision_nota: limpio.revision_nota ?? null,
     idempresa: limpio.idempresa ?? empresaId ?? 100,
     origen: (row as any).origen ?? "sst",
     actualizado_en: new Date().toISOString(),

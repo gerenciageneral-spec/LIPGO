@@ -327,7 +327,7 @@ export default function MisDatosPage() {
                 <Campo l="Tipo de vivienda" obligatorio>
                   <Selector v={perfil.tipo_vivienda} on={(v) => setP("tipo_vivienda", v)} o={TIPO_VIVIENDA_OPCIONES} placeholder="Selecciona" />
                 </Campo>
-                <Campo l="Como es la vivienda">
+                <Campo l="La vivienda es" ayuda="Propia, arrendada o de un familiar.">
                   <Selector v={perfil.caracteristicas_vivienda} on={(v) => setP("caracteristicas_vivienda", v)} o={CARACTERISTICAS_VIVIENDA_OPCIONES} placeholder="Selecciona" />
                 </Campo>
                 <Campo l="Zona">

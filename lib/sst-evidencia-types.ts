@@ -114,9 +114,13 @@ export interface PerfilSociodemograficoRow {
   created_at?: string | null
   // Misma llave de enlace que MEDEVAC. Columna GENERADA: no se escribe.
   documento_norm?: string | null
-  origen?: string | null            // portal | sst
+  origen?: string | null            // carga_csv | portal | sst
   actualizado_en?: string | null
   actualizado_por?: string | null
+  // Control de calidad de la carga masiva: la fila entro pero hay algo que
+  // corregir a mano.
+  requiere_revision?: boolean | null
+  revision_nota?: string | null
 }
 
 export interface IpevrRow {

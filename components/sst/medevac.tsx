@@ -1021,7 +1021,7 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
                   <Sec n="Vivienda y desplazamiento">
                     <Row3>
                       <Field l="Tipo de vivienda"><Sel v={perfil.tipo_vivienda || ""} on={(v) => setP("tipo_vivienda", v)} o={TIPO_VIVIENDA_OPCIONES} /></Field>
-                      <Field l="Características de la vivienda"><Sel v={perfil.caracteristicas_vivienda || ""} on={(v) => setP("caracteristicas_vivienda", v)} o={CARACTERISTICAS_VIVIENDA_OPCIONES} /></Field>
+                      <Field l="Tenencia de la vivienda"><Sel v={perfil.caracteristicas_vivienda || ""} on={(v) => setP("caracteristicas_vivienda", v)} o={CARACTERISTICAS_VIVIENDA_OPCIONES} /></Field>
                       <Field l="Zona"><Sel v={perfil.zona || ""} on={(v) => setP("zona", v)} o={ZONA_OPCIONES} /></Field>
                       <Field l="Estrato"><Sel v={perfil.estrato || ""} on={(v) => setP("estrato", v)} o={ESTRATO_OPCIONES} /></Field>
                       <Field l="Municipio de residencia"><Input value={perfil.municipio_residencia} onChange={(e) => setP("municipio_residencia", e.target.value)} /></Field>

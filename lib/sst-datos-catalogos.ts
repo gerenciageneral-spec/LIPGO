@@ -61,39 +61,53 @@ export const PARENTESCO_OPCIONES: string[] = [
 
 // ---------------------------------------------------------------------------
 // Perfil Sociodemográfico (SST-FOR-32)
+//
+// Estos valores NO son inventados: son exactamente el vocabulario del
+// formulario que LIP ya venía diligenciando (29 respuestas cargadas). Importa
+// que coincidan letra por letra: el censo se lee agrupando por estos campos, y
+// "Secundaria Completa" y "Bachillerato completo" contarían como dos niveles
+// de escolaridad distintos aunque sean el mismo.
 // ---------------------------------------------------------------------------
 
 export const SEXO_OPCIONES: Opcion[] = [
-  ["Masculino", "Masculino"], ["Femenino", "Femenino"], ["Prefiero no responder", "Prefiero no responder"],
+  ["Masculino", "Masculino"], ["Femenino", "Femenino"],
 ]
 
 export const ESCOLARIDAD_OPCIONES: Opcion[] = [
-  ["Primaria", "Primaria"],
-  ["Bachillerato incompleto", "Bachillerato incompleto"],
-  ["Bachillerato completo", "Bachillerato completo"],
+  ["Ninguno", "Ninguno"],
+  ["Primaria Incompleta", "Primaria incompleta"],
+  ["Primaria Completa", "Primaria completa"],
+  ["Secundaria Incompleta", "Secundaria incompleta"],
+  ["Secundaria Completa", "Secundaria completa"],
   ["Técnico", "Técnico"],
   ["Tecnólogo", "Tecnólogo"],
-  ["Universitario", "Universitario"],
-  ["Posgrado", "Posgrado"],
-  ["Ninguno", "Ninguno"],
+  ["Profesional", "Profesional"],
+  ["Postgrado", "Postgrado"],
 ]
 
 export const ESTADO_CIVIL_OPCIONES: Opcion[] = [
-  ["Soltero(a)", "Soltero(a)"], ["Casado(a)", "Casado(a)"], ["Unión libre", "Unión libre"],
-  ["Separado(a)", "Separado(a)"], ["Divorciado(a)", "Divorciado(a)"], ["Viudo(a)", "Viudo(a)"],
+  ["Soltero", "Soltero(a)"], ["Casado", "Casado(a)"], ["Unión libre", "Unión libre"],
+  ["Separado", "Separado(a)"], ["Divorciado", "Divorciado(a)"], ["Viudo", "Viudo(a)"],
 ]
 
-export const SI_NO: Opcion[] = [["Sí", "Sí"], ["No", "No"]]
+// El formulario responde SI/NO en mayúscula. Se conserva tal cual para que lo
+// que capture el portal agrupe junto con lo que ya está cargado.
+export const SI_NO: Opcion[] = [["SI", "Sí"], ["NO", "No"]]
 
+// OJO: "tipo" es la clase de inmueble y "características" es la tenencia. Es al
+// revés de lo que sugiere el nombre, pero es como está el formulario y como
+// están los datos ya cargados.
 export const TIPO_VIVIENDA_OPCIONES: Opcion[] = [
-  ["Propia", "Propia"], ["Arrendada", "Arrendada"], ["Familiar", "Familiar"], ["Compartida", "Compartida"],
-]
-
-export const CARACTERISTICAS_VIVIENDA_OPCIONES: Opcion[] = [
   ["Casa", "Casa"], ["Apartamento", "Apartamento"], ["Habitación", "Habitación"], ["Finca", "Finca"],
 ]
 
-export const ZONA_OPCIONES: Opcion[] = [["Urbana", "Urbana"], ["Rural", "Rural"]]
+export const CARACTERISTICAS_VIVIENDA_OPCIONES: Opcion[] = [
+  ["Propia", "Propia"], ["Arrendada", "Arrendada"], ["Familiar", "Familiar"], ["Compartida", "Compartida"],
+]
+
+export const ZONA_OPCIONES: Opcion[] = [
+  ["Urbana", "Urbana"], ["Suburbana", "Suburbana"], ["Rural", "Rural"],
+]
 
 export const ESTRATO_OPCIONES: Opcion[] = [
   ["1", "Estrato 1"], ["2", "Estrato 2"], ["3", "Estrato 3"],
@@ -101,43 +115,42 @@ export const ESTRATO_OPCIONES: Opcion[] = [
 ]
 
 export const TRANSPORTE_OPCIONES: Opcion[] = [
-  ["A pie", "A pie"], ["Bicicleta", "Bicicleta"], ["Moto", "Moto"],
-  ["Transporte público", "Transporte público"], ["Vehículo propio", "Vehículo propio"],
+  ["Caminando", "Caminando"],
+  ["Bicicleta", "Bicicleta"],
+  ["Moto", "Moto"],
+  ["Transporte público", "Transporte público"],
+  ["Vehículo particular", "Vehículo particular"],
   ["Transporte de la empresa", "Transporte de la empresa"],
 ]
 
-// En salarios mínimos, que es como lo pide el análisis sociodemográfico.
 export const INGRESOS_OPCIONES: Opcion[] = [
-  ["1 SMLV", "1 salario mínimo"],
-  ["Entre 1 y 2 SMLV", "Entre 1 y 2 salarios mínimos"],
-  ["Entre 2 y 3 SMLV", "Entre 2 y 3 salarios mínimos"],
-  ["Más de 3 SMLV", "Más de 3 salarios mínimos"],
+  ["Menos de 1 Salario Mínimo", "Menos de 1 salario mínimo"],
+  ["1 Salario Mínimo", "1 salario mínimo"],
+  ["Entre 1 Y 2 Salarios Mínimos", "Entre 1 y 2 salarios mínimos"],
+  ["Más de 2 Salarios", "Más de 2 salarios mínimos"],
 ]
 
 export const GRUPO_ETNICO_OPCIONES: Opcion[] = [
-  ["Ninguno", "Ninguno"], ["Afrodescendiente", "Afrodescendiente"], ["Indígena", "Indígena"],
-  ["Raizal", "Raizal"], ["Palenquero", "Palenquero"], ["Rom (gitano)", "Rom (gitano)"],
+  ["Sin Pertenencia Etnica", "Sin pertenencia étnica"],
+  ["Afrodescendiente", "Afrodescendiente"],
+  ["Indígena", "Indígena"],
+  ["Raizal", "Raizal"],
+  ["Palenquero", "Palenquero"],
+  ["Rom (gitano)", "Rom (gitano)"],
 ]
 
-export const ACTIVIDAD_FISICA_OPCIONES: Opcion[] = [
-  ["No practica", "No practica"],
-  ["1 a 2 veces por semana", "1 a 2 veces por semana"],
-  ["3 a 4 veces por semana", "3 a 4 veces por semana"],
-  ["5 o más veces por semana", "5 o más veces por semana"],
-]
-
-export const FRECUENCIA_CONSUMO_OPCIONES: Opcion[] = [
-  ["No consume", "No consume"], ["Ocasionalmente", "Ocasionalmente"],
-  ["Fin de semana", "Fin de semana"], ["Diariamente", "Diariamente"],
-]
+// El formulario pregunta "¿practica actividad física al menos 3 veces por
+// semana, 30 minutos mínimo?": es una sola respuesta SI/NO, no una frecuencia.
+// Lo mismo con alcohol y tabaco.
+export const ACTIVIDAD_FISICA_OPCIONES: Opcion[] = SI_NO
+export const FRECUENCIA_CONSUMO_OPCIONES: Opcion[] = SI_NO
 
 export const AFP_OPCIONES: string[] = [
-  "Porvenir", "Protección", "Colfondos", "Skandia", "Colpensiones",
+  "PORVENIR", "PROTECCIÓN", "COLFONDOS", "COLPENSIONES", "SKANDIA",
 ]
 
 export const TURNO_OPCIONES: Opcion[] = [
-  ["Turno 1", "Turno 1"], ["Turno 2", "Turno 2"], ["Turno 3", "Turno 3"],
-  ["Administrativo", "Administrativo"], ["Mixto", "Mixto"],
+  ["Diurno", "Diurno"], ["Nocturno", "Nocturno"], ["Mixto", "Mixto"], ["Administrativo", "Administrativo"],
 ]
 
 /** Convierte una lista de textos en pares [valor, etiqueta] para los `Select`. */
