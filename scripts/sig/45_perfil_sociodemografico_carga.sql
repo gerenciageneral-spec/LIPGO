@@ -5,7 +5,16 @@
 -- que es el que crea `documento_norm` y su indice unico. Sin eso el upsert de
 -- aqui falla.
 --
--- ADITIVO E IDEMPOTENTE: se puede correr varias veces. Correr en Supabase.
+-- REEMPLAZA EL CENSO COMPLETO. Al terminar, `sst_perfil_sociodemografico`
+-- queda con EXACTAMENTE las filas de este archivo y nada mas. Lo que hubiera
+-- antes y no venga aqui SE ELIMINA -- incluido lo que un trabajador haya
+-- diligenciado desde el portal.
+--
+-- Nada se pierde de verdad: antes de borrar, esas filas se copian a
+-- public.sst_perfil_sd_eliminados_45 para poder revisarlas o devolverlas.
+--
+-- IDEMPOTENTE: se puede correr varias veces; el resultado es el mismo.
+-- Correr en Supabase.
 --
 -- ============================ LEER ANTES =============================
 --
@@ -85,8 +94,9 @@ end $$;
 -- 3) LAS 29 FILAS DEL FORMULARIO
 --
 -- Upsert por documento: al que ya esta se le actualiza el perfil, al que no
--- esta se le crea. NO borra a nadie que no venga en el archivo; la consulta 3
--- de verificacion los lista para decidir.
+-- esta se le crea. El borrado de lo que sobra va DESPUES, en el paso 4, y a
+-- proposito en ese orden: si algo falla aqui el script se detiene y la tabla
+-- se queda como estaba, en vez de quedar vacia a medio camino.
 -- ---------------------------------------------------------------------
 with csv (documento, documento_tipo, nombres, apellidos, fecha_nacimiento, edad, sexo, eps, afp, arl,
           centro_trabajo, turno, cargo, fecha_ingreso, pais_nacimiento, depto_nacimiento, municipio_residencia,
@@ -188,12 +198,65 @@ on conflict (documento_norm) do update set
   actualizado_en           = now(),
   actualizado_por          = excluded.actualizado_por;
 
+-- ---------------------------------------------------------------------
+-- 4) REEMPLAZO: fuera lo que no viene en este archivo
+--
+-- Se ejecuta DESPUES del upsert de arriba a proposito. Si aquel hubiera
+-- fallado, el script se detiene antes de llegar aqui y la tabla se queda como
+-- estaba; al reves -- borrar primero -- una falla dejaria el censo vacio.
+--
+-- La lista de documentos se extrajo del bloque VALUES de este mismo archivo,
+-- asi que no puede quedar desalineada con el.
+--
+-- Antes de borrar, las filas se COPIAN a sst_perfil_sd_eliminados_45. No es
+-- lo mismo "sobra" que "esta mal": puede haber gente que diligencio su perfil
+-- desde el portal despues de que se exporto este archivo, y esa informacion
+-- hay que poder recuperarla.
+-- ---------------------------------------------------------------------
+create table if not exists public.sst_perfil_sd_eliminados_45
+  (like public.sst_perfil_sociodemografico including defaults excluding generated);
+
+do $$
+declare n int;
+begin
+  insert into public.sst_perfil_sd_eliminados_45
+  select p.* from public.sst_perfil_sociodemografico p
+   where p.documento_norm is null
+      or p.documento_norm not in (
+    '1007599302', '80075406', '1049936132', '80037138', '1033712312',
+    '1042457110', '1094951357', '1043441052', '1007206556', '1033373410',
+    '1042441053', '1003097095', '6679516', '1047488881', '1000442265',
+    '1069504611', '1131479081', '1073155377', '1049945704', '1193431838',
+    '1002319848', '1004323562', '72260522', '1043604591', '1193510194',
+    '1000221742', '1048285137', '98074100', '1131494159'
+      );
+  get diagnostics n = row_count;
+
+  delete from public.sst_perfil_sociodemografico
+   where documento_norm is null
+      or documento_norm not in (
+    '1007599302', '80075406', '1049936132', '80037138', '1033712312',
+    '1042457110', '1094951357', '1043441052', '1007206556', '1033373410',
+    '1042441053', '1003097095', '6679516', '1047488881', '1000442265',
+    '1069504611', '1131479081', '1073155377', '1049945704', '1193431838',
+    '1002319848', '1004323562', '72260522', '1043604591', '1193510194',
+    '1000221742', '1048285137', '98074100', '1131494159'
+      );
+
+  if n = 0 then
+    raise notice 'Reemplazo: no habia perfiles ajenos a este archivo. Nada que borrar.';
+  else
+    raise notice 'Reemplazo: % perfiles NO venian en el archivo. Se movieron a sst_perfil_sd_eliminados_45 y se borraron del censo.', n;
+  end if;
+end $$;
+
 -- =====================================================================
 -- VERIFICACION: correr despues y revisar las cinco.
 -- =====================================================================
 
 -- 1) Cuantos quedaron y cuantos hay que revisar.
---    Esperado: 29 cargados del CSV y 5 marcados.
+--    Esperado EXACTAMENTE: 29 perfiles en total, 29 del CSV y 5 marcados.
+--    Si "total_perfiles" no da 29, el reemplazo no se aplico.
 select count(*)                                     as total_perfiles,
        count(*) filter (where requiere_revision)    as por_revisar,
        count(*) filter (where origen = 'carga_csv') as cargados_del_csv,
@@ -206,13 +269,14 @@ select documento, apellidos, nombres, eps, municipio_residencia, revision_nota
  where requiere_revision
  order by apellidos;
 
--- 3) Perfiles que ya estaban y NO vienen en este archivo. Decidir si se quedan.
---    Correrla JUSTO DESPUES de la carga: `origen` guarda quien escribio de
---    ultimo, asi que un perfil del CSV que se edite despues pasa a 'sst'.
-select documento, apellidos, nombres, origen, created_at
-  from public.sst_perfil_sociodemografico
- where coalesce(origen,'') <> 'carga_csv'
- order by apellidos;
+-- 3) QUE SE BORRO. Perfiles que existian y no venian en este archivo.
+--    REVISAR ESTO: si aparece alguien que diligencio su perfil desde el portal
+--    hace poco, su informacion es mas reciente que la del archivo y
+--    seguramente hay que devolverla (ver el bloque del final).
+--    Si sale vacia, el censo ya era exactamente este archivo.
+select documento, apellidos, nombres, origen, actualizado_en, actualizado_por
+  from public.sst_perfil_sd_eliminados_45
+ order by actualizado_en desc nulls last, apellidos;
 
 -- 4) EL CRUCE QUE IMPORTA: perfiles cuyo documento no existe en MEDEVAC, y
 --    fichas MEDEVAC sin perfil. Aqui es donde sale el caso de Yilfred.
@@ -236,14 +300,32 @@ select count(*)                                 as activos_headcount,
  where lower(coalesce(estado,'')) = 'activo';
 
 -- =====================================================================
--- SI SE QUIERE DEJAR SOLO LO DE ESTE ARCHIVO
+-- SI HAY QUE DEVOLVER ALGO DE LO BORRADO
 --
--- La consulta 3 lista lo que habia antes y no viene aqui. Si se confirma que
--- sobra, esto lo borra. NO se ejecuta solo: hay que descomentarlo a proposito.
+-- La consulta 3 lista lo que salio. Para devolver a UNA persona -- por ejemplo
+-- alguien que diligencio su perfil desde el portal y por eso no venia en el
+-- archivo -- basta con reinsertarla desde la tabla de eliminados. Cambiar la
+-- cedula y descomentar:
 --
---   delete from public.sst_perfil_sociodemografico
---    where coalesce(origen,'') <> 'carga_csv';
+--   insert into public.sst_perfil_sociodemografico (
+--     idempresa, estado, documento, documento_tipo, nombres, apellidos,
+--     fecha_nacimiento, edad, sexo, eps, afp, arl, centro_trabajo, turno, cargo,
+--     fecha_ingreso, pais_nacimiento, depto_nacimiento, municipio_residencia,
+--     grupo_etnico, nivel_escolaridad, estado_civil, cabeza_familia, num_hijos,
+--     personas_hogar, ingresos_familiares, tipo_vivienda, caracteristicas_vivienda,
+--     zona, direccion, transporte, estrato, consume_alcohol, actividad_fisica,
+--     fumador, origen, actualizado_en, actualizado_por)
+--   select idempresa, estado, documento, documento_tipo, nombres, apellidos,
+--     fecha_nacimiento, edad, sexo, eps, afp, arl, centro_trabajo, turno, cargo,
+--     fecha_ingreso, pais_nacimiento, depto_nacimiento, municipio_residencia,
+--     grupo_etnico, nivel_escolaridad, estado_civil, cabeza_familia, num_hijos,
+--     personas_hogar, ingresos_familiares, tipo_vivienda, caracteristicas_vivienda,
+--     zona, direccion, transporte, estrato, consume_alcohol, actividad_fisica,
+--     fumador, origen, actualizado_en, actualizado_por
+--     from public.sst_perfil_sd_eliminados_45
+--    where documento = 'PONER_AQUI_LA_CEDULA'
+--   on conflict (documento_norm) do nothing;
 --
--- PARA REVERTIR TODA LA CARGA: los datos anteriores estan en
--- public.sst_perfil_sd_backup_45.
+-- PARA REVERTIR TODO EL CENSO al estado anterior a este script:
+--   public.sst_perfil_sd_backup_45 tiene la foto completa de como estaba.
 -- =====================================================================
