@@ -68,6 +68,52 @@ function encabezadoPDF(doc: any, logo: string | null, subtitulo?: string) {
   if (subtitulo) { doc.setFontSize(9).setTextColor(...navy); doc.text(subtitulo, 40, 70) }
 }
 
+// Definicion unica de las columnas del directorio. De aqui salen el
+// encabezado, la fila de filtros, las celdas y el PDF: si se agrega una
+// columna, aparece en los cuatro lados a la vez y no se pueden desincronizar.
+//
+//   tipo "lista" -> desplegable con los valores que REALMENTE existen en los
+//                   datos, para que ningun filtro pueda dar cero resultados.
+//   tipo "texto" -> campo libre, sin distinguir mayusculas ni tildes.
+type TipoFiltro = "texto" | "lista"
+interface Columna {
+  k: keyof MedevacRow
+  l: string
+  tipo: TipoFiltro
+  min: string
+  ph?: string
+}
+const COLUMNAS: Columna[] = [
+  { k: "nombres",             l: "Colaborador",        tipo: "texto", min: "15rem", ph: "Nombre…" },
+  { k: "documento",           l: "Documento",          tipo: "texto", min: "9rem",  ph: "Cédula…" },
+  { k: "documento_tipo",      l: "Tipo doc.",          tipo: "lista", min: "11rem" },
+  { k: "cargo",               l: "Cargo",              tipo: "lista", min: "13rem" },
+  { k: "centro_trabajo",      l: "Centro de trabajo",  tipo: "lista", min: "12rem" },
+  { k: "celular",             l: "Celular",            tipo: "texto", min: "8rem",  ph: "Teléfono…" },
+  { k: "rh",                  l: "RH",                 tipo: "lista", min: "6rem"  },
+  { k: "alergias",            l: "Alergias",           tipo: "texto", min: "11rem", ph: "Alergia…" },
+  { k: "eps",                 l: "EPS",                tipo: "lista", min: "10rem" },
+  { k: "arl",                 l: "ARL",                tipo: "lista", min: "8rem"  },
+  { k: "contacto_nombre",     l: "Contacto emergencia", tipo: "texto", min: "13rem", ph: "Contacto…" },
+  { k: "contacto_telefono",   l: "Tel. contacto",      tipo: "texto", min: "8rem",  ph: "Teléfono…" },
+  { k: "contacto_parentesco", l: "Parentesco",         tipo: "lista", min: "8rem"  },
+  { k: "email",               l: "Correo",             tipo: "texto", min: "14rem", ph: "Correo…" },
+  { k: "mes_cumple",          l: "Cumpleaños",         tipo: "lista", min: "8rem"  },
+]
+
+/** Texto comparable: sin mayusculas y sin tildes. Sirve para que buscar
+ *  "Berrio" encuentre "Berrio" y "Berrio" con tilde por igual, que en una
+ *  planta con apellidos como Berrio, Fandino o Penate importa. */
+const comparable = (v: unknown) =>
+  String(v ?? "").normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().trim()
+
+const celda = (r: MedevacRow, k: keyof MedevacRow) => String(r[k] ?? "").trim()
+
+// Alto exacto del encabezado, en pixeles. La fila de filtros se ancla justo
+// debajo con este mismo valor: si se dejara al alto natural habria que
+// adivinarlo y la fila quedaria montada sobre el encabezado o despegada.
+const ALTO_ENCABEZADO = 34
+
 const vacio = (empresaId?: number | null): Record<string, any> => ({
   id: undefined,
   centro_trabajo: (empresaId && CENTRO_POR_EMPRESA[empresaId]) || "",
@@ -94,11 +140,9 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
   const [tab, setTab] = useState("directorio")
   const [rows, setRows] = useState<MedevacRow[]>([])
   const [cobertura, setCobertura] = useState<CoberturaMedevac | null>(null)
-  const [q, setQ] = useState("")
-  const [fCargo, setFCargo] = useState(TODOS)
-  const [fCentro, setFCentro] = useState(TODOS)
-  const [fEps, setFEps] = useState(TODOS)
-  const [fArl, setFArl] = useState(TODOS)
+  // Un filtro por columna. Vive en un solo objeto -y no en una variable por
+  // campo- para que agregar una columna a COLUMNAS no obligue a tocar el estado.
+  const [filtros, setFiltros] = useState<Record<string, string>>({})
   const [form, setForm] = useState<Record<string, any>>(() => vacio(empresaId))
   const [saving, setSaving] = useState(false)
   const [card, setCard] = useState<MedevacRow | null>(null)
@@ -224,7 +268,9 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
     doc.save(`MEDEVAC ${(c.nombres || "").trim()}.pdf`)
   }
 
-  // Directorio MEDEVAC completo (con los filtros aplicados) en PDF
+  // Directorio MEDEVAC completo (con los filtros aplicados) en PDF.
+  // Las columnas salen de COLUMNAS, las mismas que se ven en pantalla: el PDF
+  // no puede mostrar algo distinto de lo que el usuario acaba de filtrar.
   async function pdfDirectorio() {
     const { default: jsPDF } = await import("jspdf")
     const autoTable = (await import("jspdf-autotable")).default
@@ -233,50 +279,60 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
     encabezadoPDF(doc, await loadLogo(), `Directorio de emergencias médicas${resumenFiltros ? ` · ${resumenFiltros}` : " · todos"}`)
     autoTable(doc, {
       startY: 82,
-      head: [["Colaborador", "Doc.", "Cargo", "Centro", "RH", "Alergias", "EPS/ARL", "Emergencia: avisar a", "Tel."]],
-      body: filtered.map((r) => [
-        r.nombres ?? "", r.documento ?? "", r.cargo ?? "", r.centro_trabajo ?? "", r.rh ?? "",
-        r.alergias ?? "", `${r.eps ?? ""}/${r.arl ?? ""}`,
-        `${r.contacto_nombre ?? ""} ${r.contacto_parentesco ? "(" + r.contacto_parentesco + ")" : ""}`, r.contacto_telefono ?? "",
-      ]),
+      head: [COLUMNAS.map((c) => c.l)],
+      body: filtered.map((r) => COLUMNAS.map((c) => celda(r, c.k))),
       theme: "grid",
-      styles: { fontSize: 7, cellPadding: 2 },
-      headStyles: { fillColor: navy, textColor: 255, fontSize: 7.5 },
+      styles: { fontSize: 6, cellPadding: 2, overflow: "linebreak" },
+      headStyles: { fillColor: navy, textColor: 255, fontSize: 6.5 },
     })
     doc.save(`MEDEVAC directorio.pdf`)
   }
 
-  // Opciones de los filtros: se arman con lo que realmente hay en los datos,
-  // no con una lista fija, para que nunca ofrezcan un filtro que da cero.
+  // Opciones de cada desplegable: se arman con lo que REALMENTE hay en los
+  // datos, no con una lista fija, para que ningun filtro pueda dar cero.
   const opciones = useMemo(() => {
-    const uniq = (campo: keyof MedevacRow) =>
-      [...new Set(rows.map((r) => String(r[campo] ?? "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b))
-    return { cargos: uniq("cargo"), centros: uniq("centro_trabajo"), eps: uniq("eps"), arl: uniq("arl") }
+    const m: Record<string, string[]> = {}
+    for (const c of COLUMNAS) {
+      if (c.tipo !== "lista") continue
+      m[c.k as string] = [...new Set(rows.map((r) => celda(r, c.k)).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b, "es"))
+    }
+    return m
   }, [rows])
 
   const filtered = useMemo(() => {
-    const t = q.trim().toLowerCase()
-    return rows.filter((r) => {
-      if (fCargo !== TODOS && String(r.cargo ?? "").trim() !== fCargo) return false
-      if (fCentro !== TODOS && String(r.centro_trabajo ?? "").trim() !== fCentro) return false
-      if (fEps !== TODOS && String(r.eps ?? "").trim() !== fEps) return false
-      if (fArl !== TODOS && String(r.arl ?? "").trim() !== fArl) return false
-      if (!t) return true
-      return `${r.nombres} ${r.documento} ${r.cargo} ${r.centro_trabajo} ${r.rh} ${r.eps} ${r.arl} ${r.contacto_nombre}`
-        .toLowerCase().includes(t)
-    })
-  }, [rows, q, fCargo, fCentro, fEps, fArl])
+    const activos = COLUMNAS
+      .map((c) => ({ c, v: filtros[c.k as string] ?? "" }))
+      .filter(({ c, v }) => (c.tipo === "lista" ? v && v !== TODOS : v.trim() !== ""))
+    if (!activos.length) return rows
+    return rows.filter((r) =>
+      activos.every(({ c, v }) =>
+        c.tipo === "lista"
+          ? celda(r, c.k) === v
+          : comparable(celda(r, c.k)).includes(comparable(v)),
+      ),
+    )
+  }, [rows, filtros])
 
-  const hayFiltro = q.trim() !== "" || [fCargo, fCentro, fEps, fArl].some((v) => v !== TODOS)
-  const resumenFiltros = [
-    fCentro !== TODOS ? fCentro : "",
-    fCargo !== TODOS ? fCargo : "",
-    fEps !== TODOS ? `EPS ${fEps}` : "",
-    fArl !== TODOS ? `ARL ${fArl}` : "",
-  ].filter(Boolean).join(" · ")
+  const filtrosActivos = COLUMNAS.filter((c) => {
+    const v = filtros[c.k as string] ?? ""
+    return c.tipo === "lista" ? v && v !== TODOS : v.trim() !== ""
+  })
+  const hayFiltro = filtrosActivos.length > 0
+  const resumenFiltros = filtrosActivos
+    .map((c) => `${c.l}: ${filtros[c.k as string]}`)
+    .join(" · ")
+
+  const setFiltro = (k: string, v: string) =>
+    setFiltros((f) => {
+      const n = { ...f }
+      if (!v || v === TODOS) delete n[k]
+      else n[k] = v
+      return n
+    })
 
   function limpiarFiltros() {
-    setQ(""); setFCargo(TODOS); setFCentro(TODOS); setFEps(TODOS); setFArl(TODOS)
+    setFiltros({})
   }
 
   const pendientes = useMemo(() => rows.filter((r) => r.requiere_revision), [rows])
@@ -337,106 +393,140 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
         </TabsList>
 
         <TabsContent value="directorio">
-          {/* Filtros. El buscador cubre nombre, documento y contacto; los cuatro
-              selectores acotan por las dimensiones con las que SST realmente
-              consulta el directorio en una emergencia. */}
           <Card className="mb-3 p-3">
-            <div className="flex flex-wrap items-end gap-2">
-              <div className="min-w-[16rem] flex-1">
-                <label className="text-xs" style={{ color: SST_TOKENS.ink }}>Colaborador</label>
-                <div className="relative">
-                  <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Nombre, cédula, contacto…" className="pl-8" />
-                </div>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-xs text-muted-foreground">
+                {hayFiltro
+                  ? <>Mostrando <b>{filtered.length}</b> de {rows.length} · <span style={{ color: SST_TOKENS.navy }}>{resumenFiltros}</span></>
+                  : <><b>{rows.length}</b> colaboradores. Cada columna tiene su propio filtro en la fila gris; se combinan entre si.</>}
               </div>
-              <div className="w-44">
-                <label className="text-xs" style={{ color: SST_TOKENS.ink }}>Cargo</label>
-                <Sel v={fCargo} on={setFCargo} o={[[TODOS, "Todos los cargos"], ...comoOpciones(opciones.cargos)]} />
-              </div>
-              <div className="w-44">
-                <label className="text-xs" style={{ color: SST_TOKENS.ink }}>Centro de trabajo</label>
-                <Sel v={fCentro} on={setFCentro} o={[[TODOS, "Todos los centros"], ...comoOpciones(opciones.centros)]} />
-              </div>
-              <div className="w-40">
-                <label className="text-xs" style={{ color: SST_TOKENS.ink }}>EPS</label>
-                <Sel v={fEps} on={setFEps} o={[[TODOS, "Todas las EPS"], ...comoOpciones(opciones.eps)]} />
-              </div>
-              <div className="w-36">
-                <label className="text-xs" style={{ color: SST_TOKENS.ink }}>ARL</label>
-                <Sel v={fArl} on={setFArl} o={[[TODOS, "Todas las ARL"], ...comoOpciones(opciones.arl)]} />
-              </div>
-              {hayFiltro && (
-                <Button variant="ghost" size="sm" onClick={limpiarFiltros} title="Quitar todos los filtros">
-                  <X className="mr-1 h-4 w-4" /> Limpiar
+              <div className="flex items-center gap-2">
+                {hayFiltro && (
+                  <Button variant="ghost" size="sm" onClick={limpiarFiltros} title="Quitar todos los filtros">
+                    <X className="mr-1 h-4 w-4" /> Limpiar filtros
+                  </Button>
+                )}
+                <Button variant="outline" size="sm" onClick={pdfDirectorio} disabled={filtered.length === 0}>
+                  <FileDown className="mr-1 h-4 w-4" /> Exportar (PDF)
                 </Button>
-              )}
-              <Button variant="outline" size="sm" onClick={pdfDirectorio} disabled={filtered.length === 0}>
-                <FileDown className="mr-1 h-4 w-4" /> Exportar (PDF)
-              </Button>
-            </div>
-            <div className="mt-2 text-xs text-muted-foreground">
-              {hayFiltro
-                ? <>Mostrando <b>{filtered.length}</b> de {rows.length}. El PDF exporta exactamente lo que estás viendo.</>
-                : <>{rows.length} colaboradores en el directorio.</>}
+              </div>
             </div>
           </Card>
 
-          <Card className="p-0 overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr style={{ background: SST_TOKENS.navy, color: "white" }}>
-                  <th className="p-2 text-left">Colaborador</th>
-                  <th className="p-2 text-left">Cargo</th>
-                  <th className="p-2 text-left">Centro</th>
-                  <th className="p-2 text-center">RH</th>
-                  <th className="p-2 text-left">Alergias</th>
-                  <th className="p-2 text-left">EPS / ARL</th>
-                  <th className="p-2 text-left">Contacto emergencia</th>
-                  <th className="p-2 text-center">Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((r, i) => (
-                  <tr key={r.id} style={{ background: i % 2 ? "#f7fafc" : "white" }}>
-                    <td className="p-2">
-                      <div className="font-medium flex items-center gap-1">
-                        {r.nombres}
-                        {r.requiere_revision && (
-                          <AlertTriangle className="h-3.5 w-3.5 shrink-0" style={{ color: SST_TOKENS.warn }} aria-label="Requiere revisión" />
-                        )}
-                      </div>
-                      <div className="text-xs text-muted-foreground">{r.documento_tipo} {r.documento} · {r.celular}</div>
-                    </td>
-                    <td className="p-2 text-xs">{r.cargo || <span className="text-muted-foreground">—</span>}</td>
-                    <td className="p-2 text-xs">{r.centro_trabajo || <span className="text-muted-foreground">—</span>}</td>
-                    <td className="p-2 text-center">
-                      <Badge style={{ background: SST_TOKENS.bad, color: "white" }}>{r.rh || "—"}</Badge>
-                    </td>
-                    <td className="p-2 text-xs">{r.alergias}</td>
-                    <td className="p-2 text-xs">{r.eps} / {r.arl}</td>
-                    <td className="p-2 text-xs">
-                      {r.contacto_nombre ? (
-                        <>{r.contacto_nombre} ({r.contacto_parentesco}) · {r.contacto_telefono}</>
-                      ) : <span className="text-muted-foreground">—</span>}
-                    </td>
-                    <td className="p-2 text-center whitespace-nowrap">
-                      <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => setCard(r)}>Ver</Button>
-                      <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground" onClick={() => editar(r)} title="Editar">
-                        <Pencil className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground" onClick={() => eliminar(r.id)} title="Eliminar">
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </td>
+          {/* La tabla muestra TODOS los campos de la ficha, asi que no cabe a lo
+              ancho: se desplaza horizontalmente dentro de su propio contenedor.
+              Para que el desplazamiento no haga perder el hilo, la columna del
+              colaborador queda fija a la izquierda y la de acciones a la
+              derecha; el encabezado y la fila de filtros quedan fijos arriba. */}
+          <Card className="p-0">
+            <div className="relative max-h-[70vh] overflow-auto">
+              <table className="w-max min-w-full border-separate border-spacing-0 text-sm">
+                <thead>
+                  <tr>
+                    {COLUMNAS.map((c, idx) => (
+                      <th
+                        key={String(c.k)}
+                        className={`sticky top-0 whitespace-nowrap p-2 text-left text-xs font-semibold ${idx === 0 ? "left-0 z-30" : "z-20"}`}
+                        style={{ background: SST_TOKENS.navy, color: "white", minWidth: c.min, height: ALTO_ENCABEZADO }}
+                      >
+                        {c.l}
+                      </th>
+                    ))}
+                    <th
+                      className="sticky right-0 top-0 z-30 p-2 text-center text-xs font-semibold"
+                      style={{ background: SST_TOKENS.navy, color: "white", minWidth: "8rem", height: ALTO_ENCABEZADO }}
+                    >
+                      Acciones
+                    </th>
                   </tr>
-                ))}
-                {filtered.length === 0 && (
-                  <tr><td colSpan={8} className="p-6 text-center text-muted-foreground">
-                    {hayFiltro ? "Ningún colaborador coincide con los filtros." : "Sin colaboradores registrados."}
-                  </td></tr>
-                )}
-              </tbody>
-            </table>
+                  {/* Una fila de filtros alineada bajo su columna: se ve de
+                      inmediato por que campo se esta filtrando. */}
+                  <tr>
+                    {COLUMNAS.map((c, idx) => (
+                      <th
+                        key={String(c.k)}
+                        className={`sticky border-b p-1 ${idx === 0 ? "left-0 z-30" : "z-20"}`}
+                        style={{ background: "#eef2f7", minWidth: c.min, top: ALTO_ENCABEZADO }}
+                      >
+                        {c.tipo === "lista" ? (
+                          <Sel
+                            small
+                            v={filtros[c.k as string] ?? TODOS}
+                            on={(v) => setFiltro(c.k as string, v)}
+                            o={[[TODOS, "Todos"], ...comoOpciones(opciones[c.k as string] ?? [])]}
+                          />
+                        ) : (
+                          <Input
+                            className="h-8 bg-white text-xs"
+                            value={filtros[c.k as string] ?? ""}
+                            onChange={(e) => setFiltro(c.k as string, e.target.value)}
+                            placeholder={c.ph ?? "Buscar…"}
+                          />
+                        )}
+                      </th>
+                    ))}
+                    <th className="sticky right-0 z-30 border-b p-1 text-center" style={{ background: "#eef2f7", top: ALTO_ENCABEZADO }}>
+                      {hayFiltro && (
+                        <Button variant="ghost" size="sm" className="h-8 px-2 text-[11px]" onClick={limpiarFiltros}>
+                          <X className="mr-1 h-3 w-3" /> Limpiar
+                        </Button>
+                      )}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((r, i) => {
+                    // El fondo se repite en las celdas fijas: sin esto se
+                    // verian transparentes y el contenido pasaria por debajo.
+                    const bg = i % 2 ? "#f7fafc" : "#ffffff"
+                    return (
+                      <tr key={r.id}>
+                        {COLUMNAS.map((c, idx) => (
+                          <td
+                            key={String(c.k)}
+                            className={`border-b p-2 align-top text-xs ${idx === 0 ? "sticky left-0 z-10 font-medium" : ""}`}
+                            style={{ background: bg, minWidth: c.min }}
+                          >
+                            {c.k === "nombres" ? (
+                              <span className="flex items-start gap-1">
+                                <span className="text-sm">{celda(r, "nombres") || "—"}</span>
+                                {r.requiere_revision && (
+                                  <AlertTriangle
+                                    className="mt-0.5 h-3.5 w-3.5 shrink-0"
+                                    style={{ color: SST_TOKENS.warn }}
+                                    aria-label="Requiere revisión"
+                                  />
+                                )}
+                              </span>
+                            ) : c.k === "rh" ? (
+                              <Badge style={{ background: SST_TOKENS.bad, color: "white" }}>{celda(r, "rh") || "—"}</Badge>
+                            ) : (
+                              celda(r, c.k) || <span className="text-muted-foreground">—</span>
+                            )}
+                          </td>
+                        ))}
+                        <td className="sticky right-0 z-10 whitespace-nowrap border-b p-2 text-center" style={{ background: bg }}>
+                          <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => setCard(r)}>Ver</Button>
+                          <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground" onClick={() => editar(r)} title="Editar">
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground" onClick={() => eliminar(r.id)} title="Eliminar">
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                  {filtered.length === 0 && (
+                    <tr>
+                      <td colSpan={COLUMNAS.length + 1} className="p-6 text-center text-muted-foreground">
+                        {hayFiltro ? "Ningún colaborador coincide con los filtros." : "Sin colaboradores registrados."}
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </Card>
         </TabsContent>
 
