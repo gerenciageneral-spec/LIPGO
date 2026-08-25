@@ -75,11 +75,19 @@ export function horaUTC(ms: number): string {
 
 // Devuelve las FRANJAS de paro (celdas de 2 min sin producción, agrupadas en
 // runs contiguos) entre shiftStart y shiftEnd, hasta el corte `nowMs`.
-export function detectarParos(
+/**
+ * Igual que `detectarParos`, pero la ventana se expresa en MINUTOS desde la
+ * medianoche en vez de en horas enteras.
+ *
+ * Hace falta porque el Horario de Tolva se configura a la hora que sea
+ * -06:30, 17:45- y redondear a la hora en punto inventaria o descartaria
+ * paros en los bordes de la jornada.
+ */
+export function detectarParosEnVentana(
   histRows: HistRowLike[],
   selectedDate: string,
-  shiftStart: number,
-  shiftEnd: number,
+  desdeMin: number,
+  hastaMin: number,
   nowMs: number,
 ): ParoDetectado[] {
   const bucketMs = BUCKET_MIN * 60000
@@ -90,8 +98,10 @@ export function detectarParos(
     const start = t - (t % bucketMs)
     prod.set(start, (prod.get(start) || 0) + (h.produccion_2min || 0))
   }
-  const base = Date.parse(`${selectedDate}T${pad2(shiftStart)}:00:00Z`)
-  const totalBuckets = Math.max(0, ((shiftEnd - shiftStart) * 60) / BUCKET_MIN)
+  const base = Date.parse(
+    `${selectedDate}T${pad2(Math.floor(desdeMin / 60))}:${pad2(desdeMin % 60)}:00Z`,
+  )
+  const totalBuckets = Math.max(0, Math.ceil((hastaMin - desdeMin) / BUCKET_MIN))
   const paros: ParoDetectado[] = []
   const push = (s: number, e: number) => {
     paros.push({
@@ -120,4 +130,18 @@ export function detectarParos(
   }
   if (runStart != null) push(runStart, lastDown + bucketMs)
   return paros
+}
+
+/**
+ * Firma original, en horas enteras. Se conserva para `reporte-paros`, que
+ * trabaja con turnos en hora en punto.
+ */
+export function detectarParos(
+  histRows: HistRowLike[],
+  selectedDate: string,
+  shiftStart: number,
+  shiftEnd: number,
+  nowMs: number,
+): ParoDetectado[] {
+  return detectarParosEnVentana(histRows, selectedDate, shiftStart * 60, shiftEnd * 60, nowMs)
 }
