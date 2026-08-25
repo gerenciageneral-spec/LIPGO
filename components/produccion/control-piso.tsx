@@ -6,7 +6,7 @@ import { supabase } from "@/lib/supabase"
 import { fetchAllRows } from "@/lib/fetch-all-rows"
 import { useAuth } from "@/components/auth-provider"
 import { getParos, type ParoComentario } from "@/lib/paros-actions"
-import { getHorarioTolva } from "@/lib/horario-tolva-actions"
+import { getHorarioTolva, getHorarioTolvaPorFecha } from "@/lib/horario-tolva-actions"
 import { detectarParosEnVentana } from "@/lib/paros-produccion"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
@@ -426,10 +426,18 @@ function LiveTab() {
   const [parosComentados, setParosComentados] = useState<Record<string, ParoComentario>>({})
   // Horario de Tolva del dia, tomado de lo que se configura en Programacion de
   // turnos. Es la PRIMERA opcion para la ventana del tablero (ver `ventana`).
-  // null mientras carga o si el dia no lo tiene configurado.
-  const [ventanaTolva, setVentanaTolva] = useState<{ desdeMin: number; hastaMin: number } | null>(
-    null,
-  )
+  //
+  // Guarda tambien POR QUE no se pudo usar cuando ese es el caso: antes solo
+  // guardaba la ventana o null, y "no hay horario configurado" tapaba por igual
+  // tres situaciones muy distintas -- que de verdad no exista, que exista bajo
+  // otro proyecto, o que la consulta haya fallado. Sin esa distincion, el
+  // tablero calculaba contra un rango supuesto sin manera de saberlo.
+  const [tolva, setTolva] = useState<{
+    ventana: { desdeMin: number; hastaMin: number } | null
+    estado: "cargando" | "ok" | "sin-configurar" | "incompleto" | "ambiguo" | "error"
+    detalle?: string
+  }>({ ventana: null, estado: "cargando" })
+  const ventanaTolva = tolva.ventana
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000)
@@ -525,32 +533,83 @@ function LiveTab() {
   // termina en la hora de FIN más tardía entre Turno 1 y Turno 2. Es la jornada
   // real de la tolva, definida por quien programa los turnos.
   //
-  // Si el día no lo tiene configurado se deja en null y `ventana` cae a los
-  // turnos programados del personal.
+  // Se busca primero por el proyecto seleccionado. Si ahí no hay nada —o si no
+  // hay proyecto seleccionado— se busca el horario de esa FECHA en cualquier
+  // proyecto: el horario se guarda por (fecha, empresa, turno), así que
+  // configurarlo con un proyecto y mirar el tablero con otro dejaba la jornada
+  // sin acotar en silencio. Si varios proyectos tienen horario ese día no se
+  // adivina: se avisa y se pide elegir.
   useEffect(() => {
     let active = true
-    if (!selectedEmpresaId) {
-      setVentanaTolva(null)
-      return
-    }
-    getHorarioTolva(selectedEmpresaId, selectedDate).then((r) => {
-      if (!active) return
-      if (!r.success || !r.data) {
-        setVentanaTolva(null)
-        return
-      }
-      const { turno1, turno2 } = r.data
+    setTolva({ ventana: null, estado: "cargando" })
+
+    /** Convierte turno1/turno2 en la ventana, o dice por qué no pudo. */
+    const aVentana = (d: { turno1: { horaInicio: string | null; horaFin: string | null }; turno2: { horaInicio: string | null; horaFin: string | null } }) => {
       // Si el Turno 1 no está configurado se usa el inicio del Turno 2: es
       // preferible acotar por lo que sí se definió a ignorar el horario entero.
-      const desdeMin = horaAMinutos(turno1.horaInicio) ?? horaAMinutos(turno2.horaInicio)
-      const fines = [horaAMinutos(turno1.horaFin), horaAMinutos(turno2.horaFin)].filter(
+      const desdeMin = horaAMinutos(d.turno1.horaInicio) ?? horaAMinutos(d.turno2.horaInicio)
+      const fines = [horaAMinutos(d.turno1.horaFin), horaAMinutos(d.turno2.horaFin)].filter(
         (m): m is number => m != null,
       )
       const hastaMin = fines.length > 0 ? Math.max(...fines) : null
-      setVentanaTolva(
-        desdeMin != null && hastaMin != null && hastaMin > desdeMin ? { desdeMin, hastaMin } : null,
-      )
-    })
+      if (desdeMin == null || hastaMin == null) return null
+      if (hastaMin <= desdeMin) return null
+      return { desdeMin, hastaMin }
+    }
+
+    ;(async () => {
+      if (selectedEmpresaId) {
+        const r = await getHorarioTolva(selectedEmpresaId, selectedDate)
+        if (!active) return
+        if (r.success && r.data) {
+          const v = aVentana(r.data)
+          if (v) {
+            setTolva({ ventana: v, estado: "ok" })
+            return
+          }
+          // Hay fila(s) pero sin horas utilizables (o fin antes que inicio).
+          const algo = r.data.turno1.horaInicio || r.data.turno1.horaFin || r.data.turno2.horaInicio || r.data.turno2.horaFin
+          if (algo) {
+            setTolva({ ventana: null, estado: "incompleto" })
+            return
+          }
+        } else if (!r.success) {
+          setTolva({ ventana: null, estado: "error", detalle: r.message })
+          return
+        }
+      }
+
+      // Sin proyecto, o el proyecto seleccionado no tiene horario ese día.
+      const f = await getHorarioTolvaPorFecha(selectedDate)
+      if (!active) return
+      if (f.estado === "ok" && f.data) {
+        const v = aVentana(f.data)
+        if (v) {
+          setTolva({
+            ventana: v,
+            estado: "ok",
+            detalle: selectedEmpresaId ? `configurado en el proyecto ${f.data.idempresa}` : undefined,
+          })
+          return
+        }
+        setTolva({ ventana: null, estado: "incompleto" })
+        return
+      }
+      if (f.estado === "ambiguo") {
+        setTolva({
+          ventana: null,
+          estado: "ambiguo",
+          detalle: `hay horario en los proyectos ${(f.empresas ?? []).join(", ")}`,
+        })
+        return
+      }
+      if (f.estado === "error") {
+        setTolva({ ventana: null, estado: "error", detalle: f.message })
+        return
+      }
+      setTolva({ ventana: null, estado: "sin-configurar" })
+    })()
+
     return () => {
       active = false
     }
@@ -945,12 +1004,29 @@ function LiveTab() {
   // TODOS los numeros de la pantalla, no a un grafico suelto: si el dia no
   // tiene Horario de Tolva, la disponibilidad y el OEE se estan midiendo contra
   // un rango supuesto y quien lee el tablero tiene que saberlo.
-  const ORIGEN_VENTANA: Record<typeof ventana.origen, { texto: string; alerta: boolean }> = {
-    tolva: { texto: "según el Horario de Tolva del día", alerta: false },
-    turnos: { texto: "según los turnos programados del personal — el día no tiene Horario de Tolva", alerta: true },
-    defecto: { texto: "horario por defecto — el día no tiene Horario de Tolva ni turnos programados", alerta: true },
-  }
-  const origenVentana = ORIGEN_VENTANA[ventana.origen]
+  const origenVentana = (() => {
+    if (ventana.origen === "tolva") {
+      return {
+        texto: tolva.detalle
+          ? `según el Horario de Tolva del día (${tolva.detalle})`
+          : "según el Horario de Tolva del día",
+        alerta: false,
+      }
+    }
+    // No se está usando el Horario de Tolva: hay que decir exactamente por qué,
+    // porque cada motivo se arregla en un lugar distinto.
+    const porQue =
+      tolva.estado === "cargando" ? "leyendo el Horario de Tolva…"
+      : tolva.estado === "ambiguo" ? `no se pudo elegir el Horario de Tolva: ${tolva.detalle}. Selecciona un proyecto arriba`
+      : tolva.estado === "incompleto" ? "el Horario de Tolva del día está incompleto: falta la hora de inicio o de fin"
+      : tolva.estado === "error" ? `no se pudo leer el Horario de Tolva (${tolva.detalle ?? "error"})`
+      : "el día no tiene Horario de Tolva configurado"
+    const base =
+      ventana.origen === "turnos"
+        ? "calculado con los turnos programados del personal"
+        : "calculado con el horario por defecto"
+    return { texto: `${base} — ${porQue}`, alerta: tolva.estado !== "cargando" }
+  })()
 
   return (
     <div className="space-y-6">
