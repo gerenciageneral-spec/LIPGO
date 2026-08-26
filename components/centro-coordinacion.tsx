@@ -369,6 +369,18 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
     ? data.muelles.filter((slot) => !soloAtencion || (slot.orden && (slot.orden.slaVencido || slot.orden.slaEnRiesgo || slot.orden.pausado)))
     : []
 
+  const conteoPorTipo: Record<TipoOperacion | "Todos", number> = {
+    Todos: 0,
+    Cargue: 0,
+    Descargue: 0,
+    Distribucion: 0,
+  }
+  for (const slot of data?.muelles || []) {
+    if (!slot.orden) continue
+    conteoPorTipo.Todos += 1
+    conteoPorTipo[slot.orden.tipooperacion] += 1
+  }
+
   const estadoLabel = { adelantado: "Adelantado", cerca: "Cerca", atrasado: "Atrasado", sin_datos: "Sin datos aún" }
   const estadoColor = {
     adelantado: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400",
@@ -491,6 +503,13 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                       }`}
                     >
                       {f.label}
+                      <span
+                        className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums ${
+                          filtroTipo === f.value ? "bg-white/20" : "bg-muted text-muted-foreground"
+                        }`}
+                      >
+                        {conteoPorTipo[f.value]}
+                      </span>
                     </button>
                   ))}
                   <button
