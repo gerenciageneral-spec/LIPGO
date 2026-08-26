@@ -208,6 +208,12 @@ export async function getPendingLoadOrders(selectedEmpresaId?: number | null) {
     .eq("tipooperacion", "Cargue") // Only show Cargue operations
     .is("fincargue", null) // Solo pendientes; al finalizar el proceso desaparece (igual que todas)
     .not("horalote", "is", null)
+    // Además del lote, ahora también exige muelle asignado (Centro de
+    // Coordinación) — la orden queda lista para trabajarla en Picking solo
+    // cuando ya tiene vehículo + lote + muelle. Mientras dure la transición
+    // a Centro de Coordinación, una orden sin muelle simplemente no aparece
+    // aquí hasta que se le asigne uno.
+    .not("muelle", "is", null)
     .order("ordendecargue", { ascending: false })
 
   if (error) {
@@ -713,6 +719,22 @@ export async function generatePickingPDF(
     const supabase = await createClient()
     const supabaseAdmin = await getSupabaseAdmin()
 
+    // Esta función ahora se dispara desde DOS lugares que pueden competir
+    // mientras conviven el botón "Generar PDF" de Picking y la asignación de
+    // muelle en Centro de Coordinación: el que llegue primero manda, el que
+    // llega después debe respetarlo (no pisar iniciocargue ni duplicar el
+    // PDF). Si la orden YA tiene doccargue, no se regenera nada — se
+    // devuelve el PDF existente tal cual.
+    const { data: ordenActual } = await supabase
+      .from("cabeceraoc")
+      .select("iniciocargue, doccargue")
+      .eq("id", orderId)
+      .maybeSingle()
+    if (ordenActual?.doccargue) {
+      return { success: true, url: ordenActual.doccargue }
+    }
+    const iniciocargueYaExistente: string | null = ordenActual?.iniciocargue || null
+
     // Get products from invtrans
     const productsResult = await getLoadOrderProducts(orderId, ordenCargue)
     if (!productsResult.success) {
@@ -842,7 +864,10 @@ export async function generatePickingPDF(
     const { error: updateError } = await supabase
       .from("cabeceraoc")
       .update({
-        iniciocargue: currentTime,
+        // Si el muelle ya puso iniciocargue (asignación desde Centro de
+        // Coordinación) antes de que se generara este PDF, esa hora manda —
+        // aquí solo se completa si de verdad seguía vacía.
+        iniciocargue: iniciocargueYaExistente || currentTime,
         doccargue: publicUrl,
       })
       .eq("id", orderId)
