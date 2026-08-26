@@ -199,15 +199,18 @@ export async function getCentroCoordinacion(
       .eq("fechacargue", fechaConsulta)
 
     const todasOrdenes = ordenesRaw || []
-    // Cargue requiere lote asignado para empezar a operarse — mismo filtro
-    // real que ya usa Picking (getPendingLoadOrders: .not("horalote","is",null)).
-    // Sin lote, la orden ni siquiera aparece aquí para asignar muelle (y el
-    // lote, al aprobarse, ya exige que la placa/vehículo esté asignado —
-    // ver lib/batch-actions.ts — así que este único filtro cubre las dos
-    // reglas: vehículo asignado Y lote asignado). Descargue/Distribución no
-    // tienen ese gate en Packing, así que acá tampoco se les agrega uno nuevo.
+    // Cargue requiere vehículo (placa) Y lote asignados para empezar a
+    // operarse — mismo filtro real que ya usa Picking para lote
+    // (getPendingLoadOrders: .not("horalote","is",null)). En la práctica el
+    // lote, al aprobarse, ya exige que la placa esté asignada (ver
+    // lib/batch-actions.ts), pero se encontró al menos una orden real con
+    // horalote seteado y placa NULL (dato viejo, previo a que esa regla
+    // quedara firme) que sí quedaba asignable a muelle sin vehículo — por
+    // eso se exige `placa` explícitamente además de `horalote`, no se confía
+    // en que uno implique el otro. Descargue/Distribución no tienen ese gate
+    // en Packing, así que acá tampoco se les agrega uno nuevo.
     const ordenesActivasRaw = todasOrdenes.filter(
-      (o: any) => !o.fincargue && (o.tipooperacion !== "Cargue" || o.horalote),
+      (o: any) => !o.fincargue && (o.tipooperacion !== "Cargue" || (o.horalote && o.placa)),
     )
     const orderIdsActivas = ordenesActivasRaw.map((o: any) => o.id)
     const ordendecargueCargueActivas = ordenesActivasRaw
