@@ -288,6 +288,18 @@ export async function getCarguDescarguePersonnel(empresaId?: number | null) {
   //      alguien programado pero que nunca se presento aparecia igual
   //      como disponible para asignar a una orden. Verificado con datos
   //      reales: 2026-08-06 tenia 41 candidatos, 1 sin horaingreso.
+  //   5) Puesto distinto de "Cargue/Descargue" con turno en curso: si la
+  //      persona esta programada hoy en Tolva Bulto/Tolva Planchador/
+  //      Auxiliar Mixto, esta cumpliendo esa actividad (que en el caso de
+  //      Auxiliar Mixto incluye tolva Y cargue dentro del mismo turno
+  //      programado) y NO debe ofrecerse para que el coordinador la
+  //      asigne aparte hasta que su turno programado termine
+  //      (`horasalidaprogramada`). Se compara contra la hora PROGRAMADA,
+  //      no contra una marcacion real de salida (esa no siempre existe
+  //      mientras el turno esta en curso). Si no quedo registrada
+  //      `horasalidaprogramada` no se puede aplicar la regla y la persona
+  //      se deja disponible (comportamiento previo), como corresponde a
+  //      un dato incompleto y no a una regla de negocio.
   //
   // Mapeo de columnas para mantener el contrato `{ id, nombreempleado }`
   // que el componente Picking ya consume:
@@ -302,7 +314,7 @@ export async function getCarguDescarguePersonnel(empresaId?: number | null) {
 
   let query = supabase
     .from("registroasistencia")
-    .select("id, nombre")
+    .select("id, nombre, puesto, horasalidaprogramada")
     .in("puesto", PUESTOS_PICKING)
     .eq("fecha", todayDate)
     .is("asistencia", null) // Excluye Ausentes con codigo de novedad
@@ -320,9 +332,18 @@ export async function getCarguDescarguePersonnel(empresaId?: number | null) {
     return { success: false, data: [], message: error.message }
   }
 
+  const horaActual = colombiaDate.toTimeString().slice(0, 5) // "HH:MM"
+
+  const disponiblesAhora = (data ?? []).filter((r) => {
+    if (r.puesto === "Cargue/Descargue") return true
+    const horaSalidaProgramada = (r.horasalidaprogramada || "").toString().slice(0, 5)
+    if (!horaSalidaProgramada) return true // sin dato programado: se deja como antes
+    return horaActual >= horaSalidaProgramada // solo disponible cuando termina su turno programado
+  })
+
   // Adaptamos el shape al contrato esperado por el componente
   // (`nombreempleado` en vez de `nombre`).
-  const mapped = (data ?? []).map((r) => ({
+  const mapped = disponiblesAhora.map((r) => ({
     id: r.id,
     nombreempleado: r.nombre,
   }))
