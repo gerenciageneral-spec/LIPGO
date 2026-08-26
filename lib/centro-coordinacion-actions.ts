@@ -117,6 +117,10 @@ export interface CentroCoordinacionData {
   personalDisponibleLista: { id: number; nombreempleado: string }[]
   /** Próximo vehículo de patio sugerido para el primer muelle libre (mismo tipo si hay match, si no el más antiguo). */
   sugerenciaProximoTurno: SugerenciaTurno | null
+  /** Ya está cargando (iniciocargue puesto) pero sin muelle asignado — alerta inmediata, sin esperar los 15 min. */
+  alertaCargandoSinMuelle: OrdenOperativa[]
+  /** Asignaciones que el sistema acaba de hacer solo en ESTA consulta (≥15 min sin muelle + libre disponible) — para avisar una sola vez en el cliente. */
+  autoAsignaciones: { ordendecargue: string; placa: string | null; muelle: number }[]
 }
 
 /** SLA de respaldo (minutos) cuando no se pudo determinar el tipo de vehículo. */
@@ -334,7 +338,7 @@ export async function getCentroCoordinacion(
 
     // 8) Muelles: ocupación REAL (cabeceraoc.muelle) + cola sin muelle asignado.
     const muelles: MuelleSlot[] = Array.from({ length: N }, (_, i) => ({ muelle: i + 1, orden: null }))
-    const colaSinMuelle: OrdenOperativa[] = []
+    let colaSinMuelle: OrdenOperativa[] = []
     for (const o of ordenesOperativas) {
       if (o.muelle && o.muelle >= 1 && o.muelle <= N) {
         muelles[o.muelle - 1].orden = o
@@ -343,6 +347,34 @@ export async function getCentroCoordinacion(
       }
     }
     colaSinMuelle.sort((a, b) => a.ordendecargue.localeCompare(b.ordendecargue))
+
+    // 8b) Auto-asignación de muelle: una orden ya "cargando" (iniciocargue
+    // puesto, sin pasar por Centro de Coordinación) sin muelle asignado es
+    // una situación real mientras el módulo no reemplaza a Picking/Packing —
+    // se alerta de inmediato (`alertaCargandoSinMuelle`, cualquier minuto) y,
+    // si pasan ≥15 min sin que el coordinador la asigne a mano, el sistema le
+    // asigna el primer muelle libre que encuentre en ese momento. Si no hay
+    // ninguno libre, se reintenta en el próximo refresco (cada 60s) hasta que
+    // se libere uno — nunca se deja de intentar.
+    const autoAsignaciones: { ordendecargue: string; placa: string | null; muelle: number }[] = []
+    const candidatasAutoAsignar = colaSinMuelle.filter(
+      (o) => o.estado === "cargando" && o.minutosTranscurridos != null && o.minutosTranscurridos >= 15,
+    )
+    for (const o of candidatasAutoAsignar) {
+      const idxLibre = muelles.findIndex((m) => m.orden === null)
+      if (idxLibre === -1) break // no quedan muelles libres ahora mismo
+      const muelleLibre = idxLibre + 1
+      const resultado = await asignarOrdenAMuelle(o.orderId, muelleLibre)
+      if (resultado.success) {
+        o.muelle = muelleLibre
+        muelles[idxLibre].orden = o
+        autoAsignaciones.push({ ordendecargue: o.ordendecargue, placa: o.placa, muelle: muelleLibre })
+      }
+    }
+    if (autoAsignaciones.length > 0) {
+      colaSinMuelle = colaSinMuelle.filter((o) => o.muelle == null)
+    }
+    const alertaCargandoSinMuelle = colaSinMuelle.filter((o) => o.estado === "cargando")
 
     // 9) Proyección de cierre: earliest-available-machine sobre los muelles
     //    REALES. Los ocupados calculan su fin desde iniciocargue+SLA (si aún
@@ -469,6 +501,8 @@ export async function getCentroCoordinacion(
         colaPatio,
         personalDisponibleLista,
         sugerenciaProximoTurno,
+        alertaCargandoSinMuelle,
+        autoAsignaciones,
       },
     }
   } catch (e: any) {
@@ -524,6 +558,9 @@ export async function getParteDeTurno(
     }
     if (base.data.colaSinMuelle.length > 0) {
       pendientes.push(`${base.data.colaSinMuelle.length} orden(es) esperando muelle libre.`)
+    }
+    for (const o of base.data.alertaCargandoSinMuelle) {
+      pendientes.push(`${o.cliente} (${o.placa || "sin placa"}) está cargando sin muelle asignado — asignar cuanto antes.`)
     }
 
     return {

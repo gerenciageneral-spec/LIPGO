@@ -187,6 +187,12 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
     setLoading(false)
     if (r.success && r.data) {
       setData(r.data)
+      for (const a of r.data.autoAsignaciones) {
+        toast({
+          title: "Muelle asignado automáticamente",
+          description: `${a.ordendecargue} (${a.placa || "sin placa"}) llevaba 15+ min cargando sin muelle — se asignó solo al muelle ${a.muelle}.`,
+        })
+      }
     } else {
       toast({ title: "No se pudo cargar el Centro de Coordinación", description: r.message, variant: "destructive" })
     }
@@ -412,6 +418,33 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
           <p className="py-8 text-sm text-muted-foreground">No se pudo cargar la información.</p>
         ) : (
           <>
+            {data.alertaCargandoSinMuelle.length > 0 && (
+              <div className="rounded-lg border-2 border-rose-600 bg-rose-600 p-3 text-white shadow-md animate-pulse">
+                <div className="flex items-center gap-2 text-sm font-bold">
+                  <AlertTriangle className="h-4 w-4" />
+                  {data.alertaCargandoSinMuelle.length === 1
+                    ? "1 vehículo está cargando sin muelle asignado"
+                    : `${data.alertaCargandoSinMuelle.length} vehículos están cargando sin muelle asignado`}
+                </div>
+                <div className="mt-2 space-y-1.5">
+                  {data.alertaCargandoSinMuelle.map((o) => (
+                    <div key={o.orderId} className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-white/15 px-2.5 py-1.5 text-xs">
+                      <span>
+                        <span className="font-mono">{o.ordendecargue}</span> · {o.cliente} · {o.placa || "sin placa"} —{" "}
+                        {o.minutosTranscurridos != null ? `${o.minutosTranscurridos} min cargando` : "recién iniciado"}
+                        {o.minutosTranscurridos != null && o.minutosTranscurridos >= 15
+                          ? " · se asigna solo apenas haya muelle libre"
+                          : ` · se asigna solo a los 15 min si nadie la asigna antes`}
+                      </span>
+                      <Button size="sm" variant="secondary" className="h-6 text-xs" onClick={() => abrirAsignar(o)}>
+                        Asignar ahora
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
               <div className="rounded-lg border bg-card p-3 shadow-sm sm:col-span-2 lg:col-span-2">
                 <div className="flex items-center justify-between gap-2">
