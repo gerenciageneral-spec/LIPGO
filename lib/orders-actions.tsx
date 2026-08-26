@@ -1080,11 +1080,12 @@ export async function generateLoadOrder(orderData: {
     let telefono = ""
     let horapesoinicial = null
     let horallegada = null
+    let horaregistro = null
 
     if (!orderData.sinVehiculo && orderData.vehiculo) {
       const { data: vehicleData, error: vehicleError } = await supabase
         .from("citasvehiculos")
-        .select("telefono, horapesoinicial, horallegada")
+        .select("telefono, horapesoinicial, horallegada, horaregistro")
         .eq("placa", orderData.vehiculo)
         .is("estatus", null)
         .maybeSingle()
@@ -1098,6 +1099,11 @@ export async function generateLoadOrder(orderData: {
         telefono = vehicleData.telefono
         horapesoinicial = vehicleData.horapesoinicial
         horallegada = vehicleData.horallegada
+        // La hora de la inspección sanitaria hecha ANTES de que existiera esta
+        // orden. Se leía `horapesoinicial` y `horallegada` pero no esta, así que
+        // la orden nacía sin hora de sanitario aunque el vehículo sí se hubiera
+        // inspeccionado.
+        horaregistro = vehicleData.horaregistro
         console.log(
           "[v0] Vehicle data - phone:",
           telefono,
@@ -1105,6 +1111,8 @@ export async function generateLoadOrder(orderData: {
           horapesoinicial,
           "horallegada:",
           horallegada,
+          "horaregistro:",
+          horaregistro,
         )
       } else {
         console.warn("[v0] No vehicle data found for placa:", orderData.vehiculo)
@@ -1140,6 +1148,17 @@ export async function generateLoadOrder(orderData: {
     const fechaCargue = orderData.fechaOrdenCargue ? await dateInputToColombiaDate(orderData.fechaOrdenCargue) : null
     const fechaEntrega = orderData.fechaEntrega ? await dateInputToColombiaDate(orderData.fechaEntrega) : null
 
+    // Inspección sanitaria previa: si el vehículo se inspeccionó antes de que
+    // existiera esta orden, su hora vive en la cita o en el propio registro.
+    // `horaregistro` de la cita es el camino directo; el helper cubre además el
+    // caso en que la cita no quedó actualizada.
+    const horaSanitaria = horaregistro
+      ? { hora: horaregistro as string | null, registroId: null as number | null }
+      : await resolverHoraSanitaria(supabase, orderData.vehiculo, currentDate)
+    if (horaSanitaria.hora) {
+      console.log("[v0] Hora sanitaria recuperada para la orden:", horaSanitaria.hora)
+    }
+
     const { error: headerInsertError } = await supabase.from("cabeceraoc").insert({
       id: nextId,
       idempresa: sessionEmpresaId, // Use empresa ID from session
@@ -1156,6 +1175,7 @@ export async function generateLoadOrder(orderData: {
       observaciones: orderData.observaciones || "",
       pesajeinicial: horapesoinicial, // From citasvehiculos.horapesoinicial
       horavehiculo: horallegada, // From citasvehiculos.horallegada
+      horasanitario: horaSanitaria.hora, // Inspección hecha antes de esta orden
     })
 
     if (headerInsertError) {
@@ -1164,6 +1184,9 @@ export async function generateLoadOrder(orderData: {
     }
 
     console.log("[v0] Cabeceraoc inserted successfully")
+
+    // La inspección deja de estar huérfana: queda amarrada a esta orden.
+    await vincularRegistroSanitario(supabase, horaSanitaria.registroId, orderCode)
 
     const detailUpdateResult = await updatePedidoDetalleStatus(orderData.detailUpdates, orderCode)
 
@@ -1643,6 +1666,107 @@ async function sincronizarBasculaAClon(ordenId: number): Promise<void> {
       .eq("id", clon.id)
   } catch (e: any) {
     console.error("[sincronizarBasculaAClon] excepción (no bloquea la orden):", e?.message || e)
+  }
+}
+
+
+/**
+ * Hora de la inspección sanitaria de un vehículo, para una orden que se está
+ * creando AHORA.
+ *
+ * El caso que resuelve: la inspección se hace ANTES de que exista la orden. En
+ * ese momento el registro se guarda con `ordencargue` en null y la hora queda
+ * en `citasvehiculos.horaregistro`. Si después la orden se crea directamente
+ * con la placa —y no asignando el vehículo a una orden ya existente— esa hora
+ * no viajaba a `cabeceraoc.horasanitario` y en la orden aparecía vacía, como si
+ * el vehículo nunca se hubiera inspeccionado.
+ *
+ * Busca en dos lugares, en este orden:
+ *   1. `citasvehiculos.horaregistro` — donde la deja la inspección sin orden.
+ *   2. `registrosanitario` — la inspección misma. Cubre los casos en que la
+ *      cita no se actualizó o en que no había cita.
+ *
+ * Solo mira inspecciones APROBADAS y del mismo día o del anterior: una
+ * inspección de hace tres días no dice nada del estado del vehículo hoy, y
+ * arrastrarla a la orden sería peor que dejar el campo vacío. El día anterior
+ * sí cuenta porque un vehículo inspeccionado de noche se carga a la mañana
+ * siguiente.
+ *
+ * Devuelve también el `id` del registro para poder amarrarlo a la orden.
+ * Nunca lanza: si algo falla, devuelve la hora en null y la orden sigue.
+ */
+async function resolverHoraSanitaria(
+  supabase: any,
+  placa: string | null | undefined,
+  fechaOrden: string,
+): Promise<{ hora: string | null; registroId: number | null }> {
+  const vacio = { hora: null as string | null, registroId: null as number | null }
+  const chapa = String(placa ?? "").trim()
+  if (!chapa || !/^\d{4}-\d{2}-\d{2}$/.test(fechaOrden)) return vacio
+
+  // Día anterior, comparando por texto: `fechaOrden` es AAAA-MM-DD y en ese
+  // formato el orden alfabético es el cronológico. No se usa `new Date(...)`
+  // porque interpreta la cadena como UTC y en Colombia devuelve el día previo.
+  const [y, m, d] = fechaOrden.split("-").map(Number)
+  const anterior = new Date(Date.UTC(y, m - 1, d - 1)).toISOString().slice(0, 10)
+
+  try {
+    const { data: reg, error: regError } = await supabase
+      .from("registrosanitario")
+      .select("id, horaregistro, fecha, aprobacion, ordencargue")
+      .eq("placa", chapa)
+      .is("ordencargue", null)
+      .gte("fecha", anterior)
+      .lte("fecha", fechaOrden)
+      .order("id", { ascending: false })
+      .limit(5)
+
+    if (regError) {
+      console.error("[v0] resolverHoraSanitaria registrosanitario:", regError.message, regError.code)
+    } else {
+      const aprobado = (reg ?? []).find(
+        (r: any) => String(r.aprobacion ?? "aprobado").trim().toLowerCase() !== "rechazado" && r.horaregistro,
+      )
+      if (aprobado) {
+        return { hora: aprobado.horaregistro, registroId: aprobado.id ?? null }
+      }
+    }
+
+    // Respaldo: la hora que la inspección dejó en la cita del vehículo.
+    const { data: cita, error: citaError } = await supabase
+      .from("citasvehiculos")
+      .select("horaregistro")
+      .eq("placa", chapa)
+      .not("horaregistro", "is", null)
+      .order("id", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (citaError) {
+      console.error("[v0] resolverHoraSanitaria citasvehiculos:", citaError.message, citaError.code)
+      return vacio
+    }
+    return { hora: cita?.horaregistro ?? null, registroId: null }
+  } catch (e: any) {
+    console.error("[v0] resolverHoraSanitaria excepción:", e?.message)
+    return vacio
+  }
+}
+
+/**
+ * Amarra una inspección sanitaria previa a la orden que acaba de nacer, para
+ * que el histórico de inspecciones deje de mostrarla sin orden. No bloquea:
+ * si falla, la orden ya quedó bien y esto es trazabilidad.
+ */
+async function vincularRegistroSanitario(supabase: any, registroId: number | null, ordenCargue: string) {
+  if (!registroId || !ordenCargue) return
+  const { error } = await supabase
+    .from("registrosanitario")
+    .update({ ordencargue: ordenCargue })
+    .eq("id", registroId)
+    .is("ordencargue", null)
+  if (error) {
+    console.error("[v0] vincularRegistroSanitario:", error.message, error.code)
   }
 }
 
@@ -2553,6 +2677,13 @@ export async function generateUnloadOrder(orderData: {
     const currentTime = await getColombiaTime()
     const fechaDescargueFormatted = await dateInputToColombiaDate(orderData.fechaDescargue)
 
+    // Mismo caso que en la orden de cargue: el vehiculo pudo inspeccionarse
+    // antes de que existiera la orden, y esa hora hay que conservarla.
+    const horaSanitariaDesc = await resolverHoraSanitaria(supabase, orderData.placa, currentDate)
+    if (horaSanitariaDesc.hora) {
+      console.log("[v0] Hora sanitaria recuperada para el descargue:", horaSanitariaDesc.hora)
+    }
+
     // Insert into cabeceraoc with tipooperacion = "Descargue"
     const { error: headerInsertError } = await supabase.from("cabeceraoc").insert({
       id: nextId,
@@ -2567,6 +2698,7 @@ export async function generateUnloadOrder(orderData: {
       horaorden: currentTime,
       horalote: currentTime,
       horavehiculo: currentTime,
+      horasanitario: horaSanitariaDesc.hora,
       fechacargue: fechaDescargueFormatted,
       pesovascula: orderData.pesoBascula,
     })
@@ -2577,6 +2709,10 @@ export async function generateUnloadOrder(orderData: {
     }
 
     console.log("[v0] Cabeceraoc inserted successfully")
+
+    await vincularRegistroSanitario(
+      supabase, horaSanitariaDesc.registroId, orderData.numeroOrden || orderCode,
+    )
 
     // Get next detail ID
     const { data: lastDetail, error: lastDetailError } = await supabase
@@ -2748,7 +2884,14 @@ export async function generateDistributionOrder(orderData: {
     // El usuario ahora ingresa pesoBascula directamente en TONELADAS desde el UI,
     // por lo que ya no se divide por 1000 al persistir.
     const pesoBasculaTons = orderData.pesoBascula
-    
+
+    // Igual que en cargue y descargue: si el vehiculo se inspecciono antes de
+    // que existiera la orden, esa hora tiene que viajar a la cabecera.
+    const horaSanitariaDist = await resolverHoraSanitaria(supabase, orderData.placa, currentDate)
+    if (horaSanitariaDist.hora) {
+      console.log("[v0] Hora sanitaria recuperada para la distribucion:", horaSanitariaDist.hora)
+    }
+
     const { error: headerInsertError } = await supabase.from("cabeceraoc").insert({
       id: nextId,
       idempresa: sessionEmpresaId,
@@ -2762,6 +2905,7 @@ export async function generateDistributionOrder(orderData: {
       horaorden: currentTime,
       horalote: currentTime,
       horavehiculo: currentTime,
+      horasanitario: horaSanitariaDist.hora,
       fechacargue: fechaDistribucionFormatted,
       pesovascula: pesoBasculaTons, // ya en toneladas
     })
