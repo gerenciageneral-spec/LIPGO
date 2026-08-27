@@ -2685,12 +2685,13 @@ export async function getMovimientosProducto(
           fecha: r.creado,
           tipo: label(r),
           codigo: r.cod_movimiento || null,
-          // Traslado de ubicación / reclasificación de lote (309/311/312/344/343):
-          // no es un ingreso ni una salida real (no cambia el total, solo
-          // reubica) — el frontend usa esta bandera para NO pintar la
-          // cantidad en las columnas de Ingreso/Salida, que antes se veían
-          // igual que una recepción (101) real.
-          netoCero: esCodigoTrasladoNetoCero(r.cod_movimiento),
+          // Traslado de ubicación / reclasificación DENTRO del mismo producto
+          // (309/311/312/344/343): no es un ingreso ni una salida real (no
+          // cambia el total, solo reubica) — el frontend usa esta bandera
+          // para NO pintar la cantidad en las columnas de Ingreso/Salida.
+          // Si el 309 reclasificó hacia OTRO producto, para ESTE producto sí
+          // es un ingreso/salida real (mueve su saldo) y debe pintarse.
+          netoCero: netoCeroProducto(r),
           tipomov: r.tipomov,
           cantidad: Number(r.cantidad) || 0,
           status: r.status,
@@ -2808,7 +2809,6 @@ export async function getKardexInventario(
       from += 1000
       if (from > 60000) break
     }
-    const esNetoCeroMismoProducto = construirEsNetoCeroMismoProducto(inv)
 
     // Saldo actual por producto (saldoinvdetalle)
     const saldos: Record<string, number> = {}
@@ -2831,11 +2831,16 @@ export async function getKardexInventario(
       if (r.nombreproducto && !map[cod].producto) map[cod].producto = r.nombreproducto
       // Prioriza el código real (309/311/312/344/343 = pareja neta 0, NO es
       // un ajuste real) sobre el heurístico de texto — ver
-      // esCodigoTrasladoNetoCero en lib/transacciones-codigo.ts. Un 309 que
-      // reclasificó hacia OTRO producto (esNetoCeroMismoProducto = false)
-      // sí es un ingreso/salida real para ESTE producto — cae al bucket de
-      // "ajustes" más abajo, no a "traslados".
-      if (esNetoCeroMismoProducto(r)) map[cod].traslados += c
+      // esCodigoTrasladoNetoCero en lib/transacciones-codigo.ts. La función
+      // de estos códigos es siempre "reclasificar/trasladar" (nunca
+      // "ajuste", el catch-all de 701/702) — por eso van SIEMPRE a
+      // "Traslados" en esta tabla resumen, aunque un 309 cambie de producto
+      // (ese caso sí mueve el saldo real de cada producto — ver
+      // getMovimientosProducto/getConciliacionMensualInventario, donde la
+      // matemática sí necesita distinguirlo — pero el "Saldo" de ESTA tabla
+      // viene directo de saldoinvdetalle, no de esta clasificación, así que
+      // acá es solo una etiqueta y debe reflejar la función real del código).
+      if (esCodigoTrasladoNetoCero(r.cod_movimiento)) map[cod].traslados += c
       else if (r.tipomov === "Reproceso" || has(r.origen, "reproceso")) map[cod].merma += c
       else if (has(r.origen, "traslado entre localizaciones")) map[cod].traslados += c
       else if (r.tipomov === "Entrada" && (has(r.origen, "producc") || has(r.origen, "aprob") || has(r.origen, "descarg") || has(r.origen, "logo"))) map[cod].entradas += c
