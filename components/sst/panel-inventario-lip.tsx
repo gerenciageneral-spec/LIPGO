@@ -1232,11 +1232,20 @@ export function PanelInventarioLIP() {
                           .map((mv: any, i: number) => (
                             <tr key={i} className="border-b last:border-0 align-top">
                               <td className="px-2 py-1.5 text-xs whitespace-nowrap">{fechaColombiaUI(mv.fecha)}</td>
-                              <td className="px-2 py-1.5"><Badge variant="outline" className="text-[10px]">{mv.tipo}</Badge></td>
+                              <td className="px-2 py-1.5">
+                                <Badge variant="outline" className="text-[10px]">{mv.tipo}</Badge>
+                                {mv.netoCero && (
+                                  <span className="ml-1.5 text-[10px] tabular-nums text-muted-foreground">↔ {fmt(mv.cantidad)}</span>
+                                )}
+                              </td>
                               <td className="px-2 py-1.5 text-xs">{mv.lote || "—"}</td>
                               <td className="px-2 py-1.5 text-xs text-muted-foreground">{mv.location || "—"}</td>
-                              <td className="px-2 py-1.5 text-right font-medium tabular-nums" style={{ color: SST_TOKENS.ok }}>{mv.tipomov === "Entrada" ? fmt(mv.cantidad) : ""}</td>
-                              <td className="px-2 py-1.5 text-right font-medium tabular-nums" style={{ color: SST_TOKENS.bad }}>{mv.tipomov !== "Entrada" ? fmt(mv.cantidad) : ""}</td>
+                              <td className="px-2 py-1.5 text-right font-medium tabular-nums" style={{ color: SST_TOKENS.ok }} title={mv.netoCero ? "Traslado/reclasificación: no es un ingreso real, no cambia el total" : undefined}>
+                                {!mv.netoCero && mv.tipomov === "Entrada" ? fmt(mv.cantidad) : ""}
+                              </td>
+                              <td className="px-2 py-1.5 text-right font-medium tabular-nums" style={{ color: SST_TOKENS.bad }} title={mv.netoCero ? "Traslado/reclasificación: no es una salida real, no cambia el total" : undefined}>
+                                {!mv.netoCero && mv.tipomov !== "Entrada" ? fmt(mv.cantidad) : ""}
+                              </td>
                               <td className="px-2 py-1.5 text-right tabular-nums" title={mv.afectaSaldo ? undefined : "No aprobado: no afectó el saldo"}>
                                 {mv.afectaSaldo ? (
                                   <span className="font-semibold">{fmt(mv.saldoDespues)}</span>

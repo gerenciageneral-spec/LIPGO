@@ -2644,6 +2644,12 @@ export async function getMovimientosProducto(
           fecha: r.creado,
           tipo: label(r),
           codigo: r.cod_movimiento || null,
+          // Traslado de ubicación / reclasificación de lote (309/311/312/344/343):
+          // no es un ingreso ni una salida real (no cambia el total, solo
+          // reubica) — el frontend usa esta bandera para NO pintar la
+          // cantidad en las columnas de Ingreso/Salida, que antes se veían
+          // igual que una recepción (101) real.
+          netoCero: esCodigoTrasladoNetoCero(r.cod_movimiento),
           tipomov: r.tipomov,
           cantidad: Number(r.cantidad) || 0,
           status: r.status,
@@ -4338,7 +4344,15 @@ export async function getConciliacionMensualInventario(
       const c = Math.abs(Number(r.cantidad) || 0)
       const esInicial = r.cod_movimiento === "561" || has(r.origen, "inventario inicial")
       if (esInicial) { invInicial += c; continue } // apertura, no es flujo del mes
-      if (r.cod_movimiento === "311" || has(r.origen, "traslado entre localizaciones")) continue // neto 0
+      // 309 (reclasificación de lote/producto/ubicación), 311 (traslado),
+      // 312 (reverso de traslado), 344/343 (bloqueo/desbloqueo a cuarentena):
+      // parejas salida+entrada neto 0, no participan de este balance mensual
+      // (producción/cargue/devolución/merma/ajuste). Antes solo se excluía
+      // 311 por texto ("traslado entre localizaciones") — el resto, creado
+      // por "Transacciones por Código" con origen="transaccion manual", caía
+      // al catch-all de `esDev` de abajo y se contaba como una devolución
+      // fantasma (verificado con datos reales: ID3, PT FIDEO 250*24PQ).
+      if (esCodigoTrasladoNetoCero(r.cod_movimiento) || has(r.origen, "traslado entre localizaciones")) continue // neto 0
       if (r.ordentolva || has(r.ocargue, "tolva") || has(r.ocargue, "proyec") || has(r.origen, "tolva") || has(r.origen, "proyec")) continue
       const mk = mesDe(r.ocargue, r.creado)
       if (!mk) continue
@@ -4358,7 +4372,14 @@ export async function getConciliacionMensualInventario(
       const esMerma = r.tipomov === "Reproceso"
       const esIngRepro = r.tipomov === "Entrada" && has(r.origen, "reproceso") // retorno de reproceso
       const esProd = r.cod_movimiento === "101" || (r.tipomov === "Entrada" && (has(r.origen, "producc") || has(r.origen, "aprob") || has(r.origen, "descarg") || has(r.origen, "logo")))
-      const esDev = esIngRepro || has(r.origen, "devoluc") || (r.tipomov === "Entrada" && has(r.origen, "transaccion manual"))
+      // Antes CUALQUIER entrada manual sin otro match cabía aquí (catch-all
+      // "tipomov Entrada && transaccion manual") — eso conflaba con 653
+      // (devolución real) a cualquier otro código nuevo de "Transacciones
+      // por Código" (ej. 701, que además se revisaba DESPUÉS de esDev en
+      // este if/else-if, así que un 701 real terminaba contado como
+      // devolución). Ahora solo 653 (su código explícito) y el retorno de
+      // reproceso cuentan como devolución.
+      const esDev = r.cod_movimiento === "653" || esIngRepro || has(r.origen, "devoluc")
       const esAjuste = r.cod_movimiento === "701" || r.cod_movimiento === "702"
       if (esCargue) a.cargue += c
       else if (esMerma) a.merma += c
