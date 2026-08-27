@@ -115,6 +115,10 @@ export const SUBMODULO_KPIS: Record<string, string[]> = {
   // --- Operación LIP ---
   Picking: ["lip_evidencia", "lip_tiempo_cargue"],
   Packing: ["lip_tiempo_cargue"],
+  // Centro de Coordinación ya trae sus propios KPIs en la pantalla (incluye
+  // "Tiempo de cargue" del día) — no repetir la tira genérica, para dejar
+  // más espacio vertical al tablero de muelles.
+  "Centro de Coordinación": [],
   "Ver Picking/Packing": ["lip_evidencia"],
   "Registro de QR estibas": ["inv_exactitud"],
   "Lectura de QR estibas": ["inv_exactitud"],

@@ -442,7 +442,7 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-7">
               <div className="rounded-lg border bg-card p-3 shadow-sm sm:col-span-2 lg:col-span-2">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Cargado hoy</div>
@@ -516,6 +516,16 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                   muelles {data.kpis.muellesOcupados}/{data.kpis.muellesTotal}
                   {data.colaSinMuelle.length > 0 && ` · ${data.colaSinMuelle.length} en cola`}
                 </div>
+              </div>
+              <div className="rounded-lg border bg-card p-3 shadow-sm">
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Tiempo de cargue</div>
+                <div className="mt-0.5 flex items-baseline gap-1">
+                  <span className="text-2xl font-extrabold tabular-nums">
+                    {data.kpis.tiempoCargueProedioMin ?? "—"}
+                  </span>
+                  {data.kpis.tiempoCargueProedioMin != null && <span className="text-xs text-muted-foreground">min</span>}
+                </div>
+                <div className="text-[11px] text-muted-foreground">{data.kpis.tiempoCargueBaseOrdenes} órdenes hoy</div>
               </div>
             </div>
 

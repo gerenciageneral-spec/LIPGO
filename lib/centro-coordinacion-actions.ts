@@ -94,6 +94,10 @@ export interface CentroCoordinacionKpis {
   /** Lo que ya se debería haber cargado a esta hora, según horas de personal realmente trabajadas — mismo cálculo que "Avance en Vivo". */
   metaEsperadaAhoraTon: number
   estadoTurno: "adelantado" | "cerca" | "atrasado" | "sin_datos"
+  /** Tiempo promedio de cargue/descargue HOY (fincargue - iniciocargue, en min) — mismo cálculo que el indicador BSC "lip_tiempo_cargue", acotado al día. Null si ninguna orden de hoy tiene ambos datos aún. */
+  tiempoCargueProedioMin: number | null
+  /** Órdenes de hoy usadas para el promedio de arriba (para mostrar "X órdenes" como base). */
+  tiempoCargueBaseOrdenes: number
 }
 
 export interface ColaPatioItem {
@@ -294,6 +298,23 @@ export async function getCentroCoordinacion(
       const { peso } = pesoBaseCalculo(idempresa, tipo, num(o.pesovascula), num(o.pesoorden))
       if (peso > 0) cargadoHoyTon += peso
     }
+
+    // 7b) Tiempo de cargue/descargue promedio de HOY — mismo cálculo que el
+    // indicador BSC "lip_tiempo_cargue" (fincargue - iniciocargue en min,
+    // acotado a 0-600 para descartar datos basura), pero acotado al día en
+    // vez del periodo del BSC — consistente con que el resto de esta
+    // pantalla es en vivo/diario.
+    const aMinDia = (s: string) => {
+      const [h, m, sec] = String(s).split(":").map(Number)
+      return h * 60 + (m || 0) + (sec || 0) / 60
+    }
+    const duracionesHoy = todasOrdenes
+      .filter((o: any) => o.iniciocargue && o.fincargue)
+      .map((o: any) => aMinDia(o.fincargue) - aMinDia(o.iniciocargue))
+      .filter((d: number) => d > 0 && d < 600)
+    const tiempoCargueProedioMin =
+      duracionesHoy.length > 0 ? Math.round(duracionesHoy.reduce((s: number, d: number) => s + d, 0) / duracionesHoy.length) : null
+    const tiempoCargueBaseOrdenes = duracionesHoy.length
 
     const armar = (o: any): OrdenOperativa => {
       const tipo = String(o.tipooperacion || "").trim() as TipoOperacion
@@ -520,6 +541,8 @@ export async function getCentroCoordinacion(
           metaPorHoraTrabajador: round2(metaPorHora),
           metaEsperadaAhoraTon: round1(metaEsperadaAhoraTon),
           estadoTurno,
+          tiempoCargueProedioMin,
+          tiempoCargueBaseOrdenes,
         },
         muelles,
         colaSinMuelle,
