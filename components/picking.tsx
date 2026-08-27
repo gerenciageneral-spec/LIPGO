@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button"
 import {
   RefreshCw,
   FileText,
-  UserPlus,
   CheckSquare,
   Package,
   Check,
@@ -22,9 +21,6 @@ import {
   getPendingLoadOrders,
   type PendingLoadOrder,
   generatePickingPDF,
-  getCarguDescarguePersonnel,
-  type PersonnelEmployee,
-  assignPersonnelToOrder,
   getPickingItems,
   type PickingItem,
   confirmPicking,
@@ -74,14 +70,7 @@ function Picking() {
   const [loading, setLoading] = useState(true)
   const [generatingPDF, setGeneratingPDF] = useState<number | null>(null)
 
-  const [personnelDialogOpen, setPersonnelDialogOpen] = useState(false)
   const [selectedOrder, setSelectedOrder] = useState<PendingLoadOrder | null>(null)
-  const [personnel, setPersonnel] = useState<PersonnelEmployee[]>([])
-  const [selectedPersonnel, setSelectedPersonnel] = useState<string[]>([])
-  const [loadingPersonnel, setLoadingPersonnel] = useState(false)
-  const [assigningPersonnel, setAssigningPersonnel] = useState(false)
-
-  const [auxiliaresInput, setAuxiliaresInput] = useState("")
 
   const [ordersWithPhotos, setOrdersWithPhotos] = useState<Set<number>>(new Set())
 
@@ -199,79 +188,6 @@ const loadOrders = async () => {
       loadOrders()
     }
   }, [selectedEmpresaId])
-
-  const handleAssignPersonnel = async (order: PendingLoadOrder) => {
-    setSelectedOrder(order)
-    // Precarga los auxiliares YA asignados (si los hay) para poder agregar o
-    // quitar sobre lo existente — el personal se puede editar mientras la
-    // orden siga abierta, no solo la primera vez.
-    setSelectedPersonnel(
-      String(order.auxiliares || "")
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean),
-    )
-    setPersonnelDialogOpen(true)
-
-    setLoadingPersonnel(true)
-    const result = await getCarguDescarguePersonnel(selectedEmpresaId)
-
-    if (result.success) {
-      setPersonnel(result.data)
-    } else {
-      toast({
-        title: "Error",
-        description: result.message,
-        variant: "destructive",
-      })
-    }
-    setLoadingPersonnel(false)
-  }
-
-  const togglePersonnelSelection = (employeeName: string) => {
-    setSelectedPersonnel((prev) =>
-      prev.includes(employeeName) ? prev.filter((name) => name !== employeeName) : [...prev, employeeName],
-    )
-  }
-
-  const handleConfirmAssignment = async () => {
-    if (!selectedOrder || selectedPersonnel.length === 0) {
-      toast({
-        title: "Error",
-        description: "Debe seleccionar al menos un empleado",
-        variant: "destructive",
-      })
-      return
-    }
-
-    const currentUserName = profile?.usuario || "Usuario desconocido"
-
-    setAssigningPersonnel(true)
-    const result = await assignPersonnelToOrder(
-      selectedOrder.id,
-      selectedPersonnel,
-      auxiliaresInput,
-      currentUserName,
-      selectedOrder,
-    )
-
-    if (result.success) {
-      toast({
-        title: "Éxito",
-        description: result.message,
-      })
-      setPersonnelDialogOpen(false)
-      setAuxiliaresInput("") // Reset auxiliares input
-      await loadOrders()
-    } else {
-      toast({
-        title: "Error",
-        description: result.message,
-        variant: "destructive",
-      })
-    }
-    setAssigningPersonnel(false)
-  }
 
   /**
    * Modo de verificacion EFECTIVO de una linea. Todas arrancan en "simple",
@@ -1754,22 +1670,24 @@ const loadOrders = async () => {
                         />
                       </td>
                       <td className="py-1 px-2">
-                        {/* Nueva secuencia: Picking -> PDF -> Personal -> Fotos.
-                            El orden visual coincide con el orden funcional para
-                            que el operario sepa de un vistazo cual es el siguiente
-                            paso. Cada boton se habilita solo cuando el paso previo
-                            esta completo:
+                        {/* Picking es una actividad de bodega: se hace ANTES de
+                            que llegue el vehículo, apenas hay lote asignado — no
+                            depende de a qué muelle se asigne después. Asignar
+                            Personal se movió por completo a Centro de
+                            Coordinación (decisión del coordinador, junto con
+                            muelle y tipo de pago); aquí solo queda Picking, PDF
+                            y Cargar fotos (que exige que ya haya personal y tipo
+                            de pago elegidos allá).
                               - PDF requiere haber realizado el picking (no
                                 bloqueamos por `iniciocargue` porque el PDF lo
-                                escribe; solo evitamos doble generacion).
-                              - Asignar Personal requiere `iniciocargue` (PDF ya
-                                generado). Se puede volver a abrir cuantas veces
-                                haga falta para agregar o quitar gente mientras
-                                la orden siga abierta — no se bloquea despues de
-                                la primera vez.
-                              - Cargar fotos requiere `auxiliares` (personal ya
-                                asignado). El cargue de fotos cierra la orden
-                                (escribe `fincargue`), por eso es el paso final.
+                                escribe; solo evitamos doble generacion). Si ya
+                                existe (por ejemplo, generado al asignar muelle
+                                en Centro de Coordinación), no se regenera — solo
+                                se abre, sin restricción para el montacarguista.
+                              - Cargar fotos requiere `auxiliares` y `tipo_pago`
+                                (asignados en Centro de Coordinación). El cargue
+                                de fotos cierra la orden (escribe `fincargue`),
+                                por eso es el paso final.
                         */}
                         <div className="flex flex-wrap gap-1">
                           <Button
@@ -1786,25 +1704,11 @@ const loadOrders = async () => {
                             size="sm"
                             variant="outline"
                             onClick={() => handleGeneratePDF(order)}
-                            // Si ya existe (por ejemplo, generado al asignar muelle en
-                            // Centro de Coordinación), NO se regenera — generatePickingPDF
-                            // ya detecta doccargue y devuelve el mismo PDF. El montacarguista
-                            // debe poder verlo sin restricción, por eso el botón sigue activo.
                             disabled={generatingPDF === order.id}
                             className="gap-1 h-7 text-[10px] px-2"
                           >
                             <FileText className="h-3 w-3" />
                             {generatingPDF === order.id ? "Generando..." : order.doccargue ? "Ver PDF" : "Generar PDF"}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleAssignPersonnel(order)}
-                            disabled={!order.iniciocargue}
-                            className="gap-1 h-7 text-[10px] px-2"
-                          >
-                            <UserPlus className="h-3 w-3" />
-                            {order.auxiliares ? "Editar Personal" : "Asignar Personal"}
                           </Button>
                           <Button
                             size="sm"
@@ -1838,14 +1742,18 @@ const loadOrders = async () => {
                             )}
                           </Button>
                         </div>
-                        {/* El tipo de pago (Global/Individual) lo elige el
-                            coordinador en Centro de Coordinación, no aquí —
-                            Picking solo respeta el bloqueo si aún no se eligió. */}
-                        {!order.auxiliares ? null : !order.tipo_pago && (
+                        {/* Personal y tipo de pago los asigna el coordinador en
+                            Centro de Coordinación, no aquí — Picking solo avisa
+                            si falta alguno, sin poder cambiarlo. */}
+                        {!order.iniciocargue ? null : !order.auxiliares ? (
+                          <div className="mt-1 text-[10px] font-medium text-rose-600">
+                            ⚠ Falta asignar personal en Centro de Coordinación
+                          </div>
+                        ) : !order.tipo_pago ? (
                           <div className="mt-1 text-[10px] font-medium text-rose-600">
                             ⚠ Falta elegir tipo de pago en Centro de Coordinación
                           </div>
-                        )}
+                        ) : null}
                       </td>
                     </tr>
                   ))
@@ -1926,16 +1834,6 @@ const loadOrders = async () => {
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => handleAssignPersonnel(order)}
-                    disabled={!order.iniciocargue}
-                    className="text-xs h-9"
-                  >
-                    <UserPlus className="h-3 w-3 mr-1" />
-                    {order.auxiliares ? "Editar" : "Personal"}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
                     onClick={() => handleUploadPhotos(order)}
                     disabled={!order.auxiliares || !order.tipo_pago}
                     className="text-xs h-9"
@@ -1964,87 +1862,21 @@ const loadOrders = async () => {
                     )}
                   </Button>
                 </div>
-                {order.auxiliares && !order.tipo_pago && (
+                {order.iniciocargue && !order.auxiliares ? (
+                  <div className="mt-1 text-[10px] font-medium text-rose-600">
+                    ⚠ Falta asignar personal en Centro de Coordinación
+                  </div>
+                ) : order.iniciocargue && !order.tipo_pago ? (
                   <div className="mt-1 text-[10px] font-medium text-rose-600">
                     ⚠ Falta elegir tipo de pago en Centro de Coordinación
                   </div>
-                )}
+                ) : null}
               </div>
             </Card>
           ))
         )}
       </div>
 
-      <Dialog open={personnelDialogOpen} onOpenChange={setPersonnelDialogOpen}>
-        <DialogContent className="max-w-md w-[95vw]">
-          <DialogHeader>
-            <DialogTitle className="text-base">{selectedOrder?.auxiliares ? "Editar Personal" : "Asignar Personal"}</DialogTitle>
-            <DialogDescription className="text-sm" asChild>
-              <span className="block">
-                <span className="block">Orden: {selectedOrder?.ordendecargue}</span>
-                <span className="mt-1 block">Usuario: {profile?.usuario || "Usuario desconocido"}</span>
-              </span>
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="py-4 space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="auxiliares" className="text-sm font-medium">
-                Auxiliares (opcional)
-              </Label>
-              <Input
-                id="auxiliares"
-                placeholder="Ingrese los nombres de los auxiliares..."
-                value={auxiliaresInput}
-                onChange={(e) => setAuxiliaresInput(e.target.value)}
-                className="text-sm"
-              />
-              <p className="text-xs text-muted-foreground">
-                Información adicional de auxiliares que se agregará al PDF
-              </p>
-            </div>
-
-            {loadingPersonnel ? (
-              <div className="text-center py-8 text-muted-foreground text-sm">Cargando personal...</div>
-            ) : personnel.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground text-sm">No hay personal disponible</div>
-            ) : (
-              <div className="space-y-3 max-h-96 overflow-y-auto">
-                {personnel.map((employee) => (
-                  <div key={employee.id} className="flex items-center space-x-2 p-2 rounded border">
-                    <Checkbox
-                      id={`employee-${employee.id}`}
-                      checked={selectedPersonnel.includes(employee.nombreempleado)}
-                      onCheckedChange={() => togglePersonnelSelection(employee.nombreempleado)}
-                    />
-                    <Label htmlFor={`employee-${employee.id}`} className="text-sm font-normal cursor-pointer flex-1">
-                      {employee.nombreempleado}
-                    </Label>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <DialogFooter className="gap-2">
-            <Button
-              variant="outline"
-              onClick={() => setPersonnelDialogOpen(false)}
-              disabled={assigningPersonnel}
-              className="flex-1"
-            >
-              Cancelar
-            </Button>
-            <Button
-              onClick={handleConfirmAssignment}
-              disabled={assigningPersonnel || selectedPersonnel.length === 0}
-              className="flex-1"
-            >
-              {assigningPersonnel ? "..." : `Asignar (${selectedPersonnel.length})`}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {selectedPhotosOrder && (
         <PickingPhotoUploadDialog

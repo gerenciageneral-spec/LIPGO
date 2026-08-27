@@ -376,16 +376,12 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
     ? data.muelles.filter((slot) => !soloAtencion || (slot.orden && (slot.orden.slaVencido || slot.orden.slaEnRiesgo || slot.orden.pausado)))
     : []
 
+  // Conteo del DÍA (abiertas + cerradas), no de ocupación en vivo — así no
+  // baja cuando una orden cierra y libera su muelle.
+  const conteoDia = data?.conteoTipoHoy || { Cargue: 0, Descargue: 0, Distribucion: 0 }
   const conteoPorTipo: Record<TipoOperacion | "Todos", number> = {
-    Todos: 0,
-    Cargue: 0,
-    Descargue: 0,
-    Distribucion: 0,
-  }
-  for (const slot of data?.muelles || []) {
-    if (!slot.orden) continue
-    conteoPorTipo.Todos += 1
-    conteoPorTipo[slot.orden.tipooperacion] += 1
+    Todos: conteoDia.Cargue + conteoDia.Descargue + conteoDia.Distribucion,
+    ...conteoDia,
   }
 
   const estadoLabel = { adelantado: "Adelantado", cerca: "Cerca", atrasado: "Atrasado", sin_datos: "Sin datos aún" }

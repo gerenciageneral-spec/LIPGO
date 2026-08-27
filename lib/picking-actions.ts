@@ -215,13 +215,12 @@ export async function getPendingLoadOrders(selectedEmpresaId?: number | null) {
     .eq("idempresa", empresaId) // Filter by empresa from session
     .eq("tipooperacion", "Cargue") // Only show Cargue operations
     .is("fincargue", null) // Solo pendientes; al finalizar el proceso desaparece (igual que todas)
+    // Solo exige lote (vehículo + lote) — Picking es una actividad de
+    // bodega que se hace ANTES de que llegue el vehículo, independiente de
+    // a qué muelle se asigne después. El muelle es una decisión del
+    // coordinador en Centro de Coordinación, en otro momento; no debe
+    // bloquear que el montacarguista haga Picking/PDF apenas haya lote.
     .not("horalote", "is", null)
-    // Además del lote, ahora también exige muelle asignado (Centro de
-    // Coordinación) — la orden queda lista para trabajarla en Picking solo
-    // cuando ya tiene vehículo + lote + muelle. Mientras dure la transición
-    // a Centro de Coordinación, una orden sin muelle simplemente no aparece
-    // aquí hasta que se le asigne uno.
-    .not("muelle", "is", null)
     .order("ordendecargue", { ascending: false })
 
   if (error) {

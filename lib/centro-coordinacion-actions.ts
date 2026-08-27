@@ -123,6 +123,8 @@ export interface CentroCoordinacionData {
   alertaCargandoSinMuelle: OrdenOperativa[]
   /** Asignaciones que el sistema acaba de hacer solo en ESTA consulta (≥15 min sin muelle + libre disponible) — para avisar una sola vez en el cliente. */
   autoAsignaciones: { ordendecargue: string; placa: string | null; muelle: number }[]
+  /** Total de órdenes de HOY por tipo (abiertas + cerradas) — para los chips de filtro, que no deben bajar cuando una orden cierra. */
+  conteoTipoHoy: Record<TipoOperacion, number>
 }
 
 /** SLA de respaldo (minutos) cuando no se pudo determinar el tipo de vehículo. */
@@ -207,6 +209,17 @@ export async function getCentroCoordinacion(
       .eq("fechacargue", fechaConsulta)
 
     const todasOrdenes = ordenesRaw || []
+
+    // Conteo del día por tipo de operación — a diferencia de "muelles
+    // ocupados ahora", este cuenta TODAS las órdenes de hoy (abiertas y ya
+    // cerradas), así que no baja cuando una orden cierra y libera su
+    // muelle. Es lo que deben reflejar los chips de filtro.
+    const conteoTipoHoy = { Cargue: 0, Descargue: 0, Distribucion: 0 } as Record<TipoOperacion, number>
+    for (const o of todasOrdenes) {
+      const t = String(o.tipooperacion || "").trim() as TipoOperacion
+      if (t in conteoTipoHoy) conteoTipoHoy[t] += 1
+    }
+
     // Cargue requiere vehículo (placa) Y lote asignados para empezar a
     // operarse — mismo filtro real que ya usa Picking para lote
     // (getPendingLoadOrders: .not("horalote","is",null)). En la práctica el
@@ -515,6 +528,7 @@ export async function getCentroCoordinacion(
         sugerenciaProximoTurno,
         alertaCargandoSinMuelle,
         autoAsignaciones,
+        conteoTipoHoy,
       },
     }
   } catch (e: any) {
