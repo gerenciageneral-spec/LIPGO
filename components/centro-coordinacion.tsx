@@ -175,7 +175,9 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
 
   const [pausingOrder, setPausingOrder] = useState<string | null>(null)
 
-  // Parte de turno — carga bajo demanda, solo cuando se abre.
+  // Parte de turno — carga bajo demanda, solo cuando se abre. Control manual
+  // (no <details>/<summary>): más predecible que depender del toggle nativo.
+  const [parteTurnoAbierto, setParteTurnoAbierto] = useState(false)
   const [parteTurno, setParteTurno] = useState<ParteDeTurno | null>(null)
   const [loadingParte, setLoadingParte] = useState(false)
 
@@ -349,8 +351,10 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
     setPhotoDialogOpen(true)
   }
 
-  const abrirParteTurno = async () => {
-    if (parteTurno || !selectedEmpresaId) return
+  const toggleParteTurno = async () => {
+    const abriendo = !parteTurnoAbierto
+    setParteTurnoAbierto(abriendo)
+    if (!abriendo || parteTurno || !selectedEmpresaId) return
     setLoadingParte(true)
     const r = await getParteDeTurno(selectedEmpresaId)
     setLoadingParte(false)
@@ -709,11 +713,16 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
               </div>
             </div>
 
-            <details className="rounded-xl border bg-card shadow-sm" onToggle={(e) => (e.currentTarget as HTMLDetailsElement).open && abrirParteTurno()}>
-              <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm font-bold">
+            <div className="rounded-xl border bg-card shadow-sm">
+              <button
+                type="button"
+                onClick={toggleParteTurno}
+                className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-bold"
+              >
                 <ClipboardList className="h-4 w-4 text-primary" /> Parte de turno — resumen para el próximo coordinador
-                <ChevronDown className="ml-auto h-4 w-4 text-muted-foreground" />
-              </summary>
+                <ChevronDown className={`ml-auto h-4 w-4 text-muted-foreground transition-transform ${parteTurnoAbierto ? "rotate-180" : ""}`} />
+              </button>
+              {parteTurnoAbierto && (
               <div className="border-t p-4">
                 {loadingParte ? (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -813,7 +822,8 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                   </>
                 )}
               </div>
-            </details>
+              )}
+            </div>
           </>
         )}
       </div>
