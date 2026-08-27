@@ -745,6 +745,61 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                         </ul>
                       </div>
                     )}
+
+                    {/* Historial del día completo (abiertas + cerradas) con su
+                        personal real asignado — esto es lo que ya no se ve en
+                        el tablero de muelles apenas una orden cierra. */}
+                    <div className="mt-3">
+                      <h3 className="mb-1.5 text-xs font-bold text-foreground">
+                        Historial de órdenes de hoy ({parteTurno.historial.length})
+                      </h3>
+                      <div className="max-h-72 overflow-auto rounded-md border">
+                        <table className="w-full text-left text-[11px]">
+                          <thead className="sticky top-0 bg-muted/80 backdrop-blur">
+                            <tr>
+                              <th className="px-2 py-1.5 font-semibold">Orden</th>
+                              <th className="px-2 py-1.5 font-semibold">Tipo</th>
+                              <th className="px-2 py-1.5 font-semibold">Placa</th>
+                              <th className="px-2 py-1.5 font-semibold">Muelle</th>
+                              <th className="px-2 py-1.5 font-semibold">Estado</th>
+                              <th className="px-2 py-1.5 font-semibold">Personal real asignado</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {parteTurno.historial.length === 0 ? (
+                              <tr>
+                                <td colSpan={6} className="px-2 py-3 text-center text-muted-foreground">
+                                  Sin órdenes hoy.
+                                </td>
+                              </tr>
+                            ) : (
+                              parteTurno.historial.map((h) => (
+                                <tr key={h.ordendecargue} className="border-t">
+                                  <td className="px-2 py-1 font-mono">{h.ordendecargue}</td>
+                                  <td className="px-2 py-1">{TIPO_LABEL[h.tipooperacion]}</td>
+                                  <td className="px-2 py-1">{h.placa || "—"}</td>
+                                  <td className="px-2 py-1">{h.muelle ?? "—"}</td>
+                                  <td className="px-2 py-1">
+                                    <span
+                                      className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                                        h.estado === "cerrada"
+                                          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400"
+                                          : "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400"
+                                      }`}
+                                    >
+                                      {h.estado === "cerrada" ? `Cerrada ${fmtHora(h.horaCierre)}` : "En curso"}
+                                    </span>
+                                  </td>
+                                  <td className="px-2 py-1 text-muted-foreground">
+                                    {h.personalReal.length > 0 ? h.personalReal.join(", ") : "—"}
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
                   </>
                 )}
               </div>

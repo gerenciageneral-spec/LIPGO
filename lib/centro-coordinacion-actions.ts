@@ -542,6 +542,18 @@ export async function getCentroCoordinacion(
 // órdenes cerradas hoy + la lista de pendientes armada desde los mismos datos.
 // ---------------------------------------------------------------------------
 
+export interface HistorialOrdenTurno {
+  ordendecargue: string
+  tipooperacion: TipoOperacion
+  cliente: string
+  placa: string | null
+  muelle: number | null
+  estado: "cerrada" | "en_curso"
+  horaCierre: string | null
+  /** Trazabilidad real (auxiliares_real) — quién asignó de verdad el coordinador, no se pierde aunque la orden haya cerrado en pago Global. */
+  personalReal: string[]
+}
+
 export interface ParteDeTurno {
   cargadoHoyTon: number
   ordenesCerradas: number
@@ -550,6 +562,8 @@ export interface ParteDeTurno {
   slaVencidosAhora: number
   personalEnPiso: number
   pendientes: string[]
+  /** Historial completo del día (abiertas + cerradas) con su personal real asignado, más reciente primero. */
+  historial: HistorialOrdenTurno[]
 }
 
 export async function getParteDeTurno(
@@ -569,6 +583,40 @@ export async function getParteDeTurno(
       .eq("idempresa", idempresa)
       .eq("fechacargue", fechaConsulta)
       .not("fincargue", "is", null)
+
+    // Historial del día completo (abiertas + cerradas), con su personal real
+    // asignado — a diferencia del tablero de muelles, que solo muestra las
+    // abiertas y las pierde de vista apenas cierran.
+    const { data: todasHoy } = await admin
+      .from("cabeceraoc")
+      .select("id, ordendecargue, tipooperacion, placa, muelle, fincargue, auxiliares, auxiliares_real")
+      .eq("idempresa", idempresa)
+      .eq("fechacargue", fechaConsulta)
+      .in("tipooperacion", ["Cargue", "Descargue", "Distribucion"])
+      .order("id", { ascending: false })
+
+    const idsHoy = (todasHoy || []).map((o: any) => o.id)
+    const clientePorOrdenHoy = new Map<number, string>()
+    if (idsHoy.length > 0) {
+      const { data: detallesHoy } = await admin.from("detalleoc").select("idorden, cliente").in("idorden", idsHoy)
+      for (const d of detallesHoy || []) {
+        if (!clientePorOrdenHoy.has(d.idorden)) clientePorOrdenHoy.set(d.idorden, d.cliente || "Sin cliente")
+      }
+    }
+
+    const historial: HistorialOrdenTurno[] = (todasHoy || []).map((o: any) => ({
+      ordendecargue: o.ordendecargue,
+      tipooperacion: String(o.tipooperacion || "").trim() as TipoOperacion,
+      cliente: clientePorOrdenHoy.get(o.id) || "Sin cliente",
+      placa: o.placa || null,
+      muelle: o.muelle ?? null,
+      estado: o.fincargue ? "cerrada" : "en_curso",
+      horaCierre: o.fincargue || null,
+      personalReal: String(o.auxiliares_real || o.auxiliares || "")
+        .split(",")
+        .map((s: string) => s.trim())
+        .filter(Boolean),
+    }))
 
     const pendientes: string[] = []
     for (const slot of base.data.muelles) {
@@ -598,6 +646,7 @@ export async function getParteDeTurno(
         slaVencidosAhora: base.data.kpis.ordenesEnRiesgo,
         personalEnPiso: base.data.kpis.personalEnPiso,
         pendientes,
+        historial,
       },
     }
   } catch (e: any) {

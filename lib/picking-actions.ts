@@ -347,29 +347,34 @@ export async function getCarguDescarguePersonnel(empresaId?: number | null) {
 
   const horaActual = colombiaDate.toTimeString().slice(0, 5) // "HH:MM"
 
-  // 6) Ya asignado en una orden ACTIVA de pago 'individual': ahí sí hay una
-  //    asignación real y exclusiva por vehículo, así que se descuenta de
-  //    disponibles. Las órdenes en 'global' (o sin elegir aún) NUNCA restan
-  //    disponibilidad — el reparto global de hoy necesita poder asignar a
-  //    la misma persona a varias órdenes a la vez (decisión de negocio).
-  const asignadosIndividual = new Set<string>()
+  // 6) Ya asignado en una orden ACTIVA (cualquier muelle sin cerrar): se
+  //    descuenta de disponibles hasta que esa orden cierre. Antes esto solo
+  //    aplicaba a pago 'individual' — porque en 'global' el coordinador
+  //    necesitaba poder teclear a la misma gente en varias órdenes para
+  //    forzar el reparto parejo. Eso ya no hace falta: en 'global' el
+  //    sistema calcula y escribe el roster solo, al cerrar (ver
+  //    computarRosterPagoGlobal) — la asignación manual en Centro de
+  //    Coordinación ahora es SIEMPRE la asignación real por muelle
+  //    (trazabilidad), sin importar el modo de pago, así que debe
+  //    comportarse igual en los dos modos: exclusiva mientras el muelle
+  //    siga abierto.
+  const asignadosActivos = new Set<string>()
   if (finalEmpresaId) {
-    const { data: activasIndividual } = await supabase
+    const { data: activas } = await supabase
       .from("cabeceraoc")
       .select("auxiliares")
       .eq("idempresa", finalEmpresaId)
       .is("fincargue", null)
-      .eq("tipo_pago", "individual")
-    for (const o of activasIndividual ?? []) {
+    for (const o of activas ?? []) {
       for (const n of String(o.auxiliares || "").split(",")) {
         const t = n.trim()
-        if (t) asignadosIndividual.add(normalizeName(t))
+        if (t) asignadosActivos.add(normalizeName(t))
       }
     }
   }
 
   const disponiblesAhora = (data ?? []).filter((r) => {
-    if (asignadosIndividual.has(normalizeName(r.nombre))) return false
+    if (asignadosActivos.has(normalizeName(r.nombre))) return false
     if (r.puesto === "Cargue/Descargue") return true
     const horaSalidaProgramada = (r.horasalidaprogramada || "").toString().slice(0, 5)
     if (!horaSalidaProgramada) return true // sin dato programado: se deja como antes
