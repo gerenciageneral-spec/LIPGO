@@ -2339,6 +2339,10 @@ export async function getPanelInventarioLIP(
     const salPorProd: Record<string, { producto: string; salidas: number }> = {} // para top movers / ABC
     const skusActivosSet = new Set<string>()
     for (const r of inv) {
+      // Un ingreso SIN aprobar no es inventario todavía — no debe sumar en
+      // ningún total de movimientos de esta pantalla (ver
+      // getKardexInventario/getMovimientosProducto, mismo criterio).
+      if (!String(r.status || "").toLowerCase().startsWith("aprob")) continue
       if (yr(r.creado) !== anioSel) continue
       const c = Number(r.cantidad) || 0
       const t = tipoMov(r)
@@ -2479,7 +2483,7 @@ export async function getCuadreDiario(
     const inv: any[] = []
     let from = 0
     while (true) {
-      const { data, error } = await supabase.from("invtrans").select("tipomov,origen,cantidad,creado,cod_movimiento").in("idempresa", clientes).order("id", { ascending: true }).range(from, from + 999)
+      const { data, error } = await supabase.from("invtrans").select("tipomov,origen,cantidad,creado,cod_movimiento,status").in("idempresa", clientes).order("id", { ascending: true }).range(from, from + 999)
       if (error) return { success: false, data: [], error: error.message }
       inv.push(...(data ?? []))
       if (!data || data.length < 1000) break
@@ -2491,6 +2495,9 @@ export async function getCuadreDiario(
     // el cuadre diario se veía "atrasado").
     const byDay: Record<string, { ingresos: number; salidas: number; otros: number }> = {}
     for (const r of inv) {
+      // Un ingreso SIN aprobar no es inventario todavía — no debe mover el
+      // cuadre diario (mismo criterio que Kardex/Panel).
+      if (!String(r.status || "").toLowerCase().startsWith("aprob")) continue
       const d = r.creado ? fechaColombiaDe(r.creado) : ""
       if (!d) continue
       // 309/311/312/344/343 son pareja neta 0 igual que el traslado clásico
@@ -2689,7 +2696,16 @@ export async function getMovimientosProducto(
     const { porFila: saldosPorFila } = calcularSaldoReal(rows ?? [], anclasProducto, stockVivo)
     const cronologico = [...(rows ?? [])].sort((a: any, b: any) => String(a.creado || "").localeCompare(String(b.creado || "")))
 
-    const movs = (rows ?? []).filter((r: any) => (!anio || yr(r.creado) === anio) && (!mes || mo(r.creado) === mes))
+    // Un ingreso SIN aprobar (ej. el auto-descargue antes de que alguien lo
+    // confirme con su ubicación/lote/cantidad real) no es inventario todavía
+    // — ya tiene su propio lugar para gestionarse (Producción › Aprobación
+    // de ingreso). No debe mezclarse con el Kardex/inventario confirmado:
+    // se excluye del listado por completo (ya estaba excluido del saldo,
+    // ahora tampoco aparece como fila).
+    const aprobadoParaListado = (r: any) => String(r.status || "").toLowerCase().startsWith("aprob")
+    const movs = (rows ?? []).filter(
+      (r: any) => aprobadoParaListado(r) && (!anio || yr(r.creado) === anio) && (!mes || mo(r.creado) === mes),
+    )
 
     // Resolver PDFs de las órdenes de cargue
     const ocargues = Array.from(new Set(movs.map((r: any) => r.ocargue).filter(Boolean)))
@@ -2872,6 +2888,12 @@ export async function getKardexInventario(
 
     const map: Record<string, any> = {}
     for (const r of inv) {
+      // Un ingreso SIN aprobar (ej. el auto-descargue antes de que alguien lo
+      // confirme con su ubicación/lote/cantidad real) no es inventario
+      // todavía — no debe sumar en Entradas/Salidas/Ajustes/etc. de esta
+      // tabla resumen (ya tiene su propio lugar: Producción › Aprobación de
+      // ingreso).
+      if (!String(r.status || "").toLowerCase().startsWith("aprob")) continue
       if (anio && yr(r.creado) !== anio) continue
       if (mes && mo(r.creado) !== mes) continue
       const cod = r.codproducto || "(sin código)"
