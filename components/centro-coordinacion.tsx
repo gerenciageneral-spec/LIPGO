@@ -922,19 +922,34 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
             ) : personnel.length === 0 ? (
               <div className="py-8 text-center text-sm text-muted-foreground">No hay personal disponible</div>
             ) : (
-              <div className="max-h-96 space-y-2 overflow-y-auto">
-                {personnel.map((employee) => (
-                  <div key={employee.id} className="flex items-center space-x-2 rounded border p-2">
-                    <Checkbox
-                      id={`cc-employee-${employee.id}`}
-                      checked={selectedPersonnel.includes(employee.nombreempleado)}
-                      onCheckedChange={() => togglePersonnelSelection(employee.nombreempleado)}
-                    />
-                    <Label htmlFor={`cc-employee-${employee.id}`} className="flex-1 cursor-pointer text-sm font-normal">
-                      {employee.nombreempleado}
-                    </Label>
+              <div className="space-y-2">
+                {personnelDialogOrder?.pausado && selectedPersonnel.length > 0 && (
+                  <div className="flex justify-end">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                      onClick={() => setSelectedPersonnel([])}
+                    >
+                      Quitar todos
+                    </Button>
                   </div>
-                ))}
+                )}
+                <div className="max-h-96 space-y-2 overflow-y-auto">
+                  {personnel.map((employee) => (
+                    <div key={employee.id} className="flex items-center space-x-2 rounded border p-2">
+                      <Checkbox
+                        id={`cc-employee-${employee.id}`}
+                        checked={selectedPersonnel.includes(employee.nombreempleado)}
+                        onCheckedChange={() => togglePersonnelSelection(employee.nombreempleado)}
+                      />
+                      <Label htmlFor={`cc-employee-${employee.id}`} className="flex-1 cursor-pointer text-sm font-normal">
+                        {employee.nombreempleado}
+                      </Label>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>

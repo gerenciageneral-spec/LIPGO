@@ -795,7 +795,20 @@ export function Packing() {
             </div>
 
             <div>
-              <Label className="text-sm font-medium mb-2 block">Seleccionar Personal</Label>
+              <div className="mb-2 flex items-center justify-between">
+                <Label className="text-sm font-medium">Seleccionar Personal</Label>
+                {selectedOrder && pausedOrders.has(selectedOrder.ordendecargue) && selectedPersonnel.length > 0 && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                    onClick={() => setSelectedPersonnel([])}
+                  >
+                    Quitar todos
+                  </Button>
+                )}
+              </div>
               {loadingPersonnel ? (
                 <div className="text-center py-4">Cargando personal...</div>
               ) : (
