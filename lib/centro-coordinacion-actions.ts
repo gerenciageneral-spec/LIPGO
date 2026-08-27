@@ -19,8 +19,8 @@ import {
   DIAS_OPERACION_MES,
   duracionHoras,
   esPuestoCargueDescargue,
-  MUELLES_SIMULTANEOS,
 } from "@/lib/meta-productividad-utils"
+import { cargarMuellesEmpresa, getMuellesEmpresaSync } from "@/lib/muelles-empresa"
 import { generatePickingPDF, getCarguDescarguePersonnel } from "@/lib/picking-actions"
 import { generatePackingPDF, getPackingItems } from "@/lib/packing-actions"
 import { updateOrderInitioCargue } from "@/lib/orders-actions"
@@ -45,6 +45,8 @@ export interface OrdenOperativa {
   muelle: number | null
   auxiliares: string[]
   facturar: boolean | null
+  /** Modo de pago elegido: 'individual' respeta `auxiliares` tal cual; 'global' se recalcula al cerrar. Obligatorio antes de cerrar. */
+  tipoPago: "global" | "individual" | null
   pesoorden: number
   pesovascula: number | null
   iniciocargue: string | null
@@ -155,7 +157,9 @@ export async function getCentroCoordinacion(
     const minAhora = hNow * 60 + (mNow || 0)
 
     const metaTonDia = (TON_MES_CARGUE_DESCARGUE[idempresa] || 0) / DIAS_OPERACION_MES
-    const N = MUELLES_SIMULTANEOS[idempresa] || 1
+    await cargarMuellesEmpresa()
+    const muelleNumeros = getMuellesEmpresaSync(idempresa)
+    const N = muelleNumeros.length || 1
 
     // 1) Headcount real de hoy (mismo criterio que Avance en Vivo).
     const { data: filas } = await admin
@@ -197,7 +201,7 @@ export async function getCentroCoordinacion(
     const { data: ordenesRaw } = await admin
       .from("cabeceraoc")
       .select(
-        "id, ordendecargue, tipooperacion, muelle, auxiliares, facturar, pesoorden, pesovascula, iniciocargue, fincargue, placa, conductor, horalote",
+        "id, ordendecargue, tipooperacion, muelle, auxiliares, facturar, pesoorden, pesovascula, iniciocargue, fincargue, placa, conductor, horalote, tipo_pago",
       )
       .eq("idempresa", idempresa)
       .eq("fechacargue", fechaConsulta)
@@ -312,6 +316,7 @@ export async function getCentroCoordinacion(
         muelle: o.muelle ?? null,
         auxiliares,
         facturar: o.facturar ?? null,
+        tipoPago: o.tipo_pago ?? null,
         pesoorden: num(o.pesoorden),
         pesovascula: o.pesovascula != null ? num(o.pesovascula) : null,
         iniciocargue: o.iniciocargue || null,
@@ -337,11 +342,18 @@ export async function getCentroCoordinacion(
     const ordenesOperativas: OrdenOperativa[] = ordenesActivasRaw.map(armar)
 
     // 8) Muelles: ocupación REAL (cabeceraoc.muelle) + cola sin muelle asignado.
-    const muelles: MuelleSlot[] = Array.from({ length: N }, (_, i) => ({ muelle: i + 1, orden: null }))
+    // Los números de muelle vienen de `muelles_empresa` (administrable) y no son
+    // necesariamente contiguos 1..N (se puede desactivar uno puntual) — por eso
+    // se busca por número real, no por aritmética de índice.
+    const muelles: MuelleSlot[] = muelleNumeros.length > 0
+      ? muelleNumeros.map((m) => ({ muelle: m, orden: null }))
+      : Array.from({ length: N }, (_, i) => ({ muelle: i + 1, orden: null }))
+    const muellePorNumero = new Map(muelles.map((slot) => [slot.muelle, slot]))
     let colaSinMuelle: OrdenOperativa[] = []
     for (const o of ordenesOperativas) {
-      if (o.muelle && o.muelle >= 1 && o.muelle <= N) {
-        muelles[o.muelle - 1].orden = o
+      const slot = o.muelle != null ? muellePorNumero.get(o.muelle) : undefined
+      if (slot) {
+        slot.orden = o
       } else {
         colaSinMuelle.push(o)
       }
@@ -363,7 +375,7 @@ export async function getCentroCoordinacion(
     for (const o of candidatasAutoAsignar) {
       const idxLibre = muelles.findIndex((m) => m.orden === null)
       if (idxLibre === -1) break // no quedan muelles libres ahora mismo
-      const muelleLibre = idxLibre + 1
+      const muelleLibre = muelles[idxLibre].muelle
       const resultado = await asignarOrdenAMuelle(o.orderId, muelleLibre)
       if (resultado.success) {
         o.muelle = muelleLibre
@@ -599,9 +611,10 @@ export async function asignarOrdenAMuelle(
   if (fetchErr || !orderRow) return { success: false, message: "No se encontró la orden" }
   if (orderRow.fincargue) return { success: false, message: "La orden ya está cerrada" }
 
-  const maxMuelle = MUELLES_SIMULTANEOS[orderRow.idempresa] || 1
-  if (!Number.isFinite(muelle) || muelle < 1 || muelle > maxMuelle) {
-    return { success: false, message: `Muelle inválido (debe ser 1-${maxMuelle})` }
+  await cargarMuellesEmpresa()
+  const muellesActivos = getMuellesEmpresaSync(orderRow.idempresa)
+  if (!Number.isFinite(muelle) || !muellesActivos.includes(muelle)) {
+    return { success: false, message: `Muelle inválido (activos: ${muellesActivos.join(", ") || "ninguno configurado"})` }
   }
 
   const { data: ocupante } = await supabase

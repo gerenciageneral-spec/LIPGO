@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase-client"
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getColombiaDateTime, getColombiaTime } from "@/lib/date-utils"
 import { getCurrentEmpresaIdForInsert, getCurrentEmpresaId } from "@/lib/company-filter"
+import { normalizeName } from "@/lib/nomina-calculo-utils"
 
 export interface PendingLoadOrder {
   id: number
@@ -37,6 +38,13 @@ export interface PendingLoadOrder {
    * vehículo trae los suyos) → `false` = ese cargue no aparece en Gestión de Facturas.
    */
   facturar?: boolean | null
+  /**
+   * Modo de pago elegido para esta orden: 'individual' respeta `auxiliares`
+   * tal cual lo asignó el coordinador; 'global' hace que el sistema calcule
+   * y sobrescriba `auxiliares` al cerrar. Obligatorio antes de poder cerrar
+   * (aplicado server-side en /api/upload-picking-photos, no solo en la UI).
+   */
+  tipo_pago?: "global" | "individual" | null
 }
 
 export interface PersonnelEmployee {
@@ -202,7 +210,7 @@ export async function getPendingLoadOrders(selectedEmpresaId?: number | null) {
   const { data, error } = await supabase
     .from("cabeceraoc")
     .select(
-      "id, ordendecargue, placa, conductor, fechaorden, fechacargue, iniciocargue, fotospicking, doccargue, horapicking, auxiliares, fincargue, facturar",
+      "id, ordendecargue, placa, conductor, fechaorden, fechacargue, iniciocargue, fotospicking, doccargue, horapicking, auxiliares, fincargue, facturar, tipo_pago",
     )
     .eq("idempresa", empresaId) // Filter by empresa from session
     .eq("tipooperacion", "Cargue") // Only show Cargue operations
@@ -340,7 +348,29 @@ export async function getCarguDescarguePersonnel(empresaId?: number | null) {
 
   const horaActual = colombiaDate.toTimeString().slice(0, 5) // "HH:MM"
 
+  // 6) Ya asignado en una orden ACTIVA de pago 'individual': ahí sí hay una
+  //    asignación real y exclusiva por vehículo, así que se descuenta de
+  //    disponibles. Las órdenes en 'global' (o sin elegir aún) NUNCA restan
+  //    disponibilidad — el reparto global de hoy necesita poder asignar a
+  //    la misma persona a varias órdenes a la vez (decisión de negocio).
+  const asignadosIndividual = new Set<string>()
+  if (finalEmpresaId) {
+    const { data: activasIndividual } = await supabase
+      .from("cabeceraoc")
+      .select("auxiliares")
+      .eq("idempresa", finalEmpresaId)
+      .is("fincargue", null)
+      .eq("tipo_pago", "individual")
+    for (const o of activasIndividual ?? []) {
+      for (const n of String(o.auxiliares || "").split(",")) {
+        const t = n.trim()
+        if (t) asignadosIndividual.add(normalizeName(t))
+      }
+    }
+  }
+
   const disponiblesAhora = (data ?? []).filter((r) => {
+    if (asignadosIndividual.has(normalizeName(r.nombre))) return false
     if (r.puesto === "Cargue/Descargue") return true
     const horaSalidaProgramada = (r.horasalidaprogramada || "").toString().slice(0, 5)
     if (!horaSalidaProgramada) return true // sin dato programado: se deja como antes
@@ -359,6 +389,84 @@ export async function getCarguDescarguePersonnel(empresaId?: number | null) {
     data: mapped,
     message: "Personal cargado exitosamente",
   }
+}
+
+/**
+ * Roster de "Pago Global": nombres ELEGIBLES presentes ese día para
+ * idempresa/fecha, deduplicados, listos para escribir en `auxiliares`.
+ *
+ * NO reutiliza `getCarguDescarguePersonnel` (esa sirve para "disponible
+ * para asignar ahora" — trae Tolva Bulto/Planchador, que nunca deben
+ * cobrar cargue) ni `esPuestoCargueDescargue` de meta-productividad-utils.ts
+ * tal cual está (esa solo agrupa Auxiliar Mixto con ID1, y aquí aplica en
+ * los 4 proyectos — es una regla propia de nómina, no se toca la de meta).
+ *
+ * Elegibilidad:
+ *   - Puesto "Cargue/Descargue" → siempre elegible.
+ *   - Puesto "Auxiliar Mixto" → elegible solo si ya pasó su
+ *     `horasalidaprogramada` (o no tiene una registrada). Antes de esa hora
+ *     está cumpliendo su turno de tolva y no pertenece al reparto de cargue
+ *     de esa orden — mismo campo/lógica que ya usa `getCarguDescarguePersonnel`
+ *     para "Personal disponible".
+ *   - Cualquier otro puesto → no elegible.
+ *
+ * Deduplica por nombre normalizado: una persona puede tener 2 filas el
+ * mismo día (turno 1/2, típico de Auxiliar Mixto) — sin deduplicar
+ * quedaría 2 veces en el CSV y `cantidad_auxiliares` la contaría doble,
+ * pagándole el doble de su parte real a costa de los demás.
+ */
+export async function computarRosterPagoGlobal(idempresa: number, fecha: string): Promise<string[]> {
+  const supabase = await getSupabaseAdmin()
+  const { data, error } = await supabase
+    .from("registroasistencia")
+    .select("nombre, puesto, horasalidaprogramada")
+    .eq("idempresa", idempresa)
+    .eq("fecha", fecha)
+    .is("asistencia", null)
+    .not("horaingreso", "is", null)
+
+  if (error) {
+    console.error("[v0] Error computando roster de pago global:", error)
+    return []
+  }
+
+  const colombiaDate = await getColombiaDateTime()
+  const horaActual = colombiaDate.toTimeString().slice(0, 5)
+
+  const vistos = new Set<string>()
+  const roster: string[] = []
+  for (const r of data ?? []) {
+    const puesto = String(r.puesto || "").trim()
+    let elegible = false
+    if (puesto === "Cargue/Descargue") {
+      elegible = true
+    } else if (puesto === "Auxiliar Mixto") {
+      const horaSalidaProgramada = (r.horasalidaprogramada || "").toString().slice(0, 5)
+      elegible = !horaSalidaProgramada || horaActual >= horaSalidaProgramada
+    }
+    if (!elegible) continue
+
+    const nombre = String(r.nombre || "").trim()
+    if (!nombre) continue
+    const key = normalizeName(nombre)
+    if (vistos.has(key)) continue
+    vistos.add(key)
+    roster.push(nombre)
+  }
+  return roster
+}
+
+/** Elige el modo de pago de la orden. Obligatorio antes de poder cerrarla (ver upload-picking-photos/route.ts). */
+export async function setTipoPagoOrden(
+  orderId: number,
+  tipoPago: "global" | "individual",
+): Promise<{ success: boolean; message?: string }> {
+  const supabase = await createClient()
+  const { data: orderRow } = await supabase.from("cabeceraoc").select("fincargue").eq("id", orderId).single()
+  if (orderRow?.fincargue) return { success: false, message: "La orden ya está cerrada" }
+  const { error } = await supabase.from("cabeceraoc").update({ tipo_pago: tipoPago }).eq("id", orderId)
+  if (error) return { success: false, message: error.message }
+  return { success: true, message: tipoPago === "global" ? "Pago Global seleccionado" : "Pago Individual seleccionado" }
 }
 
 export async function assignPersonnelToOrder(

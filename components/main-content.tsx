@@ -64,6 +64,7 @@ import { Button } from "@/components/ui/button"
 import { UserPermissionsManagement } from "@/components/configuration/user-permissions-management"
 import BitacoraAuditoria from "@/components/configuration/bitacora-auditoria"
 import PlacasDistribucion from "@/components/configuration/placas-distribucion"
+import MuellesEmpresaConfig from "@/components/configuration/muelles-empresa"
 import { PermissionGuard } from "@/components/permission-guard"
 import { UserAccessModule } from "@/components/user-access-module"
 import HeadcountManagement from "@/components/headcount-management" // Added Head Count component import
@@ -755,6 +756,10 @@ export function MainContent({
           ) : selectedModule === "Placas de Distribución" ? (
             <PermissionGuard moduleName="Placas de Distribución">
               <PlacasDistribucion />
+            </PermissionGuard>
+          ) : selectedModule === "Muelles de Cargue" ? (
+            <PermissionGuard moduleName="Muelles de Cargue">
+              <MuellesEmpresaConfig />
             </PermissionGuard>
           ) : selectedModule === "Head Count" ? (
             <PermissionGuard moduleName="Head Count">

@@ -35,6 +35,7 @@ import {
   getOrdenesPausadas,
 } from "@/lib/picking-actions"
 import { FacturarCheckbox } from "@/components/facturar-checkbox"
+import { TipoPagoSelector } from "@/components/tipo-pago-selector"
 import { useToast } from "@/hooks/use-toast"
 import {
   Dialog,
@@ -1796,7 +1797,7 @@ const loadOrders = async () => {
                             size="sm"
                             variant="outline"
                             onClick={() => handleUploadPhotos(order)}
-                            disabled={!order.auxiliares}
+                            disabled={!order.auxiliares || !order.tipo_pago}
                             className="h-7 text-[10px] px-2"
                           >
                             <Camera className="h-3 w-3 mr-1" />
@@ -1823,6 +1824,16 @@ const loadOrders = async () => {
                               </>
                             )}
                           </Button>
+                        </div>
+                        <div className="mt-1.5">
+                          <TipoPagoSelector
+                            orderId={order.id}
+                            tipoPago={order.tipo_pago}
+                            disabled={!!order.fincargue}
+                            onChanged={(v) =>
+                              setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, tipo_pago: v } : o)))
+                            }
+                          />
                         </div>
                       </td>
                     </tr>
@@ -1915,7 +1926,7 @@ const loadOrders = async () => {
                     size="sm"
                     variant="outline"
                     onClick={() => handleUploadPhotos(order)}
-                    disabled={!order.auxiliares}
+                    disabled={!order.auxiliares || !order.tipo_pago}
                     className="text-xs h-9"
                   >
                     <Camera className="h-3 w-3 mr-1" />
@@ -1941,6 +1952,16 @@ const loadOrders = async () => {
                       </>
                     )}
                   </Button>
+                </div>
+                <div className="mt-2">
+                  <TipoPagoSelector
+                    orderId={order.id}
+                    tipoPago={order.tipo_pago}
+                    disabled={!!order.fincargue}
+                    onChanged={(v) =>
+                      setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, tipo_pago: v } : o)))
+                    }
+                  />
                 </div>
               </div>
             </Card>

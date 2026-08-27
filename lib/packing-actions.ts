@@ -40,6 +40,13 @@ export interface PendingLoadOrder {
    * `null`/`true` = SÍ se factura (por defecto encendido).
    */
   facturar?: boolean | null
+  /**
+   * Modo de pago elegido para esta orden: 'individual' respeta `auxiliares`
+   * tal cual lo asignó el coordinador; 'global' hace que el sistema calcule
+   * y sobrescriba `auxiliares` al cerrar. Obligatorio antes de poder cerrar
+   * (aplicado server-side en /api/upload-picking-photos, no solo en la UI).
+   */
+  tipo_pago?: "global" | "individual" | null
 }
 
 export interface PackingItem {
@@ -59,7 +66,7 @@ export async function getPendingUnloadOrders(selectedEmpresaId?: number | null) 
   const { data, error } = await supabase
     .from("cabeceraoc")
     .select(
-      "id, ordendecargue, placa, conductor, fechaorden, fechacargue, iniciocargue, tipooperacion, auxiliares, fincargue",
+      "id, ordendecargue, placa, conductor, fechaorden, fechacargue, iniciocargue, tipooperacion, auxiliares, fincargue, tipo_pago",
     )
     .eq("idempresa", empresaId) // 1) Filter by empresa session
     .eq("tipooperacion", "Descargue") // 2) Filter only by Descargue (Distribucion is handled separately)
@@ -109,7 +116,7 @@ export async function getDistributionOrders(selectedEmpresaId?: number | null) {
   const { data, error } = await supabase
     .from("cabeceraoc")
     .select(
-      "id, ordendecargue, placa, conductor, fechaorden, fechacargue, iniciocargue, auxiliares, fincargue, tipooperacion, facturar",
+      "id, ordendecargue, placa, conductor, fechaorden, fechacargue, iniciocargue, auxiliares, fincargue, tipooperacion, facturar, tipo_pago",
     )
     .eq("idempresa", empresaId) // 1) Filter by empresa session
     .eq("tipooperacion", "Distribucion") // 2) Filter by Distribucion

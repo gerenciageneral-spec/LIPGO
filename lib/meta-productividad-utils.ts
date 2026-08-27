@@ -46,14 +46,6 @@ export const TON_MES_CARGUE_DESCARGUE: Record<number, number> = {
 /** Dias habiles/mes (lunes a sabado, sin domingos ni festivos) — mismo criterio en toda la app. */
 export const DIAS_OPERACION_MES = 24.7
 
-/** Muelles/cupos de cargue que se pueden atender SIMULTÁNEAMENTE por proyecto — confirmado por el usuario 2026-08-18. */
-export const MUELLES_SIMULTANEOS: Record<number, number> = {
-  1: 3, // Indupan
-  2: 5, // Avimol
-  3: 4, // Cedi Funza
-  4: 1, // Cedi Medellín
-}
-
 function normPuesto(s: unknown): string {
   return String(s ?? "")
     .normalize("NFD")

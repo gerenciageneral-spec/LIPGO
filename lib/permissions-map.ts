@@ -176,6 +176,7 @@ export interface UserPermissions {
   accesos_usuario: boolean
   bitacora_auditoria: boolean
   placas_distribucion: boolean
+  muelles_empresa: boolean
   facturacion_proyectos: boolean
   cuadro_facturacion: boolean
   conciliacion_avimol: boolean
@@ -392,6 +393,7 @@ export const MODULE_PERMISSION_MAP: Record<string, keyof UserPermissions> = {
   "Accesos de Usuario": "accesos_usuario",
   "Bitácora de Auditoría": "bitacora_auditoria",
   "Placas de Distribución": "placas_distribucion",
+  "Muelles de Cargue": "muelles_empresa",
   // --- Certificaciones LIP · SST ---
   "Auditoría 0312": "sst_auditoria",
   "Matriz de Estándares": "sst_autoevaluacion",

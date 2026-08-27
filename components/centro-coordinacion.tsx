@@ -52,6 +52,7 @@ import {
   type PersonnelEmployee,
 } from "@/lib/picking-actions"
 import { PickingPhotoUploadDialog } from "@/components/picking-photo-upload-dialog"
+import { TipoPagoSelector } from "@/components/tipo-pago-selector"
 
 const t1 = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { maximumFractionDigits: 1 })
 const t2 = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { maximumFractionDigits: 2 })
@@ -588,6 +589,7 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                         onPausar={() => slot.orden && togglePausa(slot.orden)}
                         onQuitar={() => slot.orden && quitarDeMuelle(slot.orden)}
                         onReasignar={() => slot.orden && abrirAsignar(slot.orden)}
+                        onCambioTipoPago={cargar}
                         pausingOrder={pausingOrder}
                         puedeConcluirSinPersonal={slot.orden ? puedeConcluirSinPersonal(slot.orden) : false}
                         metaPorHoraTrabajador={data.kpis.metaPorHoraTrabajador}
@@ -873,6 +875,7 @@ function MuelleRow({
   onPausar,
   onQuitar,
   onReasignar,
+  onCambioTipoPago,
   pausingOrder,
   puedeConcluirSinPersonal,
   metaPorHoraTrabajador,
@@ -889,6 +892,7 @@ function MuelleRow({
   onPausar: () => void
   onQuitar: () => void
   onReasignar: () => void
+  onCambioTipoPago: () => void
   pausingOrder: string | null
   puedeConcluirSinPersonal: boolean
   metaPorHoraTrabajador: number
@@ -1037,8 +1041,14 @@ function MuelleRow({
                 <Button
                   size="sm"
                   onClick={onCerrarFotos}
-                  disabled={!auxiliaresLabel && !puedeConcluirSinPersonal}
-                  title={!auxiliaresLabel && !puedeConcluirSinPersonal ? "Asigna personal antes de cerrar" : undefined}
+                  disabled={!puedeConcluirSinPersonal && (!auxiliaresLabel || !o.tipoPago)}
+                  title={
+                    !puedeConcluirSinPersonal && !auxiliaresLabel
+                      ? "Asigna personal antes de cerrar"
+                      : !puedeConcluirSinPersonal && !o.tipoPago
+                        ? "Elige tipo de pago antes de cerrar"
+                        : undefined
+                  }
                 >
                   <Camera className="mr-1 h-3.5 w-3.5" /> Cargar fotos (cierra la OC)
                 </Button>
@@ -1072,6 +1082,12 @@ function MuelleRow({
               </Button>
             )}
           </div>
+
+          {!puedeConcluirSinPersonal && (
+            <div className="mt-2">
+              <TipoPagoSelector orderId={o.orderId} tipoPago={o.tipoPago} disabled={!!o.fincargue} onChanged={onCambioTipoPago} />
+            </div>
+          )}
 
           {/* Evidencias / detalle — bajo demanda */}
           <details className="mt-3 rounded-md border">

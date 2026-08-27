@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from "next/server"
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getColombiaTime } from "@/lib/date-utils"
 import { generarIngresoProduccionDesdeDescargue } from "@/lib/orders-actions"
+import { computarRosterPagoGlobal } from "@/lib/picking-actions"
 
 // Subimos un solo archivo (o pocos) por request para evitar el limite
 // duro de ~4.5MB por body en Vercel serverless. Cuando un movil envia
@@ -50,14 +51,58 @@ export async function POST(request: NextRequest) {
         )
       }
 
+      const orderIdNum = Number.parseInt(orderId)
+      const { data: orderRow, error: orderErr } = await supabaseAdmin
+        .from("cabeceraoc")
+        .select("idempresa, fechacargue, tipooperacion, facturar, tipo_pago")
+        .eq("id", orderIdNum)
+        .single()
+      if (orderErr || !orderRow) {
+        return NextResponse.json({ success: false, error: "No se encontró la orden" }, { status: 404 })
+      }
+
+      // Misma excepción que ya usan Picking/Packing/Centro de Coordinación
+      // para no exigir personal: Distribución sin facturar tampoco exige
+      // tipo de pago (no hay tonelaje que repartir).
+      const exentoPorNoFacturable = orderRow.tipooperacion === "Distribucion" && orderRow.facturar === false
+
+      let auxiliaresOverride: string | undefined
+      if (!exentoPorNoFacturable) {
+        if (orderRow.tipo_pago !== "global" && orderRow.tipo_pago !== "individual") {
+          return NextResponse.json(
+            { success: false, error: "Debe elegir Pago Global o Individual antes de cerrar la orden" },
+            { status: 400 },
+          )
+        }
+        if (orderRow.tipo_pago === "global") {
+          const roster = await computarRosterPagoGlobal(orderRow.idempresa, orderRow.fechacargue)
+          if (roster.length === 0) {
+            // Fail-CLOSED a propósito: sobrescribir con vacío perdería el
+            // tonelaje del día en pagonomina. Mejor bloquear y que se
+            // revise Registro de Asistencia antes de cerrar.
+            return NextResponse.json(
+              {
+                success: false,
+                error: "No se encontró personal elegible presente ese día en Registro de Asistencia; revise antes de cerrar",
+              },
+              { status: 400 },
+            )
+          }
+          auxiliaresOverride = roster.join(",")
+        }
+        // tipo_pago === "individual": no se toca auxiliares, se respeta lo
+        // que ya asignó el coordinador por vehículo.
+      }
+
       const fincargue = await getColombiaTime()
       const { error: updateError } = await supabaseAdmin
         .from("cabeceraoc")
         .update({
           fotospicking: JSON.stringify(urls),
           fincargue,
+          ...(auxiliaresOverride !== undefined ? { auxiliares: auxiliaresOverride } : {}),
         })
-        .eq("id", Number.parseInt(orderId))
+        .eq("id", orderIdNum)
 
       if (updateError) {
         console.error("[v0] Error updating fotospicking:", updateError)
@@ -75,7 +120,7 @@ export async function POST(request: NextRequest) {
       // descargue de PT en un CEDI (id3/id4), esto crea el ingreso pendiente en
       // Producción → "Aprobación de ingreso". No-op para cualquier otro caso
       // (falla-seguro internamente, no bloquea la respuesta de cierre).
-      await generarIngresoProduccionDesdeDescargue(supabaseAdmin, Number.parseInt(orderId))
+      await generarIngresoProduccionDesdeDescargue(supabaseAdmin, orderIdNum)
 
       return NextResponse.json({ success: true, count: urls.length })
     }

@@ -30,6 +30,7 @@ import {
 import { pausarOrden, reanudarOrden, getOrdenesPausadas } from "@/lib/picking-actions"
 import { updateOrderInitioCargue } from "@/lib/orders-actions"
 import { FacturarCheckbox } from "@/components/facturar-checkbox"
+import { TipoPagoSelector } from "@/components/tipo-pago-selector"
 import { useToast } from "@/hooks/use-toast"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { useIsMobile } from "@/components/qr-camera-scanner"
@@ -680,10 +681,12 @@ export function Packing() {
                           <Button
                             onClick={() => handleUploadPhotos(order)}
                             // Cierre por "Cargar Fotos" (escribe fincargue). Normalmente
-                            // requiere personal asignado, PERO una DISTRIBUCIÓN ("…D")
-                            // marcada "no facturar" no lleva auxiliares, así que se puede
-                            // cerrar sin asignar personal.
-                            disabled={!order.auxiliares && !esDistribucionNoFacturable(order)}
+                            // requiere personal asignado Y tipo de pago elegido, PERO una
+                            // DISTRIBUCIÓN ("…D") marcada "no facturar" no lleva auxiliares
+                            // ni necesita tipo de pago, así que se puede cerrar directo.
+                            disabled={
+                              !esDistribucionNoFacturable(order) && (!order.auxiliares || !order.tipo_pago)
+                            }
                             size="sm"
                             variant="outline"
                             className="h-7 text-[10px] px-2"
@@ -719,6 +722,18 @@ export function Packing() {
                             )}
                           </Button>
                         </div>
+                        {!esDistribucionNoFacturable(order) && (
+                          <div className="mt-1.5">
+                            <TipoPagoSelector
+                              orderId={order.id}
+                              tipoPago={order.tipo_pago}
+                              disabled={!!order.fincargue}
+                              onChanged={(v) =>
+                                setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, tipo_pago: v } : o)))
+                              }
+                            />
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))}
