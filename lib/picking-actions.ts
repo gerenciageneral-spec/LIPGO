@@ -452,6 +452,10 @@ export async function computarRosterPagoGlobal(idempresa: number, fecha: string)
 
     const nombre = String(r.nombre || "").trim()
     if (!nombre) continue
+    // "SIN AUXILIAR" es un marcador (no una persona real) que se usa para
+    // cerrar órdenes sin ayudante de LIP — no debe entrar al reparto de
+    // pago Global, ni sumar ni restar.
+    if (nombre.toUpperCase() === "SIN AUXILIAR") continue
     const key = normalizeName(nombre)
     if (vistos.has(key)) continue
     vistos.add(key)
