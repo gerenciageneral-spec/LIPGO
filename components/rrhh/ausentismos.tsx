@@ -65,6 +65,7 @@ import {
   CheckCircle2,
   FileCheck2,
 } from "lucide-react"
+import { subirSoporteRecobro } from "@/lib/subir-soporte-recobro"
 
 // Meses para el selector de "Mes de la incapacidad".
 const MESES = [
@@ -423,14 +424,13 @@ export default function Ausentismos() {
     }
     setSubiendoSoporte(true)
     try {
-      const fd = new FormData()
-      fd.append("file", file)
-      fd.append("id", editingId)
-      fd.append("tipo", "incapacidad")
-      const res = await fetch("/api/recobro/upload", { method: "POST", body: fd })
-      const json = await res.json()
-      if (!json.success) throw new Error(json.error || "No se pudo subir")
-      const r = await setSoporteIncapacidad(editingId, json.url)
+      // El archivo va del navegador DIRECTO a Supabase por URL firmada. Antes
+      // viajaba dentro de la petición a la función serverless, que corta el
+      // cuerpo alrededor de 4,5 MB: un soporte escaneado lo pasaba y la
+      // plataforma devolvía texto plano que el cliente intentaba leer como JSON.
+      const subida = await subirSoporteRecobro(file, { id: editingId, tipo: "incapacidad" })
+      if (!subida.success || !subida.url) throw new Error(subida.error || "No se pudo subir")
+      const r = await setSoporteIncapacidad(editingId, subida.url)
       if (!r.success) throw new Error(r.message)
       toast({ title: "Soporte cargado" })
       await loadData()

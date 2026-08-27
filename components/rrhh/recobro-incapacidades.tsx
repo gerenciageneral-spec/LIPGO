@@ -66,6 +66,7 @@ import { valorizarIncapacidad } from "@/lib/incapacidad-valor"
 import { actualizarRecobro } from "@/lib/recobros-actions"
 import { ESTADOS_RECOBRO, type EstadoRecobro } from "@/lib/recobros"
 import { AusentismosCostos } from "@/components/rrhh/ausentismos-dashboards"
+import { subirSoporteRecobro } from "@/lib/subir-soporte-recobro"
 
 // ---- helpers ------------------------------------------------------------
 const num = (v: number | null | undefined) => (typeof v === "number" && !Number.isNaN(v) ? v : 0)
@@ -291,19 +292,20 @@ export default function RecobroIncapacidades() {
     if (!gestion || !gForm) return
     setUploading(tipoSoporte)
     try {
-      const fd = new FormData()
-      fd.append("file", file)
-      fd.append("id", gestion.id)
-      fd.append("tipo", tipoSoporte)
-      const res = await fetch("/api/recobro/upload", { method: "POST", body: fd })
-      const json = await res.json()
-      if (json.success && json.url) {
+      // Mismo camino que el soporte clínico en Ausentismos: URL firmada y el
+      // archivo directo a Supabase, sin pasar por la función serverless.
+      const subida = await subirSoporteRecobro(file, { id: gestion.id, tipo: tipoSoporte })
+      if (subida.success && subida.url) {
         setGForm((f) =>
-          f ? { ...f, [tipoSoporte === "radicado" ? "soporte_radicado_url" : "soporte_pago_url"]: json.url } : f,
+          f ? { ...f, [tipoSoporte === "radicado" ? "soporte_radicado_url" : "soporte_pago_url"]: subida.url! } : f,
         )
         toast({ title: tipoSoporte === "radicado" ? "Correo adjuntado" : "Comprobante adjuntado" })
       } else {
-        toast({ title: "Error al subir", description: json.error || "No se pudo subir el archivo." })
+        toast({
+          title: "Error al subir",
+          description: subida.error || "No se pudo subir el archivo.",
+          variant: "destructive",
+        })
       }
     } catch (e: any) {
       toast({ title: "Error al subir", description: e?.message || "Fallo de red." })
