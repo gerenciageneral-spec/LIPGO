@@ -5,6 +5,7 @@ import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getColombiaDateTime, getColombiaTime } from "@/lib/date-utils"
 import { getCurrentEmpresaIdForInsert, getCurrentEmpresaId } from "@/lib/company-filter"
 import { normalizeName } from "@/lib/nomina-calculo-utils"
+import { getHorarioTolva, type HorarioTolvaDia } from "@/lib/horario-tolva-actions"
 
 export interface PendingLoadOrder {
   id: number
@@ -327,7 +328,7 @@ export async function getCarguDescarguePersonnel(empresaId?: number | null) {
 
   let query = supabase
     .from("registroasistencia")
-    .select("id, nombre, puesto, horasalidaprogramada")
+    .select("id, nombre, puesto, horasalidaprogramada, turno")
     .in("puesto", PUESTOS_PICKING)
     .eq("fecha", todayDate)
     .is("asistencia", null) // Excluye Ausentes con codigo de novedad
@@ -346,6 +347,22 @@ export async function getCarguDescarguePersonnel(empresaId?: number | null) {
   }
 
   const horaActual = colombiaDate.toTimeString().slice(0, 5) // "HH:MM"
+
+  // Horario de Tolva del día (compartido por TURNO, no por persona — tabla
+  // `horario_tolva`, ver lib/horario-tolva-actions.ts). El Auxiliar Mixto solo
+  // está ocupado en tolva DENTRO de esa ventana; fuera de ella (antes de que
+  // empiece o después de que termine) está disponible para cargue. Antes se
+  // comparaba contra `horasalidaprogramada` de la persona (fin de TODO su
+  // turno de asistencia, ej. 20:00 en turno 2) — la trataba como ocupada
+  // desde que entra hasta esa hora, aunque la tolva real de su turno sea
+  // mucho más corta. Caso real detectado 2026-08-27, ID1: turno 2 entra ~9am
+  // pero su tolva es 13:00-20:00 — de 9 a 13 debía estar disponible y no
+  // aparecía.
+  let horarioTolvaHoy: HorarioTolvaDia | null = null
+  if (finalEmpresaId) {
+    const hr = await getHorarioTolva(finalEmpresaId, todayDate)
+    if (hr.success && hr.data) horarioTolvaHoy = hr.data
+  }
 
   // 6) Ya asignado en una orden ACTIVA (cualquier muelle sin cerrar): se
   //    descuenta de disponibles hasta que esa orden cierre. Antes esto solo
@@ -376,6 +393,16 @@ export async function getCarguDescarguePersonnel(empresaId?: number | null) {
   const disponiblesAhora = (data ?? []).filter((r) => {
     if (asignadosActivos.has(normalizeName(r.nombre))) return false
     if (r.puesto === "Cargue/Descargue") return true
+    if (r.puesto === "Auxiliar Mixto" && horarioTolvaHoy) {
+      const ventana = Number(r.turno) === 2 ? horarioTolvaHoy.turno2 : horarioTolvaHoy.turno1
+      if (ventana.horaInicio && ventana.horaFin) {
+        const dentroDeTolva = horaActual >= ventana.horaInicio && horaActual < ventana.horaFin
+        return !dentroDeTolva
+      }
+    }
+    // Respaldo: Tolva Bulto/Planchador (su turno completo ES tolva) o
+    // Auxiliar Mixto sin Horario de Tolva configurado ese día — mismo
+    // criterio de siempre contra su propio turno de asistencia.
     const horaSalidaProgramada = (r.horasalidaprogramada || "").toString().slice(0, 5)
     if (!horaSalidaProgramada) return true // sin dato programado: se deja como antes
     return horaActual >= horaSalidaProgramada // solo disponible cuando termina su turno programado
@@ -407,11 +434,13 @@ export async function getCarguDescarguePersonnel(empresaId?: number | null) {
  *
  * Elegibilidad:
  *   - Puesto "Cargue/Descargue" → siempre elegible.
- *   - Puesto "Auxiliar Mixto" → elegible solo si ya pasó su
- *     `horasalidaprogramada` (o no tiene una registrada). Antes de esa hora
- *     está cumpliendo su turno de tolva y no pertenece al reparto de cargue
- *     de esa orden — mismo campo/lógica que ya usa `getCarguDescarguePersonnel`
- *     para "Personal disponible".
+ *   - Puesto "Auxiliar Mixto" → elegible solo si está FUERA de la ventana del
+ *     Horario de Tolva de su turno (`horario_tolva`, ver
+ *     lib/horario-tolva-actions.ts) — antes de que empiece o después de que
+ *     termine. Si ese día no hay Horario de Tolva configurado, respaldo con
+ *     `horasalidaprogramada` (fin de su turno completo) — mismo
+ *     campo/lógica que ya usa `getCarguDescarguePersonnel` para "Personal
+ *     disponible".
  *   - Cualquier otro puesto → no elegible.
  *
  * Deduplica por nombre normalizado: una persona puede tener 2 filas el
@@ -423,7 +452,7 @@ export async function computarRosterPagoGlobal(idempresa: number, fecha: string)
   const supabase = await getSupabaseAdmin()
   const { data, error } = await supabase
     .from("registroasistencia")
-    .select("nombre, puesto, horasalidaprogramada")
+    .select("nombre, puesto, horasalidaprogramada, turno")
     .eq("idempresa", idempresa)
     .eq("fecha", fecha)
     .is("asistencia", null)
@@ -437,6 +466,10 @@ export async function computarRosterPagoGlobal(idempresa: number, fecha: string)
   const colombiaDate = await getColombiaDateTime()
   const horaActual = colombiaDate.toTimeString().slice(0, 5)
 
+  let horarioTolvaHoy: HorarioTolvaDia | null = null
+  const hr = await getHorarioTolva(idempresa, fecha)
+  if (hr.success && hr.data) horarioTolvaHoy = hr.data
+
   const vistos = new Set<string>()
   const roster: string[] = []
   for (const r of data ?? []) {
@@ -445,8 +478,13 @@ export async function computarRosterPagoGlobal(idempresa: number, fecha: string)
     if (puesto === "Cargue/Descargue") {
       elegible = true
     } else if (puesto === "Auxiliar Mixto") {
-      const horaSalidaProgramada = (r.horasalidaprogramada || "").toString().slice(0, 5)
-      elegible = !horaSalidaProgramada || horaActual >= horaSalidaProgramada
+      const ventana = horarioTolvaHoy && (Number(r.turno) === 2 ? horarioTolvaHoy.turno2 : horarioTolvaHoy.turno1)
+      if (ventana && ventana.horaInicio && ventana.horaFin) {
+        elegible = !(horaActual >= ventana.horaInicio && horaActual < ventana.horaFin)
+      } else {
+        const horaSalidaProgramada = (r.horasalidaprogramada || "").toString().slice(0, 5)
+        elegible = !horaSalidaProgramada || horaActual >= horaSalidaProgramada
+      }
     }
     if (!elegible) continue
 
