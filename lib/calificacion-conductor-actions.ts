@@ -8,7 +8,7 @@
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { SIG_CLIENTES_LIP } from "@/lib/sig-types"
-import { getSlaCargueMin } from "@/lib/sla-acordados"
+import { getSlaCargueMin, esNombreSubproducto } from "@/lib/sla-acordados"
 import { getUserPermissions } from "@/lib/permissions-actions"
 import {
   EMOJI_A_CALIF,
@@ -290,6 +290,20 @@ export async function generarHistoricoCalificaciones(opts?: {
         .range(f, t),
     )
 
+    // Subproducto (mogolla/salvado/harina de tercera): mismo criterio que
+    // Centro de Coordinación/BSC — sin esto, esas órdenes se median contra
+    // el tiempo (más corto) de Producto Terminado.
+    const ordenesSlaCodigos = Array.from(new Set(rows.map((r: any) => String(r.ordendecargue))))
+    const esSubproductoPorOc = new Set<string>()
+    for (let i = 0; i < ordenesSlaCodigos.length; i += 500) {
+      const chunk = ordenesSlaCodigos.slice(i, i + 500)
+      const detChunk = await fetchAllRows((f, t) =>
+        supabase.from("detalleoc").select("numeroorden, producto").in("numeroorden", chunk).range(f, t),
+      )
+      for (const d of detChunk) if (esNombreSubproducto(d.producto)) esSubproductoPorOc.add(String(d.numeroorden))
+    }
+    const productoDeOrden = (ref: string) => (esSubproductoPorOc.has(ref) ? "SUB" : "PT")
+
     const conductor = { creadas: 0, omitidas: 0 }
     const cliente = { creadas: 0 }
 
@@ -311,7 +325,7 @@ export async function generarHistoricoCalificaciones(opts?: {
         const ref = String(r.ordendecargue)
         if (yaCal.has(ref)) continue // nunca pisa una calificación existente
         if (!r.iniciocargue || !r.fincargue) { conductor.omitidas++; continue }
-        const max = getSlaCargueMin(tipoPorOc[ref], "PT")
+        const max = getSlaCargueMin(tipoPorOc[ref], productoDeOrden(ref), r.idempresa)
         if (!max) { conductor.omitidas++; continue } // sin SLA calculable → no se infla
         const real = aMin(r.fincargue) - aMin(r.iniciocargue)
         if (real <= 0 || real > 600) { conductor.omitidas++; continue }
@@ -347,7 +361,7 @@ export async function generarHistoricoCalificaciones(opts?: {
       const mesMap: Record<string, { ok: number; n: number; emp: number; mes: string }> = {}
       for (const r of rows) {
         if (!r.iniciocargue || !r.fincargue) continue
-        const max = getSlaCargueMin(tipoPorOc[String(r.ordendecargue)], "PT")
+        const max = getSlaCargueMin(tipoPorOc[String(r.ordendecargue)], productoDeOrden(String(r.ordendecargue)), r.idempresa)
         if (!max) continue
         const real = aMin(r.fincargue) - aMin(r.iniciocargue)
         if (real <= 0 || real > 600) continue

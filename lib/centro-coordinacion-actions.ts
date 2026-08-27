@@ -13,7 +13,7 @@ import { createClient } from "@/lib/supabase-client"
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getColombiaDateTime } from "@/lib/date-utils"
 import { pesoBaseCalculo, excluirAvimolDistribucion } from "@/lib/nomina-calculo-utils"
-import { getSlaCargueMin } from "@/lib/sla-acordados"
+import { getSlaCargueMin, esNombreSubproducto } from "@/lib/sla-acordados"
 import {
   TON_MES_CARGUE_DESCARGUE,
   DIAS_OPERACION_MES,
@@ -256,13 +256,18 @@ export async function getCentroCoordinacion(
       .map((o: any) => o.ordendecargue)
 
     // 3) Cliente + conteo de líneas por orden (detalleoc, 1 sola consulta para todas).
+    // De paso, si ALGUNA línea es subproducto (mogolla/salvado/harina de
+    // tercera), toda la orden se mide contra el SLA "SUB" (más largo) en vez
+    // de "PT" — antes se pedía "PT" siempre, sin mirar el producto real.
     const clientePorOrden = new Map<number, string>()
     const lineasDetalleocPorOrden = new Map<number, number>()
+    const esSubproductoPorOrden = new Set<number>()
     if (orderIdsActivas.length > 0) {
-      const { data: detalles } = await admin.from("detalleoc").select("idorden, cliente").in("idorden", orderIdsActivas)
+      const { data: detalles } = await admin.from("detalleoc").select("idorden, cliente, producto").in("idorden", orderIdsActivas)
       for (const d of detalles || []) {
         if (!clientePorOrden.has(d.idorden)) clientePorOrden.set(d.idorden, d.cliente || "Sin cliente")
         lineasDetalleocPorOrden.set(d.idorden, (lineasDetalleocPorOrden.get(d.idorden) || 0) + 1)
+        if (esNombreSubproducto(d.producto)) esSubproductoPorOrden.add(d.idorden)
       }
     }
 
@@ -335,7 +340,7 @@ export async function getCentroCoordinacion(
       const tipovehiculo = tipoPorOrden.get(String(o.ordendecargue)) || (placa ? tipoPorPlaca.get(placa) : null) || null
       const capacidadVehiculo =
         capacidadPorOrden.get(String(o.ordendecargue)) ?? (placa ? capacidadPorPlaca.get(placa) : undefined) ?? null
-      const slaMin = getSlaCargueMin(tipovehiculo, "PT", idempresa) || SLA_FALLBACK_MIN
+      const slaMin = getSlaCargueMin(tipovehiculo, esSubproductoPorOrden.has(o.id) ? "SUB" : "PT", idempresa) || SLA_FALLBACK_MIN
       const auxiliares = String(o.auxiliares || "")
         .split(",")
         .map((s: string) => s.trim())

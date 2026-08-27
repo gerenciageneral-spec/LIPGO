@@ -52,7 +52,7 @@ import type {
 } from "@/lib/sig-types"
 import { SIG_EMPRESA_LIP, SIG_CLIENTES_LIP } from "@/lib/sig-types"
 import { getMetaDiaForEmpresa } from "@/lib/empresa-meta-dia"
-import { getSlaCargueMin, PLANTA_ACORDADA, factorTiempoSitio } from "@/lib/sla-acordados"
+import { getSlaCargueMin, esNombreSubproducto, PLANTA_ACORDADA, factorTiempoSitio } from "@/lib/sla-acordados"
 import { excluirNoFacturable } from "@/lib/facturas-exclusiones"
 
 // Mapea el estado del Centro de Evidencia ISO 9001 al estado de la matriz SIG.
@@ -1780,11 +1780,24 @@ async function _computeIndicadoresValores(
     )
     const tipoPorOc: Record<string, string> = {}
     for (const c of citas ?? []) if (c.ocargue) tipoPorOc[String(c.ocargue)] = c.tipovehiculo
+    // Subproducto (mogolla/salvado/harina de tercera): sin esto, esas órdenes
+    // se median contra el tiempo (más corto) de Producto Terminado — mismo
+    // criterio que Centro de Coordinación (esNombreSubproducto por producto
+    // de detalleoc). Se pagina en lotes de 500 por el `.in()` (slaRows puede
+    // superar los 1000 registros históricos, ver lipgo-supabase-1000-rows).
+    const ordenesSlaCodigos = Array.from(new Set((slaRows ?? []).map((r: any) => String(r.ordendecargue))))
+    const esSubproductoPorOc = new Set<string>()
+    for (let i = 0; i < ordenesSlaCodigos.length; i += 500) {
+      const chunk = ordenesSlaCodigos.slice(i, i + 500)
+      const { data: detChunk } = await supabase.from("detalleoc").select("numeroorden, producto").in("numeroorden", chunk)
+      for (const d of detChunk ?? []) if (esNombreSubproducto(d.producto)) esSubproductoPorOc.add(String(d.numeroorden))
+    }
     let slaOk = 0, slaTot = 0
     for (const r of slaRows ?? []) {
       const tv = tipoPorOc[String(r.ordendecargue)]
       // SLA de tiempo AJUSTADO POR SITIO (CEDIs +15%/+35% sobre el tiempo base).
-      const max = getSlaCargueMin(tv, "PT", (r as any).idempresa)
+      const producto = esSubproductoPorOc.has(String(r.ordendecargue)) ? "SUB" : "PT"
+      const max = getSlaCargueMin(tv, producto, (r as any).idempresa)
       if (!max) continue
       const real = aMin(r.fincargue) - aMin(r.iniciocargue)
       if (real <= 0 || real > 600) continue
@@ -3871,6 +3884,18 @@ export async function getPanelOperacionLIP(
     )
     const tipoPorOc: Record<string, string> = {}
     for (const c of citasSla ?? []) if (c.ocargue) tipoPorOc[String(c.ocargue)] = c.tipovehiculo
+    // Subproducto (mogolla/salvado/harina de tercera): mismo criterio que
+    // _computeIndicadoresValores (el BSC) y Centro de Coordinación — sin
+    // esto, esas órdenes se median contra el tiempo (más corto) de PT.
+    const ordenesSlaCodigosPanel = Array.from(
+      new Set(rows.filter((r) => r.iniciocargue && r.fincargue).map((r) => String(r.ordendecargue))),
+    )
+    const esSubproductoPorOcPanel = new Set<string>()
+    for (let i = 0; i < ordenesSlaCodigosPanel.length; i += 500) {
+      const chunk = ordenesSlaCodigosPanel.slice(i, i + 500)
+      const { data: detChunk } = await supabase.from("detalleoc").select("numeroorden, producto").in("numeroorden", chunk)
+      for (const d of detChunk ?? []) if (esNombreSubproducto(d.producto)) esSubproductoPorOcPanel.add(String(d.numeroorden))
+    }
     const slaTipoMap: Record<string, { sumaReal: number; n: number; ok: number; sla: number }> = {}
     const slaMesMap: Record<string, { ok: number; n: number }> = {}
     const fueraDeSla: any[] = []
@@ -3882,7 +3907,8 @@ export async function getPanelOperacionLIP(
       // SLA ajustado por sitio (CEDIs +15%/+35%), igual que _computeIndicadoresValores
       // (el BSC): antes no se pasaba `r.idempresa` y el panel medía a los CEDIs con el
       // tiempo base de planta, sin el ajuste acordado — más estricto de lo real.
-      const max = getSlaCargueMin(tv, "PT", r.idempresa)
+      const productoPanel = esSubproductoPorOcPanel.has(String(r.ordendecargue)) ? "SUB" : "PT"
+      const max = getSlaCargueMin(tv, productoPanel, r.idempresa)
       if (!max) continue
       const real = aMin(r.fincargue) - aMin(r.iniciocargue)
       if (real <= 0 || real > 600) continue

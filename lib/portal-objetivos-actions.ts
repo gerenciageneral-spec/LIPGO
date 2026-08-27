@@ -8,7 +8,7 @@
 // (objetivo operativo) se atribuye a cada persona.
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
-import { getSlaCargueMin } from "@/lib/sla-acordados"
+import { getSlaCargueMin, esNombreSubproducto } from "@/lib/sla-acordados"
 import { getMetaDiaForEmpresa } from "@/lib/empresa-meta-dia"
 import { getResultadosPorHeadcount } from "@/lib/inducciones-actions"
 import type { AporteTarjeta, AporteEvento, MetaColaborador, MiAporte, EstadoTarjeta } from "@/lib/portal-objetivos"
@@ -79,17 +79,24 @@ export async function getMiAporteObjetivos(input: {
     if (ordenIds.length) {
       const { data: cab } = await supabase
         .from("cabeceraoc")
-        .select("ordendecargue, fechaorden, iniciocargue, fincargue")
+        .select("ordendecargue, fechaorden, iniciocargue, fincargue, idempresa")
         .in("ordendecargue", ordenIds)
       const { data: citas } = await supabase
         .from("citasvehiculos")
         .select("ocargue, tipovehiculo")
         .in("ocargue", ordenIds)
+      // Subproducto (mogolla/salvado/harina de tercera): mismo criterio que
+      // Centro de Coordinación/BSC — sin esto, esas órdenes se median contra
+      // el tiempo (más corto) de Producto Terminado.
+      const { data: detOrdenes } = await supabase.from("detalleoc").select("numeroorden, producto").in("numeroorden", ordenIds)
+      const esSubproductoPorOc = new Set<string>()
+      for (const d of detOrdenes ?? []) if (esNombreSubproducto(d.producto)) esSubproductoPorOc.add(String(d.numeroorden))
       const tipoPorOc: Record<string, string> = {}
       for (const c of citas ?? []) if (c.ocargue) tipoPorOc[String(c.ocargue)] = c.tipovehiculo
       for (const r of cab ?? []) {
         if (!r.iniciocargue || !r.fincargue) continue
-        const max = getSlaCargueMin(tipoPorOc[String(r.ordendecargue)], "PT")
+        const productoOc = esSubproductoPorOc.has(String(r.ordendecargue)) ? "SUB" : "PT"
+        const max = getSlaCargueMin(tipoPorOc[String(r.ordendecargue)], productoOc, r.idempresa)
         if (!max) continue
         const real = aMin(r.fincargue) - aMin(r.iniciocargue)
         if (real <= 0 || real > 600) continue
