@@ -302,8 +302,22 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
     setLoadingPersonnel(true)
     const r = await getCarguDescarguePersonnel(selectedEmpresaId)
     setLoadingPersonnel(false)
-    if (r.success) setPersonnel(r.data)
-    else toast({ title: "Error", description: r.message, variant: "destructive" })
+    if (r.success) {
+      // "Personal disponible" ya excluye a quien esté asignado a CUALQUIER
+      // orden activa — incluida esta misma que se está editando. Para poder
+      // agregar o quitar sobre lo ya asignado, la lista del diálogo debe
+      // ser: disponibles + quien ya esté en ESTA orden (aunque por eso
+      // mismo no salga como "disponible" en general).
+      const yaEnLista = new Set(r.data.map((p) => p.nombreempleado.trim().toUpperCase()))
+      const asignadosFaltantes = orden.auxiliares
+        .filter((nombre) => !yaEnLista.has(nombre.trim().toUpperCase()))
+        .map((nombre, i) => ({ id: -1000 - i, nombreempleado: nombre }))
+      setPersonnel(
+        [...r.data, ...asignadosFaltantes].sort((a, b) => a.nombreempleado.localeCompare(b.nombreempleado, "es")),
+      )
+    } else {
+      toast({ title: "Error", description: r.message, variant: "destructive" })
+    }
   }
 
   const togglePersonnelSelection = (name: string) => {

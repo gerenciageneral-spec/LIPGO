@@ -226,7 +226,21 @@ export function Packing() {
     const result = await getCarguDescarguePersonnel(selectedEmpresaId)
 
     if (result.success) {
-      setPersonnel(result.data)
+      // "Personal disponible" ya excluye a quien esté asignado a CUALQUIER
+      // orden activa — incluida esta misma que se está editando. Para poder
+      // agregar o quitar sobre lo ya asignado, la lista del diálogo debe
+      // ser: disponibles + quien ya esté en ESTA orden.
+      const yaAsignados = String(order.auxiliares || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+      const yaEnLista = new Set(result.data.map((p) => p.nombreempleado.trim().toUpperCase()))
+      const asignadosFaltantes = yaAsignados
+        .filter((nombre) => !yaEnLista.has(nombre.trim().toUpperCase()))
+        .map((nombre, i) => ({ id: -1000 - i, nombreempleado: nombre }))
+      setPersonnel(
+        [...result.data, ...asignadosFaltantes].sort((a, b) => a.nombreempleado.localeCompare(b.nombreempleado, "es")),
+      )
     } else {
       toast({
         title: "Error",
