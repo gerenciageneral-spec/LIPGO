@@ -2590,15 +2590,13 @@ export async function getMovimientosProducto(
     // tiene historia previa a ese mes: su propia primera fila YA es su
     // origen, forzar el valor de la ancla ahí duplicaría el saldo en vez de
     // solo confirmarlo), y también cuando no hay ninguna ancla física.
-    // Traslado/reclasificación INTERNA del mismo producto (309/311/312/344/343):
-    // ninguna de las dos mitades del par debe mover el saldo corrido — antes
-    // SÍ se restaba en la fila de Salida y se volvía a sumar en la de
-    // Entrada (incluso ocultando la cantidad en las columnas de
-    // Ingreso/Salida, el saldo corrido seguía "bajando y subiendo" con cada
-    // movimiento). Se excluyen igual que ya se excluye una entrada contada
-    // en el ancla física (`yaContadaEnAncla`). Un 309 que reclasificó hacia
-    // OTRO producto (`netoCeroProducto` es false en ese caso) SÍ cuenta
-    // normal, porque para este producto específico es un ingreso/salida real.
+    // Traslado/reclasificación (309/311/312/344/343): ninguna de las dos
+    // mitades del par debe mover el saldo corrido, sin excepción — antes SÍ
+    // se restaba en la fila de Salida y se volvía a sumar en la de Entrada
+    // (incluso ocultando la cantidad en las columnas de Ingreso/Salida, el
+    // saldo corrido seguía "bajando y subiendo" con cada movimiento). Se
+    // excluyen igual que ya se excluye una entrada contada en el ancla
+    // física (`yaContadaEnAncla`).
     const sumaDeltas = cronologico.reduce((s: number, r: any) => {
       if (!aprobado(r) || yaContadaEnAncla(r) || netoCeroProducto(r)) return s
       const c = Math.abs(Number(r.cantidad) || 0)
@@ -2627,9 +2625,24 @@ export async function getMovimientosProducto(
     // ver como si un ingreso BAJARA el saldo — la fila pendiente ya se
     // marca aparte, "afectaSaldo: false", como corresponde).
     const ultima = [...cronologico].reverse().find((r) => aprobado(r)) ?? cronologico[cronologico.length - 1]
+    const idxUltima = ultima ? cronologico.indexOf(ultima) : -1
     if (ultima) {
       const previa = saldosPorFila.get(ultima)!
       saldosPorFila.set(ultima, { antes: previa.antes, despues: Math.round(stockVivo) })
+      // Cualquier fila PENDIENTE que haya quedado cronológicamente después de
+      // la última aprobada (ej. un ingreso automático de descargue aún sin
+      // aprobar) ya había calculado su "antes/después" ANTES de este ajuste
+      // — sin esto, quedaba con el valor viejo (previo al ajuste) y se veía
+      // un salto sin ninguna transacción real que lo explique (verificado
+      // con datos reales: ID3, PT HARINA PREC MAIZ 24LB, un ingreso de
+      // descargue pendiente mostraba +9 de la nada). Como esas filas no
+      // afectan el saldo (no están aprobadas), deben seguir mostrando el
+      // mismo valor ya corregido, no el que tenían antes del ajuste.
+      if (idxUltima >= 0) {
+        for (let i = idxUltima + 1; i < cronologico.length; i++) {
+          saldosPorFila.set(cronologico[i], { antes: Math.round(stockVivo), despues: Math.round(stockVivo) })
+        }
+      }
     }
 
     const movs = (rows ?? []).filter((r: any) => (!anio || yr(r.creado) === anio) && (!mes || mo(r.creado) === mes))
