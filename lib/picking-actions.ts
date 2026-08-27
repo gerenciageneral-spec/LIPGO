@@ -486,10 +486,17 @@ export async function assignPersonnelToOrder(
   // El cierre (fincargue) lo dispara el paso final de cargue de
   // fotos. Aqui solo persistimos el listado de auxiliares para que
   // sirva de "checkpoint" entre PDF -> Personal -> Fotos.
+  //
+  // `auxiliares_real` es la trazabilidad de quién asignó de verdad el
+  // coordinador (cargue/descargue de ESE vehículo) — se guarda siempre
+  // junto con `auxiliares`, pero a diferencia de ese campo, NUNCA se
+  // sobrescribe al cerrar en pago 'global' (ver
+  // app/api/upload-picking-photos/route.ts). No participa en nómina.
   const { error } = await supabase
     .from("cabeceraoc")
     .update({
       auxiliares,
+      auxiliares_real: auxiliares,
     })
     .eq("id", orderId)
 

@@ -286,6 +286,7 @@ export default function ControlToneladas() {
                                             <TableHead className="text-xs">Puesto programado</TableHead>
                                             <TableHead className="text-xs">Placa</TableHead>
                                             <TableHead className="text-right text-xs">Ton asignada</TableHead>
+                                            <TableHead className="text-xs">Personal real asignado</TableHead>
                                           </TableRow>
                                         </TableHeader>
                                         <TableBody className="tabular-nums">
@@ -306,6 +307,9 @@ export default function ControlToneladas() {
                                                 )}
                                               </TableCell>
                                               <TableCell className="text-right text-xs font-medium">{t2(o.tonPersona)}</TableCell>
+                                              <TableCell className="max-w-[220px] truncate text-[11px] text-muted-foreground" title={o.personalReal.join(", ")}>
+                                                {o.personalReal.length > 0 ? o.personalReal.join(", ") : "—"}
+                                              </TableCell>
                                             </TableRow>
                                           ))}
                                         </TableBody>

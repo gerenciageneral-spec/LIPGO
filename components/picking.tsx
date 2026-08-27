@@ -35,7 +35,6 @@ import {
   getOrdenesPausadas,
 } from "@/lib/picking-actions"
 import { FacturarCheckbox } from "@/components/facturar-checkbox"
-import { TipoPagoSelector } from "@/components/tipo-pago-selector"
 import { useToast } from "@/hooks/use-toast"
 import {
   Dialog,
@@ -1825,16 +1824,14 @@ const loadOrders = async () => {
                             )}
                           </Button>
                         </div>
-                        <div className="mt-1.5">
-                          <TipoPagoSelector
-                            orderId={order.id}
-                            tipoPago={order.tipo_pago}
-                            disabled={!!order.fincargue}
-                            onChanged={(v) =>
-                              setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, tipo_pago: v } : o)))
-                            }
-                          />
-                        </div>
+                        {/* El tipo de pago (Global/Individual) lo elige el
+                            coordinador en Centro de Coordinación, no aquí —
+                            Picking solo respeta el bloqueo si aún no se eligió. */}
+                        {!order.auxiliares ? null : !order.tipo_pago && (
+                          <div className="mt-1 text-[10px] font-medium text-rose-600">
+                            ⚠ Falta elegir tipo de pago en Centro de Coordinación
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))
@@ -1953,16 +1950,11 @@ const loadOrders = async () => {
                     )}
                   </Button>
                 </div>
-                <div className="mt-2">
-                  <TipoPagoSelector
-                    orderId={order.id}
-                    tipoPago={order.tipo_pago}
-                    disabled={!!order.fincargue}
-                    onChanged={(v) =>
-                      setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, tipo_pago: v } : o)))
-                    }
-                  />
-                </div>
+                {order.auxiliares && !order.tipo_pago && (
+                  <div className="mt-1 text-[10px] font-medium text-rose-600">
+                    ⚠ Falta elegir tipo de pago en Centro de Coordinación
+                  </div>
+                )}
               </div>
             </Card>
           ))

@@ -30,7 +30,6 @@ import {
 import { pausarOrden, reanudarOrden, getOrdenesPausadas } from "@/lib/picking-actions"
 import { updateOrderInitioCargue } from "@/lib/orders-actions"
 import { FacturarCheckbox } from "@/components/facturar-checkbox"
-import { TipoPagoSelector } from "@/components/tipo-pago-selector"
 import { useToast } from "@/hooks/use-toast"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { useIsMobile } from "@/components/qr-camera-scanner"
@@ -722,16 +721,12 @@ export function Packing() {
                             )}
                           </Button>
                         </div>
-                        {!esDistribucionNoFacturable(order) && (
-                          <div className="mt-1.5">
-                            <TipoPagoSelector
-                              orderId={order.id}
-                              tipoPago={order.tipo_pago}
-                              disabled={!!order.fincargue}
-                              onChanged={(v) =>
-                                setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, tipo_pago: v } : o)))
-                              }
-                            />
+                        {/* El tipo de pago (Global/Individual) lo elige el
+                            coordinador en Centro de Coordinación, no aquí —
+                            Packing solo respeta el bloqueo si aún no se eligió. */}
+                        {!esDistribucionNoFacturable(order) && order.auxiliares && !order.tipo_pago && (
+                          <div className="mt-1 text-[10px] font-medium text-rose-600">
+                            ⚠ Falta elegir tipo de pago en Centro de Coordinación
                           </div>
                         )}
                       </td>

@@ -32,6 +32,10 @@ export interface OrdenTrabajador {
   // registroasistencia.puesto). null si no hubo programación ese día/persona.
   puesto: string | null
   tonPersona: number
+  // Trazabilidad: quién asignó REALMENTE el coordinador a esta orden
+  // (cabeceraoc.auxiliares_real) — en pago 'global' puede diferir de con
+  // quién se repartió el tonelaje (auxiliares), que es lo que da tonPersona.
+  personalReal: string[]
 }
 
 export interface TonPorDia {
@@ -85,7 +89,7 @@ export async function getControlToneladas(
     for (let off = 0; ; off += 1000) {
       const { data, error } = await admin
         .from("cabeceraoc")
-        .select("id, ordendecargue, fechacargue, idempresa, tipooperacion, pesovascula, pesoorden, auxiliares, placa")
+        .select("id, ordendecargue, fechacargue, idempresa, tipooperacion, pesovascula, pesoorden, auxiliares, auxiliares_real, placa")
         .in("idempresa", emps)
         .gte("fechacargue", desde)
         .lte("fechacargue", hasta)
@@ -187,6 +191,10 @@ export async function getControlToneladas(
       if (tonBase <= 0) continue
       const tonPersona = tonBase / nAux
       const placa = o.placa ? String(o.placa).trim() : null
+      const personalReal = String(o.auxiliares_real || o.auxiliares || "")
+        .split(",")
+        .map((s: string) => s.trim())
+        .filter(Boolean)
 
       for (const p of auxiliares) {
         const key = p.toUpperCase()
@@ -209,7 +217,7 @@ export async function getControlToneladas(
         c.tonAcumulada += tonPersona
         if (placa) c.vehiculos.add(placa)
         const puesto = puestoMap.get(`${planta}|${fecha}|${normalizeName(p)}`) || null
-        c.ordenes.push({ fecha, orden: String(o.ordendecargue || ""), tipooperacion: tipo, planta, placa, puesto, tonPersona: round3(tonPersona) })
+        c.ordenes.push({ fecha, orden: String(o.ordendecargue || ""), tipooperacion: tipo, planta, placa, puesto, tonPersona: round3(tonPersona), personalReal })
         c.tonPorDiaMap.set(fecha, (c.tonPorDiaMap.get(fecha) || 0) + tonPersona)
         if (!c.metaPorDiaMap.has(fecha)) {
           const horasPersona = horasPersonaPorDia.get(`${planta}|${fecha}|${normalizeName(p)}`) || 0

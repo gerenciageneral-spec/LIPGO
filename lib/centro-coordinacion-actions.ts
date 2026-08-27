@@ -694,7 +694,7 @@ export async function getHojaDelMuelle(orderId: number): Promise<{ success: bool
     const { data: o, error } = await admin
       .from("cabeceraoc")
       .select(
-        "id, idempresa, ordendecargue, tipooperacion, muelle, placa, conductor, auxiliares, pesoorden, pesovascula, fechacargue, horavehiculo, horasanitario, pesajeinicial, iniciocargue, pesajefinal, fincargue, fotospicking, tiquetebascula",
+        "id, idempresa, ordendecargue, tipooperacion, muelle, placa, conductor, auxiliares, auxiliares_real, pesoorden, pesovascula, fechacargue, horavehiculo, horasanitario, pesajeinicial, iniciocargue, pesajefinal, fincargue, fotospicking, tiquetebascula",
       )
       .eq("id", orderId)
       .single()
@@ -716,7 +716,11 @@ export async function getHojaDelMuelle(orderId: number): Promise<{ success: bool
       lineas = (pk.data || []).map((r: any) => ({ id: r.id, producto: r.producto, cantidad: num(r.cantidad), status: null }))
     }
 
-    const auxiliaresNombres = String(o.auxiliares || "")
+    // Trazabilidad de quién trabajó realmente el vehículo: `auxiliares_real`
+    // nunca se sobrescribe en pago 'global' (a diferencia de `auxiliares`,
+    // que sí se recalcula al cerrar) — se usa esa como fuente aquí. Si la
+    // orden es de antes de este campo, cae a `auxiliares`.
+    const auxiliaresNombres = String(o.auxiliares_real || o.auxiliares || "")
       .split(",")
       .map((s: string) => s.trim())
       .filter(Boolean)
