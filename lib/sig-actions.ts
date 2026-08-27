@@ -2617,33 +2617,19 @@ export async function getMovimientosProducto(
       for (let k = 0; k < anclasProducto.length; k++) if (idxDeAncla[k] === i) saldoAcumulado = anclasProducto[k].valor
       saldosPorFila.set(r, { antes: Math.round(antes), despues: Math.round(saldoAcumulado) })
     }
-    // Ajuste final: el saldo de HOY es el stock vivo real de TODO el
-    // producto (verdad física en tiempo real) — cualquier desfase residual
-    // desde la última ancla se absorbe en la ÚLTIMA fila APROBADA (no en la
-    // última fila sin más: una entrada pendiente de aprobar puede quedar
-    // cronológicamente al final, y forzarle el stock vivo ahí encima hace
-    // ver como si un ingreso BAJARA el saldo — la fila pendiente ya se
-    // marca aparte, "afectaSaldo: false", como corresponde).
-    const ultima = [...cronologico].reverse().find((r) => aprobado(r)) ?? cronologico[cronologico.length - 1]
-    const idxUltima = ultima ? cronologico.indexOf(ultima) : -1
-    if (ultima) {
-      const previa = saldosPorFila.get(ultima)!
-      saldosPorFila.set(ultima, { antes: previa.antes, despues: Math.round(stockVivo) })
-      // Cualquier fila PENDIENTE que haya quedado cronológicamente después de
-      // la última aprobada (ej. un ingreso automático de descargue aún sin
-      // aprobar) ya había calculado su "antes/después" ANTES de este ajuste
-      // — sin esto, quedaba con el valor viejo (previo al ajuste) y se veía
-      // un salto sin ninguna transacción real que lo explique (verificado
-      // con datos reales: ID3, PT HARINA PREC MAIZ 24LB, un ingreso de
-      // descargue pendiente mostraba +9 de la nada). Como esas filas no
-      // afectan el saldo (no están aprobadas), deben seguir mostrando el
-      // mismo valor ya corregido, no el que tenían antes del ajuste.
-      if (idxUltima >= 0) {
-        for (let i = idxUltima + 1; i < cronologico.length; i++) {
-          saldosPorFila.set(cronologico[i], { antes: Math.round(stockVivo), despues: Math.round(stockVivo) })
-        }
-      }
-    }
+    // NO se fuerza el saldo de la última fila al stock vivo. El Kardex es
+    // sencillo por definición — inventario inicial (o el último cierre
+    // físico real, `anclasProducto`) + ingresos − salidas, tal cual quedaron
+    // registrados — y debe mostrar ESO, aunque no coincida con
+    // `saldoinvdetalle` (que es un número aparte, mantenido por su cuenta).
+    // Forzar la última fila a ese número escondía diferencias reales: casos
+    // reales encontrados así (ID3, PT HARINA PREC MAIZ 24LB: 9 unidades de
+    // diferencia; PT FIDEO 250*24PQ: 212 unidades por una reclasificación
+    // errónea) — si el cálculo puro no cuadra con el stock vivo, esa
+    // diferencia es información real que hay que investigar, no ocultar.
+    // `stockVivo` se sigue usando solo para el back-solve del arranque
+    // cuando el producto no tiene ningún cierre físico real (ninguna
+    // ancla) — es el único caso donde no hay otra verdad de referencia.
 
     const movs = (rows ?? []).filter((r: any) => (!anio || yr(r.creado) === anio) && (!mes || mo(r.creado) === mes))
 
@@ -2725,14 +2711,19 @@ export async function getMovimientosProducto(
     }
 
     // Estos bordes son el AGREGADO del producto completo para el resumen
-    // "empecé con X, quedo con Y" (mismo `anclaPorMes`/`stockVivo` de arriba
-    // — un solo cálculo, ya no hay mapa por lote que reconciliar aparte).
+    // "empecé con X, quedo con Y" (mismo `anclaPorMes` de arriba — un solo
+    // cálculo, ya no hay mapa por lote que reconciliar aparte). El borde de
+    // HOY es el resultado PURO del cálculo (inicial/ancla + ingresos −
+    // salidas), el mismo que ya se ve en la última fila de la tabla — no
+    // `stockVivo` directo, que es un número aparte y puede diferir si hay
+    // algo por reconciliar (ver nota en el cálculo del saldo corrido).
     const finalEsHoy = !mesSeleccionado || (cronologicoFiltrado.length > 0 && cronologico.length > 0 && cronologicoFiltrado[cronologicoFiltrado.length - 1] === cronologico[cronologico.length - 1])
     const finalVerificado = finalEsHoy || (mesSeleccionado ? anclaPorMes.has(mesSeleccionado) : false)
+    const saldoCalculadoHoy = cronologico.length > 0 ? saldosPorFila.get(cronologico[cronologico.length - 1])?.despues : undefined
     const saldoFinalPeriodo = !finalVerificado
       ? undefined
       : finalEsHoy
-        ? stockVivo
+        ? saldoCalculadoHoy
         : anclaPorMes.get(mesSeleccionado!)
 
     const inicialVerificado = !!(mesAnteriorKey && anclaPorMes.has(mesAnteriorKey))
