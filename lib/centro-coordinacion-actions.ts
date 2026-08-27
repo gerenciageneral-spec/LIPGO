@@ -64,6 +64,8 @@ export interface OrdenOperativa {
   /** true = aún dentro del SLA pero le queda poco margen (≤20%) — aviso temprano antes de vencer. */
   slaEnRiesgo: boolean
   estado: "alistando" | "cargando" | "pausado"
+  /** true = quedó abierta de un día anterior (no es del día consultado) — la orden sigue mostrándose hasta que cierre, pero se marca para que el coordinador entienda por qué aparece. */
+  rezagada: boolean
 }
 
 export interface MuelleSlot {
@@ -203,23 +205,34 @@ export async function getCentroCoordinacion(
       minEntradaMasTemprana !== null ? Math.max(0, (minAhora - minEntradaMasTemprana) / 60) : 0
 
     // 2) Órdenes de hoy (los 3 tipos, se filtra por UI si aplica — el
-    //    KPI siempre suma los 3 porque los muelles son compartidos).
+    //    KPI siempre suma los 3 porque los muelles son compartidos) MÁS
+    //    cualquier orden de un día anterior que haya quedado abierta
+    //    (fincargue null): a veces una orden se crea un día para cargar al
+    //    siguiente, o simplemente queda pendiente — antes, al cambiar el
+    //    día, esa orden dejaba de consultarse aquí y se volvía invisible
+    //    para el coordinador hasta que alguien la cerrara desde otro lado.
+    //    Ahora se sigue mostrando (muelle/cola/parte de turno) hasta que
+    //    cierra de verdad. Los indicadores que miden específicamente "hoy"
+    //    (conteoTipoHoy, cargadoHoyTon, tiempo de cargue) se filtran aparte
+    //    por fechacargue === fechaConsulta para no mezclarse con lo atrasado.
     const { data: ordenesRaw } = await admin
       .from("cabeceraoc")
       .select(
-        "id, ordendecargue, tipooperacion, muelle, auxiliares, facturar, pesoorden, pesovascula, iniciocargue, fincargue, placa, conductor, horalote, tipo_pago",
+        "id, ordendecargue, tipooperacion, muelle, auxiliares, facturar, pesoorden, pesovascula, iniciocargue, fincargue, placa, conductor, horalote, tipo_pago, fechacargue",
       )
       .eq("idempresa", idempresa)
-      .eq("fechacargue", fechaConsulta)
+      .or(`fechacargue.eq.${fechaConsulta},and(fechacargue.lt.${fechaConsulta},fincargue.is.null)`)
 
     const todasOrdenes = ordenesRaw || []
 
     // Conteo del día por tipo de operación — a diferencia de "muelles
     // ocupados ahora", este cuenta TODAS las órdenes de hoy (abiertas y ya
     // cerradas), así que no baja cuando una orden cierra y libera su
-    // muelle. Es lo que deben reflejar los chips de filtro.
+    // muelle. Es lo que deben reflejar los chips de filtro. Se excluyen acá
+    // las rezagadas de días anteriores: no son actividad de "hoy".
     const conteoTipoHoy = { Cargue: 0, Descargue: 0, Distribucion: 0 } as Record<TipoOperacion, number>
     for (const o of todasOrdenes) {
+      if (o.fechacargue !== fechaConsulta) continue
       const t = String(o.tipooperacion || "").trim() as TipoOperacion
       if (t in conteoTipoHoy) conteoTipoHoy[t] += 1
     }
@@ -365,6 +378,7 @@ export async function getCentroCoordinacion(
         slaVencido,
         slaEnRiesgo,
         estado: pausado ? "pausado" : o.iniciocargue ? "cargando" : "alistando",
+        rezagada: o.fechacargue !== fechaConsulta,
       }
     }
 
@@ -383,8 +397,17 @@ export async function getCentroCoordinacion(
       ? muelleNumeros.map((m) => ({ muelle: m, orden: null }))
       : Array.from({ length: N }, (_, i) => ({ muelle: i + 1, orden: null }))
     const muellePorNumero = new Map(muelles.map((slot) => [slot.muelle, slot]))
+    // El clon de Distribución automática ("+D") es el MISMO vehículo y la
+    // MISMA orden física que su madre de Cargue — solo existe para
+    // facturación/trazabilidad (generarDistribucionAutomatica en
+    // orders-actions.tsx). No representa un vehículo adicional esperando
+    // muelle: se excluye de la asignación de muelle (grid + cola sin
+    // muelle + auto-asignación), pero conserva su funcionamiento normal en
+    // todo lo demás (KPIs, conteo por tipo, Packing, nómina, historial).
+    const esClonDistribucion = (o: OrdenOperativa) => o.tipooperacion === "Distribucion" && o.ordendecargue.endsWith("D")
     let colaSinMuelle: OrdenOperativa[] = []
     for (const o of ordenesOperativas) {
+      if (esClonDistribucion(o)) continue
       const slot = o.muelle != null ? muellePorNumero.get(o.muelle) : undefined
       if (slot) {
         slot.orden = o
@@ -575,6 +598,8 @@ export interface HistorialOrdenTurno {
   horaCierre: string | null
   /** Trazabilidad real (auxiliares_real) — quién asignó de verdad el coordinador, no se pierde aunque la orden haya cerrado en pago Global. */
   personalReal: string[]
+  /** true = quedó abierta de un día anterior al consultado. */
+  rezagada: boolean
 }
 
 export interface ParteDeTurno {
@@ -609,12 +634,15 @@ export async function getParteDeTurno(
 
     // Historial del día completo (abiertas + cerradas), con su personal real
     // asignado — a diferencia del tablero de muelles, que solo muestra las
-    // abiertas y las pierde de vista apenas cierran.
+    // abiertas y las pierde de vista apenas cierran. Incluye también las
+    // rezagadas de días anteriores que sigan abiertas (mismo criterio que
+    // getCentroCoordinacion): el siguiente turno debe verlas en el parte,
+    // no que desaparezcan por el cambio de día.
     const { data: todasHoy } = await admin
       .from("cabeceraoc")
-      .select("id, ordendecargue, tipooperacion, placa, muelle, fincargue, auxiliares, auxiliares_real")
+      .select("id, ordendecargue, tipooperacion, placa, muelle, fincargue, auxiliares, auxiliares_real, fechacargue")
       .eq("idempresa", idempresa)
-      .eq("fechacargue", fechaConsulta)
+      .or(`fechacargue.eq.${fechaConsulta},and(fechacargue.lt.${fechaConsulta},fincargue.is.null)`)
       .in("tipooperacion", ["Cargue", "Descargue", "Distribucion"])
       .order("id", { ascending: false })
 
@@ -639,6 +667,7 @@ export async function getParteDeTurno(
         .split(",")
         .map((s: string) => s.trim())
         .filter(Boolean),
+      rezagada: o.fechacargue !== fechaConsulta,
     }))
 
     const pendientes: string[] = []

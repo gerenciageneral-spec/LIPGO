@@ -637,6 +637,11 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                             <Badge variant="outline" className="ml-2 text-[10px]">
                               {TIPO_LABEL[o.tipooperacion]}
                             </Badge>
+                            {o.rezagada && (
+                              <Badge variant="outline" className="ml-1 border-amber-300 text-[10px] text-amber-700 dark:border-amber-800 dark:text-amber-400">
+                                Pendiente de un día anterior
+                              </Badge>
+                            )}
                           </div>
                           <Button size="sm" variant="outline" className="h-7 shrink-0 text-xs" onClick={() => abrirAsignar(o)}>
                             Asignar a muelle
@@ -822,6 +827,11 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                                     >
                                       {h.estado === "cerrada" ? `Cerrada ${fmtHora(h.horaCierre)}` : "En curso"}
                                     </span>
+                                    {h.rezagada && (
+                                      <span className="ml-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-950/40 dark:text-amber-400">
+                                        de un día anterior
+                                      </span>
+                                    )}
                                   </td>
                                   <td className="px-2 py-1 text-muted-foreground">
                                     {h.personalReal.length > 0 ? h.personalReal.join(", ") : "—"}
@@ -1030,6 +1040,11 @@ function MuelleRow({
               <Badge variant="outline" className="text-[10px]">
                 {TIPO_LABEL[o.tipooperacion]}
               </Badge>
+              {o.rezagada && (
+                <Badge variant="outline" className="border-amber-300 text-[10px] text-amber-700 dark:border-amber-800 dark:text-amber-400">
+                  Pendiente de un día anterior
+                </Badge>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <span className="text-base leading-none">{iconoVehiculo(o.tipovehiculo)}</span>
