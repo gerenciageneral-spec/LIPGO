@@ -44,6 +44,31 @@ export const FIELDSETS: Record<string, FieldSet> = {
 
 export const CODIGOS_CORRECCION = Object.keys(FIELDSETS).filter((c) => FIELDSETS[c].requiereClave)
 
+// ---------------------------------------------------------------------------
+// Clasificación para reportes de Kardex/Panel de Inventario (lib/sig-actions.ts:
+// getKardexInventario, getMovimientosProducto, getPanelInventarioLIP,
+// getCuadreDiario). Esos reportes nacieron ANTES de que existiera esta
+// nomenclatura por código y clasifican cada invtrans adivinando por texto de
+// `origen`/`tipomov` — heurístico que nunca conoció 309/311/312/344/343 (los
+// crea ejecutarTransaccionPorCodigo con origen="transaccion manual", que no
+// calza con ningún patrón de texto) y por eso caían al catch-all "ajuste",
+// mostrando un ingreso/salida "701/702" que nunca ocurrió. `cod_movimiento` sí
+// queda bien guardado en la fila (verificado con datos reales, ID3 PT FIDEO
+// 250*24PQ) — el fix es que los reportes lo LEAN en vez de adivinar.
+export const CODIGOS_TRASLADO_NETO_CERO = ["309", "311", "312", "344", "343"]
+
+export function esCodigoTrasladoNetoCero(codMovimiento: unknown): boolean {
+  return CODIGOS_TRASLADO_NETO_CERO.includes(String(codMovimiento ?? "").trim())
+}
+
+/** Nombre + código para mostrar, priorizando el código real de la fila sobre cualquier adivinanza por texto. */
+export function nombreMovimientoPorCodigo(codMovimiento: unknown): string | null {
+  const cod = String(codMovimiento ?? "").trim()
+  if (!cod) return null
+  const guia = GUIA_TRANSACCIONES.find((g) => g.codigo === cod)
+  return guia ? `${guia.nombre} (${cod})` : `Movimiento (${cod})`
+}
+
 export interface MovimientoOriginal {
   id: number
   tipomov: string

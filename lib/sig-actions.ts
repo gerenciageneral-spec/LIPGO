@@ -53,6 +53,7 @@ import type {
 import { SIG_EMPRESA_LIP, SIG_CLIENTES_LIP } from "@/lib/sig-types"
 import { getMetaDiaForEmpresa } from "@/lib/empresa-meta-dia"
 import { getSlaCargueMin, esNombreSubproducto, PLANTA_ACORDADA, factorTiempoSitio } from "@/lib/sla-acordados"
+import { esCodigoTrasladoNetoCero, nombreMovimientoPorCodigo } from "@/lib/transacciones-codigo"
 import { excluirNoFacturable } from "@/lib/facturas-exclusiones"
 
 // Mapea el estado del Centro de Evidencia ISO 9001 al estado de la matriz SIG.
@@ -2148,7 +2149,7 @@ export async function getPanelInventarioLIP(
     while (true) {
       const { data, error } = await supabase
         .from("invtrans")
-        .select("tipomov,origen,status,cantidad,creado,codproducto,nombreproducto")
+        .select("tipomov,origen,status,cantidad,creado,codproducto,nombreproducto,cod_movimiento")
         .in("idempresa", clientes)
         .order("id", { ascending: true }) // paginación determinista: sin ORDER BY, .range() salta/duplica filas
         .range(fromIdx, fromIdx + 999)
@@ -2194,6 +2195,11 @@ export async function getPanelInventarioLIP(
     //   inventario físico), inicial (561 carga inicial),
     //   merma (551 reproceso = merma de proceso, NO se cobra a LIP).
     const tipoMov = (r: any): string => {
+      // Prioriza el código real (309/311/312/344/343 = pareja neta 0) sobre
+      // el heurístico de texto — antes esas correcciones (origen="transaccion
+      // manual", no calza ningún patrón) caían en "ajuste" como si fueran un
+      // ingreso/salida real, cuando no cambian el total del inventario.
+      if (esCodigoTrasladoNetoCero(r.cod_movimiento)) return "traslado_interno"
       if (r.tipomov === "Reproceso" || has(r.origen, "reproceso")) return "merma"
       if (has(r.origen, "inicial")) return "inicial"
       if (has(r.origen, "traslado entre localizaciones")) return "traslado_interno"
@@ -2348,7 +2354,7 @@ export async function getCuadreDiario(
     const inv: any[] = []
     let from = 0
     while (true) {
-      const { data, error } = await supabase.from("invtrans").select("tipomov,origen,cantidad,creado").in("idempresa", clientes).order("id", { ascending: true }).range(from, from + 999)
+      const { data, error } = await supabase.from("invtrans").select("tipomov,origen,cantidad,creado,cod_movimiento").in("idempresa", clientes).order("id", { ascending: true }).range(from, from + 999)
       if (error) return { success: false, data: [], error: error.message }
       inv.push(...(data ?? []))
       if (!data || data.length < 1000) break
@@ -2362,7 +2368,10 @@ export async function getCuadreDiario(
     for (const r of inv) {
       const d = r.creado ? fechaColombiaDe(r.creado) : ""
       if (!d) continue
-      if (has(r.origen, "traslado entre localizaciones")) continue // interno: no afecta
+      // 309/311/312/344/343 son pareja neta 0 igual que el traslado clásico
+      // (texto "traslado entre localizaciones") — sin esto, una corrección de
+      // lote/ubicación aparecía moviendo el saldo del día cuando no debía.
+      if (esCodigoTrasladoNetoCero(r.cod_movimiento) || has(r.origen, "traslado entre localizaciones")) continue // interno: no afecta
       const c = Number(r.cantidad) || 0
       byDay[d] = byDay[d] || { ingresos: 0, salidas: 0, otros: 0 }
       if (r.tipomov === "Entrada" && (has(r.origen, "producc") || has(r.origen, "aprob") || has(r.origen, "descarg") || has(r.origen, "logo"))) byDay[d].ingresos += c
@@ -2487,7 +2496,7 @@ export async function getMovimientosProducto(
     const mo = (s: any) => (s ? fechaColombiaDe(s).slice(5, 7) : null)
     const { data: rows, error } = await supabase
       .from("invtrans")
-      .select("tipomov,origen,cantidad,creado,creadopor,ocargue,pdf,status,lote,location")
+      .select("tipomov,origen,cantidad,creado,creadopor,ocargue,pdf,status,lote,location,cod_movimiento")
       .eq("codproducto", codproducto)
       .in("idempresa", clientes)
       .limit(5000)
@@ -2611,7 +2620,16 @@ export async function getMovimientosProducto(
       const { data: cab } = await supabase.from("cabeceraoc").select("ordendecargue,pdfoc,doccargue").in("ordendecargue", ocargues)
       for (const c of cab ?? []) pdfPorOC[c.ordendecargue] = { pdfoc: c.pdfoc, doccargue: c.doccargue }
     }
+    // Prioriza el código REAL de la fila (cod_movimiento, verificado que
+    // queda bien guardado por ejecutarTransaccionPorCodigo y por el trigger
+    // de BD) sobre adivinar por texto de `origen` — el heurístico de abajo
+    // solo sirve de respaldo si la fila no trae código (muy anterior a la
+    // columna). Antes toda corrección 309/311/312/344/343 (que graba
+    // origen="transaccion manual", sin match en el heurístico) se mostraba
+    // como "Ajuste (701/702)" aunque nunca fue un ajuste real.
     const label = (r: any): string => {
+      const porCodigo = nombreMovimientoPorCodigo(r.cod_movimiento)
+      if (porCodigo) return porCodigo
       if (r.tipomov === "Reproceso" || has(r.origen, "reproceso")) return "Merma/Reproceso (551)"
       if (has(r.origen, "inicial")) return "Inventario inicial (561)"
       if (has(r.origen, "traslado entre localizaciones")) return "Traslado interno (311)"
@@ -2625,6 +2643,7 @@ export async function getMovimientosProducto(
         return {
           fecha: r.creado,
           tipo: label(r),
+          codigo: r.cod_movimiento || null,
           tipomov: r.tipomov,
           cantidad: Number(r.cantidad) || 0,
           status: r.status,
@@ -2706,7 +2725,7 @@ export async function getKardexInventario(
     while (true) {
       const { data, error } = await supabase
         .from("invtrans")
-        .select("codproducto,nombreproducto,tipomov,origen,cantidad,creado")
+        .select("codproducto,nombreproducto,tipomov,origen,cantidad,creado,cod_movimiento")
         .in("idempresa", clientes)
         .order("id", { ascending: true }) // paginación determinista
         .range(from, from + 999)
@@ -2736,7 +2755,11 @@ export async function getKardexInventario(
       if (!map[cod]) map[cod] = { codproducto: cod, producto: r.nombreproducto || "", entradas: 0, salidas: 0, ajustes: 0, traslados: 0, merma: 0 }
       const c = Number(r.cantidad) || 0
       if (r.nombreproducto && !map[cod].producto) map[cod].producto = r.nombreproducto
-      if (r.tipomov === "Reproceso" || has(r.origen, "reproceso")) map[cod].merma += c
+      // Prioriza el código real (309/311/312/344/343 = pareja neta 0, NO es
+      // un ajuste real) sobre el heurístico de texto — ver
+      // esCodigoTrasladoNetoCero en lib/transacciones-codigo.ts.
+      if (esCodigoTrasladoNetoCero(r.cod_movimiento)) map[cod].traslados += c
+      else if (r.tipomov === "Reproceso" || has(r.origen, "reproceso")) map[cod].merma += c
       else if (has(r.origen, "traslado entre localizaciones")) map[cod].traslados += c
       else if (r.tipomov === "Entrada" && (has(r.origen, "producc") || has(r.origen, "aprob") || has(r.origen, "descarg") || has(r.origen, "logo"))) map[cod].entradas += c
       else if (r.tipomov === "Salida" && has(r.origen, "orden de cargue")) map[cod].salidas += c
