@@ -12,7 +12,15 @@
 --      Horas extra = horas − 1h (descanso) − 7h (jornada base vigente desde
 --      16-jul-2026, parametros_legales_vigencia); mín 0; truncado a 2
 --      decimales (sin redondear hacia arriba).
---   4) Asignación por día ISO: domingo (7) → hedf; resto → hed.
+--   4) Asignación del día: DOMINGO o FESTIVO → hedf (extra diurna festiva,
+--      recargo 115%); cualquier otro día → hed (extra diurna ordinaria, 25%).
+--
+--      Antes solo miraba el día ISO, así que un festivo entre lunes y sábado
+--      -- el 17-ago-2026, por ejemplo, que es el traslado de la Asunción --
+--      caía en `hed` y se pagaba como ordinaria. El festivo se consulta contra
+--      la tabla `festivos`, la MISMA que ya usan `pagonomina` y
+--      `facturacionturnos`, para que las tres no puedan discrepar sobre qué
+--      día es festivo.
 --
 -- Es una función de trigger BEFORE INSERT/UPDATE: modifica NEW y lo retorna.
 -- NOTA: jornada base = 7h desde el 16-jul-2026 (antes 7.3333h). Si la
@@ -33,6 +41,7 @@ DECLARE
     horas_totales NUMERIC;
     horas_extras NUMERIC;
     dia_semana INTEGER;
+    es_festivo BOOLEAN;
 BEGIN
     -- Validamos que especialidad sea el texto 'true' y tengamos los datos necesarios
     IF LOWER(NEW.especialidad) = 'true'
@@ -95,11 +104,19 @@ BEGIN
         horas_extras := TRUNC(horas_extras, 2);
 
         -- ====================================================================
-        -- 4. ASIGNACIÓN POR DÍA DE LA SEMANA
+        -- 4. ASIGNACIÓN SEGÚN EL DÍA: DOMINGO O FESTIVO vs. ORDINARIO
         -- ====================================================================
         dia_semana := EXTRACT(ISODOW FROM NEW.fecha);
 
-        IF dia_semana = 7 THEN
+        -- El festivo se consulta contra `festivos`, la misma tabla que usan
+        -- `pagonomina` y `facturacionturnos`. Un festivo entre lunes y sábado
+        -- (17-ago-2026, 11-nov-2026...) se pagaba como extra ORDINARIA porque
+        -- aquí solo se miraba el día de la semana.
+        SELECT EXISTS (
+            SELECT 1 FROM public.festivos f WHERE f.fecha = NEW.fecha
+        ) INTO es_festivo;
+
+        IF dia_semana = 7 OR es_festivo THEN
             NEW.hedf := horas_extras;
             NEW.hed := 0;
         ELSE
