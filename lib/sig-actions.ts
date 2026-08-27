@@ -2578,8 +2578,16 @@ export async function getMovimientosProducto(
     // tiene historia previa a ese mes: su propia primera fila YA es su
     // origen, forzar el valor de la ancla ahí duplicaría el saldo en vez de
     // solo confirmarlo), y también cuando no hay ninguna ancla física.
+    // Traslado/reclasificación (309/311/312/344/343): ninguna de las dos
+    // mitades del par debe mover el saldo corrido — antes SÍ se restaba en
+    // la fila de Salida y se volvía a sumar en la de Entrada (incluso
+    // ocultando la cantidad en las columnas de Ingreso/Salida, el saldo
+    // corrido seguía "bajando y subiendo" con cada movimiento). Se excluyen
+    // igual que ya se excluye una entrada contada en el ancla física
+    // (`yaContadaEnAncla`).
+    const netoCero = (r: any) => esCodigoTrasladoNetoCero(r.cod_movimiento)
     const sumaDeltas = cronologico.reduce((s: number, r: any) => {
-      if (!aprobado(r) || yaContadaEnAncla(r)) return s
+      if (!aprobado(r) || yaContadaEnAncla(r) || netoCero(r)) return s
       const c = Math.abs(Number(r.cantidad) || 0)
       return s + (r.tipomov === "Entrada" ? c : -c)
     }, 0)
@@ -2591,7 +2599,7 @@ export async function getMovimientosProducto(
     for (let i = 0; i < cronologico.length; i++) {
       const r = cronologico[i]
       const antes = saldoAcumulado
-      if (aprobado(r) && !yaContadaEnAncla(r)) {
+      if (aprobado(r) && !yaContadaEnAncla(r) && !netoCero(r)) {
         const c = Math.abs(Number(r.cantidad) || 0)
         saldoAcumulado += r.tipomov === "Entrada" ? c : -c
       }
