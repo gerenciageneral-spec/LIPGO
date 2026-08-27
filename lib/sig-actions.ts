@@ -53,7 +53,7 @@ import type {
 import { SIG_EMPRESA_LIP, SIG_CLIENTES_LIP } from "@/lib/sig-types"
 import { getMetaDiaForEmpresa } from "@/lib/empresa-meta-dia"
 import { getSlaCargueMin, esNombreSubproducto, PLANTA_ACORDADA, factorTiempoSitio } from "@/lib/sla-acordados"
-import { esCodigoTrasladoNetoCero, nombreMovimientoPorCodigo } from "@/lib/transacciones-codigo"
+import { esCodigoTrasladoNetoCero, nombreMovimientoPorCodigo, CODIGOS_TRASLADO_NETO_CERO } from "@/lib/transacciones-codigo"
 import { excluirNoFacturable } from "@/lib/facturas-exclusiones"
 
 // Mapea el estado del Centro de Evidencia ISO 9001 al estado de la matriz SIG.
@@ -2496,11 +2496,43 @@ export async function getMovimientosProducto(
     const mo = (s: any) => (s ? fechaColombiaDe(s).slice(5, 7) : null)
     const { data: rows, error } = await supabase
       .from("invtrans")
-      .select("tipomov,origen,cantidad,creado,creadopor,ocargue,pdf,status,lote,location,cod_movimiento")
+      .select("idempresa,tipomov,origen,cantidad,creado,creadopor,ocargue,pdf,status,lote,location,cod_movimiento")
       .eq("codproducto", codproducto)
       .in("idempresa", clientes)
       .limit(5000)
     if (error) return { success: false, data: [], error: error.message }
+
+    // 309 puede reclasificar hacia OTRO producto (no solo lote/ubicación) —
+    // en ese caso, para CADA producto por separado SÍ es un ingreso/salida
+    // real (aunque el sistema en conjunto quede neto 0). Solo es seguro
+    // excluirlo del saldo de este producto cuando su pareja (misma
+    // idempresa+creado, se insertan juntas en el mismo insert) es del MISMO
+    // codproducto — verificado con datos reales: PT000080 tenía una fila 309
+    // que en realidad venía de PT000021 (+212), excluirla sin este chequeo
+    // desfasaba el saldo corrido en esa misma cantidad.
+    const filasNetoCero = (rows ?? []).filter((r: any) => esCodigoTrasladoNetoCero(r.cod_movimiento))
+    const esParejaMismoProducto = new Set<any>()
+    if (filasNetoCero.length > 0) {
+      const creadosSet = Array.from(new Set(filasNetoCero.map((r: any) => r.creado).filter(Boolean)))
+      const { data: pareja } = await supabase
+        .from("invtrans")
+        .select("codproducto, creado")
+        .in("idempresa", clientes)
+        .in("creado", creadosSet)
+        .in("cod_movimiento", CODIGOS_TRASLADO_NETO_CERO)
+      const productosPorCreado = new Map<string, Set<string>>()
+      for (const p of pareja ?? []) {
+        if (!productosPorCreado.has(p.creado)) productosPorCreado.set(p.creado, new Set())
+        productosPorCreado.get(p.creado)!.add(p.codproducto)
+      }
+      for (const r of filasNetoCero) {
+        const productos = productosPorCreado.get(r.creado)
+        if (!productos || productos.size <= 1) esParejaMismoProducto.add(r)
+      }
+    }
+    // true = de verdad no afecta el saldo de ESTE producto (reclasificación
+    // interna, o traslado/bloqueo — esos nunca cambian de producto).
+    const netoCeroProducto = (r: any) => esCodigoTrasladoNetoCero(r.cod_movimiento) && esParejaMismoProducto.has(r)
 
     // Saldo corrido — ÚNICO para todo el producto, en un solo hilo
     // cronológico (ya NO se fragmenta por lote/ubicación). Un lote o un
@@ -2578,16 +2610,17 @@ export async function getMovimientosProducto(
     // tiene historia previa a ese mes: su propia primera fila YA es su
     // origen, forzar el valor de la ancla ahí duplicaría el saldo en vez de
     // solo confirmarlo), y también cuando no hay ninguna ancla física.
-    // Traslado/reclasificación (309/311/312/344/343): ninguna de las dos
-    // mitades del par debe mover el saldo corrido — antes SÍ se restaba en
-    // la fila de Salida y se volvía a sumar en la de Entrada (incluso
-    // ocultando la cantidad en las columnas de Ingreso/Salida, el saldo
-    // corrido seguía "bajando y subiendo" con cada movimiento). Se excluyen
-    // igual que ya se excluye una entrada contada en el ancla física
-    // (`yaContadaEnAncla`).
-    const netoCero = (r: any) => esCodigoTrasladoNetoCero(r.cod_movimiento)
+    // Traslado/reclasificación INTERNA del mismo producto (309/311/312/344/343):
+    // ninguna de las dos mitades del par debe mover el saldo corrido — antes
+    // SÍ se restaba en la fila de Salida y se volvía a sumar en la de
+    // Entrada (incluso ocultando la cantidad en las columnas de
+    // Ingreso/Salida, el saldo corrido seguía "bajando y subiendo" con cada
+    // movimiento). Se excluyen igual que ya se excluye una entrada contada
+    // en el ancla física (`yaContadaEnAncla`). Un 309 que reclasificó hacia
+    // OTRO producto (`netoCeroProducto` es false en ese caso) SÍ cuenta
+    // normal, porque para este producto específico es un ingreso/salida real.
     const sumaDeltas = cronologico.reduce((s: number, r: any) => {
-      if (!aprobado(r) || yaContadaEnAncla(r) || netoCero(r)) return s
+      if (!aprobado(r) || yaContadaEnAncla(r) || netoCeroProducto(r)) return s
       const c = Math.abs(Number(r.cantidad) || 0)
       return s + (r.tipomov === "Entrada" ? c : -c)
     }, 0)
@@ -2599,7 +2632,7 @@ export async function getMovimientosProducto(
     for (let i = 0; i < cronologico.length; i++) {
       const r = cronologico[i]
       const antes = saldoAcumulado
-      if (aprobado(r) && !yaContadaEnAncla(r) && !netoCero(r)) {
+      if (aprobado(r) && !yaContadaEnAncla(r) && !netoCeroProducto(r)) {
         const c = Math.abs(Number(r.cantidad) || 0)
         saldoAcumulado += r.tipomov === "Entrada" ? c : -c
       }
@@ -2717,6 +2750,32 @@ export async function getMovimientosProducto(
   }
 }
 
+// 309 puede reclasificar hacia OTRO producto (no solo lote/ubicación) — en
+// ese caso, para CADA producto por separado SÍ es un ingreso/salida real,
+// aunque el sistema en conjunto quede neto 0 (verificado con datos reales:
+// 3 casos en la historia, ej. PT000080 recibiendo 212 que en realidad
+// salieron de PT000021). Solo es seguro tratar 309/311/312/344/343 como
+// neto-cero para UN producto cuando su pareja (misma idempresa+creado — se
+// insertan juntas en el mismo insert) es el MISMO codproducto. Reutilizada
+// por getKardexInventario y getConciliacionMensualInventario, que ya traen
+// todas las filas (de cualquier producto) en un solo array.
+function construirEsNetoCeroMismoProducto(
+  filas: { idempresa: any; creado: any; cod_movimiento: any; codproducto: any }[],
+): (r: any) => boolean {
+  const grupos = new Map<string, Set<string>>()
+  for (const r of filas) {
+    if (!esCodigoTrasladoNetoCero(r.cod_movimiento)) continue
+    const key = `${r.idempresa}|${r.creado}`
+    if (!grupos.has(key)) grupos.set(key, new Set())
+    grupos.get(key)!.add(String(r.codproducto))
+  }
+  return (r: any) => {
+    if (!esCodigoTrasladoNetoCero(r.cod_movimiento)) return false
+    const key = `${r.idempresa}|${r.creado}`
+    return (grupos.get(key)?.size ?? 0) <= 1
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Kardex / Inventario Detalle: movimiento total de cada producto (ingreso→salida).
 // Movimiento total por producto (ingreso → salida), agregado por código.
@@ -2739,7 +2798,7 @@ export async function getKardexInventario(
     while (true) {
       const { data, error } = await supabase
         .from("invtrans")
-        .select("codproducto,nombreproducto,tipomov,origen,cantidad,creado,cod_movimiento")
+        .select("idempresa,codproducto,nombreproducto,tipomov,origen,cantidad,creado,cod_movimiento")
         .in("idempresa", clientes)
         .order("id", { ascending: true }) // paginación determinista
         .range(from, from + 999)
@@ -2749,6 +2808,7 @@ export async function getKardexInventario(
       from += 1000
       if (from > 60000) break
     }
+    const esNetoCeroMismoProducto = construirEsNetoCeroMismoProducto(inv)
 
     // Saldo actual por producto (saldoinvdetalle)
     const saldos: Record<string, number> = {}
@@ -2771,8 +2831,11 @@ export async function getKardexInventario(
       if (r.nombreproducto && !map[cod].producto) map[cod].producto = r.nombreproducto
       // Prioriza el código real (309/311/312/344/343 = pareja neta 0, NO es
       // un ajuste real) sobre el heurístico de texto — ver
-      // esCodigoTrasladoNetoCero en lib/transacciones-codigo.ts.
-      if (esCodigoTrasladoNetoCero(r.cod_movimiento)) map[cod].traslados += c
+      // esCodigoTrasladoNetoCero en lib/transacciones-codigo.ts. Un 309 que
+      // reclasificó hacia OTRO producto (esNetoCeroMismoProducto = false)
+      // sí es un ingreso/salida real para ESTE producto — cae al bucket de
+      // "ajustes" más abajo, no a "traslados".
+      if (esNetoCeroMismoProducto(r)) map[cod].traslados += c
       else if (r.tipomov === "Reproceso" || has(r.origen, "reproceso")) map[cod].merma += c
       else if (has(r.origen, "traslado entre localizaciones")) map[cod].traslados += c
       else if (r.tipomov === "Entrada" && (has(r.origen, "producc") || has(r.origen, "aprob") || has(r.origen, "descarg") || has(r.origen, "logo"))) map[cod].entradas += c
@@ -4265,7 +4328,7 @@ export async function getConciliacionMensualInventario(
     while (true) {
       const { data, error } = await supabase
         .from("invtrans")
-        .select("idproducto, nombreproducto, codproducto, lote, tipomov, origen, cantidad, creado, ocargue, ordentolva, cod_movimiento, status, location")
+        .select("idempresa, idproducto, nombreproducto, codproducto, lote, tipomov, origen, cantidad, creado, ocargue, ordentolva, cod_movimiento, status, location")
         .in("idempresa", clientes)
         .order("id", { ascending: true }) // paginación determinista: sin ORDER BY, .range() salta/duplica filas — causa REAL de los "ajustes irreales" (confirmado 2026-08-08: marzo ID1 contaba 48.675 de cargue cuando lo real es 90.480)
         .range(from, from + 999)
@@ -4275,6 +4338,7 @@ export async function getConciliacionMensualInventario(
       from += 1000
       if (from > 100000) break
     }
+    const esNetoCeroMismoProducto = construirEsNetoCeroMismoProducto(inv)
 
     // Saldo VIVO por (producto, lote) — es la VERDAD física (lo confirma el conteo).
     const saldosRows: any[] = []
@@ -4355,12 +4419,16 @@ export async function getConciliacionMensualInventario(
       // 309 (reclasificación de lote/producto/ubicación), 311 (traslado),
       // 312 (reverso de traslado), 344/343 (bloqueo/desbloqueo a cuarentena):
       // parejas salida+entrada neto 0, no participan de este balance mensual
-      // (producción/cargue/devolución/merma/ajuste). Antes solo se excluía
-      // 311 por texto ("traslado entre localizaciones") — el resto, creado
-      // por "Transacciones por Código" con origen="transaccion manual", caía
-      // al catch-all de `esDev` de abajo y se contaba como una devolución
-      // fantasma (verificado con datos reales: ID3, PT FIDEO 250*24PQ).
-      if (esCodigoTrasladoNetoCero(r.cod_movimiento) || has(r.origen, "traslado entre localizaciones")) continue // neto 0
+      // (producción/cargue/devolución/merma/ajuste) — SOLO cuando la pareja
+      // es del MISMO producto (`esNetoCeroMismoProducto`). Antes solo se
+      // excluía 311 por texto ("traslado entre localizaciones") — el resto,
+      // creado por "Transacciones por Código" con origen="transaccion
+      // manual", caía al catch-all de `esDev` de abajo y se contaba como una
+      // devolución fantasma (verificado con datos reales: ID3, PT FIDEO
+      // 250*24PQ). Un 309 que reclasificó hacia OTRO producto SÍ debe seguir
+      // (no hace `continue`): para ESE producto es un ingreso/salida real
+      // (ver `esReclasificacionCrossProducto` más abajo).
+      if (esNetoCeroMismoProducto(r) || has(r.origen, "traslado entre localizaciones")) continue // neto 0
       if (r.ordentolva || has(r.ocargue, "tolva") || has(r.ocargue, "proyec") || has(r.origen, "tolva") || has(r.origen, "proyec")) continue
       const mk = mesDe(r.ocargue, r.creado)
       if (!mk) continue
@@ -4388,7 +4456,11 @@ export async function getConciliacionMensualInventario(
       // devolución). Ahora solo 653 (su código explícito) y el retorno de
       // reproceso cuentan como devolución.
       const esDev = r.cod_movimiento === "653" || esIngRepro || has(r.origen, "devoluc")
-      const esAjuste = r.cod_movimiento === "701" || r.cod_movimiento === "702"
+      // Reclasificación 309 hacia OTRO producto (llegó hasta acá porque no
+      // se saltó arriba): para ESTE producto es un ingreso/salida real —
+      // entra al mismo bucket que 701/702 (con signo, más abajo).
+      const esReclasificacionCrossProducto = esCodigoTrasladoNetoCero(r.cod_movimiento) && !esNetoCeroMismoProducto(r)
+      const esAjuste = r.cod_movimiento === "701" || r.cod_movimiento === "702" || esReclasificacionCrossProducto
       if (esCargue) a.cargue += c
       else if (esMerma) a.merma += c
       else if (esProd) a.produccion += c
