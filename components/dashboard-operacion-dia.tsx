@@ -173,6 +173,18 @@ export default function DashboardOperacionDia() {
   }
 
   /**
+   * Duracion en minutos -> "1h 05m" o "45m". Una duracion no se lee igual que
+   * una hora del dia: "01:05" en la columna de paro se confundiria con la una
+   * de la manana.
+   */
+  const formatDuracion = (minutos: number | null | undefined) => {
+    const m = Math.max(0, Math.round(Number(minutos) || 0))
+    if (m === 0) return "-"
+    const h = Math.floor(m / 60)
+    return h > 0 ? `${h}h ${String(m % 60).padStart(2, "0")}m` : `${m}m`
+  }
+
+  /**
    * Agrupa las ordenes por la hora declarada en `horalote` (H.Lote) y
    * suma las toneladas programadas (`pesoorden`) en cada bucket
    * horario, restringiendo el rango a la jornada operativa 06:00 - 18:00
@@ -458,6 +470,12 @@ export default function DashboardOperacionDia() {
                     <TableHead className="text-[10px] font-semibold text-slate-700 whitespace-nowrap py-1 px-1">
                       T.Proc
                     </TableHead>
+                    <TableHead
+                      className="text-[10px] font-semibold text-slate-700 whitespace-nowrap py-1 px-1"
+                      title="Tiempo total que la orden estuvo pausada, sumando todas sus pausas"
+                    >
+                      T.Paro
+                    </TableHead>
                     <TableHead className="text-[10px] font-semibold text-slate-700 whitespace-nowrap py-1 px-1">
                       Estado
                     </TableHead>
@@ -466,7 +484,7 @@ export default function DashboardOperacionDia() {
                 <TableBody>
                   {dashboardData.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={15} className="text-center py-4 text-sm text-slate-500">
+                      <TableCell colSpan={16} className="text-center py-4 text-sm text-slate-500">
                         No hay datos disponibles
                       </TableCell>
                     </TableRow>
@@ -512,6 +530,32 @@ export default function DashboardOperacionDia() {
                         </TableCell>
                         <TableCell className="text-[10px] whitespace-nowrap py-1 px-1">
                           {row.tiempo_en_proceso || "-"}
+                        </TableCell>
+                        {/* Tiempo de paro: suma de todas las pausas de la orden.
+                            Se resalta cuando hubo paro para que salte a la vista,
+                            y se avisa si quedo una pausa sin cerrar, porque en
+                            ese caso el total esta incompleto. */}
+                        <TableCell className="text-[10px] whitespace-nowrap py-1 px-1">
+                          {row.tiempo_paro_min > 0 || row.paro_abierto ? (
+                            <span
+                              className={`inline-flex items-center gap-1 font-medium ${
+                                row.paro_abierto ? "text-red-600" : "text-amber-700"
+                              }`}
+                              title={
+                                row.paro_abierto
+                                  ? `${row.paros} pausa(s); una sigue abierta, el total puede crecer`
+                                  : `${row.paros} pausa(s)`
+                              }
+                            >
+                              {formatDuracion(row.tiempo_paro_min)}
+                              {row.paros > 1 && (
+                                <span className="text-[9px] text-slate-500">({row.paros})</span>
+                              )}
+                              {row.paro_abierto && <span className="text-[9px]">•</span>}
+                            </span>
+                          ) : (
+                            "-"
+                          )}
                         </TableCell>
                         <TableCell className="whitespace-nowrap py-1 px-1">
                           <span

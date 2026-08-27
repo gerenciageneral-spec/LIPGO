@@ -31,6 +31,17 @@ export interface DashboardOperacionesData {
   pesajefinal: string | null
   tiempo_en_proceso: string | null
   estado: string | null
+  /** Minutos que la orden estuvo pausada. 0 si nunca se pauso. */
+  tiempo_paro_min: number
+  /** Cuantas pausas tuvo la orden. */
+  paros: number
+  /**
+   * Hay una pausa ABIERTA (sin hora de fin). Si es de hoy, los minutos de
+   * arriba ya incluyen lo que lleva corriendo; si es de un dia pasado NO se
+   * suma -- seria una pausa que nadie cerro, no tiempo real de paro -- y esta
+   * bandera avisa que el total esta incompleto.
+   */
+  paro_abierto: boolean
 }
 
 export interface DashboardOperacionesStats {
@@ -212,6 +223,102 @@ function extractIsoDate(value: string | null | undefined): string | null {
   return m ? m[1] : null
 }
 
+/** "HH:MM:SS" o "HH:MM" -> minutos desde medianoche. null si no parsea. */
+function horaAMinutos(t: string | null | undefined): number | null {
+  const m = String(t ?? "").match(/^(\d{1,2}):(\d{2})/)
+  if (!m) return null
+  const h = Number(m[1])
+  const min = Number(m[2])
+  if (h < 0 || h > 23 || min < 0 || min > 59) return null
+  return h * 60 + min
+}
+
+/**
+ * Minutos entre dos horas del dia. `pausas` guarda HORA, no fecha y hora, asi
+ * que una pausa que cruza la medianoche llega con el fin ANTES del inicio
+ * (23:50 -> 00:20). En ese caso se le suman 24 h; si no, saldria negativa y
+ * restaria del total en vez de sumar.
+ */
+function minutosEntreHoras(inicio: string | null, fin: string | null): number | null {
+  const a = horaAMinutos(inicio)
+  const b = horaAMinutos(fin)
+  if (a == null || b == null) return null
+  const d = b - a
+  return d >= 0 ? d : d + 24 * 60
+}
+
+export interface ParoDeOrden {
+  minutos: number
+  paros: number
+  abierto: boolean
+}
+
+/**
+ * Tiempo total de paro por orden, desde la tabla `pausas`.
+ *
+ * Una pausa esta abierta mientras `fin` sea null -- mismo criterio que usan
+ * `pausarOrden` y `reanudarOrden` en lib/picking-actions.ts. NO se mira la
+ * columna generada `activo`.
+ *
+ * La pausa abierta solo se cuenta cuando la orden es de HOY: ahi el paro sigue
+ * corriendo de verdad. En un dia pasado, una pausa sin cerrar es alguien que se
+ * olvido de reanudar, y contarla hasta "ahora" daria cifras absurdas (dias de
+ * paro); se deja fuera del total y se marca la fila como incompleta.
+ *
+ * Si la consulta falla no se rompe el tablero: todas las ordenes salen en 0.
+ */
+async function getParoPorOrden(
+  supabase: any,
+  ordenes: string[],
+  esHoy: boolean,
+): Promise<Map<string, ParoDeOrden>> {
+  const mapa = new Map<string, ParoDeOrden>()
+  if (ordenes.length === 0) return mapa
+
+  const { data, error } = await supabase
+    .from("pausas")
+    .select("ordendecargue, inicio, fin")
+    .in("ordendecargue", ordenes)
+
+  if (error) {
+    console.error("[v0] Error leyendo pausas:", error.message, error.code, error.details, error.hint)
+    return mapa
+  }
+
+  const ahora = esHoy ? horaAMinutos(getColombiaTimeSync()) : null
+
+  for (const p of data ?? []) {
+    const orden = String(p.ordendecargue ?? "")
+    if (!orden) continue
+    const cur = mapa.get(orden) ?? { minutos: 0, paros: 0, abierto: false }
+    cur.paros += 1
+
+    if (p.fin) {
+      const d = minutosEntreHoras(p.inicio, p.fin)
+      if (d != null) cur.minutos += d
+    } else {
+      cur.abierto = true
+      if (ahora != null) {
+        const ini = horaAMinutos(p.inicio)
+        if (ini != null) cur.minutos += ahora >= ini ? ahora - ini : ahora + 24 * 60 - ini
+      }
+    }
+    mapa.set(orden, cur)
+  }
+  return mapa
+}
+
+/** Hora de pared de Colombia "HH:MM:SS", sin ir al servidor de fecha. */
+function getColombiaTimeSync(): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "America/Bogota",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(new Date())
+}
+
 /** Campos que el dashboard necesita de la vista. Compartido entre la consulta
  *  del día y la de los descargues pendientes, para que no puedan divergir. */
 const CAMPOS_OPERACIONES =
@@ -361,7 +468,21 @@ export async function getDashboardOperacionesData(
       }
     }
 
-    return { success: true, data: filtered as DashboardOperacionesData[] }
+    // TIEMPO DE PARO. Las pausas viven en su propia tabla (`pausas`), no en la
+    // vista, asi que se resuelven aparte y se pegan por numero de orden.
+    const paroPorOrden = await getParoPorOrden(
+      supabase,
+      Array.from(new Set(filtered.map((r: any) => r.ordendecargue).filter(Boolean))) as string[],
+      fechaFiltro === getColombiaDate(),
+    )
+    for (const r of filtered as any[]) {
+      const paro = paroPorOrden.get(String(r.ordendecargue ?? ""))
+      r.tiempo_paro_min = paro?.minutos ?? 0
+      r.paros = paro?.paros ?? 0
+      r.paro_abierto = paro?.abierto ?? false
+    }
+
+    return { success: true, data: filtered as unknown as DashboardOperacionesData[] }
   } catch (error) {
     console.error("[v0] Error in getDashboardOperacionesData:", error)
     return { success: false, error: "Error al cargar datos del dashboard", data: [] }
