@@ -45,6 +45,18 @@ function esDistribucionNoFacturable(o: PendingLoadOrder): boolean {
   return o.tipooperacion === "Distribucion" && o.facturar === false
 }
 
+// Clon de Distribución automática ("+D", ver generarDistribucionAutomatica en
+// lib/orders-actions.tsx): es el MISMO vehículo/orden que su madre de Cargue,
+// ya excluida de Centro de Coordinación (único lugar donde se elige tipo de
+// pago) — no tiene forma de que le asignen el suyo propio. La ruta de cierre
+// (app/api/upload-picking-photos/route.ts) hereda el tipo de pago de la madre
+// automáticamente, así que acá no se exige: bloquear el botón esperando un
+// tipo_pago que el clon nunca va a tener dejaba la orden trabada sin poder
+// cerrarse en Packing.
+function esClonDistribucion(o: PendingLoadOrder): boolean {
+  return o.tipooperacion === "Distribucion" && String(o.ordendecargue || "").endsWith("D")
+}
+
 export function Packing() {
   const { toast } = useToast()
   const { profile, selectedEmpresaId } = useAuth()
@@ -702,7 +714,8 @@ export function Packing() {
                             // DISTRIBUCIÓN ("…D") marcada "no facturar" no lleva auxiliares
                             // ni necesita tipo de pago, así que se puede cerrar directo.
                             disabled={
-                              !esDistribucionNoFacturable(order) && (!order.auxiliares || !order.tipo_pago)
+                              !esDistribucionNoFacturable(order) &&
+                              (!order.auxiliares || (!order.tipo_pago && !esClonDistribucion(order)))
                             }
                             size="sm"
                             variant="outline"
@@ -742,7 +755,7 @@ export function Packing() {
                         {/* El tipo de pago (Global/Individual) lo elige el
                             coordinador en Centro de Coordinación, no aquí —
                             Packing solo respeta el bloqueo si aún no se eligió. */}
-                        {!esDistribucionNoFacturable(order) && order.auxiliares && !order.tipo_pago && (
+                        {!esDistribucionNoFacturable(order) && order.auxiliares && !order.tipo_pago && !esClonDistribucion(order) && (
                           <div className="mt-1 text-[10px] font-medium text-rose-600">
                             ⚠ Falta elegir tipo de pago en Centro de Coordinación
                           </div>

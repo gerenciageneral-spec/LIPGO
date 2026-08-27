@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
       const orderIdNum = Number.parseInt(orderId)
       const { data: orderRow, error: orderErr } = await supabaseAdmin
         .from("cabeceraoc")
-        .select("idempresa, fechacargue, tipooperacion, facturar, tipo_pago")
+        .select("idempresa, fechacargue, tipooperacion, facturar, tipo_pago, ordendecargue")
         .eq("id", orderIdNum)
         .single()
       if (orderErr || !orderRow) {
@@ -66,15 +66,36 @@ export async function POST(request: NextRequest) {
       // tipo de pago (no hay tonelaje que repartir).
       const exentoPorNoFacturable = orderRow.tipooperacion === "Distribucion" && orderRow.facturar === false
 
+      // Un clon de Distribución automática ("+D", ver generarDistribucionAutomatica
+      // en lib/orders-actions.tsx) es el MISMO vehículo/orden que su madre de
+      // Cargue — desde que se excluyó de la asignación de muelle en Centro de
+      // Coordinación (único lugar donde se elige tipo_pago), el clon ya no
+      // tiene forma de elegir el suyo propio y quedaba trabado sin poder
+      // cerrarse en Packing. Hereda el de la madre en vez de exigir uno nuevo.
+      let tipoPagoEfectivo = orderRow.tipo_pago
+      const esClonDistribucion = orderRow.tipooperacion === "Distribucion" && /D$/.test(String(orderRow.ordendecargue || ""))
+      if (esClonDistribucion && tipoPagoEfectivo !== "global" && tipoPagoEfectivo !== "individual") {
+        const codigoMadre = String(orderRow.ordendecargue).slice(0, -1)
+        const { data: madre } = await supabaseAdmin
+          .from("cabeceraoc")
+          .select("tipo_pago")
+          .eq("idempresa", orderRow.idempresa)
+          .eq("ordendecargue", codigoMadre)
+          .maybeSingle()
+        if (madre?.tipo_pago === "global" || madre?.tipo_pago === "individual") {
+          tipoPagoEfectivo = madre.tipo_pago
+        }
+      }
+
       let auxiliaresOverride: string | undefined
       if (!exentoPorNoFacturable) {
-        if (orderRow.tipo_pago !== "global" && orderRow.tipo_pago !== "individual") {
+        if (tipoPagoEfectivo !== "global" && tipoPagoEfectivo !== "individual") {
           return NextResponse.json(
             { success: false, error: "Debe elegir Pago Global o Individual antes de cerrar la orden" },
             { status: 400 },
           )
         }
-        if (orderRow.tipo_pago === "global") {
+        if (tipoPagoEfectivo === "global") {
           const roster = await computarRosterPagoGlobal(orderRow.idempresa, orderRow.fechacargue)
           if (roster.length === 0) {
             // Fail-CLOSED a propósito: sobrescribir con vacío perdería el
@@ -101,6 +122,9 @@ export async function POST(request: NextRequest) {
           fotospicking: JSON.stringify(urls),
           fincargue,
           ...(auxiliaresOverride !== undefined ? { auxiliares: auxiliaresOverride } : {}),
+          // Deja trazado en el propio clon el tipo de pago heredado de la
+          // madre (antes quedaba null aunque la orden ya cerrara con ese modo).
+          ...(esClonDistribucion && tipoPagoEfectivo !== orderRow.tipo_pago ? { tipo_pago: tipoPagoEfectivo } : {}),
         })
         .eq("id", orderIdNum)
 
