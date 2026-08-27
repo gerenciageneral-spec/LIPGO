@@ -1272,7 +1272,17 @@ const loadOrders = async () => {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
             <div className="flex items-center gap-4">
-              <Button variant="outline" size="sm" onClick={() => setShowPickingView(false)} className="gap-2">
+              {/* No se puede salir de la verificación por aquí: la única
+                  forma de cerrar esta pantalla es completar todas las
+                  líneas y presionar "Confirmar Picking" — evita dejar la
+                  orden a medio verificar sin darse cuenta. */}
+              <Button
+                variant="outline"
+                size="sm"
+                disabled
+                title="Debes verificar todas las líneas y presionar Confirmar Picking para salir"
+                className="gap-2"
+              >
                 <ArrowLeft className="h-4 w-4" />
                 Volver
               </Button>
@@ -1776,11 +1786,15 @@ const loadOrders = async () => {
                             size="sm"
                             variant="outline"
                             onClick={() => handleGeneratePDF(order)}
-                            disabled={generatingPDF === order.id || !!order.doccargue} // PDF ya generado
+                            // Si ya existe (por ejemplo, generado al asignar muelle en
+                            // Centro de Coordinación), NO se regenera — generatePickingPDF
+                            // ya detecta doccargue y devuelve el mismo PDF. El montacarguista
+                            // debe poder verlo sin restricción, por eso el botón sigue activo.
+                            disabled={generatingPDF === order.id}
                             className="gap-1 h-7 text-[10px] px-2"
                           >
                             <FileText className="h-3 w-3" />
-                            {generatingPDF === order.id ? "Generando..." : "Generar PDF"}
+                            {generatingPDF === order.id ? "Generando..." : order.doccargue ? "Ver PDF" : "Generar PDF"}
                           </Button>
                           <Button
                             size="sm"
@@ -1903,11 +1917,11 @@ const loadOrders = async () => {
                     size="sm"
                     variant="outline"
                     onClick={() => handleGeneratePDF(order)}
-                    disabled={generatingPDF === order.id || !!order.doccargue}
+                    disabled={generatingPDF === order.id}
                     className="text-xs h-9"
                   >
                     <FileText className="h-3 w-3 mr-1" />
-                    PDF
+                    {order.doccargue ? "Ver PDF" : "PDF"}
                   </Button>
                   <Button
                     size="sm"
