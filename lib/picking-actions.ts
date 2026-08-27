@@ -364,23 +364,35 @@ export async function getCarguDescarguePersonnel(empresaId?: number | null) {
     if (hr.success && hr.data) horarioTolvaHoy = hr.data
   }
 
-  // 6) Ya asignado en una orden ACTIVA (cualquier muelle sin cerrar): se
-  //    descuenta de disponibles hasta que esa orden cierre. Antes esto solo
-  //    aplicaba a pago 'individual' — porque en 'global' el coordinador
-  //    necesitaba poder teclear a la misma gente en varias órdenes para
-  //    forzar el reparto parejo. Eso ya no hace falta: en 'global' el
-  //    sistema calcula y escribe el roster solo, al cerrar (ver
-  //    computarRosterPagoGlobal) — la asignación manual en Centro de
+  // 6) Ya asignado en una orden ACTIVA de HOY (mismo muelle sin cerrar,
+  //    fechacargue = hoy): se descuenta de disponibles mientras dure ese
+  //    proceso. Antes esto solo aplicaba a pago 'individual' — porque en
+  //    'global' el coordinador necesitaba poder teclear a la misma gente en
+  //    varias órdenes para forzar el reparto parejo. Eso ya no hace falta:
+  //    en 'global' el sistema calcula y escribe el roster solo, al cerrar
+  //    (ver computarRosterPagoGlobal) — la asignación manual en Centro de
   //    Coordinación ahora es SIEMPRE la asignación real por muelle
   //    (trazabilidad), sin importar el modo de pago, así que debe
   //    comportarse igual en los dos modos: exclusiva mientras el muelle
   //    siga abierto.
+  //
+  //    Filtro por `fechacargue = hoy`: un vehículo puede no terminar hoy y
+  //    cerrar mañana (ej. una mula de descargue larga que cruza medianoche)
+  //    — eso puede pasar. Mientras esa orden siga con `fechacargue` de hoy
+  //    sigue bloqueando a su personal (está en pleno proceso). Pero si su
+  //    `fechacargue` ya no es hoy (quedó rezagada de un día anterior, o fue
+  //    programada para un día siguiente), no debe seguir consumiendo el HC
+  //    del día actual — ese personal ya tiene asistencia de HOY y debe
+  //    quedar disponible para asignarse a otro servicio de hoy. Caso real
+  //    detectado 2026-08-27, ID4: orden de descargue con fechacargue de
+  //    mañana dejaba sin candidatos a "Personal disponible" todo el día.
   const asignadosActivos = new Set<string>()
   if (finalEmpresaId) {
     const { data: activas } = await supabase
       .from("cabeceraoc")
       .select("auxiliares")
       .eq("idempresa", finalEmpresaId)
+      .eq("fechacargue", todayDate)
       .is("fincargue", null)
     for (const o of activas ?? []) {
       for (const n of String(o.auxiliares || "").split(",")) {
