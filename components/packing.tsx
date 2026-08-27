@@ -258,7 +258,11 @@ export function Packing() {
   }
 
   const handleConfirmAssignment = async () => {
-    if (!selectedOrder || selectedPersonnel.length === 0) {
+    if (!selectedOrder) return
+    // Un vehículo pausado no está descargando: su personal se puede
+    // reasignar por completo a otro servicio, sin dejar a nadie "reservado"
+    // acá. La exigencia de mínimo 1 solo aplica a una orden activa.
+    if (selectedPersonnel.length === 0 && !pausedOrders.has(selectedOrder.ordendecargue)) {
       toast({
         title: "Error",
         description: "Debe seleccionar al menos un empleado",
@@ -804,8 +808,15 @@ export function Packing() {
             <Button onClick={() => setPersonnelDialogOpen(false)} variant="outline">
               Cancelar
             </Button>
-            <Button onClick={handleConfirmAssignment} disabled={assigningPersonnel || selectedPersonnel.length === 0}>
-              {assigningPersonnel ? "Asignando..." : "Confirmar Asignación"}
+            <Button
+              onClick={handleConfirmAssignment}
+              disabled={assigningPersonnel || (selectedPersonnel.length === 0 && !(selectedOrder && pausedOrders.has(selectedOrder.ordendecargue)))}
+            >
+              {assigningPersonnel
+                ? "Asignando..."
+                : selectedPersonnel.length === 0
+                  ? "Quitar todo el personal"
+                  : "Confirmar Asignación"}
             </Button>
           </DialogFooter>
         </DialogContent>

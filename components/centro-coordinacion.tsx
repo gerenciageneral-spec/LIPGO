@@ -325,7 +325,11 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
   }
 
   const confirmarPersonal = async () => {
-    if (!personnelDialogOrder || selectedPersonnel.length === 0) {
+    if (!personnelDialogOrder) return
+    // Un vehículo pausado no está cargando: su personal se puede reasignar
+    // por completo a otro servicio, sin dejar a nadie "reservado" acá. La
+    // exigencia de mínimo 1 solo aplica a una orden activa (no pausada).
+    if (selectedPersonnel.length === 0 && !personnelDialogOrder.pausado) {
       toast({ title: "Error", description: "Debe seleccionar al menos un empleado", variant: "destructive" })
       return
     }
@@ -938,8 +942,16 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
             <Button variant="outline" onClick={() => setPersonnelDialogOrder(null)} disabled={assigningPersonnel} className="flex-1">
               Cancelar
             </Button>
-            <Button onClick={confirmarPersonal} disabled={assigningPersonnel || selectedPersonnel.length === 0} className="flex-1">
-              {assigningPersonnel ? "..." : `Asignar (${selectedPersonnel.length})`}
+            <Button
+              onClick={confirmarPersonal}
+              disabled={assigningPersonnel || (selectedPersonnel.length === 0 && !personnelDialogOrder?.pausado)}
+              className="flex-1"
+            >
+              {assigningPersonnel
+                ? "..."
+                : selectedPersonnel.length === 0
+                  ? "Quitar todo el personal"
+                  : `Asignar (${selectedPersonnel.length})`}
             </Button>
           </DialogFooter>
         </DialogContent>
