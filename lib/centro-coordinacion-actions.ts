@@ -14,6 +14,7 @@ import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getColombiaDateTime, getColombiaTime } from "@/lib/date-utils"
 import { pesoBaseCalculo, excluirAvimolDistribucion } from "@/lib/nomina-calculo-utils"
 import { getSlaCargueMin, esNombreSubproducto } from "@/lib/sla-acordados"
+import { esProductoPorUnidad } from "@/lib/facturacion-billed-party"
 import {
   TON_MES_CARGUE_DESCARGUE,
   DIAS_OPERACION_MES,
@@ -65,6 +66,14 @@ export interface OrdenOperativa {
   estado: "alistando" | "cargando" | "pausado"
   /** true = quedó abierta de un día anterior (no es del día consultado) — la orden sigue mostrándose hasta que cierre, pero se marca para que el coordinador entienda por qué aparece. */
   rezagada: boolean
+  /**
+   * true = Descargue de un producto que se factura POR UNIDAD (hoy: Huevos,
+   * ver esProductoPorUnidad), en ID2. Ese personal se paga aparte, no por
+   * destajo de esta orden — se puede concluir sin auxiliares ni tipo de
+   * pago, igual que ya pasa con Distribución sin facturar. Confirmado por
+   * el usuario 2026-08-28.
+   */
+  esDescargueHuevos: boolean
 }
 
 export interface MuelleSlot {
@@ -279,12 +288,38 @@ export async function getCentroCoordinacion(
     const clientePorOrden = new Map<number, string>()
     const lineasDetalleocPorOrden = new Map<number, number>()
     const esSubproductoPorOrden = new Set<number>()
+    // Huevos (y cualquier producto por unidad, ver esProductoPorUnidad): ese
+    // personal se paga aparte — la orden se puede concluir sin auxiliares ni
+    // tipo de pago. Se resuelve por subcategoría del producto (no por el
+    // nombre), consultando `productos` para los nombres que aparecieron en
+    // el detalle de las órdenes activas.
+    const esPorUnidadPorOrden = new Set<number>()
     if (orderIdsActivas.length > 0) {
       const { data: detalles } = await admin.from("detalleoc").select("idorden, cliente, producto").in("idorden", orderIdsActivas)
+      const productosPorOrdenTmp = new Map<number, Set<string>>()
       for (const d of detalles || []) {
         if (!clientePorOrden.has(d.idorden)) clientePorOrden.set(d.idorden, d.cliente || "Sin cliente")
         lineasDetalleocPorOrden.set(d.idorden, (lineasDetalleocPorOrden.get(d.idorden) || 0) + 1)
         if (esNombreSubproducto(d.producto)) esSubproductoPorOrden.add(d.idorden)
+        const prod = String(d.producto || "").trim()
+        if (prod) {
+          if (!productosPorOrdenTmp.has(d.idorden)) productosPorOrdenTmp.set(d.idorden, new Set())
+          productosPorOrdenTmp.get(d.idorden)!.add(prod)
+        }
+      }
+      const nombresProductos = Array.from(new Set(Array.from(productosPorOrdenTmp.values()).flatMap((s) => Array.from(s))))
+      if (nombresProductos.length > 0) {
+        const { data: prods } = await admin.from("productos").select("nombre, subcategoria").in("nombre", nombresProductos)
+        const subcategoriaPorNombre = new Map<string, string | null>()
+        for (const p of prods || []) subcategoriaPorNombre.set(String(p.nombre || "").trim(), p.subcategoria)
+        for (const [idorden, prodsOrden] of productosPorOrdenTmp) {
+          for (const prod of prodsOrden) {
+            if (esProductoPorUnidad(subcategoriaPorNombre.get(prod))) {
+              esPorUnidadPorOrden.add(idorden)
+              break
+            }
+          }
+        }
       }
     }
 
@@ -429,6 +464,7 @@ export async function getCentroCoordinacion(
         slaEnRiesgo,
         estado: pausado ? "pausado" : o.iniciocargue ? "cargando" : "alistando",
         rezagada: o.fechacargue !== fechaConsulta,
+        esDescargueHuevos: idempresa === 2 && tipo === "Descargue" && esPorUnidadPorOrden.has(o.id),
       }
     }
 

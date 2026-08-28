@@ -404,7 +404,12 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
     else toast({ title: "No se pudo cargar el parte de turno", description: r.message, variant: "destructive" })
   }
 
-  const puedeConcluirSinPersonal = (o: OrdenOperativa) => o.tipooperacion === "Distribucion" && o.facturar === false
+  // Distribución sin facturar (no se factura entrega, no hay tonelaje que
+  // repartir) o Descargue de Huevos en ID2 (ese personal se paga aparte,
+  // puesto "Cargue/Descargue Huevos"): ninguna de las dos exige auxiliares
+  // ni tipo de pago para poder concluirse. Confirmado 2026-08-28.
+  const puedeConcluirSinPersonal = (o: OrdenOperativa) =>
+    (o.tipooperacion === "Distribucion" && o.facturar === false) || o.esDescargueHuevos
 
   if (!selectedEmpresaId) {
     return (
