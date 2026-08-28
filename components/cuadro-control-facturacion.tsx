@@ -55,10 +55,10 @@ import { GESTION_LIPGO_DESDE } from "@/lib/facturacion-constantes"
 
 const money = (n: number) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO")
 const ton = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { maximumFractionDigits: 2 })
-// La columna de cantidad es una sola para toneladas, horas y turnos: la unidad
-// va al lado del número y SOLO las toneladas suman al tonelaje del documento.
-const uLabel = (u?: UnidadCobro) => (u === "h" ? "h" : u === "turno" ? "turnos" : "t")
-const esTon = (u?: UnidadCobro) => u !== "h" && u !== "turno"
+// La columna de cantidad es una sola para toneladas, horas, turnos y unidades:
+// la unidad va al lado del número y SOLO las toneladas suman al tonelaje del documento.
+const uLabel = (u?: UnidadCobro) => (u === "h" ? "h" : u === "turno" ? "turnos" : u === "u" ? "u" : "t")
+const esTon = (u?: UnidadCobro) => u !== "h" && u !== "turno" && u !== "u"
 
 // Semáforo de facturación (lo determina la FACTURA DE SIIGO):
 //   VERDE = por facturar (sin factura Siigo) · ROJO = ya facturado (tiene factura Siigo, NO recobrar).
@@ -1156,7 +1156,9 @@ export function CuadroControlFacturacion() {
                             <TableCell className="text-xs">{f.cliente ?? "-"}</TableCell>
                             <TableCell className="text-right text-xs tabular-nums">
                               {ton(f.toneladas)}
-                              <span className="ml-1 text-[9px] text-muted-foreground">{f.fuente_peso === "bascula" ? "bás" : "ord"}</span>
+                              <span className="ml-1 text-[9px] text-muted-foreground">
+                                {esTon(f.unidad) ? (f.fuente_peso === "bascula" ? "bás" : "ord") : uLabel(f.unidad)}
+                              </span>
                             </TableCell>
                             <TableCell className="text-right text-xs tabular-nums">
                               {f.sin_tarifa ? <span className="font-semibold text-red-600">sin tarifa</span> : money(f.tarifa || 0)}

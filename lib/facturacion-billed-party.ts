@@ -32,6 +32,19 @@
 
 const OPS_POR_TRANSPORTE_ID2 = new Set(["cargue", "descargue", "distribucion"])
 
+// Productos que se facturan por UNIDAD (cantidad digitada en la orden) en vez
+// de por tonelada/peso. Confirmado por el usuario 2026-08-27: "Huevos" en ID2
+// (Avimol), $2,95/unidad — es un servicio propio que LIPGO le cobra a Avimol,
+// no el reparto de costo de transporte que gobierna `OPS_POR_TRANSPORTE_ID2`
+// para Cargue/Descargue/Distribución por tonelada. Por eso se le exime de esa
+// regla y se factura SIEMPRE al owner del producto (Avimol), sin importar el
+// transporte que trajo la carga.
+const PRODUCTOS_POR_UNIDAD = new Set(["HUEVOS"])
+
+export function esProductoPorUnidad(subcategoria: string | null | undefined): boolean {
+  return PRODUCTOS_POR_UNIDAD.has(String(subcategoria ?? "").toUpperCase().trim())
+}
+
 export interface FacturadoA {
   /** A quién se factura esta línea (puede diferir del owner del producto). */
   owner: string
@@ -45,7 +58,9 @@ export function facturadoAOwner(
   ownerProducto: string,
   operacion: string | null,
   transporte: string | null,
+  subcategoria?: string | null,
 ): FacturadoA {
+  if (esProductoPorUnidad(subcategoria)) return { owner: ownerProducto, cubiertoPorFijo: false }
   if (idempresa !== 2) return { owner: ownerProducto, cubiertoPorFijo: false }
   const op = String(operacion ?? "").trim().toLowerCase()
   if (!OPS_POR_TRANSPORTE_ID2.has(op)) return { owner: ownerProducto, cubiertoPorFijo: false }

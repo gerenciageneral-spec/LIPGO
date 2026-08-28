@@ -27,16 +27,39 @@ import {
   type MedioPago,
 } from "@/lib/facturacion-medio-pago"
 import { cargueSoloPlacaPropia } from "@/lib/facturacion-cargue-propio"
-import { facturadoAOwner } from "@/lib/facturacion-billed-party"
+import { facturadoAOwner, esProductoPorUnidad } from "@/lib/facturacion-billed-party"
 
 export type CategoriaFactura = "facturado" | "en_proceso" | "sin_gestionar"
 
 /**
  * Unidad en la que se cobra una línea. La columna de cantidad del documento es
  * una sola, así que sin esto las horas y los turnos se sumarían al tonelaje.
- *   "t" = toneladas · "h" = horas extra · "turno" = personas-turno
+ *   "t" = toneladas · "h" = horas extra · "turno" = personas-turno · "u" = unidad
  */
-export type UnidadCobro = "t" | "h" | "turno"
+export type UnidadCobro = "t" | "h" | "turno" | "u"
+
+// Cantidad real (detalleoc.cantidad) de las líneas por UNIDAD (ver
+// esProductoPorUnidad) de un lote de órdenes. Se consulta aparte porque la
+// vista `facturacion` no expone `cantidad` en su salida — solo toneladas.
+// Clave `${numeroorden}|||${producto}` (un mismo número de orden puede traer
+// más de un producto).
+async function cantidadesPorUnidad(
+  sb: any,
+  pares: { numeroorden: string; producto: string | null }[],
+): Promise<Map<string, number>> {
+  const map = new Map<string, number>()
+  const numeros = [...new Set(pares.map((p) => p.numeroorden).filter(Boolean))]
+  if (!numeros.length) return map
+  for (let i = 0; i < numeros.length; i += 200) {
+    const chunk = numeros.slice(i, i + 200)
+    const { data } = await sb.from("detalleoc").select("numeroorden, producto, cantidad").in("numeroorden", chunk)
+    for (const d of data || []) {
+      const k = `${String(d.numeroorden || "").trim()}|||${String(d.producto || "").trim()}`
+      map.set(k, (map.get(k) || 0) + num(d.cantidad))
+    }
+  }
+  return map
+}
 
 // Determinante REAL de "¿se facturó?": existe la FACTURA DE SIIGO (`facturasiigo`).
 // Sin factura Siigo → NO facturado (verde), aunque el estado sea "Factura solicitada"
@@ -66,7 +89,7 @@ export interface ControlFacturaFila {
   medioPagoEsperado: MedioPago | null
   /** El medio de pago registrado contradice la regla del transporte. */
   medioPagoInconsistente: boolean
-  toneladas: number // CANTIDAD facturable: peso báscula (id 1/2) o peso orden/detalle (id 3/4)
+  toneladas: number // CANTIDAD facturable: peso báscula (id 1/2), peso orden/detalle (id 3/4) o UNIDADES si `unidad` = "u"
   fuente_peso: "bascula" | "orden"
   tarifa: number | null
   valor_a_facturar: number // total = cantidad × tarifa
@@ -74,6 +97,9 @@ export interface ControlFacturaFila {
   estadofactura: string | null
   categoria: CategoriaFactura
   valorpago: number | null
+  /** Unidad de `toneladas`. "u" = producto que se cobra por unidad (ver
+   *  esProductoPorUnidad), no por peso — la báscula no le aplica. */
+  unidad: UnidadCobro
 }
 
 export interface ResumenOwner {
@@ -309,6 +335,8 @@ export interface PrefacturaLinea {
   valorServicio: number // toneladas × tarifaServicio (para que el soporte cuadre con el resumen)
   estadofactura: string | null
   categoria: CategoriaFactura // semáforo: sin_gestionar=por facturar · en_proceso · facturado
+  /** Unidad de `toneladas`/`valorServicio`. "u" = por unidad (ver esProductoPorUnidad). */
+  unidad: UnidadCobro
 }
 export interface PrefacturaResumen {
   owner: string
@@ -707,6 +735,10 @@ export async function getPrefactura(
       const { data, error } = await q.range(offset, offset + 999)
       if (error) return { success: false, message: error.message }
       if (!data || data.length === 0) break
+      const cantMap = await cantidadesPorUnidad(
+        sb,
+        data.filter((r: any) => esProductoPorUnidad(r.subcategoria)).map((r: any) => ({ numeroorden: r.numeroorden, producto: r.producto })),
+      )
       for (const r of data) {
         const on = String(r.numeroorden || "").trim()
         if (!procesadas.has(on)) continue
@@ -731,8 +763,14 @@ export async function getPrefactura(
         // (que es como está montada `tarifasoperacion`); la reasignación es de
         // destinatario, no de tarifa. Con `cubiertoPorFijo` el movimiento cuenta
         // en toneladas pero sale en 0 — igual que en el cuadro.
-        const fa = facturadoAOwner(idempresa, owner, r.tipooperacion, r.transporte)
+        const fa = facturadoAOwner(idempresa, owner, r.tipooperacion, r.transporte, r.subcategoria)
         const tarifaFacturada = fa.cubiertoPorFijo ? 0 : tServicio
+        // Huevos (y cualquier producto por unidad): se cobra la CANTIDAD digitada
+        // en la orden (detalleoc.cantidad), no el peso. La báscula no le aplica.
+        const porUnidad = esProductoPorUnidad(r.subcategoria)
+        const cantidadFacturable = porUnidad
+          ? cantMap.get(`${on}|||${String(r.producto || "").trim()}`) || 0
+          : num(r.toneladas)
         // Unifica Cargue+Distribución del vehículo propio con owner forzado (hoy
         // solo id4/LWY393) en un mismo grupo de resumen — se factura junto, a un
         // único cliente, con su propia tarifa. Otros cargues (ej. "cliente
@@ -762,7 +800,7 @@ export async function getPrefactura(
           placa: r.placa ?? null,
           producto: r.producto ?? null,
           pesobascula: num(r.pesobascula),
-          toneladas: num(r.toneladas),
+          toneladas: cantidadFacturable,
           owner: fa.owner,
           subcategoria: r.subcategoria ?? null,
           idempresa: Number(r.idempresa),
@@ -770,12 +808,16 @@ export async function getPrefactura(
           tipooperacion: r.tipooperacion ?? null,
           grupoResumen,
           tarifa: r.tarifa ?? null,
-          valor_a_facturar: num(r.valor_a_facturar),
+          // La vista SQL calcula valor_a_facturar = tarifa × toneladas (peso); para
+          // productos por unidad ese número no sirve, se recalcula aquí con la
+          // cantidad real.
+          valor_a_facturar: porUnidad ? cantidadFacturable * tServicio : num(r.valor_a_facturar),
           servicio,
           tarifaServicio: tarifaFacturada,
-          valorServicio: num(r.toneladas) * tarifaFacturada,
+          valorServicio: cantidadFacturable * tarifaFacturada,
           estadofactura,
           categoria: categoriaDeFactura(est?.facturasiigo, estadofactura),
+          unidad: porUnidad ? "u" : "t",
         }
         origen.push(linea)
       }
@@ -788,8 +830,9 @@ export async function getPrefactura(
     if (idempresa === 1 || idempresa === 2) {
       // Todas las líneas van en `origen`, incluidas las de Zamudio/Terceros: el
       // prorrateo por báscula tiene que verlas juntas o el reparto por owner no
-      // sumaría el peso del tiquete.
-      const todas = origen
+      // sumaría el peso del tiquete. Los productos por UNIDAD (Huevos) quedan
+      // fuera: su "toneladas" es cantidad, no peso, y la báscula no le aplica.
+      const todas = origen.filter((l) => l.unidad !== "u")
       const totalDetOrden = new Map<string, number>()
       for (const l of todas) totalDetOrden.set(l.numeroorden, (totalDetOrden.get(l.numeroorden) || 0) + l.toneladas)
       for (const l of todas) {
@@ -804,7 +847,7 @@ export async function getPrefactura(
     } else if (idempresa === 3 || idempresa === 4) {
       // CEDIS (sin báscula): SOLO el DESCARGUE se prorratea por el peso del tiquete
       // (pesovascula digitado del origen). Cargue/Distribución siguen con el detalle.
-      const esDesc = (l: any) => String(l.tipooperacion).trim().toLowerCase() === "descargue"
+      const esDesc = (l: PrefacturaLinea) => l.unidad !== "u" && String(l.tipooperacion).trim().toLowerCase() === "descargue"
       const totalDetOrden = new Map<string, number>()
       for (const l of origen) if (esDesc(l)) totalDetOrden.set(l.numeroorden, (totalDetOrden.get(l.numeroorden) || 0) + l.toneladas)
       for (const l of origen) {
@@ -826,14 +869,17 @@ export async function getPrefactura(
     let totalToneladas = 0
     for (const l of origen) {
       const op = l.grupoResumen
-      const k = `${l.owner}|||${op}`
+      // La unidad entra en la clave: un producto por UNIDAD (Huevos) nunca se
+      // mezcla con el tonelaje normal de la misma operación/owner, o el "valor
+      // / toneladas" del grupo (línea 901) saldría absurdo.
+      const k = `${l.owner}|||${op}|||${l.unidad}`
       const r =
         map.get(k) ||
         {
           owner: l.owner, operacion: op, toneladas: 0, tarifa: l.tarifaServicio, valor: 0,
           tonPorFacturar: 0, valorPorFacturar: 0, tonEnProceso: 0, valorEnProceso: 0,
           tonFacturado: 0, valorFacturado: 0,
-          fuente: "ordenes" as const, bloque: "operacion" as const, unidad: "t" as const,
+          fuente: "ordenes" as const, bloque: "operacion" as const, unidad: l.unidad,
         }
       // Valor POR LÍNEA (ya calculado con la tarifa del owner/operación real).
       const v = l.valorServicio
@@ -850,7 +896,7 @@ export async function getPrefactura(
         r.valorPorFacturar += v
       }
       map.set(k, r)
-      totalToneladas += l.toneladas
+      if (l.unidad === "t") totalToneladas += l.toneladas
     }
     let totalValor = 0
     for (const r of map.values()) {
@@ -1112,7 +1158,18 @@ export async function getControlFacturacion(
     }
 
     const key = (o: string, w: string) => `${o}|||${w}`
-    type Acc = { on: string; owner: string; op: string; tonDet: number; valorDet: number; sinTarifa: boolean; r: any }
+    type Acc = {
+      on: string
+      owner: string
+      op: string
+      tonDet: number
+      valorDet: number
+      sinTarifa: boolean
+      r: any
+      /** Huevos (y cualquier producto por unidad): cantidad real digitada (detalleoc.cantidad). */
+      cantidadDet: number
+      porUnidad: boolean
+    }
     const accMap = new Map<string, Acc>()
     // Denominador del prorrateo de báscula = Σ toneladas del detalle COMPLETO de la orden
     // (TODOS los owners), INDEPENDIENTE de los filtros de owner/placa/cliente. Si esos
@@ -1150,6 +1207,10 @@ export async function getControlFacturacion(
       ordenTotalDet.set(on, (ordenTotalDet.get(on) || 0) + num(r.toneladas))
     }
 
+    const cantMapControl = await cantidadesPorUnidad(
+      sb,
+      facturas.filter((r) => esProductoPorUnidad(r.subcategoria)).map((r) => ({ numeroorden: r.numeroorden, producto: r.producto })),
+    )
     for (const r of facturas) {
       const on = String(r.numeroorden || "").trim()
       if (!on || !procesadas.has(on)) continue
@@ -1160,21 +1221,30 @@ export async function getControlFacturacion(
       const ton = num(r.toneladas)
       const tarifa = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
       const sinTarifa = tarifa <= 0
+      // Huevos (y cualquier producto por unidad): se cobra la CANTIDAD digitada,
+      // no el peso. Ver esProductoPorUnidad.
+      const porUnidad = esProductoPorUnidad(r.subcategoria)
+      const cantidad = porUnidad ? cantMapControl.get(`${on}|||${String(r.producto || "").trim()}`) || 0 : 0
+      const valorLinea = (porUnidad ? cantidad : ton) * tarifa
       const k = key(on, owner)
       const a = accMap.get(k)
       if (a) {
         a.tonDet += ton
-        a.valorDet += ton * tarifa
+        a.cantidadDet += cantidad
+        a.valorDet += valorLinea
         a.sinTarifa = a.sinTarifa && sinTarifa
+        a.porUnidad = a.porUnidad || porUnidad
       } else {
-        accMap.set(k, { on, owner, op: r.tipooperacion || "", tonDet: ton, valorDet: ton * tarifa, sinTarifa, r })
+        accMap.set(k, { on, owner, op: r.tipooperacion || "", tonDet: ton, cantidadDet: cantidad, valorDet: valorLinea, sinTarifa, r, porUnidad })
       }
     }
 
     const filasMap = new Map<string, ControlFacturaFila>()
     for (const [k, a] of accMap) {
       const est = estadoPorOrden.get(a.on)
-      let toneladas = a.tonDet
+      // Huevos (y cualquier producto por unidad): "toneladas" es en realidad la
+      // cantidad digitada — la báscula no le aplica, se cobra tal cual.
+      let toneladas = a.porUnidad ? a.cantidadDet : a.tonDet
       let valor = a.valorDet
       let fuente: "bascula" | "orden" = "orden"
       // Plantas id1/2: SIEMPRE báscula. Cedis id3/4 (sin báscula): SOLO el DESCARGUE
@@ -1183,7 +1253,7 @@ export async function getControlFacturacion(
       // con el peso del detalle. Fallback: si no hay pesovascula (P<=0) usa el detalle.
       const esDescargueCedi =
         (idempresa === 3 || idempresa === 4) && String(a.op).trim().toLowerCase() === "descargue"
-      if (esBascula || esDescargueCedi) {
+      if (!a.porUnidad && (esBascula || esDescargueCedi)) {
         const totalDet = ordenTotalDet.get(a.on) || 0
         // Cedis: báscula del tiquete NORMALIZADA a toneladas (con guarda). Plantas: cruda.
         const P = esDescargueCedi
@@ -1199,8 +1269,9 @@ export async function getControlFacturacion(
       // Avimol (id2): Cargue/Descargue/Distribución con placa propia (transporte
       // AVIMOL) no se factura por tonelada — va cubierto por el fijo de 600
       // ton/mes; con transporte Zamudio/Terceros se factura a esa transportadora,
-      // no a Avimol. Ver lib/facturacion-billed-party.ts.
-      const fa = facturadoAOwner(idempresa, a.owner, a.op, a.r.transporte)
+      // no a Avimol. Ver lib/facturacion-billed-party.ts. Huevos queda exento de
+      // esta regla (siempre se factura a Avimol, sin importar el transporte).
+      const fa = facturadoAOwner(idempresa, a.owner, a.op, a.r.transporte, a.r.subcategoria)
       if (fa.cubiertoPorFijo) valor = 0
       // Filtro de OWNER sobre el owner YA RESUELTO (`fa.owner`), que es el que
       // se muestra en pantalla y el que alimenta el desplegable. Antes se
@@ -1237,6 +1308,7 @@ export async function getControlFacturacion(
         estadofactura: est?.estado ?? null,
         categoria: categoriaDeFactura(est?.facturasiigo, est?.estado),
         valorpago: est?.valorpago ?? null,
+        unidad: a.porUnidad ? "u" : "t",
       })
     }
 
@@ -1263,8 +1335,11 @@ export async function getControlFacturacion(
     const separaTransporte = proyectoConReglaMedioPago(idempresa)
     const transporteDe = (f: ControlFacturaFila) =>
       separaTransporte ? String(f.transporte ?? "").trim() || "(sin transporte)" : null
-    const grupoKey = (owner: string, op: string, tr: string | null) =>
-      tr === null ? `${owner}|||${op}` : `${owner}|||${op}|||${tr}`
+    // La unidad entra en la clave: un producto por UNIDAD (Huevos) nunca se
+    // mezcla con el tonelaje de la misma operación/owner/transporte, o el
+    // "toneladas" del grupo sumaría cantidad de unidades con peso real.
+    const grupoKey = (owner: string, op: string, tr: string | null, unidad: UnidadCobro) =>
+      (tr === null ? `${owner}|||${op}` : `${owner}|||${op}|||${tr}`) + `|||${unidad}`
     const ordenesInconsistentesPorGrupo = new Map<string, Set<string>>()
     for (const f of filas) {
       ordenesSet.add(f.numeroorden)
@@ -1273,11 +1348,11 @@ export async function getControlFacturacion(
       if (f.medioPagoInconsistente) ordenesMedioPago.add(f.numeroorden)
       const op = f.tipooperacion || "(sin operación)"
       const tr = transporteDe(f)
-      const gk = grupoKey(f.owner, op, tr)
+      const gk = grupoKey(f.owner, op, tr, f.unidad)
       const o = ownerMap.get(gk) || {
         owner: f.owner, operacion: op, ordenes: 0, toneladas: 0, valor_a_facturar: 0,
         val_facturado: 0, val_en_proceso: 0, val_sin_gestionar: 0,
-        bloque: "operacion" as const, unidad: "t" as const,
+        bloque: "operacion" as const, unidad: f.unidad,
         transporte: tr, medioPagoEsperado: f.medioPagoEsperado, ordenesInconsistentes: 0,
       }
       o.toneladas += f.toneladas
@@ -1291,7 +1366,7 @@ export async function getControlFacturacion(
         s.add(f.numeroorden)
         ordenesInconsistentesPorGrupo.set(gk, s)
       }
-      t.toneladas += f.toneladas
+      if (f.unidad === "t") t.toneladas += f.toneladas
       t.valor_a_facturar += f.valor_a_facturar
       if (f.categoria === "facturado") t.val_facturado += f.valor_a_facturar
       else if (f.categoria === "en_proceso") t.val_en_proceso += f.valor_a_facturar
@@ -1300,7 +1375,7 @@ export async function getControlFacturacion(
     // órdenes distintas por grupo
     const ordenesPorGrupo = new Map<string, Set<string>>()
     for (const f of filas) {
-      const gk = grupoKey(f.owner, f.tipooperacion || "(sin operación)", transporteDe(f))
+      const gk = grupoKey(f.owner, f.tipooperacion || "(sin operación)", transporteDe(f), f.unidad)
       const s = ordenesPorGrupo.get(gk) || new Set<string>()
       s.add(f.numeroorden)
       ordenesPorGrupo.set(gk, s)
@@ -1461,12 +1536,19 @@ export async function getValoresNetosOrden(
     // Líneas de la vista SOLO de esas órdenes.
     const valorAcc = new Map<string, number>()
     const totalDet = new Map<string, number>()
+    // Órdenes con al menos una línea por UNIDAD (Huevos): quedan fuera del
+    // prorrateo por báscula (su "toneladas" es cantidad, no peso).
+    const ordenesPorUnidad = new Set<string>()
     for (const chunk of chunks) {
       const { data } = await sb
         .from("facturacion")
-        .select("numeroorden, owner, subcategoria, toneladas, tipooperacion, transporte, placa, cliente")
+        .select("numeroorden, owner, subcategoria, producto, toneladas, tipooperacion, transporte, placa, cliente")
         .eq("idempresa", idempresa)
         .in("numeroorden", chunk)
+      const cantMap = await cantidadesPorUnidad(
+        sb,
+        (data || []).filter((r: any) => esProductoPorUnidad(r.subcategoria)).map((r: any) => ({ numeroorden: r.numeroorden, producto: r.producto })),
+      )
       for (const r of data || []) {
         const on = String(r.numeroorden || "").trim()
         const placa = String(r.placa ?? "").trim().toUpperCase()
@@ -1477,9 +1559,13 @@ export async function getValoresNetosOrden(
         const tarifa = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
         // Avimol (id2) placa propia: cubierto por el fijo, no se factura por
         // tonelada — pero SÍ cuenta en totalDet (denominador del prorrateo de
-        // báscula de la orden). Ver lib/facturacion-billed-party.ts.
-        const fa = facturadoAOwner(idempresa, owner, r.tipooperacion, r.transporte)
-        valorAcc.set(on, (valorAcc.get(on) || 0) + (fa.cubiertoPorFijo ? 0 : ton * tarifa))
+        // báscula de la orden). Ver lib/facturacion-billed-party.ts. Huevos
+        // queda exento (siempre se factura a Avimol, sin importar el transporte).
+        const fa = facturadoAOwner(idempresa, owner, r.tipooperacion, r.transporte, r.subcategoria)
+        const porUnidad = esProductoPorUnidad(r.subcategoria)
+        if (porUnidad) ordenesPorUnidad.add(on)
+        const cantidad = porUnidad ? cantMap.get(`${on}|||${String(r.producto || "").trim()}`) || 0 : 0
+        valorAcc.set(on, (valorAcc.get(on) || 0) + (fa.cubiertoPorFijo ? 0 : (porUnidad ? cantidad : ton) * tarifa))
         totalDet.set(on, (totalDet.get(on) || 0) + ton)
       }
     }
@@ -1488,7 +1574,7 @@ export async function getValoresNetosOrden(
     for (const [on, valor] of valorAcc) {
       let v = valor
       const esDescCedi = esCedi && tipoOrden.get(on) === "descargue"
-      if (esBascula || esDescCedi) {
+      if (!ordenesPorUnidad.has(on) && (esBascula || esDescCedi)) {
         const td = totalDet.get(on) || 0
         // Cedis descargue: báscula del tiquete normalizada a toneladas (con guarda).
         const P = esDescCedi ? basculaTiqueteDescargue(pesoV.get(on) || 0, td) : pesoV.get(on) || 0
