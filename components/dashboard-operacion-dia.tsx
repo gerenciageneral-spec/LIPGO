@@ -222,9 +222,12 @@ export default function DashboardOperacionDia() {
       if (!row.horalote) continue
       const h = Number.parseInt(row.horalote.slice(0, 2), 10)
       if (Number.isNaN(h) || h < HORA_INICIO || h > HORA_FIN) continue
-      const ton = row.pesoorden || 0
       const idx = h - HORA_INICIO
-      buckets[idx].toneladas += ton
+      // Huevos (y cualquier producto por unidad) no se mide en toneladas —
+      // su `pesoorden` es un valor nominal (cantidad × peso_unitkg) sin
+      // significado real de peso. Sigue contando como orden, solo no suma
+      // al tonelaje de la franja horaria. Confirmado 2026-08-28.
+      if (!row.es_por_unidad) buckets[idx].toneladas += row.pesoorden || 0
       buckets[idx].ordenes += 1
     }
 

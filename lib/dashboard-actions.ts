@@ -43,6 +43,14 @@ export interface DashboardOperacionesData {
    * bandera avisa que el total esta incompleto.
    */
   paro_abierto: boolean
+  /**
+   * true si el producto de esta orden se factura POR UNIDAD (hoy: Huevos,
+   * ver esProductoPorUnidad/codigosOrdenPorUnidad) — su `pesoorden` es un
+   * valor nominal sin significado real de peso. La orden sigue siendo una
+   * orden normal para cualquier otro fin; solo no debe sumarse a ningun
+   * total de TONELADAS (ver "Pico por hora" en dashboard-operacion-dia.tsx).
+   */
+  es_por_unidad: boolean
 }
 
 export interface DashboardOperacionesStats {
@@ -542,6 +550,17 @@ export async function getDashboardOperacionesData(
       r.tiempo_paro_min = paro?.minutos ?? 0
       r.paros = paro?.paros ?? 0
       r.paro_abierto = paro?.abierto ?? false
+    }
+
+    // Huevos (y cualquier producto por unidad): se marca la fila para que el
+    // "Pico por hora" del cliente (que suma `pesoorden` el mismo, no via
+    // stats) no lo cuente como toneladas. Ver getDashboardOperacionesStats.
+    const codigosPorUnidadTabla = await codigosOrdenPorUnidad(
+      supabase,
+      filtered.map((r: any) => r.ordendecargue),
+    )
+    for (const r of filtered as any[]) {
+      r.es_por_unidad = codigosPorUnidadTabla.has(String(r.ordendecargue ?? "").trim())
     }
 
     return { success: true, data: filtered as unknown as DashboardOperacionesData[] }
