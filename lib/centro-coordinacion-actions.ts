@@ -11,7 +11,7 @@
 
 import { createClient } from "@/lib/supabase-client"
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
-import { getColombiaDateTime } from "@/lib/date-utils"
+import { getColombiaDateTime, getColombiaTime } from "@/lib/date-utils"
 import { pesoBaseCalculo, excluirAvimolDistribucion } from "@/lib/nomina-calculo-utils"
 import { getSlaCargueMin, esNombreSubproducto } from "@/lib/sla-acordados"
 import {
@@ -717,6 +717,27 @@ export async function getParteDeTurno(
 // exactamente esto mismo hoy); acá solo se orquestan junto al muelle real.
 // ---------------------------------------------------------------------------
 
+/**
+ * Asigna una orden a un muelle y, con eso, ARRANCA EL RELOJ DE LA OPERACIÓN.
+ *
+ * Asignar el muelle es el momento real en que la operación empieza: el vehículo
+ * deja de esperar en patio y ocupa un puesto. Por eso aquí se escribe también
+ * `cabeceraoc.iniciocargue`. Antes solo se escribía al generar el PDF de
+ * Picking/Packing, así que entre que el vehículo tomaba el muelle y alguien
+ * generaba ese documento la orden figuraba como "alistando" y el SLA no corría
+ * — tiempo real de muelle que no quedaba medido en ninguna parte.
+ *
+ * NO SE PISA una hora ya existente. Si la orden ya venía con `iniciocargue`
+ * — porque el PDF se generó primero, o porque se la mueve de un muelle a otro —
+ * manda la primera hora. Reasignar de muelle no puede reiniciar el cronómetro:
+ * el SLA, el tiempo de cargue promedio y el estado de la orden se miden desde
+ * ahí, y volver a ponerlo en cero borraría el tiempo ya transcurrido.
+ *
+ * Aplica a los tres tipos de operación (Cargue, Descargue y Distribución):
+ * `iniciocargue` es el campo que ambos flujos —Picking y Packing— ya usan para
+ * marcar el inicio, y dejar uno solo de ellos fuera haría que un descargue en
+ * muelle quedara indefinidamente en "alistando".
+ */
 export async function asignarOrdenAMuelle(
   orderId: number,
   muelle: number,
@@ -725,7 +746,7 @@ export async function asignarOrdenAMuelle(
 
   const { data: orderRow, error: fetchErr } = await supabase
     .from("cabeceraoc")
-    .select("id, idempresa, muelle, fincargue")
+    .select("id, idempresa, muelle, fincargue, iniciocargue")
     .eq("id", orderId)
     .single()
   if (fetchErr || !orderRow) return { success: false, message: "No se encontró la orden" }
@@ -748,11 +769,28 @@ export async function asignarOrdenAMuelle(
     .maybeSingle()
   if (ocupante) return { success: false, message: `El muelle ${muelle} ya está ocupado` }
 
-  const { error } = await supabase.from("cabeceraoc").update({ muelle }).eq("id", orderId)
+  // El reloj arranca aquí, salvo que ya estuviera corriendo.
+  const cambios: { muelle: number; iniciocargue?: string } = { muelle }
+  let arrancoElReloj = false
+  if (!orderRow.iniciocargue) {
+    cambios.iniciocargue = await getColombiaTime()
+    arrancoElReloj = true
+  }
+
+  const { error } = await supabase.from("cabeceraoc").update(cambios).eq("id", orderId)
   if (error) return { success: false, message: error.message }
-  return { success: true, message: `Orden asignada al muelle ${muelle}` }
+  return {
+    success: true,
+    message: arrancoElReloj
+      ? `Orden asignada al muelle ${muelle} — inicio de cargue ${cambios.iniciocargue}`
+      : `Orden asignada al muelle ${muelle}`,
+  }
 }
 
+/**
+ * Libera el muelle. NO borra `iniciocargue`: la operación sí empezó, y borrar
+ * esa hora perdería un hecho que ya ocurrió y falsearía el tiempo de cargue.
+ */
 export async function liberarMuelle(orderId: number): Promise<{ success: boolean; message?: string }> {
   const supabase = await createClient()
   const { error } = await supabase.from("cabeceraoc").update({ muelle: null }).eq("id", orderId)

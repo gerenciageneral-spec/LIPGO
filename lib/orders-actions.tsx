@@ -3790,11 +3790,38 @@ export async function generarIngresoProduccionDesdeDescargue(supabase: any, orde
   }
 }
 
+/**
+ * Marca el inicio de la operación (`cabeceraoc.iniciocargue`).
+ *
+ * NO PISA una hora ya existente. Hoy hay tres caminos que pueden marcar el
+ * inicio —asignar el muelle en Centro de Coordinación, generar el PDF de
+ * Picking, y este, que dispara Packing— y el que llegue PRIMERO manda.
+ *
+ * Importa porque la asignación del muelle es la más temprana de las tres: es
+ * cuando el vehículo deja de esperar en patio y ocupa el puesto. Si Packing
+ * sobrescribiera esa hora, se perdería todo el tiempo que la orden llevaba en
+ * el muelle y el SLA y el tiempo de cargue promedio saldrían más cortos de lo
+ * real. `generatePickingPDF` ya aplicaba esta misma regla.
+ */
 export async function updateOrderInitioCargue(orderId: number) {
   const supabase = await createClient()
 
   try {
     console.log("[v0] updateOrderInitioCargue: Starting for order ID:", orderId)
+
+    const { data: ordenActual } = await supabase
+      .from("cabeceraoc")
+      .select("iniciocargue")
+      .eq("id", orderId)
+      .maybeSingle()
+
+    if (ordenActual?.iniciocargue) {
+      console.log(
+        "[v0] updateOrderInitioCargue: ya tenía iniciocargue, se conserva:",
+        ordenActual.iniciocargue,
+      )
+      return { success: true, message: "La hora de inicio ya estaba registrada" }
+    }
 
     // Get current time in Colombia
     const colombiaTime = await getColombiaTime()
