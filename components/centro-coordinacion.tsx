@@ -198,6 +198,9 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
   const [asignarDialogOrder, setAsignarDialogOrder] = useState<OrdenOperativa | null>(null)
   const [muelleElegido, setMuelleElegido] = useState<string>("")
   const [asignando, setAsignando] = useState(false)
+  // Desglose de la espera por lotes, orden por orden. Se abre al tocar la
+  // tarjeta: el promedio dice que hay un problema, pero no CUAL orden lo tiene.
+  const [verEsperaLotes, setVerEsperaLotes] = useState(false)
 
   // Asignar personal (mismo flujo que Picking/Packing).
   const [personnelDialogOrder, setPersonnelDialogOrder] = useState<OrdenOperativa | null>(null)
@@ -598,8 +601,11 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                   color, y un fondo neutro ahí se lee como dato secundario. El
                   punto de este indicador es que salte a la vista cuando la
                   espera se dispara. Verde <30 min · ámbar 30–59 · rojo ≥60. */}
-              <div
-                className={`rounded-lg border p-3 shadow-sm ${
+              <button
+                type="button"
+                onClick={() => setVerEsperaLotes(true)}
+                title="Ver el detalle orden por orden"
+                className={`rounded-lg border p-3 text-left shadow-sm transition-shadow hover:shadow-md ${
                   data.kpis.esperaLotesPromedioMin === null
                     ? "border-border bg-card"
                     : data.kpis.esperaLotesPromedioMin >= 60
@@ -669,8 +675,9 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                       <b className="tabular-nums text-foreground">{data.kpis.esperaLotesPeor.minutos} min</b>
                     </>
                   )}
+                  <span className="ml-1 opacity-70">· toca para ver</span>
                 </div>
-              </div>
+              </button>
               <div className="rounded-lg border border-[#0e3b3b] bg-[#0e3b3b] p-3 text-white">
                 <div className="text-[10px] font-semibold uppercase tracking-wide text-[#8fd3ce]">Proyección de cierre</div>
                 <div className="text-2xl font-extrabold tabular-nums text-[#21d4c8]">{data.kpis.proyeccionHoraFinCola || "—"}</div>
@@ -1055,6 +1062,107 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
       </Dialog>
 
       {/* Diálogo: asignar personal (mismo flujo real de Picking/Packing) */}
+      {/* Desglose de la espera por lotes. El promedio de la tarjeta dice que
+          hay un problema; esto dice en QUE orden esta. Las que siguen sin
+          lotes van primero: son las unicas sobre las que se puede hacer algo
+          ahora. */}
+      <Dialog open={verEsperaLotes} onOpenChange={setVerEsperaLotes}>
+        <DialogContent className="max-h-[85vh] max-w-3xl overflow-hidden">
+          <DialogHeader>
+            <DialogTitle className="text-base">Espera por asignación de lotes</DialogTitle>
+            <p className="text-xs text-muted-foreground">
+              Desde que se crea la orden de cargue hasta que se le asignan los lotes. Solo cargue:
+              descargue y distribución no pasan por asignación de lotes.
+            </p>
+          </DialogHeader>
+
+          {!data?.kpis.esperaLotesDetalle?.length ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              No hay órdenes de cargue hoy.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <div className="max-h-[60vh] overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-muted">
+                    <tr className="text-left text-[11px] text-muted-foreground">
+                      <th className="whitespace-nowrap px-2 py-1.5 font-semibold">Orden</th>
+                      <th className="whitespace-nowrap px-2 py-1.5 font-semibold">Cliente</th>
+                      <th className="whitespace-nowrap px-2 py-1.5 font-semibold">Placa</th>
+                      <th className="whitespace-nowrap px-2 py-1.5 text-center font-semibold">Creada</th>
+                      <th className="whitespace-nowrap px-2 py-1.5 text-center font-semibold">Lotes</th>
+                      <th className="whitespace-nowrap px-2 py-1.5 text-right font-semibold">Espera</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.kpis.esperaLotesDetalle.map((d, i) => {
+                      const pendiente = !d.horalote
+                      const min = pendiente ? d.esperandoMin : d.minutos
+                      const color =
+                        min === null
+                          ? "text-muted-foreground"
+                          : min >= 60
+                            ? "text-rose-700 dark:text-rose-300"
+                            : min >= 30
+                              ? "text-amber-700 dark:text-amber-300"
+                              : "text-emerald-700 dark:text-emerald-300"
+                      return (
+                        <tr
+                          key={d.ordendecargue + i}
+                          className={pendiente ? "bg-rose-50/60 dark:bg-rose-950/20" : i % 2 ? "bg-muted/40" : ""}
+                        >
+                          <td className="whitespace-nowrap px-2 py-1 font-mono text-xs">{d.ordendecargue}</td>
+                          <td className="max-w-[14rem] truncate px-2 py-1 text-xs" title={d.cliente}>
+                            {d.cliente}
+                          </td>
+                          <td className="whitespace-nowrap px-2 py-1 font-mono text-xs text-muted-foreground">
+                            {d.placa || "—"}
+                          </td>
+                          <td className="whitespace-nowrap px-2 py-1 text-center font-mono text-xs tabular-nums">
+                            {fmtHora(d.horaorden)}
+                          </td>
+                          <td className="whitespace-nowrap px-2 py-1 text-center font-mono text-xs tabular-nums">
+                            {d.horalote ? (
+                              fmtHora(d.horalote)
+                            ) : (
+                              <span className="font-sans text-[11px] font-semibold text-rose-700 dark:text-rose-300">
+                                sin asignar
+                              </span>
+                            )}
+                          </td>
+                          <td className={`whitespace-nowrap px-2 py-1 text-right text-xs font-bold tabular-nums ${color}`}>
+                            {min === null ? "—" : fmtDuracion(min)}
+                            {pendiente && min !== null && (
+                              <span className="ml-1 font-normal text-[10px] opacity-80">y contando</span>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t pt-2 text-[11px] text-muted-foreground">
+            <span>
+              Promedio{" "}
+              <b className="tabular-nums text-foreground">
+                {data?.kpis.esperaLotesPromedioMin ?? "—"} min
+              </b>{" "}
+              sobre {data?.kpis.esperaLotesBaseOrdenes ?? 0} órdenes ya resueltas
+            </span>
+            {!!data?.kpis.esperaLotesPendientes && (
+              <span className="font-semibold text-rose-700 dark:text-rose-300">
+                {data.kpis.esperaLotesPendientes} todavía sin lotes
+              </span>
+            )}
+            <span className="ml-auto">verde &lt;30 min · ámbar 30–59 · rojo ≥60</span>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!personnelDialogOrder} onOpenChange={(open) => !open && setPersonnelDialogOrder(null)}>
         <DialogContent className="max-w-md w-[95vw]">
           <DialogHeader>

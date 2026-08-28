@@ -126,6 +126,30 @@ export interface CentroCoordinacionKpis {
   esperaLotesPeor: { ordendecargue: string; minutos: number } | null
   /** Órdenes de cargue de hoy que AÚN no tienen lotes asignados. */
   esperaLotesPendientes: number
+  /**
+   * El detalle orden por orden, para el desglose que se abre al tocar la
+   * tarjeta. Viene con los KPIs y no en una consulta aparte porque las órdenes
+   * del día ya están cargadas: pedirlas de nuevo seria una ida al servidor por
+   * datos que ya están en memoria.
+   *
+   * `minutos` es null cuando la orden todavia NO tiene lotes; en ese caso
+   * `esperandoMin` dice cuanto lleva esperando hasta ahora. Son dos cosas
+   * distintas: una es una espera que ya termino, la otra sigue corriendo.
+   */
+  esperaLotesDetalle: EsperaLoteDetalle[]
+}
+
+export interface EsperaLoteDetalle {
+  ordendecargue: string
+  cliente: string
+  placa: string | null
+  horaorden: string | null
+  horalote: string | null
+  /** Minutos que espero, si ya tiene lotes. */
+  minutos: number | null
+  /** Minutos que lleva esperando, si todavia NO tiene lotes. */
+  esperandoMin: number | null
+  cerrada: boolean
 }
 
 export interface ColaPatioItem {
@@ -414,6 +438,38 @@ export async function getCentroCoordinacion(
         : null
     const esperaLotesPendientes = ordenesCargueHoy.filter((o: any) => !o.horalote && !o.fincargue).length
 
+    // Detalle orden por orden para el desglose de la tarjeta. Se ordena por la
+    // espera mas larga primero: es el orden en que sirve mirarlo, no el
+    // cronologico. Las que siguen esperando van arriba de todo, porque son las
+    // unicas sobre las que todavia se puede hacer algo.
+    const ahoraDt: any = await getColombiaDateTime()
+    const ahoraMin = ahoraDt.getHours() * 60 + ahoraDt.getMinutes()
+    const esperaLotesDetalle: EsperaLoteDetalle[] = ordenesCargueHoy
+      .map((o: any) => {
+        const tieneLotes = !!o.horalote
+        const minutos =
+          tieneLotes && o.horaorden ? Math.round(aMinDia(o.horalote) - aMinDia(o.horaorden)) : null
+        const bruto = !tieneLotes && o.horaorden ? Math.round(ahoraMin - aMinDia(o.horaorden)) : null
+        return {
+          ordendecargue: String(o.ordendecargue),
+          cliente: clientePorOrden.get(o.id) || "Sin cliente",
+          placa: o.placa ? String(o.placa).trim() : null,
+          horaorden: o.horaorden || null,
+          horalote: o.horalote || null,
+          minutos: minutos != null && minutos >= 0 && minutos < 600 ? minutos : null,
+          esperandoMin: bruto != null && bruto >= 0 && bruto < 600 ? bruto : null,
+          cerrada: !!o.fincargue,
+        }
+      })
+      .sort((a: EsperaLoteDetalle, b: EsperaLoteDetalle) => {
+        // Primero las que siguen esperando, de mayor a menor; despues las ya
+        // resueltas, tambien de mayor a menor.
+        const aVivo = a.horalote ? 0 : 1
+        const bVivo = b.horalote ? 0 : 1
+        if (aVivo !== bVivo) return bVivo - aVivo
+        return (b.esperandoMin ?? b.minutos ?? -1) - (a.esperandoMin ?? a.minutos ?? -1)
+      })
+
     const armar = (o: any): OrdenOperativa => {
       const tipo = String(o.tipooperacion || "").trim() as TipoOperacion
       const placa = o.placa ? String(o.placa).trim() : null
@@ -656,6 +712,7 @@ export async function getCentroCoordinacion(
           esperaLotesBaseOrdenes,
           esperaLotesPeor,
           esperaLotesPendientes,
+          esperaLotesDetalle,
         },
         muelles,
         colaSinMuelle,
