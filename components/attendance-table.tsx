@@ -7,9 +7,10 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Input } from "@/components/ui/input"
 import { useAuth } from "@/components/auth-provider"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Loader2, Clock, Users, Save, AlertTriangle, Repeat } from "lucide-react"
+import { Loader2, Clock, Users, Save, AlertTriangle, Repeat, Bot, CalendarDays } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
@@ -37,6 +38,10 @@ interface AttendanceRecord {
   // Fotos capturadas automáticamente por la cámara al marcar ingreso/salida.
   fotoIngreso: string | null
   fotoSalida: string | null
+  // true si `horasalida` la cerró el cron de las 11pm (registroasistencia.
+  // horafinauto) porque la persona no marcó salida ese día — no es una
+  // marcación real.
+  horaFinAuto: boolean
 }
 
 /**
@@ -98,6 +103,15 @@ function getColombiaMinutes(): number {
   }
 }
 
+/** Fecha de hoy en Colombia (America/Bogota), formato "YYYY-MM-DD". */
+function getColombiaDateString(): string {
+  try {
+    return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota" }).format(new Date())
+  } catch {
+    return new Date().toISOString().slice(0, 10)
+  }
+}
+
 interface ShiftAssignment {
   identificacion: string
   nombre: string
@@ -142,6 +156,14 @@ export default function AttendanceTable() {
   const [error, setError] = useState<string | null>(null)
   const [shiftAssignments, setShiftAssignments] = useState<Map<string, ShiftAssignment>>(new Map())
 
+  // Filtro de fecha: por defecto hoy (Colombia). Ver días anteriores es
+  // SOLO LECTURA — asignar turnos/novedades siempre escribe en el día de
+  // hoy (app/api/attendance/register-shifts), así que con otra fecha
+  // seleccionada se deshabilitan los checkboxes para no confundir al
+  // coordinador con un cambio que en realidad cayó en otro día.
+  const [fecha, setFecha] = useState<string>(() => getColombiaDateString())
+  const esHoy = fecha === getColombiaDateString()
+
   // Cambio de puesto de una persona YA asignada hoy. Exige motivo escrito
   // porque el puesto decide quién puede asignarse en Picking/Packing y cómo
   // liquida `pagonomina` ese día (ver lib/reasignacion-puesto-actions.ts).
@@ -169,7 +191,7 @@ export default function AttendanceTable() {
     if (selectedEmpresaId) {
       fetchAttendanceData()
     }
-  }, [selectedEmpresaId])
+  }, [selectedEmpresaId, fecha])
 
   const fetchAttendanceData = async () => {
     try {
@@ -182,7 +204,7 @@ export default function AttendanceTable() {
       // sensible a estado en tiempo real (asistencia, novedades), asi
       // que siempre vamos a origen.
       const response = await fetch(
-        `/api/attendance/table?empresaId=${selectedEmpresaId}&t=${Date.now()}`,
+        `/api/attendance/table?empresaId=${selectedEmpresaId}&fecha=${fecha}&t=${Date.now()}`,
         { cache: "no-store" },
       )
       const result = await response.json()
@@ -347,19 +369,34 @@ export default function AttendanceTable() {
   const absentCount = records.filter((r) => !r.horaLlegada).length
   const selectedCount = shiftAssignments.size
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    )
-  }
-
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-3xl font-bold tracking-tight">Tabla de Asistencia</h2>
-        <p className="text-muted-foreground">Registro de asistencia del día de hoy</p>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="text-3xl font-bold tracking-tight">Tabla de Asistencia</h2>
+          <p className="text-muted-foreground">
+            {esHoy ? "Registro de asistencia del día de hoy" : "Consulta de un día anterior (solo lectura)"}
+          </p>
+        </div>
+        <div className="flex items-end gap-2">
+          <div className="space-y-1">
+            <Label className="text-xs flex items-center gap-1">
+              <CalendarDays className="h-3.5 w-3.5" /> Fecha
+            </Label>
+            <Input
+              type="date"
+              value={fecha}
+              max={getColombiaDateString()}
+              onChange={(e) => e.target.value && setFecha(e.target.value)}
+              className="h-9 w-[160px] text-sm"
+            />
+          </div>
+          {!esHoy && (
+            <Button variant="outline" size="sm" onClick={() => setFecha(getColombiaDateString())}>
+              Hoy
+            </Button>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -368,6 +405,12 @@ export default function AttendanceTable() {
         </Alert>
       )}
 
+      {loading ? (
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      ) : (
+        <>
       {/* Summary Cards */}
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
@@ -521,9 +564,20 @@ export default function AttendanceTable() {
                         </TableCell>
                         <TableCell>
                           {record.horaSalida ? (
-                            <span className="text-blue-600 font-medium tabular-nums">
-                              {record.horaSalida.slice(0, 5)}
-                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-blue-600 font-medium tabular-nums">
+                                {record.horaSalida.slice(0, 5)}
+                              </span>
+                              {record.horaFinAuto && (
+                                <Badge
+                                  variant="outline"
+                                  className="gap-0.5 text-[9px] uppercase tracking-wide px-1 py-0 leading-4 text-amber-700 border-amber-300 dark:text-amber-400 dark:border-amber-700"
+                                  title="No marcó salida: el sistema la cerró automáticamente a las 11pm con la hora programada"
+                                >
+                                  <Bot className="h-2.5 w-2.5" /> Auto
+                                </Badge>
+                              )}
+                            </div>
                           ) : (
                             <span className="text-muted-foreground">-</span>
                           )}
@@ -561,8 +615,10 @@ export default function AttendanceTable() {
                               </Badge>
                               {/* Cambiar el puesto del día. Solo tiene sentido
                                   sobre alguien ya asignado y sin novedad: una
-                                  novedad significa que no está trabajando. */}
-                              {!record.asistencia && (
+                                  novedad significa que no está trabajando. Solo
+                                  para hoy: reasignarPuestoDelDia opera sobre el
+                                  día actual, no sobre el que se está consultando. */}
+                              {!record.asistencia && esHoy && (
                                 <Button
                                   variant="ghost"
                                   size="icon"
@@ -633,7 +689,7 @@ export default function AttendanceTable() {
                               onCheckedChange={() =>
                                 handleCheckboxChange(record.identificacion, record.nombre, "operaciones", isPresent)
                               }
-                              disabled={isAssigned || !isPresent}
+                              disabled={isAssigned || !isPresent || !esHoy}
                               // Tamano y contraste reforzados para que las
                               // celdas Operaciones / Especialidades / Novedad
                               // sean facilmente clickeables en una tabla
@@ -671,7 +727,7 @@ export default function AttendanceTable() {
                               onCheckedChange={() =>
                                 handleCheckboxChange(record.identificacion, record.nombre, "especialidades", isPresent)
                               }
-                              disabled={isAssigned || !isPresent}
+                              disabled={isAssigned || !isPresent || !esHoy}
                               className="h-5 w-5 border-2 border-slate-400 data-[state=checked]:bg-emerald-600 data-[state=checked]:border-emerald-700 data-[state=checked]:text-white shadow-sm transition-colors"
                             />
                             {assignment?.type === "especialidades" && (
@@ -699,7 +755,7 @@ export default function AttendanceTable() {
                             onCheckedChange={() =>
                               handleCheckboxChange(record.identificacion, record.nombre, "novedad", isPresent)
                             }
-                            disabled={isAssigned || isPresent}
+                            disabled={isAssigned || isPresent || !esHoy}
                             // Para "Novedad" usamos el mismo tamano y borde
                             // pero un acento ambar al marcar, que comunica
                             // mejor su semantica de excepcion vs. asignacion.
@@ -714,7 +770,7 @@ export default function AttendanceTable() {
             </Table>
           </div>
 
-          {records.length > 0 && (
+          {esHoy && records.length > 0 && (
             <div className="mt-4 flex items-center justify-between">
               <p className="text-sm text-muted-foreground">{selectedCount} turno(s) seleccionado(s)</p>
               <Button onClick={handleRegisterShifts} disabled={saving || selectedCount === 0}>
@@ -734,6 +790,8 @@ export default function AttendanceTable() {
           )}
         </CardContent>
       </Card>
+        </>
+      )}
 
       {/* Cambio de puesto del día. El motivo es obligatorio: el puesto decide
           quién puede asignarse en Picking/Packing y cómo liquida la nómina ese

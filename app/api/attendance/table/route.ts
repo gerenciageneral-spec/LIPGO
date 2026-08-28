@@ -23,6 +23,7 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
     const empresaId = searchParams.get("empresaId")
+    const fechaParam = searchParams.get("fecha")
 
     if (!empresaId) {
       return NextResponse.json({ error: "empresaId is required" }, { status: 400 })
@@ -32,7 +33,7 @@ export async function GET(request: Request) {
     const supabase = createServerClient()
 
     // Get today's date in Colombia timezone (format: YYYY-MM-DD)
-    const colombiaDate = new Date()
+    const hoyColombia = new Date()
       .toLocaleString("en-CA", {
         timeZone: "America/Bogota",
         year: "numeric",
@@ -40,6 +41,11 @@ export async function GET(request: Request) {
         day: "2-digit",
       })
       .split(",")[0]
+
+    // `fecha` es opcional: filtro para ver días anteriores desde la Tabla de
+    // Asistencia. Sin el parámetro (o vacío) se mantiene el comportamiento de
+    // siempre: hoy en Colombia.
+    const colombiaDate = fechaParam && fechaParam.trim() ? fechaParam.trim() : hoyColombia
 
     console.log("[v0] Fetching attendance table for date:", colombiaDate, "empresa:", empresaId)
 
@@ -106,7 +112,7 @@ export async function GET(request: Request) {
     const { data: assignedShifts, error: shiftsError } = await supabaseAdmin
       .from("registroasistencia")
       .select(
-        "identificacion, nombre, puesto, asistencia, horasalida, horaentradaprogramada, foto_ingreso, foto_salida",
+        "identificacion, nombre, puesto, asistencia, horasalida, horaentradaprogramada, foto_ingreso, foto_salida, horafinauto",
       )
       .eq("fecha", colombiaDate)
       .eq("idempresa", empresaId)
@@ -134,6 +140,7 @@ export async function GET(request: Request) {
         horaentradaprogramada: string | null
         foto_ingreso: string | null
         foto_salida: string | null
+        horafinauto: boolean | null
       }
     >()
     for (const s of assignedShifts ?? []) {
@@ -157,6 +164,7 @@ export async function GET(request: Request) {
         horaentradaprogramada: s.horaentradaprogramada,
         foto_ingreso: (s as any).foto_ingreso ?? null,
         foto_salida: (s as any).foto_salida ?? null,
+        horafinauto: (s as any).horafinauto ?? null,
       })
     }
 
@@ -217,6 +225,9 @@ export async function GET(request: Request) {
         // con hora de llegada pero sin foto — el sintoma reportado.
         fotoIngreso: shift?.foto_ingreso ?? marcacion?.foto ?? null,
         fotoSalida: shift?.foto_salida ?? null,
+        // true si la salida la cerró el cron de las 11pm (scripts/cron_cerrar_
+        // asistencia_sin_salida.sql), no la persona.
+        horaFinAuto: shift?.horafinauto === true,
       }
     })
 
