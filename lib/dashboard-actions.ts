@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase-client"
 import { getCurrentEmpresaId } from "@/lib/company-filter"
 import { getMetaDiaForEmpresa } from "@/lib/empresa-meta-dia"
+import { esProductoPorUnidad } from "@/lib/facturacion-billed-party"
 import { createServerClient } from "@supabase/ssr"
 import { createClient as createSupabaseClient } from "@supabase/supabase-js"
 import { cookies } from "next/headers"
@@ -364,6 +365,67 @@ async function codigosDescarguePendientes(
   )
 }
 
+/**
+ * `ordendecargue` de las órdenes cuyo producto se factura POR UNIDAD (hoy:
+ * Huevos, ver esProductoPorUnidad en facturacion-billed-party.ts) — su
+ * `pesoorden` es un valor nominal (cantidad × peso_unitkg) sin significado
+ * real de peso, así que sumarlo al total de TONELADAS del día mezclaría dos
+ * unidades de medida distintas.
+ *
+ * Solo se usa para EXCLUIR esas órdenes de las sumas de peso del dashboard
+ * (tonsCargadas/tonsDescargadas/tonsDistribucion/totalToneladasDia/
+ * toneladasProgramadas) — siguen contando como órdenes/vehículos normales
+ * en el resto de KPIs (conteos, estados, etc.), es solo el peso el que
+ * queda fuera. Confirmado por el usuario 2026-08-28.
+ */
+async function codigosOrdenPorUnidad(supabase: any, ordenes: string[]): Promise<Set<string>> {
+  const codigos = Array.from(new Set(ordenes.map((o) => String(o ?? "").trim()).filter(Boolean)))
+  if (codigos.length === 0) return new Set()
+
+  const { data: detalle, error } = await supabase
+    .from("detalleoc")
+    .select("numeroorden, producto")
+    .in("numeroorden", codigos)
+  if (error) {
+    // Falla-abierto: si esta consulta falla, el dashboard sigue sumando
+    // toneladas como siempre (comportamiento previo), en vez de romperse.
+    console.error("[v0] Error buscando productos por orden (exclusión por unidad):", error)
+    return new Set()
+  }
+
+  const productosPorOrden = new Map<string, Set<string>>()
+  for (const d of detalle ?? []) {
+    const on = String(d.numeroorden ?? "").trim()
+    const prod = String(d.producto ?? "").trim()
+    if (!on || !prod) continue
+    if (!productosPorOrden.has(on)) productosPorOrden.set(on, new Set())
+    productosPorOrden.get(on)!.add(prod)
+  }
+
+  const nombresProductos = Array.from(
+    new Set(Array.from(productosPorOrden.values()).flatMap((s) => Array.from(s))),
+  )
+  if (nombresProductos.length === 0) return new Set()
+
+  const { data: prods } = await supabase
+    .from("productos")
+    .select("nombre, subcategoria")
+    .in("nombre", nombresProductos)
+  const subcategoriaPorNombre = new Map<string, string | null>()
+  for (const p of prods ?? []) subcategoriaPorNombre.set(String(p.nombre ?? "").trim(), p.subcategoria)
+
+  const resultado = new Set<string>()
+  for (const [on, productosOrden] of productosPorOrden) {
+    for (const prod of productosOrden) {
+      if (esProductoPorUnidad(subcategoriaPorNombre.get(prod))) {
+        resultado.add(on)
+        break
+      }
+    }
+  }
+  return resultado
+}
+
 export async function getDashboardOperacionesData(
   selectedEmpresaId?: number,
   /**
@@ -527,7 +589,7 @@ export async function getDashboardOperacionesStats(
 
     const { data: rawData, error } = await supabase
       .from("dashboardoperaciones")
-      .select("pesoorden, tipooperacion, fincargue, placa, estado, fechacargue")
+      .select("ordendecargue, pesoorden, tipooperacion, fincargue, placa, estado, fechacargue")
       .eq("idempresa", empresaId)
       .neq("tipooperacion", "Tolva")
       .gte("fechacargue", fechaFiltro)
@@ -559,7 +621,7 @@ export async function getDashboardOperacionesStats(
     if (codigosPendientesStats.length > 0) {
       const { data: extra, error: errExtra } = await supabase
         .from("dashboardoperaciones")
-        .select("pesoorden, tipooperacion, fincargue, placa, estado, fechacargue")
+        .select("ordendecargue, pesoorden, tipooperacion, fincargue, placa, estado, fechacargue")
         .eq("idempresa", empresaId)
         .in("ordendecargue", codigosPendientesStats)
       if (errExtra) console.error("[v0] Error trayendo descargues pendientes (stats):", errExtra)
@@ -570,25 +632,39 @@ export async function getDashboardOperacionesStats(
     // Only sum when estado is "Fin Operación" or "Finalizado LIP"
     const isFinalized = (estado: string | null) => estado === "Fin Operación" || estado === "Finalizado LIP"
 
+    // Huevos (y cualquier producto por unidad) se excluye SOLO de las sumas
+    // de peso de abajo — sigue contando como orden/vehículo normal en el
+    // resto del dashboard (ordenesFinalizadas, vehiculosAtendidos, etc.).
+    // Ver codigosOrdenPorUnidad.
+    const codigosPorUnidad = await codigosOrdenPorUnidad(
+      supabase,
+      (data ?? []).map((row: any) => row.ordendecargue),
+    )
+    const esPesable = (row: { ordendecargue?: string | null }) =>
+      !codigosPorUnidad.has(String(row.ordendecargue ?? "").trim())
+
     const tonsCargadas =
       data
-        ?.filter((row) => row.tipooperacion === "Cargue" && isFinalized(row.estado))
+        ?.filter((row) => row.tipooperacion === "Cargue" && isFinalized(row.estado) && esPesable(row))
         .reduce((sum, row) => sum + (row.pesoorden || 0), 0) || 0
 
     const tonsDescargadas =
       data
-        ?.filter((row) => row.tipooperacion === "Descargue" && isFinalized(row.estado))
+        ?.filter((row) => row.tipooperacion === "Descargue" && isFinalized(row.estado) && esPesable(row))
         .reduce((sum, row) => sum + (row.pesoorden || 0), 0) || 0
 
     const tonsDistribucion =
       data
-        ?.filter((row) => row.tipooperacion === "Distribucion" && isFinalized(row.estado))
+        ?.filter((row) => row.tipooperacion === "Distribucion" && isFinalized(row.estado) && esPesable(row))
         .reduce((sum, row) => sum + (row.pesoorden || 0), 0) || 0
 
     const totalToneladasDia =
-      data?.filter((row) => isFinalized(row.estado)).reduce((sum, row) => sum + (row.pesoorden || 0), 0) || 0
+      data
+        ?.filter((row) => isFinalized(row.estado) && esPesable(row))
+        .reduce((sum, row) => sum + (row.pesoorden || 0), 0) || 0
 
-    const toneladasProgramadas = data?.reduce((sum, row) => sum + (row.pesoorden || 0), 0) || 0
+    const toneladasProgramadas =
+      data?.filter(esPesable).reduce((sum, row) => sum + (row.pesoorden || 0), 0) || 0
 
     const ordenesPorAsignar = data?.filter((row) => row.estado === "Sin lote").length || 0
     const ordenesPorPesar = data?.filter((row) => row.estado === "Por Pesar").length || 0
