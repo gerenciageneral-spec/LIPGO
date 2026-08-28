@@ -523,19 +523,22 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                     style={{ width: `${Math.min(100, (data.kpis.cargadoHoyTon / Math.max(data.kpis.metaTonDia, 0.01)) * 100)}%` }}
                   />
                 </div>
-                <div className="mt-1.5 text-[11px] text-muted-foreground">
-                  esperado a esta hora <b className="tabular-nums text-foreground">{t1(data.kpis.metaEsperadaAhoraTon)} t</b>
-                </div>
-                <div className="text-[11px] text-muted-foreground">
-                  vs. ayer a esta hora{" "}
-                  {data.kpis.vsAyerPct === null ? (
-                    "—"
-                  ) : (
-                    <b className={`tabular-nums ${data.kpis.vsAyerPct >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
-                      {data.kpis.vsAyerPct >= 0 ? "▲" : "▼"} {t1(Math.abs(data.kpis.vsAyerPct))}%
-                    </b>
-                  )}{" "}
-                  <span className="text-muted-foreground">({t1(data.kpis.cargadoAyerMismaHoraTon)} t ayer)</span>
+                {/* Un solo renglon de pie. Antes eran dos y estiraban toda la
+                    fila de tarjetas. El detalle de ayer queda en el tooltip. */}
+                <div className="mt-1.5 flex flex-wrap items-baseline gap-x-2 text-[11px] text-muted-foreground">
+                  <span>
+                    esperado <b className="tabular-nums text-foreground">{t1(data.kpis.metaEsperadaAhoraTon)} t</b>
+                  </span>
+                  <span title={`Ayer a esta hora: ${t1(data.kpis.cargadoAyerMismaHoraTon)} t`}>
+                    · vs. ayer{" "}
+                    {data.kpis.vsAyerPct === null ? (
+                      "—"
+                    ) : (
+                      <b className={`tabular-nums ${data.kpis.vsAyerPct >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                        {data.kpis.vsAyerPct >= 0 ? "▲" : "▼"} {t1(Math.abs(data.kpis.vsAyerPct))}%
+                      </b>
+                    )}
+                  </span>
                 </div>
               </div>
               <div className="rounded-lg border bg-card p-3 shadow-sm">
@@ -571,8 +574,12 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                   <span className="text-2xl font-extrabold tabular-nums">{data.kpis.personalEnPiso}</span>
                   <span className="text-xs text-muted-foreground">aux.</span>
                 </div>
-                <div className="text-[11px] text-muted-foreground">{data.kpis.personalAsignado} asignados</div>
-                <div className="text-[11px] font-medium text-primary">{data.kpis.personalDisponible} disponibles</div>
+                {/* Un solo renglon, como el resto de las tarjetas: dos lineas
+                    aqui estiraban toda la fila. */}
+                <div className="text-[11px] text-muted-foreground">
+                  {data.kpis.personalAsignado} asignados ·{" "}
+                  <b className="font-medium text-primary">{data.kpis.personalDisponible} disponibles</b>
+                </div>
               </div>
               <div className="rounded-lg border border-[#0e3b3b] bg-[#0e3b3b] p-3 text-white">
               {/* Espera por asignación de lotes: de que nace la orden a que le
@@ -626,22 +633,37 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                   {data.kpis.esperaLotesPromedioMin != null && (
                     <span className="text-xs text-muted-foreground">min prom.</span>
                   )}
+                  {/* Las pendientes van PEGADAS al numero, no en su propio
+                      renglon: es lo unico accionable hoy y asi no estira la
+                      tarjeta. */}
+                  {data.kpis.esperaLotesPendientes > 0 && (
+                    <span
+                      className="ml-auto rounded-full bg-rose-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white"
+                      title={`${data.kpis.esperaLotesPendientes} orden(es) de cargue sin lotes asignados`}
+                    >
+                      {data.kpis.esperaLotesPendientes} sin lotes
+                    </span>
+                  )}
                 </div>
-                <div className="text-[11px] text-muted-foreground">
-                  orden → lotes · {data.kpis.esperaLotesBaseOrdenes} de cargue
+                {/* Un solo renglon de apoyo: base del promedio y peor caso. El
+                    numero de la orden queda en el tooltip para no partir la
+                    linea en dos. */}
+                <div
+                  className="truncate text-[11px] text-muted-foreground"
+                  title={
+                    data.kpis.esperaLotesPeor
+                      ? `Peor espera de hoy: ${data.kpis.esperaLotesPeor.minutos} min — orden ${data.kpis.esperaLotesPeor.ordendecargue}`
+                      : undefined
+                  }
+                >
+                  {data.kpis.esperaLotesBaseOrdenes} órd.
+                  {data.kpis.esperaLotesPeor && (
+                    <>
+                      {" · peor "}
+                      <b className="tabular-nums text-foreground">{data.kpis.esperaLotesPeor.minutos} min</b>
+                    </>
+                  )}
                 </div>
-                {data.kpis.esperaLotesPeor && (
-                  <div className="text-[11px] text-muted-foreground">
-                    peor hoy{" "}
-                    <b className="tabular-nums text-foreground">{data.kpis.esperaLotesPeor.minutos} min</b>{" "}
-                    <span className="font-mono text-[10px]">{data.kpis.esperaLotesPeor.ordendecargue}</span>
-                  </div>
-                )}
-                {data.kpis.esperaLotesPendientes > 0 && (
-                  <div className="text-[11px] font-bold text-rose-700 dark:text-rose-300">
-                    {data.kpis.esperaLotesPendientes} sin lotes aún
-                  </div>
-                )}
               </div>
                 <div className="text-[10px] font-semibold uppercase tracking-wide text-[#8fd3ce]">Proyección de cierre</div>
                 <div className="text-2xl font-extrabold tabular-nums text-[#21d4c8]">{data.kpis.proyeccionHoraFinCola || "—"}</div>
