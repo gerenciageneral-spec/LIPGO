@@ -5,6 +5,8 @@
 -- `registroasistencia` es "Distribución Turno" tiene jornada reducida — la
 -- hora extra se cuenta desde las 4,5 horas trabajadas TOTALES (no desde las
 -- 8h = 1h descanso + 7h jornada base que aplica el resto de días/puestos).
+-- Si ese turno de sábado supera las 6h trabajadas, se resta 1h de descanso
+-- ADEMÁS del umbral de 4.5h (turno largo de sábado).
 --
 -- La función trigger `calcular_y_asignar_horas_extras()` (scripts/fn_calcular_
 -- y_asignar_horas_extras.sql) ya quedó con esta excepción, pero eso solo
@@ -98,11 +100,16 @@ BEGIN
         dia_semana := EXTRACT(ISODOW FROM NEW.fecha);
 
         -- SÁBADO + "Distribución Turno": umbral de 4.5h totales (jornada
-        -- reducida), en vez de 1h descanso + 7h jornada base.
+        -- reducida), en vez de 1h descanso + 7h jornada base. Si el turno
+        -- supera las 6h, se resta 1h de descanso además del umbral de 4.5h.
         es_sabado_distribucion_turno := (dia_semana = 6 AND TRIM(NEW.puesto) = 'Distribución Turno');
 
         IF es_sabado_distribucion_turno THEN
-            horas_extras := horas_totales - 4.5;
+            IF horas_totales > 6.0 THEN
+                horas_extras := horas_totales - 1.0 - 4.5;
+            ELSE
+                horas_extras := horas_totales - 4.5;
+            END IF;
         ELSE
             horas_extras := horas_totales - 1.0 - 7.0;
         END IF;
@@ -196,14 +203,23 @@ calculo3 AS (
     END AS intervalo_trabajado
   FROM calculo2 c2
 ),
-resultado AS (
+calculo4 AS (
   SELECT
     c3.id, c3.fecha,
+    (EXTRACT(EPOCH FROM c3.intervalo_trabajado) / 3600.0) AS horas_totales
+  FROM calculo3 c3
+),
+resultado AS (
+  SELECT
+    c4.id, c4.fecha,
     GREATEST(
-      TRUNC((EXTRACT(EPOCH FROM c3.intervalo_trabajado) / 3600.0) - 4.5, 2),
+      TRUNC(
+        c4.horas_totales - CASE WHEN c4.horas_totales > 6.0 THEN 1.0 + 4.5 ELSE 4.5 END,
+        2
+      ),
       0
     ) AS horas_extras_nuevas
-  FROM calculo3 c3
+  FROM calculo4 c4
 )
 UPDATE public.registroasistencia AS ra
 SET

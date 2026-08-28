@@ -16,9 +16,10 @@
 --      EXCEPCIÓN (confirmada por el usuario 2026-08-28): SÁBADO + puesto
 --      "Distribución Turno" → el umbral es 4.5h TOTALES (sin restar 1h de
 --      descanso aparte) en vez de 1h + 7h = 8h. Es una jornada reducida de
---      sábado propia de ese puesto. Ver scripts/fix_horas_extra_sabado_
---      distribucion_turno.sql para el recálculo retroactivo de la 2da
---      quincena de agosto/2026.
+--      sábado propia de ese puesto. Si el turno total supera las 6h, SÍ se
+--      resta 1h de descanso además del umbral de 4.5h (turno largo de
+--      sábado). Ver scripts/fix_horas_extra_sabado_distribucion_turno.sql
+--      para el recálculo retroactivo de la 2da quincena de agosto/2026.
 --   4) Asignación del día: DOMINGO o FESTIVO → hedf (extra diurna festiva,
 --      recargo 115%); cualquier otro día → hed (extra diurna ordinaria, 25%).
 --      La excepción de sábado NO cambia esta clasificación: sigue siendo
@@ -106,11 +107,16 @@ BEGIN
 
         -- SÁBADO (ISODOW 6) + puesto "Distribución Turno": jornada reducida,
         -- el umbral de hora extra es 4.5h TOTALES (no 1h + 7h). Confirmado
-        -- por el usuario 2026-08-28.
+        -- por el usuario 2026-08-28. Si el turno total supera las 6h, se
+        -- resta 1h adicional de descanso antes del umbral de 4.5h.
         es_sabado_distribucion_turno := (dia_semana = 6 AND TRIM(NEW.puesto) = 'Distribución Turno');
 
         IF es_sabado_distribucion_turno THEN
-            horas_extras := horas_totales - 4.5;
+            IF horas_totales > 6.0 THEN
+                horas_extras := horas_totales - 1.0 - 4.5;
+            ELSE
+                horas_extras := horas_totales - 4.5;
+            END IF;
         ELSE
             -- Calcular horas extras (Total - 1h descanso - 7h de jornada base vigente)
             horas_extras := horas_totales - 1.0 - 7.0;
