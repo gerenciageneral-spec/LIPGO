@@ -62,7 +62,6 @@ create or replace view public.facturacion as
     dp.cliente,
     dp.producto,
     dp.toneladas,
-    dp.cantidad,
     dp.owner_name AS owner,
     dp.subcategoria,
     dp.idempresa,
@@ -83,7 +82,12 @@ create or replace view public.facturacion as
                 )::text
             ELSE '0'::text
         END AS valor_a_facturar,
-    dp.idorden
+    dp.idorden,
+    -- Nueva columna, agregada AL FINAL a propósito: Postgres no permite
+    -- insertar una columna en medio del SELECT de una vista existente con
+    -- CREATE OR REPLACE VIEW (desplaza el nombre de las columnas que le
+    -- siguen y falla con "cannot change name of view column").
+    dp.cantidad
    FROM (detalle_preparado dp
      LEFT JOIN tarifasoperacion t ON (((t.empresaid = dp.idempresa) AND (TRIM(BOTH FROM upper(t.operacion)) = TRIM(BOTH FROM upper(dp.tipooperacion))) AND (((dp.idempresa = 6) AND (t.empresafactura = dp.owner_name)) OR ((dp.idempresa <> 6) AND ((TRIM(BOTH FROM upper(dp.tipooperacion)) = ANY (ARRAY['TOLVA'::text, 'TOLVA F'::text])) OR ((t.producto = dp.subcategoria) AND ((dp.idempresa = 2) OR (t.empresafactura =
         CASE
