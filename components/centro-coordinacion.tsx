@@ -634,15 +634,19 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                     <div className="space-y-1.5">
                       {data.colaSinMuelle.map((o) => (
                         <div key={o.orderId} className="flex items-center justify-between gap-2 rounded-md border p-2 text-sm">
-                          <div className="min-w-0">
-                            <span className="font-mono text-xs text-muted-foreground">{o.ordendecargue}</span>{" "}
-                            <span className="font-semibold">{o.cliente}</span>{" "}
-                            <span className="text-xs text-muted-foreground">{o.placa}</span>
-                            <Badge variant="outline" className="ml-2 text-[10px]">
+                          {/* Una sola línea, igual que en la fila del muelle:
+                              solo cede el nombre del cliente. */}
+                          <div className="flex min-w-0 items-baseline gap-x-2">
+                            <span className="shrink-0 whitespace-nowrap font-mono text-xs text-muted-foreground">{o.ordendecargue}</span>
+                            <span className="min-w-0 truncate font-semibold" title={o.cliente ?? undefined}>
+                              {o.cliente}
+                            </span>
+                            <span className="shrink-0 whitespace-nowrap font-mono text-xs text-muted-foreground">{o.placa}</span>
+                            <Badge variant="outline" className="shrink-0 whitespace-nowrap text-[10px]">
                               {TIPO_LABEL[o.tipooperacion]}
                             </Badge>
                             {o.rezagada && (
-                              <Badge variant="outline" className="ml-1 border-amber-300 text-[10px] text-amber-700 dark:border-amber-800 dark:text-amber-400">
+                              <Badge variant="outline" className="shrink-0 whitespace-nowrap border-amber-300 text-[10px] text-amber-700 dark:border-amber-800 dark:text-amber-400">
                                 Pendiente de un día anterior
                               </Badge>
                             )}
@@ -698,9 +702,11 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                             <div
                               className={`flex items-center justify-between text-xs ${sugerido ? "-mx-2 rounded-md bg-emerald-50 px-2 py-1 dark:bg-emerald-950/30" : ""}`}
                             >
-                              <span className="font-mono">{c.placa}</span>
-                              <span className="text-muted-foreground">{c.tipovehiculo || "—"}</span>
-                              <span className="font-mono text-muted-foreground">{fmtHora(c.horallegada)}</span>
+                              <span className="shrink-0 whitespace-nowrap font-mono">{c.placa}</span>
+                              <span className="min-w-0 flex-1 truncate px-2 text-right text-muted-foreground" title={c.tipovehiculo || undefined}>
+                                {c.tipovehiculo || "—"}
+                              </span>
+                              <span className="shrink-0 whitespace-nowrap font-mono tabular-nums text-muted-foreground">{fmtHora(c.horallegada)}</span>
                             </div>
                             {sugerido && (
                               <div className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">
@@ -755,26 +761,26 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                   <p className="text-sm text-muted-foreground">Sin datos.</p>
                 ) : (
                   <>
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-                      <div className="rounded-md border bg-background p-2">
-                        <div className="text-[9px] font-semibold uppercase text-muted-foreground">Cargado en el turno</div>
-                        <div className="text-sm font-bold tabular-nums">{t1(parteTurno.cargadoHoyTon)} t</div>
+                    <div className="grid grid-cols-2 items-stretch gap-2 sm:grid-cols-3 lg:grid-cols-5">
+                      <div className="flex flex-col justify-between rounded-md border bg-background p-2">
+                        <div className="text-[9px] font-semibold uppercase leading-tight text-muted-foreground">Cargado en el turno</div>
+                        <div className="mt-0.5 whitespace-nowrap text-base font-bold tabular-nums">{t1(parteTurno.cargadoHoyTon)} t</div>
                       </div>
-                      <div className="rounded-md border bg-background p-2">
-                        <div className="text-[9px] font-semibold uppercase text-muted-foreground">Órdenes cerradas</div>
-                        <div className="text-sm font-bold tabular-nums">{parteTurno.ordenesCerradas}</div>
+                      <div className="flex flex-col justify-between rounded-md border bg-background p-2">
+                        <div className="text-[9px] font-semibold uppercase leading-tight text-muted-foreground">Órdenes cerradas</div>
+                        <div className="mt-0.5 whitespace-nowrap text-base font-bold tabular-nums">{parteTurno.ordenesCerradas}</div>
                       </div>
-                      <div className="rounded-md border bg-background p-2">
-                        <div className="text-[9px] font-semibold uppercase text-muted-foreground">En curso</div>
-                        <div className="text-sm font-bold tabular-nums">{parteTurno.ordenesEnCurso}</div>
+                      <div className="flex flex-col justify-between rounded-md border bg-background p-2">
+                        <div className="text-[9px] font-semibold uppercase leading-tight text-muted-foreground">En curso</div>
+                        <div className="mt-0.5 whitespace-nowrap text-base font-bold tabular-nums">{parteTurno.ordenesEnCurso}</div>
                       </div>
-                      <div className="rounded-md border bg-background p-2">
-                        <div className="text-[9px] font-semibold uppercase text-muted-foreground">SLA vencidos ahora</div>
-                        <div className="text-sm font-bold tabular-nums text-rose-600">{parteTurno.slaVencidosAhora}</div>
+                      <div className="flex flex-col justify-between rounded-md border bg-background p-2">
+                        <div className="text-[9px] font-semibold uppercase leading-tight text-muted-foreground">SLA vencidos ahora</div>
+                        <div className="mt-0.5 whitespace-nowrap text-base font-bold tabular-nums text-rose-600">{parteTurno.slaVencidosAhora}</div>
                       </div>
-                      <div className="rounded-md border bg-background p-2">
-                        <div className="text-[9px] font-semibold uppercase text-muted-foreground">Auxiliares en piso</div>
-                        <div className="text-sm font-bold tabular-nums">{parteTurno.personalEnPiso}</div>
+                      <div className="flex flex-col justify-between rounded-md border bg-background p-2">
+                        <div className="text-[9px] font-semibold uppercase leading-tight text-muted-foreground">Auxiliares en piso</div>
+                        <div className="mt-0.5 whitespace-nowrap text-base font-bold tabular-nums">{parteTurno.personalEnPiso}</div>
                       </div>
                     </div>
                     {parteTurno.pendientes.length > 0 && (
@@ -796,15 +802,20 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                         Historial de órdenes de hoy ({parteTurno.historial.length})
                       </h3>
                       <div className="max-h-72 overflow-auto rounded-md border">
-                        <table className="w-full text-left text-[11px]">
+                        {/* `min-w-max` + celdas `whitespace-nowrap`: la tabla
+                            toma el ancho que necesita y el contenedor se
+                            desplaza. Antes iba a `w-full` y, al no caber, el
+                            navegador partía en dos líneas el código de orden y
+                            la lista de personal. */}
+                        <table className="min-w-max text-left text-xs">
                           <thead className="sticky top-0 bg-muted/80 backdrop-blur">
                             <tr>
-                              <th className="px-2 py-1.5 font-semibold">Orden</th>
-                              <th className="px-2 py-1.5 font-semibold">Tipo</th>
-                              <th className="px-2 py-1.5 font-semibold">Placa</th>
-                              <th className="px-2 py-1.5 font-semibold">Muelle</th>
-                              <th className="px-2 py-1.5 font-semibold">Estado</th>
-                              <th className="px-2 py-1.5 font-semibold">Personal real asignado</th>
+                              <th className="whitespace-nowrap px-2 py-1.5 font-semibold">Orden</th>
+                              <th className="whitespace-nowrap px-2 py-1.5 font-semibold">Tipo</th>
+                              <th className="whitespace-nowrap px-2 py-1.5 font-semibold">Placa</th>
+                              <th className="whitespace-nowrap px-2 py-1.5 text-center font-semibold">Muelle</th>
+                              <th className="whitespace-nowrap px-2 py-1.5 font-semibold">Estado</th>
+                              <th className="whitespace-nowrap px-2 py-1.5 font-semibold">Personal real asignado</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -817,11 +828,11 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                             ) : (
                               parteTurno.historial.map((h) => (
                                 <tr key={h.ordendecargue} className="border-t">
-                                  <td className="px-2 py-1 font-mono">{h.ordendecargue}</td>
-                                  <td className="px-2 py-1">{TIPO_LABEL[h.tipooperacion]}</td>
-                                  <td className="px-2 py-1">{h.placa || "—"}</td>
-                                  <td className="px-2 py-1">{h.muelle ?? "—"}</td>
-                                  <td className="px-2 py-1">
+                                  <td className="whitespace-nowrap px-2 py-1 font-mono">{h.ordendecargue}</td>
+                                  <td className="whitespace-nowrap px-2 py-1">{TIPO_LABEL[h.tipooperacion]}</td>
+                                  <td className="whitespace-nowrap px-2 py-1 font-mono">{h.placa || "—"}</td>
+                                  <td className="whitespace-nowrap px-2 py-1 text-center tabular-nums">{h.muelle ?? "—"}</td>
+                                  <td className="whitespace-nowrap px-2 py-1">
                                     <span
                                       className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
                                         h.estado === "cerrada"
@@ -837,8 +848,16 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                                       </span>
                                     )}
                                   </td>
+                                  {/* La única columna que puede ser muy larga.
+                                      Se deja en una línea y se corta con "…";
+                                      el listado completo queda en el tooltip. */}
                                   <td className="px-2 py-1 text-muted-foreground">
-                                    {h.personalReal.length > 0 ? h.personalReal.join(", ") : "—"}
+                                    <span
+                                      className="block max-w-[22rem] truncate"
+                                      title={h.personalReal.length > 0 ? h.personalReal.join(", ") : undefined}
+                                    >
+                                      {h.personalReal.length > 0 ? h.personalReal.join(", ") : "—"}
+                                    </span>
                                   </td>
                                 </tr>
                               ))
@@ -1059,16 +1078,23 @@ function MuelleRow({
 
         {o ? (
           <div className="min-w-0 space-y-1.5">
-            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-              <span className="rounded bg-black/5 px-1 text-[9px] font-bold text-muted-foreground dark:bg-white/10">OC</span>
-              <span className="font-mono text-xs text-muted-foreground">{o.ordendecargue}</span>
-              <span className="text-sm font-bold">{o.cliente}</span>
-              <span className="font-mono text-xs text-muted-foreground">{o.placa}</span>
-              <Badge variant="outline" className="text-[10px]">
+            {/* UNA sola línea. Antes era `flex-wrap`: con un nombre de cliente
+                largo, la placa y el tipo se iban a un segundo renglón y la fila
+                del muelle quedaba desalineada. Lo único que cede es el nombre
+                del cliente, que se corta con "…" y conserva el tooltip; el
+                código de orden, la placa y el tipo nunca se parten. */}
+            <div className="flex min-w-0 items-baseline gap-x-2">
+              <span className="shrink-0 rounded bg-black/5 px-1 text-[9px] font-bold text-muted-foreground dark:bg-white/10">OC</span>
+              <span className="shrink-0 whitespace-nowrap font-mono text-xs text-muted-foreground">{o.ordendecargue}</span>
+              <span className="min-w-0 truncate text-sm font-bold" title={o.cliente ?? undefined}>
+                {o.cliente}
+              </span>
+              <span className="shrink-0 whitespace-nowrap font-mono text-xs text-muted-foreground">{o.placa}</span>
+              <Badge variant="outline" className="shrink-0 whitespace-nowrap text-[10px]">
                 {TIPO_LABEL[o.tipooperacion]}
               </Badge>
               {o.rezagada && (
-                <Badge variant="outline" className="border-amber-300 text-[10px] text-amber-700 dark:border-amber-800 dark:text-amber-400">
+                <Badge variant="outline" className="shrink-0 whitespace-nowrap border-amber-300 text-[10px] text-amber-700 dark:border-amber-800 dark:text-amber-400">
                   Pendiente de un día anterior
                 </Badge>
               )}
@@ -1078,7 +1104,7 @@ function MuelleRow({
               <div className="h-1.5 max-w-[160px] flex-1 overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
                 <div className="h-full rounded-full bg-teal-600" style={{ width: `${progreso!.pct}%` }} />
               </div>
-              <span className="whitespace-nowrap text-[10px] text-muted-foreground">
+              <span className="min-w-0 truncate whitespace-nowrap text-[11px] tabular-nums text-muted-foreground">
                 {t1(o.pesoorden)} t objetivo{o.capacidadVehiculo ? ` · cap. ${t1(o.capacidadVehiculo)} t (${o.tipovehiculo})` : ""} ·{" "}
                 {progreso!.pct}% {progreso!.fuente}
               </span>
@@ -1128,7 +1154,7 @@ function MuelleRow({
           {/* Línea de pasos — solo referencia, no compite con toneladas/tiempos */}
           <div className="mb-3 flex flex-wrap items-center gap-x-1 gap-y-1 border-b pb-2 text-[11px] text-muted-foreground">
             {pasos.map((p, i) => (
-              <span key={p.label} className="flex items-center gap-1">
+              <span key={p.label} className="flex items-center gap-1 whitespace-nowrap">
                 {i > 0 && <span className="text-border">→</span>}
                 <span className={p.done ? "text-foreground" : p.current ? "font-bold text-teal-700 dark:text-teal-400" : "opacity-50"}>
                   {p.done ? "✓" : p.current ? "●" : ""} {p.label}
