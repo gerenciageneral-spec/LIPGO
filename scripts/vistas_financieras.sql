@@ -696,6 +696,7 @@ create or replace view public.facturacion as
     dp.cliente,
     dp.producto,
     dp.toneladas,
+    dp.cantidad,
     dp.owner_name AS owner,
     dp.subcategoria,
     dp.idempresa,
@@ -706,8 +707,16 @@ create or replace view public.facturacion as
             WHEN (t.tarifa IS NOT NULL) THEN t.tarifa
             ELSE 'SIN TARIFA EN MAESTRO'::text
         END AS tarifa,
+        -- Productos por UNIDAD (hoy: "Huevos", ver esProductoPorUnidad() en
+        -- lib/facturacion-billed-party.ts) se cobran por CANTIDAD, no por peso.
         CASE
-            WHEN (t.tarifa IS NOT NULL) THEN (((t.tarifa)::numeric * dp.toneladas))::text
+            WHEN (t.tarifa IS NOT NULL) THEN
+                ((t.tarifa)::numeric *
+                    CASE
+                        WHEN (upper(TRIM(BOTH FROM dp.subcategoria)) = 'HUEVOS') THEN dp.cantidad
+                        ELSE dp.toneladas
+                    END
+                )::text
             ELSE '0'::text
         END AS valor_a_facturar,
     dp.idorden
