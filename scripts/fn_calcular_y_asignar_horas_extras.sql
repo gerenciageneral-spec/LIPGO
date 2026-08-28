@@ -12,8 +12,17 @@
 --      Horas extra = horas − 1h (descanso) − 7h (jornada base vigente desde
 --      16-jul-2026, parametros_legales_vigencia); mín 0; truncado a 2
 --      decimales (sin redondear hacia arriba).
+--
+--      EXCEPCIÓN (confirmada por el usuario 2026-08-28): SÁBADO + puesto
+--      "Distribución Turno" → el umbral es 4.5h TOTALES (sin restar 1h de
+--      descanso aparte) en vez de 1h + 7h = 8h. Es una jornada reducida de
+--      sábado propia de ese puesto. Ver scripts/fix_horas_extra_sabado_
+--      distribucion_turno.sql para el recálculo retroactivo de la 2da
+--      quincena de agosto/2026.
 --   4) Asignación del día: DOMINGO o FESTIVO → hedf (extra diurna festiva,
 --      recargo 115%); cualquier otro día → hed (extra diurna ordinaria, 25%).
+--      La excepción de sábado NO cambia esta clasificación: sigue siendo
+--      `hed` salvo que ese sábado sea festivo.
 --
 --      Antes solo miraba el día ISO, así que un festivo entre lunes y sábado
 --      -- el 17-ago-2026, por ejemplo, que es el traslado de la Asunción --
@@ -42,6 +51,7 @@ DECLARE
     horas_extras NUMERIC;
     dia_semana INTEGER;
     es_festivo BOOLEAN;
+    es_sabado_distribucion_turno BOOLEAN;
 BEGIN
     -- Validamos que especialidad sea el texto 'true' y tengamos los datos necesarios
     IF LOWER(NEW.especialidad) = 'true'
@@ -92,8 +102,19 @@ BEGIN
         -- Convertir a horas totales
         horas_totales := EXTRACT(EPOCH FROM intervalo_trabajado) / 3600.0;
 
-        -- Calcular horas extras (Total - 1h descanso - 7h de jornada base vigente)
-        horas_extras := horas_totales - 1.0 - 7.0;
+        dia_semana := EXTRACT(ISODOW FROM NEW.fecha);
+
+        -- SÁBADO (ISODOW 6) + puesto "Distribución Turno": jornada reducida,
+        -- el umbral de hora extra es 4.5h TOTALES (no 1h + 7h). Confirmado
+        -- por el usuario 2026-08-28.
+        es_sabado_distribucion_turno := (dia_semana = 6 AND TRIM(NEW.puesto) = 'Distribución Turno');
+
+        IF es_sabado_distribucion_turno THEN
+            horas_extras := horas_totales - 4.5;
+        ELSE
+            -- Calcular horas extras (Total - 1h descanso - 7h de jornada base vigente)
+            horas_extras := horas_totales - 1.0 - 7.0;
+        END IF;
 
         -- Evitar negativos si trabajó menos de la jornada base
         IF horas_extras < 0 THEN
@@ -106,8 +127,6 @@ BEGIN
         -- ====================================================================
         -- 4. ASIGNACIÓN SEGÚN EL DÍA: DOMINGO O FESTIVO vs. ORDINARIO
         -- ====================================================================
-        dia_semana := EXTRACT(ISODOW FROM NEW.fecha);
-
         -- El festivo se consulta contra `festivos`, la misma tabla que usan
         -- `pagonomina` y `facturacionturnos`. Un festivo entre lunes y sábado
         -- (17-ago-2026, 11-nov-2026...) se pagaba como extra ORDINARIA porque
