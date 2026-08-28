@@ -511,7 +511,7 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-8">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8">
               {/* Ancho completo tambien en celular (`col-span-2`): esta tarjeta
                   lleva barra de progreso y tres lineas de texto, y en media
                   pantalla de 360 px los numeros se partian. */}
@@ -588,7 +588,6 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                   <b className="font-medium text-primary">{data.kpis.personalDisponible} disponibles</b>
                 </div>
               </div>
-              <div className="rounded-lg border border-[#0e3b3b] bg-[#0e3b3b] p-3 text-white">
               {/* Espera por asignación de lotes: de que nace la orden a que le
                   asignan los lotes. Es tiempo en el que la orden ya existe pero
                   todavía no se puede alistar, y la operación lo reportó como el
@@ -656,7 +655,7 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                     numero de la orden queda en el tooltip para no partir la
                     linea en dos. */}
                 <div
-                  className="truncate text-[11px] text-muted-foreground"
+                  className="truncate whitespace-nowrap text-[11px] text-muted-foreground"
                   title={
                     data.kpis.esperaLotesPeor
                       ? `Peor espera de hoy: ${data.kpis.esperaLotesPeor.minutos} min — orden ${data.kpis.esperaLotesPeor.ordendecargue}`
@@ -672,9 +671,10 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                   )}
                 </div>
               </div>
+              <div className="rounded-lg border border-[#0e3b3b] bg-[#0e3b3b] p-3 text-white">
                 <div className="text-[10px] font-semibold uppercase tracking-wide text-[#8fd3ce]">Proyección de cierre</div>
                 <div className="text-2xl font-extrabold tabular-nums text-[#21d4c8]">{data.kpis.proyeccionHoraFinCola || "—"}</div>
-                <div className="text-[11px] text-[#cfe9e6]">
+                <div className="truncate whitespace-nowrap text-[11px] text-[#cfe9e6]">
                   muelles {data.kpis.muellesOcupados}/{data.kpis.muellesTotal}
                   {data.colaSinMuelle.length > 0 && ` · ${data.colaSinMuelle.length} en cola`}
                 </div>
