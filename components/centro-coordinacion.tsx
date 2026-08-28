@@ -137,11 +137,25 @@ function finProyectado(o: OrdenOperativa): string | null {
 
 type Paso = { label: string; done: boolean; current: boolean; role: "coord" | "op"; detail?: string }
 
+// Distribución sin facturar (no se factura entrega, no hay tonelaje que
+// repartir) o Descargue de Huevos en ID2 (ese personal se paga aparte,
+// puesto "Cargue/Descargue Huevos"): ninguna de las dos exige auxiliares ni
+// tipo de pago para poder concluirse. Confirmado 2026-08-28. Vive a nivel de
+// módulo (no dentro del componente) para que construirPasos() también la
+// use: sin esto, el paso "Asignar Personal" quedaba marcado pendiente y el
+// botón "Cargar fotos" ni se mostraba, aunque el cierre ya estuviera
+// permitido por el otro lado. Alcance estricto: SOLO afecta órdenes con
+// o.esDescargueHuevos = true (Descargue + Huevos + ID2) o Distribución sin
+// facturar — el resto de órdenes sigue exigiendo personal igual que siempre.
+function puedeConcluirSinPersonal(o: OrdenOperativa): boolean {
+  return (o.tipooperacion === "Distribucion" && o.facturar === false) || o.esDescargueHuevos
+}
+
 function construirPasos(o: OrdenOperativa): Paso[] {
   const esCargue = o.tipooperacion === "Cargue"
   const pickingListo = esCargue ? o.lineasTotal > 0 && o.lineasAprobadas === o.lineasTotal : !!o.iniciocargue
   const pdfListo = !!o.iniciocargue
-  const personalListo = o.auxiliares.length > 0
+  const personalListo = o.auxiliares.length > 0 || puedeConcluirSinPersonal(o)
 
   const pasos: Omit<Paso, "current">[] = [{ label: "Muelle asignado", done: true, role: "coord" }]
   if (esCargue) {
@@ -403,13 +417,6 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
     if (r.success && r.data) setParteTurno(r.data)
     else toast({ title: "No se pudo cargar el parte de turno", description: r.message, variant: "destructive" })
   }
-
-  // Distribución sin facturar (no se factura entrega, no hay tonelaje que
-  // repartir) o Descargue de Huevos en ID2 (ese personal se paga aparte,
-  // puesto "Cargue/Descargue Huevos"): ninguna de las dos exige auxiliares
-  // ni tipo de pago para poder concluirse. Confirmado 2026-08-28.
-  const puedeConcluirSinPersonal = (o: OrdenOperativa) =>
-    (o.tipooperacion === "Distribucion" && o.facturar === false) || o.esDescargueHuevos
 
   if (!selectedEmpresaId) {
     return (
