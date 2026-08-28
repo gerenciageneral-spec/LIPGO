@@ -407,9 +407,22 @@ export async function approveBatchAllocation(data: BatchApprovalData, selectedEm
       }),
     )
 
+    // La PLACA en el PDF de asignación de lotes: quien recibe el documento en
+    // piso necesita saber a qué vehículo corresponde sin tener que cruzarlo
+    // contra otra pantalla. Se lee de `cabeceraoc` y no de lo que mande el
+    // navegador: es el mismo dato con el que después se carga el camión.
+    const { data: ordenVehiculo } = await supabase
+      .from("cabeceraoc")
+      .select("placa, conductor")
+      .eq("ordendecargue", data.ordendecargue)
+      .limit(1)
+      .maybeSingle()
+
     const pdfData = {
       fecha: fechaActual,
       hora: horaActual,
+      placa: ordenVehiculo?.placa || null,
+      conductor: ordenVehiculo?.conductor || null,
       allocations: allocationsWithCodes,
       totalAsignaciones: data.allocations.length,
     }

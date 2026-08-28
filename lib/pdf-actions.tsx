@@ -1725,12 +1725,29 @@ export async function generateAndUploadBatchAssignmentPDF(batchData: any, ordenC
     doc.setTextColor(0, 0, 0)
     doc.setFont(undefined as any, "normal")
     doc.text(`Orden de Cargue: ${ordenCargue}`, 105, 28, { align: "center" })
-    doc.text(`Fecha: ${batchData.fecha}`, 105, 34, { align: "center" })
-    doc.text(`Hora: ${batchData.hora}`, 105, 40, { align: "center" })
+
+    // La PLACA en negrita y en su propia línea: es lo que busca primero quien
+    // recibe el documento en piso. Si la orden todavía no tiene vehículo
+    // asignado se dice explícitamente, en vez de dejar el renglón vacío.
+    doc.setFont(undefined as any, "bold")
+    doc.text(
+      batchData.placa
+        ? `Vehículo: ${batchData.placa}${batchData.conductor ? ` — ${batchData.conductor}` : ""}`
+        : "Vehículo: sin asignar",
+      105,
+      34,
+      { align: "center" },
+    )
+    doc.setFont(undefined as any, "normal")
+
+    doc.text(`Fecha: ${batchData.fecha}`, 105, 40, { align: "center" })
+    doc.text(`Hora: ${batchData.hora}`, 105, 46, { align: "center" })
 
     // Products table header
     // Column layout: # = 7, Cliente = 30, Producto = 78 (much wider), Cod = 15, Lote = 18, Loc = 16, Cant = 16
-    let y = 55
+    // y = 61 y no 55: el encabezado gano el renglon del vehiculo y la hora bajo
+    // a 46. Con 55 la primera fila de la tabla se montaba sobre la hora.
+    let y = 61
     doc.setFillColor(44, 82, 130)
     doc.setTextColor(255, 255, 255)
     doc.rect(15, y, 180, 6, "F")
