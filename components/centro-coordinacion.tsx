@@ -88,6 +88,30 @@ function fmtHora(hhmm: string | null): string {
  *     transcurridos ÷ SLA acordado × toneladas objetivo. No es un peso real,
  *     pero da una referencia razonable de "debería llevar esto" con datos
  *     que sí existen (pesoorden, iniciocargue, SLA), en vez de mostrar 0. */
+/**
+ * Minutos entre dos horas del mismo día ("HH:MM[:SS]"). null si falta alguna o
+ * si el resultado no tiene sentido como espera —negativo, o más de 10 horas—:
+ * son horas SIN fecha, así que una orden creada anoche y despachada hoy daría
+ * una resta que no significa nada.
+ */
+function minutosEntre(desde: string | null | undefined, hasta: string | null | undefined): number | null {
+  const aMin = (t: string | null | undefined) => {
+    const m = String(t ?? "").match(/^(\d{1,2}):(\d{2})/)
+    return m ? Number(m[1]) * 60 + Number(m[2]) : null
+  }
+  const a = aMin(desde)
+  const b = aMin(hasta)
+  if (a === null || b === null) return null
+  const d = b - a
+  return d >= 0 && d < 600 ? d : null
+}
+
+/** Duración en minutos -> "1 h 20 min" o "45 min". */
+function fmtDuracion(min: number): string {
+  const h = Math.floor(min / 60)
+  return h > 0 ? `${h} h ${min % 60} min` : `${min} min`
+}
+
 function progresoOrden(o: OrdenOperativa): { pct: number; fuente: string } {
   if (o.fincargue && o.pesovascula != null && o.capacidadVehiculo) {
     return { pct: Math.min(100, Math.round((o.pesovascula / o.capacidadVehiculo) * 100)), fuente: "capacidad del vehículo" }
@@ -475,7 +499,7 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-7">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-8">
               {/* Ancho completo tambien en celular (`col-span-2`): esta tarjeta
                   lleva barra de progreso y tres lineas de texto, y en media
                   pantalla de 360 px los numeros se partian. */}
@@ -562,6 +586,45 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                   {data.kpis.tiempoCargueProedioMin != null && <span className="text-xs text-muted-foreground">min</span>}
                 </div>
                 <div className="text-[11px] text-muted-foreground">{data.kpis.tiempoCargueBaseOrdenes} órdenes hoy</div>
+              </div>
+              {/* Espera por asignación de lotes: de que nace la orden a que le
+                  asignan los lotes. Es tiempo en el que la orden ya existe pero
+                  todavía no se puede alistar, y la operación lo reportó como el
+                  punto donde se pierde el turno. Se muestra la PEOR espera
+                  además del promedio: el promedio esconde el caso que duele. */}
+              <div className="rounded-lg border bg-card p-3 shadow-sm">
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Espera por lotes</div>
+                <div className="mt-0.5 flex items-baseline gap-1">
+                  <span
+                    className={`text-2xl font-extrabold tabular-nums ${
+                      data.kpis.esperaLotesPromedioMin === null
+                        ? "text-muted-foreground"
+                        : data.kpis.esperaLotesPromedioMin >= 60
+                          ? "text-rose-600 dark:text-rose-400"
+                          : data.kpis.esperaLotesPromedioMin >= 30
+                            ? "text-amber-600 dark:text-amber-400"
+                            : "text-emerald-600 dark:text-emerald-400"
+                    }`}
+                  >
+                    {data.kpis.esperaLotesPromedioMin ?? "—"}
+                  </span>
+                  {data.kpis.esperaLotesPromedioMin != null && <span className="text-xs text-muted-foreground">min prom.</span>}
+                </div>
+                <div className="text-[11px] text-muted-foreground">
+                  orden → lotes · {data.kpis.esperaLotesBaseOrdenes} de cargue
+                </div>
+                {data.kpis.esperaLotesPeor && (
+                  <div className="text-[11px] text-muted-foreground">
+                    peor hoy{" "}
+                    <b className="tabular-nums text-foreground">{data.kpis.esperaLotesPeor.minutos} min</b>{" "}
+                    <span className="font-mono text-[10px]">{data.kpis.esperaLotesPeor.ordendecargue}</span>
+                  </div>
+                )}
+                {data.kpis.esperaLotesPendientes > 0 && (
+                  <div className="text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                    {data.kpis.esperaLotesPendientes} sin lotes aún
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1315,6 +1378,35 @@ function MuelleRow({
                         </div>
                       ))}
                     </div>
+                    {/* Cuánto esperó ESTA orden por sus lotes. La lista de
+                        arriba da las dos horas, pero restarlas de cabeza en
+                        piso no es razonable: el dato que se pidió es el
+                        intervalo, no los extremos. */}
+                    {(() => {
+                      const creacion = hoja.trazabilidad.find((e) => e.evento === "Creación de la orden")?.hora
+                      const lotes = hoja.trazabilidad.find((e) => e.evento === "Asignación de lotes")?.hora
+                      const min = minutosEntre(creacion, lotes)
+                      if (min === null) {
+                        return creacion && !lotes ? (
+                          <div className="mt-2 rounded border border-dashed px-2 py-1 text-[11px] text-amber-700 dark:text-amber-400">
+                            Todavía sin lotes asignados
+                          </div>
+                        ) : null
+                      }
+                      return (
+                        <div
+                          className={`mt-2 rounded px-2 py-1 text-[11px] ${
+                            min >= 60
+                              ? "bg-rose-50 text-rose-700 dark:bg-rose-950/30 dark:text-rose-400"
+                              : min >= 30
+                                ? "bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400"
+                                : "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400"
+                          }`}
+                        >
+                          Esperó <b className="tabular-nums">{fmtDuracion(min)}</b> por la asignación de lotes
+                        </div>
+                      )
+                    })()}
                   </div>
                   <div className="space-y-2">
                     <div className="rounded border bg-background p-2">

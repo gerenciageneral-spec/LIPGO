@@ -99,6 +99,24 @@ export interface CentroCoordinacionKpis {
   tiempoCargueProedioMin: number | null
   /** Órdenes de hoy usadas para el promedio de arriba (para mostrar "X órdenes" como base). */
   tiempoCargueBaseOrdenes: number
+  /**
+   * Minutos promedio entre que se CREA la orden de cargue (`horaorden`) y que
+   * se le ASIGNAN LOS LOTES (`horalote`), hoy.
+   *
+   * Es tiempo muerto: la orden ya existe pero no se puede empezar a alistar
+   * hasta que alguien le asigne los lotes. Lo pidió la operación porque es
+   * donde sienten que se pierde el turno esperando.
+   *
+   * Solo aplica a CARGUE: descargue y distribución no pasan por asignación de
+   * lotes. Null si ninguna orden de cargue de hoy tiene las dos horas.
+   */
+  esperaLotesPromedioMin: number | null
+  /** Órdenes de cargue de hoy usadas para ese promedio. */
+  esperaLotesBaseOrdenes: number
+  /** La espera más larga de hoy, con su orden. Es la que duele, no el promedio. */
+  esperaLotesPeor: { ordendecargue: string; minutos: number } | null
+  /** Órdenes de cargue de hoy que AÚN no tienen lotes asignados. */
+  esperaLotesPendientes: number
 }
 
 export interface ColaPatioItem {
@@ -217,7 +235,7 @@ export async function getCentroCoordinacion(
     const { data: ordenesRaw } = await admin
       .from("cabeceraoc")
       .select(
-        "id, ordendecargue, tipooperacion, muelle, auxiliares, facturar, pesoorden, pesovascula, iniciocargue, fincargue, placa, conductor, horalote, tipo_pago, fechacargue",
+        "id, ordendecargue, tipooperacion, muelle, auxiliares, facturar, pesoorden, pesovascula, horaorden, iniciocargue, fincargue, placa, conductor, horalote, tipo_pago, fechacargue",
       )
       .eq("idempresa", idempresa)
       .or(`fechacargue.eq.${fechaConsulta},and(fechacargue.lt.${fechaConsulta},fincargue.is.null)`)
@@ -332,6 +350,34 @@ export async function getCentroCoordinacion(
     const tiempoCargueProedioMin =
       duracionesHoy.length > 0 ? Math.round(duracionesHoy.reduce((s: number, d: number) => s + d, 0) / duracionesHoy.length) : null
     const tiempoCargueBaseOrdenes = duracionesHoy.length
+
+    // 7c) ESPERA POR ASIGNACIÓN DE LOTES — de que nace la orden a que le
+    // asignan los lotes. Es tiempo en el que la orden existe pero no se puede
+    // alistar. Lo pidió la operación: es donde sienten que se pierde el turno.
+    //
+    // Solo CARGUE: descargue y distribución no pasan por asignación de lotes.
+    // Se descartan las que crucen medianoche o den negativo (dato basura): son
+    // horas del día, sin fecha, así que una resta negativa no es una espera.
+    const ordenesCargueHoy = todasOrdenes.filter(
+      (o: any) => String(o.tipooperacion || "").trim() === "Cargue",
+    )
+    const esperasLotes = ordenesCargueHoy
+      .filter((o: any) => o.horaorden && o.horalote)
+      .map((o: any) => ({
+        ordendecargue: String(o.ordendecargue),
+        minutos: Math.round(aMinDia(o.horalote) - aMinDia(o.horaorden)),
+      }))
+      .filter((e: any) => e.minutos >= 0 && e.minutos < 600)
+    const esperaLotesPromedioMin =
+      esperasLotes.length > 0
+        ? Math.round(esperasLotes.reduce((s: number, e: any) => s + e.minutos, 0) / esperasLotes.length)
+        : null
+    const esperaLotesBaseOrdenes = esperasLotes.length
+    const esperaLotesPeor =
+      esperasLotes.length > 0
+        ? esperasLotes.reduce((peor: any, e: any) => (e.minutos > peor.minutos ? e : peor))
+        : null
+    const esperaLotesPendientes = ordenesCargueHoy.filter((o: any) => !o.horalote && !o.fincargue).length
 
     const armar = (o: any): OrdenOperativa => {
       const tipo = String(o.tipooperacion || "").trim() as TipoOperacion
@@ -570,6 +616,10 @@ export async function getCentroCoordinacion(
           estadoTurno,
           tiempoCargueProedioMin,
           tiempoCargueBaseOrdenes,
+          esperaLotesPromedioMin,
+          esperaLotesBaseOrdenes,
+          esperaLotesPeor,
+          esperaLotesPendientes,
         },
         muelles,
         colaSinMuelle,
@@ -856,7 +906,7 @@ export async function getHojaDelMuelle(orderId: number): Promise<{ success: bool
     const { data: o, error } = await admin
       .from("cabeceraoc")
       .select(
-        "id, idempresa, ordendecargue, tipooperacion, muelle, placa, conductor, auxiliares, auxiliares_real, pesoorden, pesovascula, fechacargue, horavehiculo, horasanitario, pesajeinicial, iniciocargue, pesajefinal, fincargue, fotospicking, tiquetebascula",
+        "id, idempresa, ordendecargue, tipooperacion, muelle, placa, conductor, auxiliares, auxiliares_real, pesoorden, pesovascula, fechacargue, horaorden, horalote, horavehiculo, horasanitario, pesajeinicial, iniciocargue, pesajefinal, fincargue, fotospicking, tiquetebascula",
       )
       .eq("id", orderId)
       .single()
@@ -908,7 +958,13 @@ export async function getHojaDelMuelle(orderId: number): Promise<{ success: bool
       }
     })
 
+    // La trazabilidad ahora arranca en la CREACIÓN de la orden y muestra la
+    // asignación de lotes. Faltaban las dos, y son justo el tramo donde la
+    // operación reporta que se pierde tiempo: la orden ya existe pero no se
+    // puede alistar hasta que alguien le asigne los lotes.
     const trazabilidad = [
+      { evento: "Creación de la orden", hora: o.horaorden || null },
+      { evento: "Asignación de lotes", hora: o.horalote || null },
       { evento: "Llegada", hora: o.horavehiculo || null },
       { evento: "Registro/inspección", hora: o.horasanitario || null },
       { evento: "Pesaje inicial", hora: o.pesajeinicial || null },
