@@ -570,6 +570,74 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                 <div className="text-[11px] font-medium text-primary">{data.kpis.personalDisponible} disponibles</div>
               </div>
               <div className="rounded-lg border border-[#0e3b3b] bg-[#0e3b3b] p-3 text-white">
+              {/* Espera por asignación de lotes: de que nace la orden a que le
+                  asignan los lotes. Es tiempo en el que la orden ya existe pero
+                  todavía no se puede alistar, y la operación lo reportó como el
+                  punto donde se pierde el turno. Se muestra la PEOR espera
+                  además del promedio: el promedio esconde el caso que duele. */}
+              {/* La tarjeta ENTERA se tiñe según la espera, no solo el número:
+                  va al lado de "Proyección de cierre", que es una tarjeta de
+                  color, y un fondo neutro ahí se lee como dato secundario. El
+                  punto de este indicador es que salte a la vista cuando la
+                  espera se dispara. Verde <30 min · ámbar 30–59 · rojo ≥60. */}
+              <div
+                className={`rounded-lg border p-3 shadow-sm ${
+                  data.kpis.esperaLotesPromedioMin === null
+                    ? "border-border bg-card"
+                    : data.kpis.esperaLotesPromedioMin >= 60
+                      ? "border-rose-300 bg-rose-50 dark:border-rose-900 dark:bg-rose-950/30"
+                      : data.kpis.esperaLotesPromedioMin >= 30
+                        ? "border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30"
+                        : "border-emerald-300 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/30"
+                }`}
+              >
+                <div
+                  className={`text-[10px] font-semibold uppercase tracking-wide ${
+                    data.kpis.esperaLotesPromedioMin === null
+                      ? "text-muted-foreground"
+                      : data.kpis.esperaLotesPromedioMin >= 60
+                        ? "text-rose-700 dark:text-rose-300"
+                        : data.kpis.esperaLotesPromedioMin >= 30
+                          ? "text-amber-700 dark:text-amber-300"
+                          : "text-emerald-700 dark:text-emerald-300"
+                  }`}
+                >
+                  Espera por lotes
+                </div>
+                <div className="mt-0.5 flex items-baseline gap-1">
+                  <span
+                    className={`text-2xl font-extrabold tabular-nums ${
+                      data.kpis.esperaLotesPromedioMin === null
+                        ? "text-muted-foreground"
+                        : data.kpis.esperaLotesPromedioMin >= 60
+                          ? "text-rose-700 dark:text-rose-300"
+                          : data.kpis.esperaLotesPromedioMin >= 30
+                            ? "text-amber-700 dark:text-amber-300"
+                            : "text-emerald-700 dark:text-emerald-300"
+                    }`}
+                  >
+                    {data.kpis.esperaLotesPromedioMin ?? "—"}
+                  </span>
+                  {data.kpis.esperaLotesPromedioMin != null && (
+                    <span className="text-xs text-muted-foreground">min prom.</span>
+                  )}
+                </div>
+                <div className="text-[11px] text-muted-foreground">
+                  orden → lotes · {data.kpis.esperaLotesBaseOrdenes} de cargue
+                </div>
+                {data.kpis.esperaLotesPeor && (
+                  <div className="text-[11px] text-muted-foreground">
+                    peor hoy{" "}
+                    <b className="tabular-nums text-foreground">{data.kpis.esperaLotesPeor.minutos} min</b>{" "}
+                    <span className="font-mono text-[10px]">{data.kpis.esperaLotesPeor.ordendecargue}</span>
+                  </div>
+                )}
+                {data.kpis.esperaLotesPendientes > 0 && (
+                  <div className="text-[11px] font-bold text-rose-700 dark:text-rose-300">
+                    {data.kpis.esperaLotesPendientes} sin lotes aún
+                  </div>
+                )}
+              </div>
                 <div className="text-[10px] font-semibold uppercase tracking-wide text-[#8fd3ce]">Proyección de cierre</div>
                 <div className="text-2xl font-extrabold tabular-nums text-[#21d4c8]">{data.kpis.proyeccionHoraFinCola || "—"}</div>
                 <div className="text-[11px] text-[#cfe9e6]">
@@ -586,45 +654,6 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                   {data.kpis.tiempoCargueProedioMin != null && <span className="text-xs text-muted-foreground">min</span>}
                 </div>
                 <div className="text-[11px] text-muted-foreground">{data.kpis.tiempoCargueBaseOrdenes} órdenes hoy</div>
-              </div>
-              {/* Espera por asignación de lotes: de que nace la orden a que le
-                  asignan los lotes. Es tiempo en el que la orden ya existe pero
-                  todavía no se puede alistar, y la operación lo reportó como el
-                  punto donde se pierde el turno. Se muestra la PEOR espera
-                  además del promedio: el promedio esconde el caso que duele. */}
-              <div className="rounded-lg border bg-card p-3 shadow-sm">
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Espera por lotes</div>
-                <div className="mt-0.5 flex items-baseline gap-1">
-                  <span
-                    className={`text-2xl font-extrabold tabular-nums ${
-                      data.kpis.esperaLotesPromedioMin === null
-                        ? "text-muted-foreground"
-                        : data.kpis.esperaLotesPromedioMin >= 60
-                          ? "text-rose-600 dark:text-rose-400"
-                          : data.kpis.esperaLotesPromedioMin >= 30
-                            ? "text-amber-600 dark:text-amber-400"
-                            : "text-emerald-600 dark:text-emerald-400"
-                    }`}
-                  >
-                    {data.kpis.esperaLotesPromedioMin ?? "—"}
-                  </span>
-                  {data.kpis.esperaLotesPromedioMin != null && <span className="text-xs text-muted-foreground">min prom.</span>}
-                </div>
-                <div className="text-[11px] text-muted-foreground">
-                  orden → lotes · {data.kpis.esperaLotesBaseOrdenes} de cargue
-                </div>
-                {data.kpis.esperaLotesPeor && (
-                  <div className="text-[11px] text-muted-foreground">
-                    peor hoy{" "}
-                    <b className="tabular-nums text-foreground">{data.kpis.esperaLotesPeor.minutos} min</b>{" "}
-                    <span className="font-mono text-[10px]">{data.kpis.esperaLotesPeor.ordendecargue}</span>
-                  </div>
-                )}
-                {data.kpis.esperaLotesPendientes > 0 && (
-                  <div className="text-[11px] font-medium text-amber-600 dark:text-amber-400">
-                    {data.kpis.esperaLotesPendientes} sin lotes aún
-                  </div>
-                )}
               </div>
             </div>
 
