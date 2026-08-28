@@ -23,7 +23,6 @@ import {
 import { cargarMuellesEmpresa, getMuellesEmpresaSync } from "@/lib/muelles-empresa"
 import { generatePickingPDF, getCarguDescarguePersonnel } from "@/lib/picking-actions"
 import { generatePackingPDF, getPackingItems } from "@/lib/packing-actions"
-import { updateOrderInitioCargue } from "@/lib/orders-actions"
 // Las pausas viven en picking-actions porque nacieron ahí, pero son de la
 // ORDEN (tabla `pausas`), no exclusivas de Cargue — mismo criterio que ya
 // usa components/packing.tsx.
@@ -713,8 +712,12 @@ export async function getParteDeTurno(
 
 // ---------------------------------------------------------------------------
 // Acciones — asignar muelle e iniciar orden. Reutilizan generatePickingPDF /
-// generatePackingPDF / updateOrderInitioCargue (Picking y Packing hacen
-// exactamente esto mismo hoy); acá solo se orquestan junto al muelle real.
+// generatePackingPDF (las mismas que usan Picking y Packing) para el documento.
+//
+// EL INICIO DE LA OPERACION LO MARCA SOLO `asignarOrdenAMuelle`. Ni el PDF de
+// Picking ni el de Packing escriben ya `iniciocargue`: antes los tres podian
+// hacerlo y la hora dependia de cual se ejecutara primero, asi que la misma
+// orden quedaba con un inicio distinto segun por donde se operara.
 // ---------------------------------------------------------------------------
 
 /**
@@ -814,7 +817,8 @@ export async function iniciarOrdenEnMuelle(
 
   const r = await generatePackingPDF(orderId, orderData.ordendecargue, orderData.cliente, orderData.placa, orderData.conductor)
   if (!r.success) return { success: false, message: r.error }
-  await updateOrderInitioCargue(orderId)
+  // El inicio ya quedó marcado por `asignarOrdenAMuelle`, arriba. Aquí solo se
+  // genera el documento.
   return { success: true, message: "Orden iniciada", url: r.pdfUrl }
 }
 

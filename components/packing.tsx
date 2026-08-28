@@ -28,7 +28,6 @@ import {
 // ordenes de `tipooperacion = 'Cargue'` y packing lista Descargue y
 // Distribucion, asi que un mismo `ordendecargue` nunca aparece en ambos.
 import { pausarOrden, reanudarOrden, getOrdenesPausadas } from "@/lib/picking-actions"
-import { updateOrderInitioCargue } from "@/lib/orders-actions"
 import { FacturarCheckbox } from "@/components/facturar-checkbox"
 import { useToast } from "@/hooks/use-toast"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
@@ -387,11 +386,11 @@ export function Packing() {
     const result = await generatePackingPDF(order.id, order.ordendecargue, order.cliente, order.placa, order.conductor)
 
     if (result.success && result.pdfUrl) {
-      console.log("[v0] Packing: PDF generated successfully, updating iniciocargue")
-      
-      // Update iniciocargue with current time in Colombia
-      const updateResult = await updateOrderInitioCargue(order.id)
-      console.log("[v0] Packing: updateOrderInitioCargue result:", updateResult)
+      // Generar el PDF ya NO marca el inicio de la operación: eso lo hace
+      // asignar el muelle en Centro de Coordinación, que es el momento en que
+      // el vehículo deja de esperar en patio y ocupa el puesto. Antes esta
+      // pantalla escribía `iniciocargue` y pisaba la hora real del muelle.
+      console.log("[v0] Packing: PDF generated successfully")
 
       toast({
         title: "Éxito",

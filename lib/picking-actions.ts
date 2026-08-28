@@ -894,19 +894,17 @@ export async function generatePickingPDF(
 
     // Esta función ahora se dispara desde DOS lugares que pueden competir
     // mientras conviven el botón "Generar PDF" de Picking y la asignación de
-    // muelle en Centro de Coordinación: el que llegue primero manda, el que
-    // llega después debe respetarlo (no pisar iniciocargue ni duplicar el
-    // PDF). Si la orden YA tiene doccargue, no se regenera nada — se
-    // devuelve el PDF existente tal cual.
+    // muelle en Centro de Coordinación: si la orden YA tiene doccargue, no se
+    // regenera nada — se devuelve el PDF existente tal cual. El inicio de la
+    // operación no se toca aquí: lo marca la asignación del muelle.
     const { data: ordenActual } = await supabase
       .from("cabeceraoc")
-      .select("iniciocargue, doccargue")
+      .select("doccargue")
       .eq("id", orderId)
       .maybeSingle()
     if (ordenActual?.doccargue) {
       return { success: true, url: ordenActual.doccargue }
     }
-    const iniciocargueYaExistente: string | null = ordenActual?.iniciocargue || null
 
     // Get products from invtrans
     const productsResult = await getLoadOrderProducts(orderId, ordenCargue)
@@ -1032,17 +1030,17 @@ export async function generatePickingPDF(
 
     console.log("[v0] Picking PDF uploaded successfully:", publicUrl)
 
-    const currentTime = await getColombiaTime()
-
+    // Generar el PDF de Picking YA NO marca el inicio de la operación.
+    //
+    // El inicio lo marca UNA sola cosa: asignar el muelle
+    // (`asignarOrdenAMuelle` en lib/centro-coordinacion-actions.ts). Antes había
+    // tres caminos que podían escribir `iniciocargue` y el valor dependía de
+    // cuál se ejecutara primero, así que la misma orden podía quedar con una
+    // hora distinta según por dónde la operaran. Aquí solo se guarda el
+    // documento.
     const { error: updateError } = await supabase
       .from("cabeceraoc")
-      .update({
-        // Si el muelle ya puso iniciocargue (asignación desde Centro de
-        // Coordinación) antes de que se generara este PDF, esa hora manda —
-        // aquí solo se completa si de verdad seguía vacía.
-        iniciocargue: iniciocargueYaExistente || currentTime,
-        doccargue: publicUrl,
-      })
+      .update({ doccargue: publicUrl })
       .eq("id", orderId)
 
     if (updateError) {
@@ -1050,7 +1048,6 @@ export async function generatePickingPDF(
       // Don't fail the whole operation if the update fails
     }
 
-    console.log("[v0] Updated iniciocargue to:", currentTime)
     console.log("[v0] Updated doccargue to:", publicUrl)
 
     return {
