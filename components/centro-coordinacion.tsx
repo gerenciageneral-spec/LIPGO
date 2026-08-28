@@ -416,19 +416,30 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
 
   return (
     <div className="-m-4 space-y-0 md:-m-6">
-      <div className="sticky top-0 z-20 flex flex-wrap items-center gap-3 bg-[#0e3b3b] px-4 py-3 text-white shadow md:px-6">
-        <LayoutGrid className="h-5 w-5 text-[#21d4c8]" />
-        <span className="text-sm font-bold tracking-tight">Centro de Coordinación</span>
-        <Badge className="ml-auto border-white/15 bg-white/10 text-white hover:bg-white/10">
-          Proyecto: {selectedEmpresaNombre || `ID ${selectedEmpresaId}`}
+      {/* Barra superior en UNA sola linea, tambien en celular. Antes hacia
+          `flex-wrap`: con un nombre de proyecto largo el reloj se iba a un
+          segundo renglon y la barra —que es sticky— se comia el doble de alto
+          de una pantalla que ya es corta. Ahora lo unico que cede es el nombre
+          del proyecto, que se corta con "…". El reloj nunca se parte. */}
+      <div className="sticky top-0 z-20 flex items-center gap-2 bg-[#0e3b3b] px-3 py-2.5 text-white shadow md:gap-3 md:px-6 md:py-3">
+        <LayoutGrid className="h-5 w-5 shrink-0 text-[#21d4c8]" />
+        <span className="shrink-0 text-xs font-bold tracking-tight sm:text-sm">
+          <span className="sm:hidden">Coordinación</span>
+          <span className="hidden sm:inline">Centro de Coordinación</span>
+        </span>
+        <Badge className="ml-auto min-w-0 border-white/15 bg-white/10 text-white hover:bg-white/10">
+          <span className="block truncate">
+            <span className="hidden sm:inline">Proyecto: </span>
+            {selectedEmpresaNombre || `ID ${selectedEmpresaId}`}
+          </span>
         </Badge>
-        <span className="flex items-center gap-1.5 rounded-md border border-white/15 bg-white/5 px-2.5 py-1 font-mono text-xs text-[#cfe9e6]">
+        <span className="flex shrink-0 items-center gap-1.5 rounded-md border border-white/15 bg-white/5 px-2 py-1 font-mono text-[11px] text-[#cfe9e6] sm:px-2.5 sm:text-xs">
           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#21d4c8]" />
           {horaActualReloj}
         </span>
       </div>
 
-      <div className="space-y-4 p-4 md:p-6">
+      <div className="space-y-3 p-3 md:space-y-4 md:p-6">
         {loading && !data ? (
           <div className="flex items-center justify-center py-16 text-muted-foreground">
             <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Cargando Centro de Coordinación...
@@ -465,7 +476,10 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
             )}
 
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-7">
-              <div className="rounded-lg border bg-card p-3 shadow-sm sm:col-span-2 lg:col-span-2">
+              {/* Ancho completo tambien en celular (`col-span-2`): esta tarjeta
+                  lleva barra de progreso y tres lineas de texto, y en media
+                  pantalla de 360 px los numeros se partian. */}
+              <div className="col-span-2 rounded-lg border bg-card p-3 shadow-sm lg:col-span-2">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Cargado hoy</div>
                   <Badge className={estadoColor[data.kpis.estadoTurno]}>{estadoLabel[data.kpis.estadoTurno]}</Badge>
@@ -585,10 +599,11 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                 </div>
 
                 <div className="rounded-xl border bg-card shadow-sm">
-                  <div className="flex items-center gap-2 border-b px-4 py-3">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b px-3 py-2.5 md:px-4 md:py-3">
                     <h2 className="text-sm font-bold">Distribución de muelles</h2>
-                    <span className="text-[11px] text-muted-foreground">— toca un muelle para operarlo</span>
-                    <div className="ml-auto flex gap-3 text-[10px] text-muted-foreground">
+                    <span className="hidden text-[11px] text-muted-foreground sm:inline">— toca un muelle para operarlo</span>
+                    {/* La leyenda baja de linea en celular en vez de aplastar el titulo. */}
+                    <div className="flex w-full gap-3 text-[10px] text-muted-foreground sm:ml-auto sm:w-auto">
                       <span className="flex items-center gap-1">
                         <i className="inline-block h-2 w-2 rounded-sm bg-emerald-600" />
                         Libre
@@ -633,10 +648,12 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                     <h2 className="mb-2 text-sm font-bold">Cola sin muelle asignado ({data.colaSinMuelle.length})</h2>
                     <div className="space-y-1.5">
                       {data.colaSinMuelle.map((o) => (
-                        <div key={o.orderId} className="flex items-center justify-between gap-2 rounded-md border p-2 text-sm">
-                          {/* Una sola línea, igual que en la fila del muelle:
-                              solo cede el nombre del cliente. */}
-                          <div className="flex min-w-0 items-baseline gap-x-2">
+                        <div key={o.orderId} className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-2 text-sm sm:flex-nowrap">
+                          {/* En escritorio, una sola línea: solo cede el nombre
+                              del cliente. En celular puede bajar de línea, y el
+                              botón se va a su propio renglón: forzarlo todo en
+                              360 px dejaba el cliente ilegible. */}
+                          <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5 sm:flex-nowrap">
                             <span className="shrink-0 whitespace-nowrap font-mono text-xs text-muted-foreground">{o.ordendecargue}</span>
                             <span className="min-w-0 truncate font-semibold" title={o.cliente ?? undefined}>
                               {o.cliente}
@@ -651,7 +668,7 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                               </Badge>
                             )}
                           </div>
-                          <Button size="sm" variant="outline" className="h-7 shrink-0 text-xs" onClick={() => abrirAsignar(o)}>
+                          <Button size="sm" variant="outline" className="h-7 w-full shrink-0 text-xs sm:w-auto" onClick={() => abrirAsignar(o)}>
                             Asignar a muelle
                           </Button>
                         </div>
@@ -1068,22 +1085,34 @@ function MuelleRow({
 
   return (
     <div className={`rounded-lg border ${rowBg} dark:bg-card dark:border-border transition-opacity ${atenuado ? "opacity-40" : ""}`}>
-      <button type="button" onClick={onToggle} disabled={!o} className="grid w-full grid-cols-[64px_1fr_auto_auto] items-center gap-3 p-2.5 text-left disabled:cursor-default">
-        <div className={`flex h-16 w-16 flex-col items-center justify-center rounded-xl ${badgeColor} ${badgeTextColor} shadow ${o?.slaEnRiesgo ? "animate-pulse" : ""}`}>
-          <div className="text-2xl font-extrabold leading-none">{slot.muelle}</div>
-          <div className="mt-0.5 text-[8px] font-bold uppercase tracking-wide">
+      {/* CELULAR: 3 columnas (distintivo · contenido · flecha) y la caja de
+          "finaliza aprox." baja a una segunda fila a lo ancho.
+          TABLET/ESCRITORIO: las 4 columnas de siempre, en una sola fila.
+          `minmax(0,1fr)` y no `1fr` a proposito: sin el minimo en 0 la columna
+          del contenido no puede encogerse y `truncate` no recorta nada. */}
+      <button
+        type="button"
+        onClick={onToggle}
+        disabled={!o}
+        className="grid w-full grid-cols-[48px_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-2 p-2 text-left disabled:cursor-default sm:grid-cols-[64px_minmax(0,1fr)_auto_auto] sm:gap-3 sm:p-2.5"
+      >
+        <div className={`flex h-12 w-12 flex-col items-center justify-center rounded-xl sm:h-16 sm:w-16 ${badgeColor} ${badgeTextColor} shadow ${o?.slaEnRiesgo ? "animate-pulse" : ""}`}>
+          <div className="text-xl font-extrabold leading-none sm:text-2xl">{slot.muelle}</div>
+          <div className="mt-0.5 text-[7px] font-bold uppercase leading-tight tracking-wide sm:text-[8px]">
             {estado === "libre" ? "Libre" : estado === "vencido" ? "Fuera de tiempo" : o?.pausado ? "Pausado" : "Ocupado"}
           </div>
         </div>
 
         {o ? (
           <div className="min-w-0 space-y-1.5">
-            {/* UNA sola línea. Antes era `flex-wrap`: con un nombre de cliente
-                largo, la placa y el tipo se iban a un segundo renglón y la fila
-                del muelle quedaba desalineada. Lo único que cede es el nombre
-                del cliente, que se corta con "…" y conserva el tooltip; el
-                código de orden, la placa y el tipo nunca se parten. */}
-            <div className="flex min-w-0 items-baseline gap-x-2">
+            {/* En ESCRITORIO, una sola línea: con un nombre de cliente largo la
+                placa y el tipo se iban a un segundo renglón y la fila quedaba
+                desalineada. Lo único que cede es el cliente, que se corta con
+                "…" y conserva el tooltip.
+                En CELULAR sí se permite bajar de línea (`flex-wrap`): forzar
+                una sola línea en 360 px dejaba el nombre del cliente reducido a
+                dos letras, que es peor que ocupar un renglón más. */}
+            <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5 sm:flex-nowrap">
               <span className="shrink-0 rounded bg-black/5 px-1 text-[9px] font-bold text-muted-foreground dark:bg-white/10">OC</span>
               <span className="shrink-0 whitespace-nowrap font-mono text-xs text-muted-foreground">{o.ordendecargue}</span>
               <span className="min-w-0 truncate text-sm font-bold" title={o.cliente ?? undefined}>
@@ -1099,12 +1128,15 @@ function MuelleRow({
                 </Badge>
               )}
             </div>
-            <div className="flex items-center gap-2">
+            {/* En celular la barra y el texto van en renglones distintos: en una
+                sola línea de 360 px el texto de toneladas quedaba cortado a la
+                mitad y no se leía ni la capacidad ni el porcentaje. */}
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               <span className="text-base leading-none">{iconoVehiculo(o.tipovehiculo)}</span>
-              <div className="h-1.5 max-w-[160px] flex-1 overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+              <div className="h-1.5 w-24 overflow-hidden rounded-full bg-black/10 dark:bg-white/10 sm:max-w-[160px] sm:flex-1">
                 <div className="h-full rounded-full bg-teal-600" style={{ width: `${progreso!.pct}%` }} />
               </div>
-              <span className="min-w-0 truncate whitespace-nowrap text-[11px] tabular-nums text-muted-foreground">
+              <span className="min-w-0 basis-full truncate text-[11px] tabular-nums text-muted-foreground sm:basis-auto sm:whitespace-nowrap">
                 {t1(o.pesoorden)} t objetivo{o.capacidadVehiculo ? ` · cap. ${t1(o.capacidadVehiculo)} t (${o.tipovehiculo})` : ""} ·{" "}
                 {progreso!.pct}% {progreso!.fuente}
               </span>
@@ -1126,12 +1158,14 @@ function MuelleRow({
 
         {o && (
           <div
-            className={`rounded-lg px-3 py-2 text-center ${estado === "vencido" ? "bg-rose-100 dark:bg-rose-950/40" : o.pausado ? "bg-amber-100 dark:bg-amber-950/40" : "bg-emerald-100 dark:bg-emerald-950/40"}`}
+            /* En celular ocupa una segunda fila a lo ancho (col 2 y 3); en
+               tablet vuelve a su columna propia de la primera fila. */
+            className={`col-start-2 col-end-4 row-start-2 flex items-center justify-center gap-2 rounded-lg px-2 py-1.5 text-center sm:col-start-3 sm:col-end-4 sm:row-start-1 sm:block sm:px-3 sm:py-2 ${estado === "vencido" ? "bg-rose-100 dark:bg-rose-950/40" : o.pausado ? "bg-amber-100 dark:bg-amber-950/40" : "bg-emerald-100 dark:bg-emerald-950/40"}`}
           >
             <div className="text-[9px] font-bold uppercase tracking-wide text-muted-foreground">
               {o.pausado ? "En pausa" : "Finaliza aprox."}
             </div>
-            <div className={`text-lg font-extrabold tabular-nums ${estado === "vencido" ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>
+            <div className={`text-base font-extrabold tabular-nums sm:text-lg ${estado === "vencido" ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>
               {o.pausado ? "—" : eta || "—"}
             </div>
             <div className="text-[9px] text-muted-foreground">
@@ -1146,7 +1180,11 @@ function MuelleRow({
           </div>
         )}
 
-        {o && <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} />}
+        {o && (
+          <ChevronDown
+            className={`col-start-3 col-end-4 row-start-1 h-4 w-4 shrink-0 self-center text-muted-foreground transition-transform sm:col-start-4 sm:col-end-5 ${expanded ? "rotate-180" : ""}`}
+          />
+        )}
       </button>
 
       {expanded && o && (
