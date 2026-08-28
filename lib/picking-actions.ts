@@ -6,6 +6,7 @@ import { getColombiaDateTime, getColombiaTime } from "@/lib/date-utils"
 import { getCurrentEmpresaIdForInsert, getCurrentEmpresaId } from "@/lib/company-filter"
 import { normalizeName } from "@/lib/nomina-calculo-utils"
 import { getHorarioTolva, type HorarioTolvaDia } from "@/lib/horario-tolva-actions"
+import { esProductoPorUnidad } from "@/lib/facturacion-billed-party"
 
 export interface PendingLoadOrder {
   id: number
@@ -512,6 +513,33 @@ export async function computarRosterPagoGlobal(idempresa: number, fecha: string)
     roster.push(nombre)
   }
   return roster
+}
+
+/**
+ * true si esta orden es un DESCARGUE en ID2 (Avimol) de un producto que se
+ * factura por UNIDAD (hoy: Huevos, ver esProductoPorUnidad en
+ * facturacion-billed-party.ts). Ese personal se paga aparte (puesto
+ * "Cargue/Descargue Huevos"), no por destajo de esta orden puntual — no
+ * exige tipo de pago ni personal asignado para poder cerrarla.
+ *
+ * Confirmado por el usuario 2026-08-28. Alcance ESTRICTO a propósito: SOLO
+ * Descargue (no Cargue/Distribución) + ID2 + producto por unidad — hoy ese
+ * descargue solo existe en ID2. El resto de descargues (cualquier otro
+ * producto, cualquier otro proyecto) sigue exigiendo tipo de pago y
+ * personal exactamente igual que hoy — no tocar esa parte.
+ */
+export async function esDescargueSinPersonalRequerido(
+  supabase: any,
+  orderId: number,
+  idempresa: number | string | null | undefined,
+  tipooperacion: string | null | undefined,
+): Promise<boolean> {
+  if (Number(idempresa) !== 2 || tipooperacion !== "Descargue") return false
+  const { data: detalle } = await supabase.from("detalleoc").select("producto").eq("idorden", orderId)
+  const nombres = [...new Set((detalle ?? []).map((d: any) => String(d.producto || "").trim()).filter(Boolean))]
+  if (nombres.length === 0) return false
+  const { data: prods } = await supabase.from("productos").select("subcategoria").in("nombre", nombres)
+  return (prods ?? []).some((p: any) => esProductoPorUnidad(p.subcategoria))
 }
 
 /** Elige el modo de pago de la orden. Obligatorio antes de poder cerrarla (ver upload-picking-photos/route.ts). */

@@ -56,6 +56,16 @@ function esClonDistribucion(o: PendingLoadOrder): boolean {
   return o.tipooperacion === "Distribucion" && String(o.ordendecargue || "").endsWith("D")
 }
 
+// Descargue de Huevos en ID2: ese personal se paga aparte (puesto "Cargue/
+// Descargue Huevos"), no por destajo de esta orden — se puede cerrar sin
+// personal asignado ni tipo de pago elegido. Confirmado 2026-08-28, alcance
+// estricto: solo Descargue + Huevos + ID2 (`esDescargueHuevos` ya viene
+// calculado así desde getPendingUnloadOrders); el resto de descargues sigue
+// exigiendo personal y tipo de pago igual que siempre.
+function esDescargueHuevosSinPersonal(o: PendingLoadOrder): boolean {
+  return !!o.esDescargueHuevos
+}
+
 export function Packing() {
   const { toast } = useToast()
   const { profile, selectedEmpresaId } = useAuth()
@@ -711,9 +721,11 @@ export function Packing() {
                             // Cierre por "Cargar Fotos" (escribe fincargue). Normalmente
                             // requiere personal asignado Y tipo de pago elegido, PERO una
                             // DISTRIBUCIÓN ("…D") marcada "no facturar" no lleva auxiliares
-                            // ni necesita tipo de pago, así que se puede cerrar directo.
+                            // ni necesita tipo de pago, así que se puede cerrar directo. Un
+                            // Descargue de Huevos en ID2 tampoco: ese personal se paga aparte.
                             disabled={
                               !esDistribucionNoFacturable(order) &&
+                              !esDescargueHuevosSinPersonal(order) &&
                               (!order.auxiliares || (!order.tipo_pago && !esClonDistribucion(order)))
                             }
                             size="sm"
@@ -754,7 +766,7 @@ export function Packing() {
                         {/* El tipo de pago (Global/Individual) lo elige el
                             coordinador en Centro de Coordinación, no aquí —
                             Packing solo respeta el bloqueo si aún no se eligió. */}
-                        {!esDistribucionNoFacturable(order) && order.auxiliares && !order.tipo_pago && !esClonDistribucion(order) && (
+                        {!esDistribucionNoFacturable(order) && !esDescargueHuevosSinPersonal(order) && order.auxiliares && !order.tipo_pago && !esClonDistribucion(order) && (
                           <div className="mt-1 text-[10px] font-medium text-rose-600">
                             ⚠ Falta elegir tipo de pago en Centro de Coordinación
                           </div>

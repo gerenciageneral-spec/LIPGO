@@ -9,6 +9,7 @@ import {
   getCarguDescarguePersonnel as _getCarguDescarguePersonnel,
   assignPersonnelToOrder as _assignPersonnelToOrder,
   savePickingPhotos as _savePickingPhotos,
+  esDescargueSinPersonalRequerido,
 } from "@/lib/picking-actions"
 
 export interface PendingLoadOrder {
@@ -47,6 +48,15 @@ export interface PendingLoadOrder {
    * (aplicado server-side en /api/upload-picking-photos, no solo en la UI).
    */
   tipo_pago?: "global" | "individual" | null
+  /**
+   * true si es un Descargue de Huevos en ID2: ese personal se paga aparte
+   * (puesto "Cargue/Descargue Huevos"), así que esta orden puede cerrarse
+   * sin personal asignado ni tipo de pago elegido. Ver
+   * esDescargueSinPersonalRequerido en lib/picking-actions.ts — el server
+   * (app/api/upload-picking-photos) es quien realmente lo hace cumplir;
+   * este campo solo habilita el botón en el cliente.
+   */
+  esDescargueHuevos?: boolean
 }
 
 export interface PackingItem {
@@ -90,9 +100,21 @@ export async function getPendingUnloadOrders(selectedEmpresaId?: number | null) 
         .limit(1)
         .single()
 
+      // Descargue de Huevos en ID2: habilita "Cargar Fotos" sin exigir
+      // personal ni tipo de pago (ver comentario en la interfaz). Alcance
+      // estricto: solo esta lista es de Descargue — Distribución (función
+      // aparte) no se toca.
+      const esDescargueHuevos = await esDescargueSinPersonalRequerido(
+        supabase,
+        order.id,
+        empresaId,
+        order.tipooperacion,
+      )
+
       return {
         ...order,
         cliente: detailData?.cliente || "Sin cliente",
+        esDescargueHuevos,
       }
     }),
   )

@@ -2,7 +2,7 @@ import { type NextRequest, NextResponse } from "next/server"
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getColombiaTime } from "@/lib/date-utils"
 import { generarIngresoProduccionDesdeDescargue } from "@/lib/orders-actions"
-import { computarRosterPagoGlobal } from "@/lib/picking-actions"
+import { computarRosterPagoGlobal, esDescargueSinPersonalRequerido } from "@/lib/picking-actions"
 
 // Subimos un solo archivo (o pocos) por request para evitar el limite
 // duro de ~4.5MB por body en Vercel serverless. Cuando un movil envia
@@ -66,6 +66,17 @@ export async function POST(request: NextRequest) {
       // tipo de pago (no hay tonelaje que repartir).
       const exentoPorNoFacturable = orderRow.tipooperacion === "Distribucion" && orderRow.facturar === false
 
+      // Descargue de Huevos en ID2: el personal se paga aparte (puesto
+      // "Cargue/Descargue Huevos"), no por destajo de esta orden — tampoco
+      // exige tipo de pago ni personal. Confirmado 2026-08-28, alcance
+      // estricto (ver esDescargueSinPersonalRequerido).
+      const exentoPorHuevos = await esDescargueSinPersonalRequerido(
+        supabaseAdmin,
+        orderIdNum,
+        orderRow.idempresa,
+        orderRow.tipooperacion,
+      )
+
       // Un clon de Distribución automática ("+D", ver generarDistribucionAutomatica
       // en lib/orders-actions.tsx) es el MISMO vehículo/orden que su madre de
       // Cargue — desde que se excluyó de la asignación de muelle en Centro de
@@ -88,7 +99,7 @@ export async function POST(request: NextRequest) {
       }
 
       let auxiliaresOverride: string | undefined
-      if (!exentoPorNoFacturable) {
+      if (!exentoPorNoFacturable && !exentoPorHuevos) {
         if (tipoPagoEfectivo !== "global" && tipoPagoEfectivo !== "individual") {
           return NextResponse.json(
             { success: false, error: "Debe elegir Pago Global o Individual antes de cerrar la orden" },
