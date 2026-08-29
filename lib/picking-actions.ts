@@ -591,6 +591,25 @@ export async function assignPersonnelToOrder(
   const supabase = await createClient()
   const supabaseAdmin = await getSupabaseAdmin()
 
+  // Una Distribución ("+D" o manual) marcada "No Facturar" no debe llevar
+  // auxiliares (si no se factura, no se paga la entrega — ver
+  // esDistribucionNoFacturable en components/packing.tsx). El botón ya
+  // queda deshabilitado en la UI, pero eso es solo comodidad visual: se
+  // vuelve a consultar el estado REAL en la base (no lo que mandó el
+  // cliente) para que esta acción nunca pueda asignar personal a una orden
+  // así, sin importar por dónde se llame.
+  const { data: ordenActual } = await supabase
+    .from("cabeceraoc")
+    .select("tipooperacion, facturar")
+    .eq("id", orderId)
+    .maybeSingle()
+  if (ordenActual?.tipooperacion === "Distribucion" && ordenActual.facturar === false) {
+    return {
+      success: false,
+      message: "Esta distribución está marcada 'No Facturar' — no lleva auxiliares.",
+    }
+  }
+
   // Join employee names with commas
   const auxiliares = employeeNames.join(",")
 
