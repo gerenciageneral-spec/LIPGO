@@ -185,6 +185,14 @@ export interface CentroCoordinacionData {
   autoAsignaciones: { ordendecargue: string; placa: string | null; muelle: number }[]
   /** Total de órdenes de HOY por tipo (abiertas + cerradas) — para los chips de filtro, que no deben bajar cuando una orden cierra. */
   conteoTipoHoy: Record<TipoOperacion, number>
+  /**
+   * Órdenes de Cargue ACTIVAS ahora mismo en modo "Arrume" (ID1/ID2). El
+   * propio vehículo en Arrume no tarda más (la cuadrilla extra lo compensa —
+   * validado con datos reales 2026-08-29), pero SÍ le quita personal a los
+   * demás muelles del mismo día — hasta +45% más lento en casos reales. Sirve
+   * solo de aviso; no cambia ningún SLA ni proyección (ver [[lipgo-modo-carga-arrume-estibado]]).
+   */
+  arrumeActivo: OrdenOperativa[]
 }
 
 /** SLA de respaldo (minutos) cuando no se pudo determinar el tipo de vehículo. */
@@ -728,6 +736,11 @@ export async function getCentroCoordinacion(
     }
     const vsAyerPct = cargadoAyerMismaHoraTon > 0 ? round1(((cargadoHoyTon - cargadoAyerMismaHoraTon) / cargadoAyerMismaHoraTon) * 100) : null
 
+    // 15) Aviso de Arrume activo: órdenes de Cargue en curso ahora mismo con
+    // modoCarga === "Arrume" — puro aviso de contención de personal para el
+    // resto de los muelles, no afecta ningún cálculo de SLA/proyección.
+    const arrumeActivo = ordenesOperativas.filter((o) => o.modoCarga === "Arrume")
+
     return {
       success: true,
       data: {
@@ -769,6 +782,7 @@ export async function getCentroCoordinacion(
         alertaCargandoSinMuelle,
         autoAsignaciones,
         conteoTipoHoy,
+        arrumeActivo,
       },
     }
   } catch (e: any) {

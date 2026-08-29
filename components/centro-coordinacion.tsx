@@ -515,6 +515,16 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
               </div>
             )}
 
+            {data.arrumeActivo.length > 0 && (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
+                <div className="flex flex-wrap items-center gap-1.5 text-xs font-semibold">
+                  <AlertTriangle className="h-3.5 w-3.5 flex-none" />
+                  Arrume activo en muelle{data.arrumeActivo.length > 1 ? "s" : ""}{" "}
+                  {data.arrumeActivo.map((o) => o.muelle ?? "?").join(", ")} — otros muelles pueden tardar más de lo normal hoy.
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8">
               {/* Ancho completo tambien en celular (`col-span-2`): esta tarjeta
                   lleva barra de progreso y tres lineas de texto, y en media
