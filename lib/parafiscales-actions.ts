@@ -8,14 +8,18 @@
 // Fuente de los datos (todo real, nada simulado). Cada día del mes se clasifica
 // por su novedad (`pagonomina.novedad_reportada`) y cotiza según la norma PILA:
 //   · Trabajado  → IBC = `total_liquidado_dia` (BASE del día + extras + recargos +
-//     dominical/festivo, SIN auxilio de transporte). Cotiza TODO, incl. ARL.
-//     NO incluye la bonificación por productividad / excedente de destajo (novedad
-//     "52-Bonificación Por Productividad" del archivo plano, `bonif_prestacional`):
-//     es un bono NO prestacional (no constitutivo de salario), no cotiza al IBC ni
-//     genera aportes de PILA. Tampoco cuenta lo PROYECTADO (`cabeceraoc.tipooperacion
-//     = 'proyeccion'`, ver lib/ajuste-proyeccion-actions.ts): esa producción entra a
-//     `bonif_prestacional` igual que la real, así que al excluir el bono completo
-//     también queda excluida cualquier proyección que hubiera en él.
+//     dominical/festivo, SIN auxilio de transporte) + la BONIFICACIÓN por productividad
+//     = excedente de destajo NETO de la quincena (piso 0), TODA prestacional. Cotiza
+//     TODO, incl. ARL. RESTAURADO 2026-08-29: el commit f706a7f (14-ago) lo había
+//     sacado del IBC ("bono NO prestacional"), pero se comparó contra la planilla REAL
+//     de Aportes en Línea de julio-2026 (60 personas cruzadas por cédula) y con el bono
+//     adentro la brecha promedio baja de $234k a $118k por persona (a $57k cuando además
+//     coincide el conteo de días) — la vieja fórmula sí es la que de verdad se radicó en
+//     la PILA. Confirmado por el usuario: debe coincidir con lo pagado en Siigo.
+//     NOTA pendiente (la razón original de f706a7f): esto vuelve a dejar que lo
+//     PROYECTADO (`cabeceraoc.tipooperacion = 'proyeccion'`) entre al IBC vía este mismo
+//     bono si un mes se consulta ANTES de cerrar sus proyecciones — no debería afectar
+//     meses ya cerrados como julio, pero vigilar si se usa para el mes en curso.
 //   · Vacaciones → IBC = salario/día. Cotiza pensión + caja (no salud, no ARL).
 //   · Incapacidad→ IBC = salario/día (día completo). Cotiza pensión + salud (no ARL).
 //   · Ausentismo → licencia no remunerada: solo 12% de pensión (empleador).
@@ -301,6 +305,10 @@ export async function getParafiscales(
         diasIncap: number
         diasAus: number
         diasLicr: number
+        // Excedente de destajo acumulado CON SIGNO por quincena (se netea y se aplica
+        // MAX(0,·) por quincena al final — igual que el archivo plano de Siigo).
+        excQ1: number
+        excQ2: number
       }
     >()
     for (const r of filas) {
@@ -326,7 +334,7 @@ export async function getParafiscales(
       const esDia31 = diaMes === 31
       const a =
         acum.get(nombre) ||
-        { ibcTrab: 0, diasTrab: 0, diasVac: 0, diasIncap: 0, diasAus: 0, diasLicr: 0 }
+        { ibcTrab: 0, diasTrab: 0, diasVac: 0, diasIncap: 0, diasAus: 0, diasLicr: 0, excQ1: 0, excQ2: 0 }
       switch (clasificarDiaCotizacion(r.novedad_reportada)) {
         case "VAC":
           if (!esDia31) a.diasVac += 1
@@ -343,12 +351,16 @@ export async function getParafiscales(
         case "RETIRO":
           break // día de baja: no suma a ninguna base
         default: {
-          // TRAB. IBC de días trabajados = SOLO `total_liquidado_dia` (salario/30 +
-          // recargos de turno + dominical). El bono de productividad / excedente de
-          // destajo (`bonif_prestacional`, novedad "52-Bonificación Por Productividad"
-          // del archivo plano) NO entra: es un bono NO prestacional (no constitutivo
-          // de salario), así que no cotiza al IBC ni genera aportes de PILA.
+          // TRAB. Cada día trabajado ya liquida su BASE del día (`total_liquidado_dia`
+          // = salario/30 + recargos de turno + dominical; el destajo ya NO se paga por
+          // día). El excedente de producción se NETEA por QUINCENA y se paga como
+          // bonificación por productividad, TODA prestacional (cotiza al IBC, sin
+          // tope). Se acumula con signo aquí (`bonif_prestacional` ya viene con signo
+          // desde pagonomina) y se aplica MAX(0,·) por quincena más abajo — validado
+          // contra la planilla real de julio-2026 (ver comentario arriba).
           a.ibcTrab += Number(r.total_liquidado_dia || 0)
+          if (diaMes <= 15) a.excQ1 += Number(r.bonif_prestacional || 0)
+          else a.excQ2 += Number(r.bonif_prestacional || 0)
           if (!esDia31) a.diasTrab += 1
         }
       }
@@ -364,10 +376,15 @@ export async function getParafiscales(
       // proporcional a los días TRABAJADOS del mes (no se causa en vac/incap/ausencia/licencia).
       const salarioRef = info.salario || smlv
       const auxilio = salarioRef <= smlv * 2 ? (auxilioMes / 30) * Math.min(a.diasTrab, 30) : 0
+      // Bonificación por productividad = excedente NETO de cada quincena con piso 0
+      // (los días bajos netean con los altos DENTRO de la quincena; nunca baja la base).
+      // TODA prestacional → entra al IBC. Es exactamente el "52-Bonificación Por
+      // Productividad" del archivo plano.
+      const bonoProductividad = Math.max(0, a.excQ1) + Math.max(0, a.excQ2)
       const ap = calcularAportes(
         {
           salario: info.salario,
-          ibcTrabajado: a.ibcTrab,
+          ibcTrabajado: a.ibcTrab + bonoProductividad,
           diasTrabajados: a.diasTrab,
           diasVacaciones: a.diasVac,
           diasIncapacidad: a.diasIncap,
