@@ -393,13 +393,24 @@ export function Packing() {
     setGeneratingPDF(order.id)
     console.log("[v0] Packing: Starting PDF generation for order:", order.id)
     
-    const result = await generatePackingPDF(order.id, order.ordendecargue, order.cliente, order.placa, order.conductor)
+    const result = await generatePackingPDF(
+      order.id,
+      order.ordendecargue,
+      order.cliente,
+      order.placa,
+      order.conductor,
+      order.tipooperacion,
+    )
 
     if (result.success && result.pdfUrl) {
-      // Generar el PDF ya NO marca el inicio de la operación: eso lo hace
-      // asignar el muelle en Centro de Coordinación, que es el momento en que
-      // el vehículo deja de esperar en patio y ocupa el puesto. Antes esta
-      // pantalla escribía `iniciocargue` y pisaba la hora real del muelle.
+      // Generar el PDF ya NO marca el inicio de la operación para la mayoría
+      // de órdenes: eso lo hace asignar el muelle en Centro de Coordinación,
+      // que es el momento en que el vehículo deja de esperar en patio y ocupa
+      // el puesto. Antes esta pantalla escribía `iniciocargue` y pisaba la
+      // hora real del muelle. EXCEPCIÓN: los clones de Distribución "+D"
+      // nunca pasan por muelle (están excluidos a propósito) — para ellos
+      // `generatePackingPDF` sí escribe `iniciocargue` acá mismo, porque es
+      // su único punto de inicio real.
       console.log("[v0] Packing: PDF generated successfully")
 
       toast({
@@ -407,6 +418,10 @@ export function Packing() {
         description: "PDF generado exitosamente",
       })
       window.open(result.pdfUrl, "_blank")
+      // Refresca la lista: para un clon "+D" esto es lo que trae el
+      // `iniciocargue` recién escrito y habilita "Asignar Personal" sin
+      // esperar a un refresco manual.
+      await loadOrders()
     } else {
       console.log("[v0] Packing: PDF generation failed")
       toast({

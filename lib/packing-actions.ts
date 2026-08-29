@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase-client"
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getCurrentEmpresaIdForInsert } from "@/lib/user-context"
 import { getColombiaDateTime } from "@/lib/inventory-actions"
+import { getColombiaTime } from "@/lib/date-utils"
 import { reconciliarDistribucionesFaltantes } from "@/lib/orders-actions"
 import {
   getCarguDescarguePersonnel as _getCarguDescarguePersonnel,
@@ -247,6 +248,7 @@ export async function generatePackingPDF(
   cliente: string,
   placa: string,
   conductor?: string | null,
+  tipooperacion?: string | null,
 ) {
   try {
     if (!ordenDescargue || !cliente || !placa) {
@@ -392,6 +394,26 @@ export async function generatePackingPDF(
     if (updateError) {
       console.error("[v0] Error updating cabeceraoc with PDF URL:", updateError)
       return { success: false, error: updateError.message }
+    }
+
+    // Los clones de Distribución automática ("+D") están EXCLUIDOS de la
+    // asignación de muelle en Centro de Coordinación (ver esClonDistribucion
+    // en centro-coordinacion-actions.ts) — es lo único que hoy escribe
+    // `iniciocargue` (commit 91c65f4). Sin esta excepción, esos clones nunca
+    // arrancan el reloj y "Asignar Personal"/"Cargar Fotos" en Packing quedan
+    // bloqueados para siempre. Se restaura acá, SOLO para ellos: es su único
+    // punto de inicio real. Se protege con `.is("iniciocargue", null)` para
+    // no pisar un valor si por algún motivo ya existiera.
+    const esClonDistribucion = tipooperacion === "Distribucion" && ordenDescargue.endsWith("D")
+    if (esClonDistribucion) {
+      const { error: inicioError } = await supabaseAdmin
+        .from("cabeceraoc")
+        .update({ iniciocargue: await getColombiaTime() })
+        .eq("id", orderId)
+        .is("iniciocargue", null)
+      if (inicioError) {
+        console.error("[v0] Error setting iniciocargue for +D clone:", inicioError)
+      }
     }
 
     return { success: true, pdfUrl: publicUrl }
