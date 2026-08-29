@@ -3,6 +3,7 @@ import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getColombiaTime } from "@/lib/date-utils"
 import { generarIngresoProduccionDesdeDescargue } from "@/lib/orders-actions"
 import { computarRosterPagoGlobal, esDescargueSinPersonalRequerido } from "@/lib/picking-actions"
+import { esModoCargaRequerido } from "@/lib/sla-acordados"
 
 // Subimos un solo archivo (o pocos) por request para evitar el limite
 // duro de ~4.5MB por body en Vercel serverless. Cuando un movil envia
@@ -54,7 +55,7 @@ export async function POST(request: NextRequest) {
       const orderIdNum = Number.parseInt(orderId)
       const { data: orderRow, error: orderErr } = await supabaseAdmin
         .from("cabeceraoc")
-        .select("idempresa, fechacargue, tipooperacion, facturar, tipo_pago, ordendecargue")
+        .select("idempresa, fechacargue, tipooperacion, facturar, tipo_pago, modo_carga, ordendecargue")
         .eq("id", orderIdNum)
         .single()
       if (orderErr || !orderRow) {
@@ -124,6 +125,18 @@ export async function POST(request: NextRequest) {
         }
         // tipo_pago === "individual": no se toca auxiliares, se respeta lo
         // que ya asignó el coordinador por vehículo.
+      }
+
+      // Modo de carga (Estibado/Arrume): obligatorio SOLO en Cargue de
+      // ID1/ID2 (ver esModoCargaRequerido). No afecta ningún otro tipo de
+      // operación ni proyecto — confirmado por el usuario 2026-08-29.
+      if (esModoCargaRequerido(orderRow.idempresa, orderRow.tipooperacion)) {
+        if (orderRow.modo_carga !== "Estibado" && orderRow.modo_carga !== "Arrume") {
+          return NextResponse.json(
+            { success: false, error: "Debe elegir Estibado o Arrume antes de cerrar la orden" },
+            { status: 400 },
+          )
+        }
       }
 
       const fincargue = await getColombiaTime()

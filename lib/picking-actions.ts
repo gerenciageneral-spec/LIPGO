@@ -555,6 +555,24 @@ export async function setTipoPagoOrden(
   return { success: true, message: tipoPago === "global" ? "Pago Global seleccionado" : "Pago Individual seleccionado" }
 }
 
+/**
+ * Elige el modo de carga (Estibado o Arrume negro) de la orden. Obligatorio
+ * antes de cerrar SOLO en Cargue de ID1/ID2 (ver esModoCargaRequerido en
+ * upload-picking-photos/route.ts) — es donde existe la práctica real de
+ * arrume negro. Confirmado por el usuario 2026-08-29.
+ */
+export async function setModoCargaOrden(
+  orderId: number,
+  modoCarga: "Estibado" | "Arrume",
+): Promise<{ success: boolean; message?: string }> {
+  const supabase = await createClient()
+  const { data: orderRow } = await supabase.from("cabeceraoc").select("fincargue").eq("id", orderId).single()
+  if (orderRow?.fincargue) return { success: false, message: "La orden ya está cerrada" }
+  const { error } = await supabase.from("cabeceraoc").update({ modo_carga: modoCarga }).eq("id", orderId)
+  if (error) return { success: false, message: error.message }
+  return { success: true, message: modoCarga === "Estibado" ? "Estibado seleccionado" : "Arrume seleccionado" }
+}
+
 export async function assignPersonnelToOrder(
   orderId: number,
   employeeNames: string[],

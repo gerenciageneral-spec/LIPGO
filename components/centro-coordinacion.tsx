@@ -53,6 +53,7 @@ import {
 } from "@/lib/picking-actions"
 import { PickingPhotoUploadDialog } from "@/components/picking-photo-upload-dialog"
 import { TipoPagoSelector } from "@/components/tipo-pago-selector"
+import { ModoCargaSelector } from "@/components/modo-carga-selector"
 
 const t1 = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { maximumFractionDigits: 1 })
 const t2 = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { maximumFractionDigits: 2 })
@@ -766,6 +767,7 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                         onQuitar={() => slot.orden && quitarDeMuelle(slot.orden)}
                         onReasignar={() => slot.orden && abrirAsignar(slot.orden)}
                         onCambioTipoPago={cargar}
+                        onCambioModoCarga={cargar}
                         pausingOrder={pausingOrder}
                         puedeConcluirSinPersonal={slot.orden ? puedeConcluirSinPersonal(slot.orden) : false}
                         metaPorHoraTrabajador={data.kpis.metaPorHoraTrabajador}
@@ -965,13 +967,14 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                               <th className="whitespace-nowrap px-2 py-1.5 font-semibold">Placa</th>
                               <th className="whitespace-nowrap px-2 py-1.5 text-center font-semibold">Muelle</th>
                               <th className="whitespace-nowrap px-2 py-1.5 font-semibold">Estado</th>
+                              <th className="whitespace-nowrap px-2 py-1.5 font-semibold">Modo</th>
                               <th className="whitespace-nowrap px-2 py-1.5 font-semibold">Personal real asignado</th>
                             </tr>
                           </thead>
                           <tbody>
                             {parteTurno.historial.length === 0 ? (
                               <tr>
-                                <td colSpan={6} className="px-2 py-3 text-center text-muted-foreground">
+                                <td colSpan={7} className="px-2 py-3 text-center text-muted-foreground">
                                   Sin órdenes hoy.
                                 </td>
                               </tr>
@@ -998,6 +1001,7 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                                       </span>
                                     )}
                                   </td>
+                                  <td className="whitespace-nowrap px-2 py-1">{h.modoCarga || "—"}</td>
                                   {/* La única columna que puede ser muy larga.
                                       Se deja en una línea y se corta con "…";
                                       el listado completo queda en el tooltip. */}
@@ -1268,6 +1272,7 @@ function MuelleRow({
   onQuitar,
   onReasignar,
   onCambioTipoPago,
+  onCambioModoCarga,
   pausingOrder,
   puedeConcluirSinPersonal,
   metaPorHoraTrabajador,
@@ -1285,6 +1290,7 @@ function MuelleRow({
   onQuitar: () => void
   onReasignar: () => void
   onCambioTipoPago: () => void
+  onCambioModoCarga: () => void
   pausingOrder: string | null
   puedeConcluirSinPersonal: boolean
   metaPorHoraTrabajador: number
@@ -1511,6 +1517,12 @@ function MuelleRow({
           {!puedeConcluirSinPersonal && (
             <div className="mt-2">
               <TipoPagoSelector orderId={o.orderId} tipoPago={o.tipoPago} disabled={!!o.fincargue} onChanged={onCambioTipoPago} />
+            </div>
+          )}
+
+          {o.requiereModoCarga && (
+            <div className="mt-2">
+              <ModoCargaSelector orderId={o.orderId} modoCarga={o.modoCarga} disabled={!!o.fincargue} onChanged={onCambioModoCarga} />
             </div>
           )}
 

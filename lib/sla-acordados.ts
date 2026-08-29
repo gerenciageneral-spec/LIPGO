@@ -44,19 +44,73 @@ export function esNombreSubproducto(nombreProducto: unknown): boolean {
   return k.includes("MOGOLLA") || k.includes("SALVADO") || k.includes("TERCERA")
 }
 
+export type TipologiaProducto = "BULTO" | "PASTA"
+
+// Ajuste fino DENTRO de PT por tipología de producto (Bulto/estibas normales
+// vs Pasta/Pacas livianas ≤15kg por unidad — más movimientos por tonelada).
+// Un año completo de tiempos reales (iniciocargue→fincargue) mostró que en
+// estas combinaciones puntuales Pasta tarda estructuralmente más que Bulto,
+// brecha que el SLA único de PT no reflejaba. Confirmado con el usuario
+// 2026-08-29. A diferencia de SLA_TIEMPO_CARGUE_MIN, estos valores YA son
+// finales por sitio (salen de la mediana real medida ahí) — no se multiplican
+// por factorTiempoSitio. Solo están las combinaciones donde la evidencia
+// mostró una brecha real; lo que no aparece aquí sigue el PT normal para
+// ambas tipologías (ej. Sencillo en ID3, o cualquier vehículo en ID4).
+export const SLA_PT_POR_TIPOLOGIA: Record<
+  number,
+  Partial<Record<string, Partial<Record<TipologiaProducto, number>>>>
+> = {
+  1: {
+    Sencillo: { PASTA: 50 },
+    Mula: { PASTA: 135 },
+    Tractomula: { PASTA: 135 },
+  },
+  2: {
+    Sencillo: { PASTA: 75 },
+    Dobletroque: { BULTO: 90 },
+  },
+  3: {
+    Turbo: { BULTO: 45, PASTA: 60 },
+    Dobletroque: { PASTA: 130 },
+    Mula: { BULTO: 180, PASTA: 210 },
+    Tractomula: { BULTO: 180, PASTA: 210 },
+  },
+}
+
 // Tiempo SLA aplicable a un vehículo/producto EN UN SITIO. Si no se conoce el producto,
 // usa PT (estándar de referencia del acuerdo). Aplica el factor del sitio (CEDIs +%).
+// `tipologia` es opcional y solo aplica sobre PT: quien no lo pase (todos los
+// consumidores existentes antes de 2026-08-29) obtiene EXACTAMENTE el mismo
+// resultado de siempre.
 export function getSlaCargueMin(
   tipovehiculo?: string | null,
   producto: "PT" | "SUB" = "PT",
   empresaId?: number | null,
+  tipologia?: TipologiaProducto | null,
 ): number | null {
   if (!tipovehiculo) return null
+  if (producto === "PT" && tipologia && empresaId != null) {
+    const override = SLA_PT_POR_TIPOLOGIA[empresaId]?.[tipovehiculo]?.[tipologia]
+    if (override != null) return override
+  }
   const v = SLA_TIEMPO_CARGUE_MIN[tipovehiculo]
   if (!v) return null
   const base = v[producto] ?? v.PT ?? null
   if (base == null) return null
   return Math.round(base * factorTiempoSitio(empresaId))
+}
+
+/**
+ * true si la orden DEBE elegir modo de carga (Estibado/Arrume) antes de
+ * cerrarse: solo Cargue en ID1 (Indupan) e ID2 (Avimol) — únicos proyectos
+ * con la práctica real de arrume negro (confirmado 2026-08-29). No aplica a
+ * Descargue/Distribución ni a ID3/ID4. Ver setModoCargaOrden (lib/picking-actions.ts).
+ */
+export function esModoCargaRequerido(
+  idempresa: number | string | null | undefined,
+  tipooperacion: string | null | undefined,
+): boolean {
+  return (Number(idempresa) === 1 || Number(idempresa) === 2) && tipooperacion === "Cargue"
 }
 
 // Planta de personal ACORDADA por proyecto (headcount esperado). Fuente:

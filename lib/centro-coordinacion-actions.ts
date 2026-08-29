@@ -13,7 +13,7 @@ import { createClient } from "@/lib/supabase-client"
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getColombiaDateTime, getColombiaTime } from "@/lib/date-utils"
 import { pesoBaseCalculo, excluirAvimolDistribucion } from "@/lib/nomina-calculo-utils"
-import { getSlaCargueMin, esNombreSubproducto } from "@/lib/sla-acordados"
+import { getSlaCargueMin, esNombreSubproducto, esModoCargaRequerido, type TipologiaProducto } from "@/lib/sla-acordados"
 import { esProductoPorUnidad } from "@/lib/facturacion-billed-party"
 import {
   TON_MES_CARGUE_DESCARGUE,
@@ -74,6 +74,10 @@ export interface OrdenOperativa {
    * el usuario 2026-08-28.
    */
   esDescargueHuevos: boolean
+  /** "Estibado" o "Arrume" (negro/desarrume) — ver setModoCargaOrden. null hasta que el coordinador elija. */
+  modoCarga: "Estibado" | "Arrume" | null
+  /** true = esta orden debe elegir modoCarga antes de poder cerrarse (Cargue en ID1/ID2, ver esModoCargaRequerido). */
+  requiereModoCarga: boolean
 }
 
 export interface MuelleSlot {
@@ -268,7 +272,7 @@ export async function getCentroCoordinacion(
     const { data: ordenesRaw } = await admin
       .from("cabeceraoc")
       .select(
-        "id, ordendecargue, tipooperacion, muelle, auxiliares, facturar, pesoorden, pesovascula, horaorden, iniciocargue, fincargue, placa, conductor, horalote, tipo_pago, fechacargue",
+        "id, ordendecargue, tipooperacion, muelle, auxiliares, facturar, pesoorden, pesovascula, horaorden, iniciocargue, fincargue, placa, conductor, horalote, tipo_pago, modo_carga, fechacargue",
       )
       .eq("idempresa", idempresa)
       .or(`fechacargue.eq.${fechaConsulta},and(fechacargue.lt.${fechaConsulta},fincargue.is.null)`)
@@ -318,9 +322,18 @@ export async function getCentroCoordinacion(
     // nombre), consultando `productos` para los nombres que aparecieron en
     // el detalle de las órdenes activas.
     const esPorUnidadPorOrden = new Set<number>()
+    // Tipología dentro de PT (Bulto vs Pasta/Pacas livianas ≤15kg/unidad) —
+    // solo para el ajuste fino de SLA (ver SLA_PT_POR_TIPOLOGIA). Se clasifica
+    // por MAYORÍA de tonelaje real de la orden entre líneas no-subproducto
+    // (misma metodología validada con un año de datos reales, 2026-08-29).
+    const tipologiaPorOrden = new Map<number, TipologiaProducto>()
     if (orderIdsActivas.length > 0) {
-      const { data: detalles } = await admin.from("detalleoc").select("idorden, cliente, producto").in("idorden", orderIdsActivas)
+      const { data: detalles } = await admin
+        .from("detalleoc")
+        .select("idorden, cliente, producto, toneladas")
+        .in("idorden", orderIdsActivas)
       const productosPorOrdenTmp = new Map<number, Set<string>>()
+      const tonPorOrdenTmp = new Map<number, { bulto: number; pasta: number }>()
       for (const d of detalles || []) {
         if (!clientePorOrden.has(d.idorden)) clientePorOrden.set(d.idorden, d.cliente || "Sin cliente")
         lineasDetalleocPorOrden.set(d.idorden, (lineasDetalleocPorOrden.get(d.idorden) || 0) + 1)
@@ -333,9 +346,19 @@ export async function getCentroCoordinacion(
       }
       const nombresProductos = Array.from(new Set(Array.from(productosPorOrdenTmp.values()).flatMap((s) => Array.from(s))))
       if (nombresProductos.length > 0) {
-        const { data: prods } = await admin.from("productos").select("nombre, subcategoria").in("nombre", nombresProductos)
+        const { data: prods } = await admin
+          .from("productos")
+          .select("nombre, subcategoria, categoria, peso_unitkg")
+          .in("nombre", nombresProductos)
         const subcategoriaPorNombre = new Map<string, string | null>()
-        for (const p of prods || []) subcategoriaPorNombre.set(String(p.nombre || "").trim(), p.subcategoria)
+        const categoriaPorNombre = new Map<string, string | null>()
+        const pesoPorNombre = new Map<string, number>()
+        for (const p of prods || []) {
+          const n = String(p.nombre || "").trim()
+          subcategoriaPorNombre.set(n, p.subcategoria)
+          categoriaPorNombre.set(n, p.categoria)
+          pesoPorNombre.set(n, Number(p.peso_unitkg) || 0)
+        }
         for (const [idorden, prodsOrden] of productosPorOrdenTmp) {
           for (const prod of prodsOrden) {
             if (esProductoPorUnidad(subcategoriaPorNombre.get(prod))) {
@@ -343,6 +366,22 @@ export async function getCentroCoordinacion(
               break
             }
           }
+        }
+        for (const d of detalles || []) {
+          if (esNombreSubproducto(d.producto)) continue // el SUB no entra a esta clasificación
+          const prod = String(d.producto || "").trim()
+          const ton = Number(d.toneladas) || 0
+          if (!prod || ton <= 0) continue
+          const cat = categoriaPorNombre.get(prod)
+          const peso = pesoPorNombre.get(prod) || 0
+          const esPasta = (cat === "PASTAS" || cat === "PACAS") && peso > 0 && peso <= 15
+          const acc = tonPorOrdenTmp.get(d.idorden) || { bulto: 0, pasta: 0 }
+          if (esPasta) acc.pasta += ton
+          else acc.bulto += ton
+          tonPorOrdenTmp.set(d.idorden, acc)
+        }
+        for (const [idorden, acc] of tonPorOrdenTmp) {
+          tipologiaPorOrden.set(idorden, acc.pasta > acc.bulto ? "PASTA" : "BULTO")
         }
       }
     }
@@ -476,7 +515,13 @@ export async function getCentroCoordinacion(
       const tipovehiculo = tipoPorOrden.get(String(o.ordendecargue)) || (placa ? tipoPorPlaca.get(placa) : null) || null
       const capacidadVehiculo =
         capacidadPorOrden.get(String(o.ordendecargue)) ?? (placa ? capacidadPorPlaca.get(placa) : undefined) ?? null
-      const slaMin = getSlaCargueMin(tipovehiculo, esSubproductoPorOrden.has(o.id) ? "SUB" : "PT", idempresa) || SLA_FALLBACK_MIN
+      const slaMin =
+        getSlaCargueMin(
+          tipovehiculo,
+          esSubproductoPorOrden.has(o.id) ? "SUB" : "PT",
+          idempresa,
+          tipologiaPorOrden.get(o.id),
+        ) || SLA_FALLBACK_MIN
       const auxiliares = String(o.auxiliares || "")
         .split(",")
         .map((s: string) => s.trim())
@@ -521,6 +566,8 @@ export async function getCentroCoordinacion(
         estado: pausado ? "pausado" : o.iniciocargue ? "cargando" : "alistando",
         rezagada: o.fechacargue !== fechaConsulta,
         esDescargueHuevos: idempresa === 2 && tipo === "Descargue" && esPorUnidadPorOrden.has(o.id),
+        modoCarga: o.modo_carga ?? null,
+        requiereModoCarga: esModoCargaRequerido(idempresa, tipo),
       }
     }
 
@@ -747,6 +794,8 @@ export interface HistorialOrdenTurno {
   personalReal: string[]
   /** true = quedó abierta de un día anterior al consultado. */
   rezagada: boolean
+  /** "Estibado"/"Arrume" si la orden lo requería y ya se eligió; null si no aplica o aún no se elige. */
+  modoCarga: "Estibado" | "Arrume" | null
 }
 
 export interface ParteDeTurno {
@@ -787,7 +836,7 @@ export async function getParteDeTurno(
     // no que desaparezcan por el cambio de día.
     const { data: todasHoy } = await admin
       .from("cabeceraoc")
-      .select("id, ordendecargue, tipooperacion, placa, muelle, fincargue, auxiliares, auxiliares_real, fechacargue")
+      .select("id, ordendecargue, tipooperacion, placa, muelle, fincargue, auxiliares, auxiliares_real, modo_carga, fechacargue")
       .eq("idempresa", idempresa)
       .or(`fechacargue.eq.${fechaConsulta},and(fechacargue.lt.${fechaConsulta},fincargue.is.null)`)
       .in("tipooperacion", ["Cargue", "Descargue", "Distribucion"])
@@ -815,6 +864,7 @@ export async function getParteDeTurno(
         .map((s: string) => s.trim())
         .filter(Boolean),
       rezagada: o.fechacargue !== fechaConsulta,
+      modoCarga: o.modo_carga ?? null,
     }))
 
     const pendientes: string[] = []
