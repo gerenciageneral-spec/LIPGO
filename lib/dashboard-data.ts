@@ -577,3 +577,50 @@ export const groups: Group[] = [
       ]
     : []),
 ]
+
+// Grupos que NUNCA se ocultan por el filtro de "al menos un módulo protegido
+// permitido" (ver filterGroupsByPermissions abajo) — contienen solo módulos
+// no protegidos que deben verse para todos. DUPLICADO A PROPÓSITO de
+// `GRUPOS_SIN_FILTRO_PROTEGIDO` en components/sidebar.tsx: ese archivo ya
+// funciona bien y no se tocó para no arriesgarlo: si se agrega un grupo acá,
+// agregarlo también allá.
+const GRUPOS_SIN_FILTRO_PROTEGIDO: GroupKey[] = ["certificaciones_lip", "aprendizaje"]
+
+/**
+ * Filtra `groups` contra los permisos del usuario actual — MISMO criterio que
+ * usa `components/sidebar.tsx` para el menú lateral (isModuleVisible +
+ * visibleGroups ahí): un módulo se ve si no está protegido, o si está
+ * protegido y el usuario lo tiene permitido; un grupo se descarta si se
+ * queda sin módulos visibles, o si (salvo exención) no le queda NINGÚN
+ * módulo protegido permitido. Usado por Inicio (module-cards) y la vista de
+ * grupo (modules-view) para que dejen de mostrar módulos sin permiso.
+ */
+export function filterGroupsByPermissions(
+  isModuleVisible: (name: string) => boolean,
+  permissionsLoaded: boolean,
+  allowedModules: Set<string>,
+): Group[] {
+  return groups
+    .map((group) => {
+      const filteredSubgroups: Subgroup[] | undefined = group.subgroups
+        ?.map((sg) => ({ ...sg, modules: sg.modules.filter((m) => isModuleVisible(m.name)) }))
+        .filter((sg) => sg.modules.length > 0)
+      const filteredModules: Module[] | undefined = group.modules?.filter((m) => isModuleVisible(m.name))
+
+      const hasVisibleSubgroups = (filteredSubgroups?.length ?? 0) > 0
+      const hasVisibleModules = (filteredModules?.length ?? 0) > 0
+      if (!hasVisibleSubgroups && !hasVisibleModules) return null
+
+      if (permissionsLoaded && !GRUPOS_SIN_FILTRO_PROTEGIDO.includes(group.key)) {
+        const allModulesInGroup = [
+          ...(filteredModules ?? []),
+          ...((filteredSubgroups ?? []).flatMap((sg) => sg.modules)),
+        ]
+        const hasAtLeastOneAllowedProtected = allModulesInGroup.some((m) => allowedModules.has(m.name))
+        if (!hasAtLeastOneAllowedProtected) return null
+      }
+
+      return { ...group, subgroups: filteredSubgroups, modules: filteredModules }
+    })
+    .filter((g): g is NonNullable<typeof g> => g !== null)
+}

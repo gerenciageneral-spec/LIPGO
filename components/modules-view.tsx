@@ -1,7 +1,8 @@
 "use client"
 
 import { useEffect, useState, type CSSProperties } from "react"
-import { groups, type GroupKey, type Module } from "@/lib/dashboard-data"
+import { filterGroupsByPermissions, type GroupKey, type Module } from "@/lib/dashboard-data"
+import { useModulePermissions } from "@/hooks/use-module-permissions"
 import { ArrowLeft, ArrowRight } from "lucide-react"
 import { TINT } from "@/components/module-cards"
 import { AreaKpis, type ValorBsc } from "@/components/area-kpis"
@@ -67,7 +68,10 @@ export function ModulesView({ groupKey, onBack, onSelectModule }: ModulesViewPro
   const [valores, setValores] = useState<Record<string, ValorBsc>>({})
   const [loading, setLoading] = useState(true)
 
-  const group = groups.find((g) => g.key === groupKey)
+  // Mismo filtro de permisos que Inicio (module-cards) y el sidebar: si el
+  // usuario no tiene acceso a un submódulo, no debe verlo listado aquí.
+  const { loaded, allowedModules, isModuleVisible } = useModulePermissions()
+  const group = filterGroupsByPermissions(isModuleVisible, loaded, allowedModules).find((g) => g.key === groupKey)
 
   // UNA sola lectura del BSC por empresa/grupo (+ refresco cada 3 min). Alimenta
   // los KPIs del área Y las tareas del día del submódulo, así siempre coinciden.

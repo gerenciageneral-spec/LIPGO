@@ -1,9 +1,10 @@
 "use client"
 
 import type { CSSProperties } from "react"
-import { groups } from "@/lib/dashboard-data"
+import { groups, filterGroupsByPermissions } from "@/lib/dashboard-data"
 import type { GroupKey } from "@/lib/dashboard-data"
 import { ArrowRight } from "lucide-react"
+import { useModulePermissions } from "@/hooks/use-module-permissions"
 
 interface ModuleCardsProps {
   onSelectGroup: (group: GroupKey) => void
@@ -35,6 +36,9 @@ function countModules(group: (typeof groups)[number]): number {
 }
 
 export function ModuleCards({ onSelectGroup }: ModuleCardsProps) {
+  const { loaded, allowedModules, isModuleVisible } = useModulePermissions()
+  const visibleGroups = filterGroupsByPermissions(isModuleVisible, loaded, allowedModules)
+
   return (
     <div>
       <style>{`
@@ -76,7 +80,7 @@ export function ModuleCards({ onSelectGroup }: ModuleCardsProps) {
       </div>
 
       <div className="apps-grid grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4">
-        {groups.map((group) => {
+        {visibleGroups.map((group) => {
           const Icon = group.icon
           const tint = TINT[group.key] ?? "#5b6b7f"
           const count = countModules(group)
