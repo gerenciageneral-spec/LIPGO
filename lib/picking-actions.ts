@@ -303,6 +303,10 @@ export async function getCarguDescarguePersonnel(empresaId?: number | null) {
   //      alguien programado pero que nunca se presento aparecia igual
   //      como disponible para asignar a una orden. Verificado con datos
   //      reales: 2026-08-06 tenia 41 candidatos, 1 sin horaingreso.
+  //   4b) `horasalida IS NULL`: si ya marco salida real (checkout del dia),
+  //      ya no esta en el proyecto — no puede seguir apareciendo como
+  //      disponible aunque su `horasalidaprogramada` todavia no llegue.
+  //      Aplica a los 4 proyectos. Confirmado por el usuario 2026-08-29.
   //   5) Puesto distinto de "Cargue/Descargue" con turno en curso: si la
   //      persona esta programada hoy en Tolva Bulto/Tolva Planchador/
   //      Auxiliar Mixto, esta cumpliendo esa actividad (que en el caso de
@@ -336,6 +340,7 @@ export async function getCarguDescarguePersonnel(empresaId?: number | null) {
     .eq("fecha", todayDate)
     .is("asistencia", null) // Excluye Ausentes con codigo de novedad
     .not("horaingreso", "is", null) // Excluye programados que no han confirmado llegada
+    .is("horasalida", null) // Excluye a quien ya marco salida real: ya salio del proyecto hoy
     .order("nombre", { ascending: true })
 
   if (finalEmpresaId) {
