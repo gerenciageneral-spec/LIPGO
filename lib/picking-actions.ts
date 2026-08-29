@@ -320,12 +320,14 @@ export async function getCarguDescarguePersonnel(empresaId?: number | null) {
   // que el componente Picking ya consume:
   //   - `id`             <- `registroasistencia.id`
   //   - `nombreempleado` <- `registroasistencia.nombre`
-  const PUESTOS_PICKING = [
-    "Cargue/Descargue",
-    "Auxiliar Mixto",
-    "Tolva Bulto",
-    "Tolva Planchador",
-  ]
+  // "Auxiliar Mixto" es el nombre de puesto mixto (tolva + cargue) en ID1.
+  // En ID2 el mismo concepto de tolva se registra con otros nombres de
+  // puesto — "Estibado PT" y "Salvado" — y funcionan igual: ocupados solo
+  // durante SU ventana de tolva, disponibles para cargue fuera de ella.
+  // Confirmado por el usuario 2026-08-29. NO se agregan para otros IDs (ese
+  // mismo puesto no representa lo mismo ahí — ver PUESTOS_MIXTOS_TOLVA).
+  const PUESTOS_MIXTOS_TOLVA = finalEmpresaId === 2 ? ["Auxiliar Mixto", "Estibado PT", "Salvado"] : ["Auxiliar Mixto"]
+  const PUESTOS_PICKING = ["Cargue/Descargue", "Tolva Bulto", "Tolva Planchador", ...PUESTOS_MIXTOS_TOLVA]
 
   let query = supabase
     .from("registroasistencia")
@@ -406,7 +408,7 @@ export async function getCarguDescarguePersonnel(empresaId?: number | null) {
   const disponiblesAhora = (data ?? []).filter((r) => {
     if (asignadosActivos.has(normalizeName(r.nombre))) return false
     if (r.puesto === "Cargue/Descargue") return true
-    if (r.puesto === "Auxiliar Mixto" && horarioTolvaHoy) {
+    if (PUESTOS_MIXTOS_TOLVA.includes(r.puesto) && horarioTolvaHoy) {
       const ventana = Number(r.turno) === 2 ? horarioTolvaHoy.turno2 : horarioTolvaHoy.turno1
       if (ventana.horaInicio && ventana.horaFin) {
         const dentroDeTolva = horaActual >= ventana.horaInicio && horaActual < ventana.horaFin
@@ -414,8 +416,9 @@ export async function getCarguDescarguePersonnel(empresaId?: number | null) {
       }
     }
     // Respaldo: Tolva Bulto/Planchador (su turno completo ES tolva) o
-    // Auxiliar Mixto sin Horario de Tolva configurado ese día — mismo
-    // criterio de siempre contra su propio turno de asistencia.
+    // cualquier puesto mixto de tolva (PUESTOS_MIXTOS_TOLVA) sin Horario de
+    // Tolva configurado ese día — mismo criterio de siempre contra su
+    // propio turno de asistencia.
     const horaSalidaProgramada = (r.horasalidaprogramada || "").toString().slice(0, 5)
     if (!horaSalidaProgramada) return true // sin dato programado: se deja como antes
     return horaActual >= horaSalidaProgramada // solo disponible cuando termina su turno programado
