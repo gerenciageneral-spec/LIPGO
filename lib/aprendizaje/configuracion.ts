@@ -579,4 +579,45 @@ export const APRENDIZAJE_CONFIGURACION: ContenidoAprendizaje[] = [
       "Prefiere Desasignar en lugar de Eliminar: logras el mismo efecto operativo y conservas el historial de la placa.",
     ],
   },
+
+  // ==========================================================================
+  // MUELLES DE CARGUE
+  // ==========================================================================
+  {
+    modulo: "Muelles de Cargue",
+    resumen: "Administra los muelles fisicos disponibles por proyecto para asignar en Centro de Coordinacion.",
+    proposito:
+      "Cada proyecto tiene un numero fijo de muelles fisicos donde se atienden los vehiculos; este modulo permite agregar, desactivar o eliminar muelles sin necesidad de un despliegue tecnico. Los cambios los usa de inmediato Centro de Coordinacion al momento de asignar una orden a un muelle.",
+    puedes: [
+      "Agregar un muelle nuevo escogiendo la empresa y el numero de muelle (el formulario sugiere el siguiente numero disponible) mas una observacion opcional.",
+      "Desactivar un muelle para que deje de ofrecerse en Centro de Coordinacion, sin perder su historial.",
+      "Reactivar un muelle que estaba desactivado.",
+      "Eliminar un muelle definitivamente, con confirmacion (en ese caso se pierde el historial).",
+      "Ver el estado de cada muelle (Activo o Inactivo) y su observacion, agrupados por empresa.",
+    ],
+    noPuedes: [
+      "Desactivar o eliminar un muelle que tiene una orden activa en este momento: el sistema lo bloquea hasta que esa orden cierre.",
+      "Asignar ordenes a un muelle desde aqui: eso se sigue haciendo en Centro de Coordinacion; este modulo solo administra cuales muelles existen.",
+    ],
+    funcionalidades: [
+      {
+        nombre: "Alta de muelle",
+        descripcion:
+          "Se elige la empresa, se escribe el numero de muelle (sugerido automaticamente segun los que ya existen para esa empresa) y una observacion opcional.",
+      },
+      {
+        nombre: "Desactivar / Reactivar / Eliminar",
+        descripcion:
+          "Desactivar y Eliminar validan primero que el muelle no tenga una orden abierta ahora mismo; si la tiene, avisan cual es y no dejan continuar. Un muelle inactivo se ve atenuado en la lista.",
+      },
+      {
+        nombre: "Efecto casi inmediato",
+        descripcion:
+          "Los cambios surten efecto en Centro de Coordinacion en cerca de un minuto (o de inmediato en la siguiente operacion), sin despliegues ni intervencion tecnica.",
+      },
+    ],
+    consejos: [
+      "Prefiere Desactivar en lugar de Eliminar cuando un muelle se dane o se saque de operacion temporalmente: conservas su historial y evitas renumerar los demas muelles.",
+    ],
+  },
 ]
