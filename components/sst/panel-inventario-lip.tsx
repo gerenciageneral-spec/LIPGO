@@ -49,7 +49,13 @@ export function PanelInventarioLIP() {
   const [kardex, setKardex] = useState<any[]>([])
   const [loadingKardex, setLoadingKardex] = useState(false)
   const [filtroProd, setFiltroProd] = useState<string>("")
-  const [drill, setDrill] = useState<{ producto: string; movs: any[]; saldoInicialPeriodo?: number; saldoFinalPeriodo?: number } | null>(null)
+  const [drill, setDrill] = useState<{
+    producto: string
+    movs: any[]
+    saldoInicialPeriodo?: number
+    saldoFinalPeriodo?: number
+    resumen?: { entradas: number; salidas: number; traslados: number; ajustes: number; merma: number }
+  } | null>(null)
   const [loadingDrill, setLoadingDrill] = useState(false)
   const [tiposMov, setTiposMov] = useState<any[]>([])
   const [verNomenclatura, setVerNomenclatura] = useState(false)
@@ -130,7 +136,12 @@ export function PanelInventarioLIP() {
   }
 
   async function abrirDrill(p: any) {
-    setDrill({ producto: `${p.producto} (${p.codproducto})`, movs: [] })
+    // El resumen (Entradas/Salidas/Traslados/Ajustes/Merma) sale del MISMO
+    // cálculo ya hecho por getKardexInventario para esta fila — no se
+    // recalcula sumando `movs`, para que el total mostrado aquí sea
+    // exactamente el mismo número que ya se ve en la fila de la tabla.
+    const resumen = { entradas: p.entradas ?? 0, salidas: p.salidas ?? 0, traslados: p.traslados ?? 0, ajustes: p.ajustes ?? 0, merma: p.merma ?? 0 }
+    setDrill({ producto: `${p.producto} (${p.codproducto})`, movs: [], resumen })
     setLoadingDrill(true)
     const r = await getMovimientosProducto(p.codproducto, selectedEmpresaId ?? null, anio || null, mes || null)
     setLoadingDrill(false)
@@ -140,6 +151,7 @@ export function PanelInventarioLIP() {
         movs: r.data,
         saldoInicialPeriodo: r.saldoInicialPeriodo,
         saldoFinalPeriodo: r.saldoFinalPeriodo,
+        resumen,
       })
     } else toast({ title: "No se pudo cargar el detalle", description: r.error })
   }
@@ -1206,6 +1218,15 @@ export function PanelInventarioLIP() {
           {drill && (
             <>
               <DialogHeader><DialogTitle className="text-base">Movimientos · {drill.producto}</DialogTitle></DialogHeader>
+              {drill.resumen && (
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                  <SigKpi label="Entradas del periodo" value={fmt(drill.resumen.entradas)} accent={SST_TOKENS.ok} valueColor={SST_TOKENS.ok} />
+                  <SigKpi label="Salidas del periodo" value={fmt(drill.resumen.salidas)} accent={SST_TOKENS.navy} valueColor={SST_TOKENS.navy} />
+                  <SigKpi label="Traslados" value={fmt(drill.resumen.traslados)} accent={SST_TOKENS.ink} />
+                  <SigKpi label="Ajustes" value={fmt(drill.resumen.ajustes)} accent={SST_TOKENS.ink} />
+                  <SigKpi label="Merma" value={fmt(drill.resumen.merma)} accent={SST_TOKENS.warn} valueColor={SST_TOKENS.warn} />
+                </div>
+              )}
               {loadingDrill ? (
                 <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin" style={{ color: SST_TOKENS.navy }} /></div>
               ) : drill.movs.length === 0 ? (
