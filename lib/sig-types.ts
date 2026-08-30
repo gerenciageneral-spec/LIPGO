@@ -312,6 +312,7 @@ export interface SigInventarioCuadre {
   fecha_firma: string | null
   firmado: boolean | null
   acta_observaciones: string | null
+  firma_url: string | null
   activo: boolean
 }
 
@@ -326,6 +327,8 @@ export interface SigInventarioCuadreDetalle {
   conteo: number | null
   diferencia: number | null
   observacion: string | null
+  contado_por: string | null
+  contado_en: string | null
 }
 
 // Cierre mensual de conciliación de inventario (acta + PDF por mes/proyecto).

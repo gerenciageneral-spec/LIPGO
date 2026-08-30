@@ -16,7 +16,7 @@ import { useToast } from "@/hooks/use-toast"
 import { SST_TOKENS } from "@/components/sst/sst-utils"
 import { SigHeader, SigFilterBar, SigField, SigKpi, sigControl } from "@/components/sst/sig-ui"
 import { useAuth } from "@/components/auth-provider"
-import { getPanelInventarioLIP, getKardexInventario, getMovimientosProducto, getTiposMovimiento, getCuadreDiario, getPreservacionInventario, getConciliacionMensualInventario, guardarCierreMesInventario, getConciliacionPedidosVsSalidas, getAuditoriaOrdenPedidoSalida, guardarCuadreManualPedidoSalida, getOrCrearActaCruce, corregirLineaActaCruce, firmarActaCruce, getProductosInventario } from "@/lib/sig-actions"
+import { getPanelInventarioLIP, getKardexInventario, getMovimientosProducto, getTiposMovimiento, getCuadreDiario, getPreservacionInventario, getConciliacionMensualInventario, guardarCierreMesInventario, getConciliacionPedidosVsSalidas, getAuditoriaOrdenPedidoSalida, guardarCuadreManualPedidoSalida, getOrCrearActaCruce, corregirLineaActaCruce, firmarActaCruce, getProductosInventario, getConteoFisicoDelMes } from "@/lib/sig-actions"
 import { Loader2, Boxes, TrendingDown, ArrowDownToLine, AlertTriangle, RefreshCw, CalendarClock, Layers, FileText, BookOpen, ZoomIn, ClipboardList, ShieldAlert, FolderOpen, ExternalLink, CheckCircle2 } from "lucide-react"
 import { ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts"
 
@@ -427,6 +427,14 @@ export function PanelInventarioLIP() {
       const upJson = await up.json()
       if (!upJson.success) throw new Error(upJson.error || "Error al subir PDF")
 
+      // Si ya se hizo un conteo físico de fin de mes en "Cuadre y
+      // Correcciones" (cerrado/aprobado) para este proyecto/mes, ese conteo
+      // real queda como el "físico congelado" que abre el mes siguiente —
+      // sin esto, Acta de Cruce/Kardex solo verían un cierre sin conteo real
+      // detrás (el hueco que antes solo se llenaba con un script manual).
+      const conteoFisico = await getConteoFisicoDelMes(selectedEmpresaId, f.mes)
+      const fisico = conteoFisico.success ? conteoFisico.data : null
+
       const save = await guardarCierreMesInventario({
         proyecto_id: selectedEmpresaId,
         mes: f.mes,
@@ -445,11 +453,18 @@ export function PanelInventarioLIP() {
         firmante: firmanteNom.trim(),
         firmante_cargo: firmanteCargo.trim() || null,
         firma_url: firmaUrl,
-        observaciones: `Merma de proceso: reproceso 551 = ${fmt(f.reproceso ?? 0)}, cuadre físico por lote = ${fmt(f.mermaProceso ?? 0)}. Saldo final conciliado = stock físico. Firmado por ${firmanteNom.trim()}${firmanteCargo.trim() ? " (" + firmanteCargo.trim() + ")" : ""}.`,
+        fisico_congelado: fisico?.fisicoCongelado ?? null,
+        fisico_snapshot: fisico?.fisicoSnapshot ?? null,
+        observaciones: `Merma de proceso: reproceso 551 = ${fmt(f.reproceso ?? 0)}, cuadre físico por lote = ${fmt(f.mermaProceso ?? 0)}. Saldo final conciliado = stock físico. Firmado por ${firmanteNom.trim()}${firmanteCargo.trim() ? " (" + firmanteCargo.trim() + ")" : ""}.${fisico ? " Inventario inicial del mes siguiente = conteo físico real de este cierre." : ""}`,
       })
       if (!save.success) throw new Error(save.error || "Error al guardar cierre")
 
-      toast({ title: "Acta firmada y guardada", description: `Cierre ${f.mes} · firmado por ${firmanteNom.trim()}` })
+      toast({
+        title: "Acta firmada y guardada",
+        description: fisico
+          ? `Cierre ${f.mes} · firmado por ${firmanteNom.trim()} · conteo físico real enlazado como inventario inicial del siguiente mes`
+          : `Cierre ${f.mes} · firmado por ${firmanteNom.trim()} (sin conteo físico de esta pantalla — el mes siguiente arranca calculado, no contado)`,
+      })
       setActaSign(null)
       await cargarConciliacion()
     } catch (e: any) {

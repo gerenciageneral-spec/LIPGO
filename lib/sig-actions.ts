@@ -3137,6 +3137,67 @@ export async function guardarConteoCuadre(
   }
 }
 
+/**
+ * Guarda UNA sola línea de conteo (upsert por cuadre_id+codproducto+lote+
+ * location) — a diferencia de `guardarConteoCuadre` (borra todo el detalle y
+ * lo reinserta completo), esto permite que varias personas cuenten el mismo
+ * documento AL TIEMPO sin pisarse: cada quien guarda solo la línea que
+ * acaba de contar, con su nombre y hora (`contado_por`/`contado_en`).
+ * Recalcula los totales de la cabecera desde TODO el detalle actual.
+ */
+export async function guardarLineaConteoCuadre(
+  cuadreId: number,
+  linea: { codproducto?: string | null; producto?: string | null; lote?: string | null; location?: string | null; sistema: number; conteo: number; observacion?: string | null },
+  contadoPor: string,
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const supabase: any = await getSupabaseAdmin()
+    const sistema = Number(linea.sistema) || 0
+    const conteo = Number(linea.conteo) || 0
+    const fila = {
+      cuadre_id: cuadreId,
+      codproducto: linea.codproducto ?? null,
+      producto: linea.producto ?? null,
+      lote: linea.lote ?? "",
+      location: linea.location ?? "",
+      sistema,
+      conteo,
+      diferencia: Math.round((conteo - sistema) * 100) / 100,
+      observacion: linea.observacion ?? null,
+      contado_por: contadoPor,
+      contado_en: new Date().toISOString(),
+    }
+    const { error } = await supabase
+      .from("sig_inventario_cuadre_detalle")
+      .upsert(fila, { onConflict: "cuadre_id,codproducto,lote,location" })
+    if (error) return { success: false, error: error.message }
+
+    // Recalcula los totales de la cabecera desde el detalle completo (no
+    // solo esta línea) — mismo criterio de siempre, ahora tras un upsert.
+    const { data: todas } = await supabase.from("sig_inventario_cuadre_detalle").select("sistema,conteo,diferencia").eq("cuadre_id", cuadreId)
+    const filas = todas ?? []
+    const totalSistema = filas.reduce((s: number, r: any) => s + (Number(r.sistema) || 0), 0)
+    const totalConteo = filas.reduce((s: number, r: any) => s + (Number(r.conteo) || 0), 0)
+    const totalDif = filas.reduce((s: number, r: any) => s + (Number(r.diferencia) || 0), 0)
+    const conDif = filas.filter((r: any) => Number(r.diferencia) !== 0).length
+    await supabase
+      .from("sig_inventario_cuadre")
+      .update({
+        total_sistema: Math.round(totalSistema * 100) / 100,
+        total_conteo: Math.round(totalConteo * 100) / 100,
+        total_diferencia: Math.round(totalDif * 100) / 100,
+        items: filas.length,
+        items_con_diferencia: conDif,
+        estado: "contado",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", cuadreId)
+    return { success: true }
+  } catch (err: any) {
+    return { success: false, error: err?.message || "Error desconocido" }
+  }
+}
+
 export async function cerrarCuadre(cuadreId: number, estado: string): Promise<{ success: boolean; error?: string }> {
   try {
     const supabase: any = await getSupabaseAdmin()
@@ -3154,25 +3215,81 @@ export async function cerrarCuadre(cuadreId: number, estado: string): Promise<{ 
 /** Registra la firma del cliente en el acta de revisión de inventario (auditoría). */
 export async function firmarCuadre(
   cuadreId: number,
-  payload: { cliente_firmante?: string | null; cliente_cargo?: string | null; fecha_firma?: string | null; acta_observaciones?: string | null },
+  payload: {
+    cliente_firmante?: string | null
+    cliente_cargo?: string | null
+    fecha_firma?: string | null
+    acta_observaciones?: string | null
+    // Imagen real de la firma (pad) — igual patrón que Acta de Cruce / Acta
+    // de Cierre Mensual. Opcional: si no llega, queda como antes (solo texto).
+    firma_url?: string | null
+  },
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const supabase: any = await getSupabaseAdmin()
-    const { error } = await supabase
-      .from("sig_inventario_cuadre")
-      .update({
-        cliente_firmante: payload.cliente_firmante ?? null,
-        cliente_cargo: payload.cliente_cargo ?? null,
-        fecha_firma: payload.fecha_firma ?? null,
-        acta_observaciones: payload.acta_observaciones ?? null,
-        firmado: !!(payload.cliente_firmante && payload.cliente_firmante.trim()),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", cuadreId)
+    const fila: any = {
+      cliente_firmante: payload.cliente_firmante ?? null,
+      cliente_cargo: payload.cliente_cargo ?? null,
+      fecha_firma: payload.fecha_firma ?? null,
+      acta_observaciones: payload.acta_observaciones ?? null,
+      firmado: !!(payload.cliente_firmante && payload.cliente_firmante.trim()),
+      updated_at: new Date().toISOString(),
+    }
+    if (payload.firma_url != null) fila.firma_url = payload.firma_url
+    const { error } = await supabase.from("sig_inventario_cuadre").update(fila).eq("id", cuadreId)
     if (error) return { success: false, error: error.message }
     return { success: true }
   } catch (err: any) {
     return { success: false, error: err?.message || "Error desconocido" }
+  }
+}
+
+/**
+ * Busca el conteo físico (Cuadre y Correcciones, tipo "total") YA CERRADO O
+ * APROBADO de un proyecto/mes, para que el cierre mensual de Conciliación lo
+ * use como "físico congelado" — el enlace real con el mes siguiente
+ * (`getOrCrearActaCruce`/`getKardexInventario` leen `fisico_snapshot` de
+ * `sig_inventario_cierre_mes`). Antes esto SOLO se llenaba con un script
+ * puntual corrido a mano (ver scripts/sig/ESTADO_PROYECTO_SIG.md §6j); con
+ * esto, si YA se hizo el conteo físico de fin de mes en esta pantalla, el
+ * botón normal de "Generar Acta" de Conciliación Mensual lo recoge solo.
+ * Si hay varios cuadres cerrados ese mes, usa el más reciente.
+ */
+export async function getConteoFisicoDelMes(
+  proyectoId: number,
+  mes: string, // 'YYYY-MM'
+): Promise<{ success: boolean; data: { cuadreId: number; fisicoCongelado: number; fisicoSnapshot: Record<string, number> } | null; error?: string }> {
+  try {
+    const supabase: any = await getSupabaseAdmin()
+    const desde = `${mes}-01`
+    const hastaD = new Date(`${mes}-01T00:00:00Z`)
+    hastaD.setUTCMonth(hastaD.getUTCMonth() + 1)
+    const hasta = hastaD.toISOString().slice(0, 10)
+    const { data: cuadre } = await supabase
+      .from("sig_inventario_cuadre")
+      .select("id")
+      .eq("proyecto_id", proyectoId)
+      .eq("tipo", "total")
+      .eq("activo", true)
+      .in("estado", ["cerrado", "aprobado"])
+      .gte("fecha", desde)
+      .lt("fecha", hasta)
+      .order("id", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (!cuadre?.id) return { success: true, data: null }
+    const { data: det } = await supabase.from("sig_inventario_cuadre_detalle").select("codproducto, conteo").eq("cuadre_id", cuadre.id)
+    const fisicoSnapshot: Record<string, number> = {}
+    let fisicoCongelado = 0
+    for (const d of det ?? []) {
+      const cod = d.codproducto || "(sin código)"
+      const c = Number(d.conteo) || 0
+      fisicoSnapshot[cod] = (fisicoSnapshot[cod] || 0) + c
+      fisicoCongelado += c
+    }
+    return { success: true, data: { cuadreId: cuadre.id, fisicoCongelado: Math.round(fisicoCongelado * 100) / 100, fisicoSnapshot } }
+  } catch (err: any) {
+    return { success: false, data: null, error: err?.message || "Error desconocido" }
   }
 }
 

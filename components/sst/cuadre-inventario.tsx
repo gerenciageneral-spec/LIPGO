@@ -4,7 +4,7 @@
 // Persiste el conteo físico vs sistema (saldoinvdetalle), documenta diferencias
 // y genera ajustes contabilizados. Por cliente/sitio. Evidencia ISO 8.5.1.
 
-import { useEffect, useMemo, useState } from "react"
+import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -17,7 +17,7 @@ import {
   getCuadres,
   getCuadreDetalle,
   crearCuadre,
-  guardarConteoCuadre,
+  guardarLineaConteoCuadre,
   cerrarCuadre,
   cerrarMesCuadre,
   firmarCuadre,
@@ -32,8 +32,9 @@ import {
 } from "@/lib/sig-actions"
 import { useAuth } from "@/components/auth-provider"
 import { SigHeader, SigFilterBar, SigKpi } from "@/components/sst/sig-ui"
+import { SignaturePad, type SignaturePadHandle } from "@/components/rrhh/signature-pad"
 import type { SigInventarioCuadre, SigInventarioCuadreDetalle, SigInventarioAjuste } from "@/lib/sig-types"
-import { Loader2, ClipboardCheck, Plus, Save, Lock, Trash2, FileCheck2, ArrowLeft, Pencil, BookOpen, CheckCircle2, ArrowDownToLine, ArrowUpFromLine, PackageSearch } from "lucide-react"
+import { Loader2, ClipboardCheck, Plus, Lock, Trash2, FileCheck2, ArrowLeft, Pencil, BookOpen, CheckCircle2, ArrowDownToLine, ArrowUpFromLine, PackageSearch, User, ChevronDown, ChevronRight } from "lucide-react"
 
 const ESTADO_CUADRE: Record<string, { label: string; color: string }> = {
   borrador: { label: "Borrador", color: "#94a3b8" },
@@ -78,6 +79,16 @@ export function CuadreInventario() {
   const [tiposMov, setTiposMov] = useState<any[]>([])
   const [verNom, setVerNom] = useState(false)
   const [productos, setProductos] = useState<any[]>([]) // catálogo para precargar el ajuste
+  // Conteo concurrente: cada línea se guarda sola al perder foco (autosave),
+  // sin tocar las demás — así varias personas cuentan el mismo documento sin
+  // pisarse el trabajo. dirtyRef marca qué líneas cambiaron desde el último
+  // guardado; detalleRef evita cerrar sobre un valor viejo en el onBlur.
+  const [savingLineId, setSavingLineId] = useState<number | null>(null)
+  const dirtyRef = useRef<Set<number>>(new Set())
+  const detalleRef = useRef<SigInventarioCuadreDetalle[]>([])
+  useEffect(() => { detalleRef.current = detalle }, [detalle])
+  const [gruposColapsados, setGruposColapsados] = useState<Set<string>>(new Set())
+  const firmaPadRef = useRef<SignaturePadHandle | null>(null)
 
   async function abrirNomenclatura() {
     setVerNom(true)
@@ -122,19 +133,35 @@ export function CuadreInventario() {
   async function guardarFirma() {
     if (!sel) return
     if (!firma.firmante.trim()) { toast({ title: "Indica quién firma por el cliente" }); return }
+    if (!firmaPadRef.current || firmaPadRef.current.isEmpty()) { toast({ title: "Falta la firma", description: "Dibuje la firma para cerrar el acta." }); return }
     setSaving(true)
-    const r = await firmarCuadre(sel.id, {
-      cliente_firmante: firma.firmante,
-      cliente_cargo: firma.cargo,
-      fecha_firma: firma.fecha || null,
-      acta_observaciones: firma.obs,
-    })
-    setSaving(false)
-    if (r.success) {
+    try {
+      const blob = await firmaPadRef.current.toBlob()
+      let firmaUrl: string | null = null
+      if (blob) {
+        const fd = new FormData()
+        fd.append("file", blob, `firma-cuadre-${sel.id}.png`)
+        const up = await fetch("/api/capacitaciones/upload-firma", { method: "POST", body: fd })
+        const upJson = await up.json()
+        if (!upJson?.url) throw new Error(upJson?.error || "No se pudo subir la firma")
+        firmaUrl = upJson.url
+      }
+      const r = await firmarCuadre(sel.id, {
+        cliente_firmante: firma.firmante,
+        cliente_cargo: firma.cargo,
+        fecha_firma: firma.fecha || null,
+        acta_observaciones: firma.obs,
+        firma_url: firmaUrl,
+      })
+      if (!r.success) throw new Error(r.error || "No se pudo guardar la firma")
       toast({ title: "Acta firmada" })
       await cargar()
-      setSel({ ...sel, cliente_firmante: firma.firmante, cliente_cargo: firma.cargo, fecha_firma: firma.fecha || null, acta_observaciones: firma.obs, firmado: true })
-    } else toast({ title: "No se pudo guardar la firma", description: r.error })
+      setSel({ ...sel, cliente_firmante: firma.firmante, cliente_cargo: firma.cargo, fecha_firma: firma.fecha || null, acta_observaciones: firma.obs, firmado: true, firma_url: firmaUrl })
+    } catch (e: any) {
+      toast({ title: "No se pudo guardar la firma", description: e?.message || "Error desconocido" })
+    } finally {
+      setSaving(false)
+    }
   }
 
   async function generarActaPDF() {
@@ -211,28 +238,49 @@ export function CuadreInventario() {
 
   function setConteo(id: number, v: string) {
     const n = Number(v)
+    dirtyRef.current.add(id)
     setDetalle((prev) => prev.map((d) => (d.id === id ? { ...d, conteo: isNaN(n) ? 0 : n, diferencia: (isNaN(n) ? 0 : n) - (d.sistema ?? 0) } : d)))
   }
 
-  async function guardarConteo() {
-    if (!sel) return
-    setSaving(true)
-    const lineas = detalle.map((d) => ({
-      codproducto: d.codproducto,
-      producto: d.producto,
-      lote: d.lote,
-      location: d.location,
-      sistema: d.sistema ?? 0,
-      conteo: d.conteo ?? 0,
-      observacion: d.observacion,
-    }))
-    const r = await guardarConteoCuadre(sel.id, lineas)
-    setSaving(false)
+  // Guarda SOLO esta línea (upsert) al perder el foco — no toca las demás,
+  // por eso varias personas pueden contar el mismo documento a la vez.
+  async function guardarLinea(id: number) {
+    if (!sel || !dirtyRef.current.has(id)) return
+    const d = detalleRef.current.find((x) => x.id === id)
+    if (!d) return
+    dirtyRef.current.delete(id)
+    setSavingLineId(id)
+    const r = await guardarLineaConteoCuadre(
+      sel.id,
+      {
+        codproducto: d.codproducto,
+        producto: d.producto,
+        lote: d.lote,
+        location: d.location,
+        sistema: d.sistema ?? 0,
+        conteo: d.conteo ?? 0,
+        observacion: d.observacion,
+      },
+      actor,
+    )
+    setSavingLineId(null)
     if (r.success) {
-      toast({ title: "Conteo guardado" })
-      await cargar()
-      abrir(sel)
-    } else toast({ title: "No se pudo guardar", description: r.error })
+      const ahora = new Date().toISOString()
+      setDetalle((prev) => prev.map((x) => (x.id === id ? { ...x, contado_por: actor, contado_en: ahora } : x)))
+      if (sel.estado !== "contado") setSel((prev) => (prev ? { ...prev, estado: "contado" } : prev))
+    } else {
+      dirtyRef.current.add(id) // no se pudo guardar — reintenta en el próximo blur
+      toast({ title: "No se pudo guardar el conteo de esta línea", description: r.error })
+    }
+  }
+
+  function toggleGrupo(key: string) {
+    setGruposColapsados((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
   }
 
   async function generar() {
@@ -345,6 +393,27 @@ export function CuadreInventario() {
   const difTotal = useMemo(() => detalle.reduce((s, d) => s + (Number(d.diferencia) || 0), 0), [detalle])
   const conDif = useMemo(() => detalle.filter((d) => (Number(d.diferencia) || 0) !== 0).length, [detalle])
 
+  // Agrupa el detalle por producto: cantidad por lote (filas) + cantidad total (subtotal).
+  const grupos = useMemo(() => {
+    const map = new Map<
+      string,
+      { key: string; producto: string; codproducto: string | null; sistema: number; conteo: number; diferencia: number; filas: SigInventarioCuadreDetalle[] }
+    >()
+    for (const d of detalle) {
+      const key = d.codproducto || d.producto || "—"
+      let g = map.get(key)
+      if (!g) {
+        g = { key, producto: d.producto || d.codproducto || "—", codproducto: d.codproducto, sistema: 0, conteo: 0, diferencia: 0, filas: [] }
+        map.set(key, g)
+      }
+      g.sistema += Number(d.sistema) || 0
+      g.conteo += Number(d.conteo) || 0
+      g.diferencia += Number(d.diferencia) || 0
+      g.filas.push(d)
+    }
+    return Array.from(map.values()).sort((a, b) => a.producto.localeCompare(b.producto))
+  }, [detalle])
+
   // ---------- Vista DETALLE de un cuadre ----------
   if (sel) {
     const est = ESTADO_CUADRE[sel.estado ?? "borrador"] ?? ESTADO_CUADRE.borrador
@@ -364,9 +433,9 @@ export function CuadreInventario() {
           </div>
           <div className="flex gap-2">
             {editable && (
-              <Button size="sm" disabled={saving} onClick={guardarConteo}>
-                <Save className="mr-1 h-4 w-4" /> Guardar conteo
-              </Button>
+              <span className="self-center text-[11px] text-muted-foreground">
+                Cada línea se guarda sola al contarla — varias personas pueden contar a la vez sin pisarse.
+              </span>
             )}
             {(sel.estado === "contado") && (
               <Button size="sm" variant="outline" onClick={generar}>
@@ -405,28 +474,69 @@ export function CuadreInventario() {
                     <th className="px-3 py-2 text-right">Sistema</th>
                     <th className="px-3 py-2 text-right">Conteo</th>
                     <th className="px-3 py-2 text-right">Diferencia</th>
+                    <th className="px-3 py-2">Contado por</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {detalle.map((d) => {
-                    const dif = Number(d.diferencia) || 0
+                  {grupos.map((g) => {
+                    const colapsado = gruposColapsados.has(g.key)
+                    const gDif = Math.round(g.diferencia * 100) / 100
+                    const contadas = g.filas.filter((f) => f.contado_por).length
                     return (
-                      <tr key={d.id} className={`border-b last:border-0 ${dif !== 0 ? "bg-red-50" : ""}`}>
-                        <td className="px-3 py-1.5">{d.producto}</td>
-                        <td className="px-3 py-1.5 text-muted-foreground">{d.lote}</td>
-                        <td className="px-3 py-1.5 text-muted-foreground">{d.location}</td>
-                        <td className="px-3 py-1.5 text-right">{fmt(d.sistema)}</td>
-                        <td className="px-3 py-1.5 text-right">
-                          {editable ? (
-                            <Input type="number" value={d.conteo ?? 0} onChange={(e) => setConteo(d.id, e.target.value)} className="h-7 w-24 text-right" />
-                          ) : (
-                            fmt(d.conteo)
-                          )}
-                        </td>
-                        <td className="px-3 py-1.5 text-right font-medium" style={{ color: dif === 0 ? undefined : dif > 0 ? SST_TOKENS.ok : SST_TOKENS.bad }}>
-                          {dif > 0 ? "+" : ""}{fmt(dif)}
-                        </td>
-                      </tr>
+                      <Fragment key={g.key}>
+                        <tr className="cursor-pointer select-none border-b bg-muted/40 hover:bg-muted/60" onClick={() => toggleGrupo(g.key)}>
+                          <td className="px-3 py-1.5 font-semibold" colSpan={3}>
+                            <span className="inline-flex items-center gap-1">
+                              {colapsado ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                              {g.producto}
+                              {g.codproducto && <span className="ml-1 text-[11px] font-normal text-muted-foreground">· {g.codproducto}</span>}
+                            </span>
+                          </td>
+                          <td className="px-3 py-1.5 text-right font-semibold">{fmt(g.sistema)}</td>
+                          <td className="px-3 py-1.5 text-right font-semibold">{fmt(g.conteo)}</td>
+                          <td className="px-3 py-1.5 text-right font-semibold" style={{ color: gDif === 0 ? undefined : gDif > 0 ? SST_TOKENS.ok : SST_TOKENS.bad }}>
+                            {gDif > 0 ? "+" : ""}{fmt(gDif)}
+                          </td>
+                          <td className="px-3 py-1.5 text-right text-[11px] text-muted-foreground">{contadas}/{g.filas.length} líneas</td>
+                        </tr>
+                        {!colapsado && g.filas.map((d) => {
+                          const dif = Number(d.diferencia) || 0
+                          return (
+                            <tr key={d.id} className={`border-b last:border-0 ${dif !== 0 ? "bg-red-50" : ""}`}>
+                              <td className="px-3 py-1.5"></td>
+                              <td className="px-3 py-1.5 text-muted-foreground">{d.lote || "—"}</td>
+                              <td className="px-3 py-1.5 text-muted-foreground">{d.location || "—"}</td>
+                              <td className="px-3 py-1.5 text-right">{fmt(d.sistema)}</td>
+                              <td className="px-3 py-1.5 text-right">
+                                {editable ? (
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <Input
+                                      type="number"
+                                      value={d.conteo ?? 0}
+                                      onChange={(e) => setConteo(d.id, e.target.value)}
+                                      onBlur={() => guardarLinea(d.id)}
+                                      className="h-7 w-24 text-right"
+                                    />
+                                    {savingLineId === d.id && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+                                  </span>
+                                ) : (
+                                  fmt(d.conteo)
+                                )}
+                              </td>
+                              <td className="px-3 py-1.5 text-right font-medium" style={{ color: dif === 0 ? undefined : dif > 0 ? SST_TOKENS.ok : SST_TOKENS.bad }}>
+                                {dif > 0 ? "+" : ""}{fmt(dif)}
+                              </td>
+                              <td className="px-3 py-1.5 text-[11px] text-muted-foreground">
+                                {d.contado_por ? (
+                                  <span className="inline-flex items-center gap-1"><User className="h-3 w-3" />{d.contado_por}</span>
+                                ) : (
+                                  "—"
+                                )}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </Fragment>
                     )
                   })}
                 </tbody>
@@ -447,17 +557,27 @@ export function CuadreInventario() {
             </Button>
           </div>
           <p className="mb-2 text-[11px] text-muted-foreground">
-            Para auditoría: el cliente firma cada 1 de mes que se realizó el inventario. Registra quién firma y descarga el acta para la firma física.
+            Para auditoría: el cliente firma cada 1 de mes que se realizó el inventario. Este conteo firmado queda como el inventario inicial del mes siguiente.
           </p>
-          <div className="grid gap-2 md:grid-cols-4">
+          <div className="grid gap-2 md:grid-cols-3">
             <Input value={firma.firmante} onChange={(e) => setFirma({ ...firma, firmante: e.target.value })} placeholder="Quién firma (cliente)" />
             <Input value={firma.cargo} onChange={(e) => setFirma({ ...firma, cargo: e.target.value })} placeholder="Cargo" />
             <Input type="date" value={firma.fecha} onChange={(e) => setFirma({ ...firma, fecha: e.target.value })} />
-            <Button size="sm" disabled={saving} onClick={guardarFirma}>
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Guardar firma"}
-            </Button>
           </div>
           <Input className="mt-2" value={firma.obs} onChange={(e) => setFirma({ ...firma, obs: e.target.value })} placeholder="Observaciones del acta" />
+          <div className="mt-3 flex flex-col gap-2 md:flex-row md:items-start">
+            {sel.firmado && sel.firma_url ? (
+              <div className="flex flex-col items-start gap-1">
+                <span className="text-[11px] text-muted-foreground">Firma registrada:</span>
+                <img src={sel.firma_url} alt="Firma" className="h-16 rounded-md border bg-white p-1" />
+              </div>
+            ) : (
+              <SignaturePad ref={firmaPadRef} height={140} className="w-full max-w-sm" />
+            )}
+            <Button size="sm" disabled={saving} onClick={guardarFirma}>
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : sel.firmado ? "Actualizar firma" : "Guardar firma"}
+            </Button>
+          </div>
         </Card>
       </div>
     )
