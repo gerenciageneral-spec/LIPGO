@@ -30,7 +30,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { LayoutGrid, Loader2, Camera, UserPlus, Play, Pause, ChevronDown, Truck, Users, AlertTriangle, ClipboardList } from "lucide-react"
+import { LayoutGrid, Loader2, Camera, UserPlus, Play, Pause, ChevronDown, Truck, Users, AlertTriangle, ClipboardList, CheckSquare } from "lucide-react"
 import {
   getCentroCoordinacion,
   iniciarOrdenEnMuelle,
@@ -49,6 +49,7 @@ import {
   assignPersonnelToOrder,
   pausarOrden,
   reanudarOrden,
+  confirmPicking,
   type PersonnelEmployee,
 } from "@/lib/picking-actions"
 import { PickingPhotoUploadDialog } from "@/components/picking-photo-upload-dialog"
@@ -216,6 +217,7 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
   const [photoDialogOpen, setPhotoDialogOpen] = useState(false)
 
   const [pausingOrder, setPausingOrder] = useState<string | null>(null)
+  const [confirmandoPickingId, setConfirmandoPickingId] = useState<number | null>(null)
 
   // Parte de turno — carga bajo demanda, solo cuando se abre. Control manual
   // (no <details>/<summary>): más predecible que depender del toggle nativo.
@@ -391,6 +393,56 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
       await cargar()
     } else {
       toast({ title: "Error", description: r.message, variant: "destructive" })
+    }
+  }
+
+  /**
+   * Confirmación rápida de Picking desde el propio Centro de Coordinación.
+   * Problema real (2026-08-29/30): el montacarguista muchas veces verifica
+   * físicamente pero se va sin darle "Confirmar Picking" en Picking — la
+   * orden igual se cierra (esa pantalla nunca exigió picking confirmado),
+   * dejando líneas de `invtrans` en "por descontar" para siempre (el
+   * inventario real las excluye). Se detectaron 15 órdenes ya cerradas así.
+   * Ahora el servidor SÍ bloquea el cierre sin picking confirmado (ver
+   * upload-picking-photos/route.ts) — esto le da al coordinador, que es
+   * quien de verdad cierra la orden, una forma de resolverlo ahí mismo sin
+   * depender de que el montacarguista vuelva: confirma las líneas tal cual
+   * quedaron asignadas (mismo camino que "Confirmar Picking" sin QR).
+   */
+  const confirmarPickingRapido = async (orden: OrdenOperativa) => {
+    setConfirmandoPickingId(orden.orderId)
+    try {
+      let hoja = hojasPorOrden.get(orden.orderId)
+      if (!hoja) {
+        const r = await getHojaDelMuelle(orden.orderId)
+        if (r.success && r.data) {
+          hoja = r.data
+          setHojasPorOrden((prev) => new Map(prev).set(orden.orderId, r.data!))
+        }
+      }
+      const pendientes = (hoja?.lineas ?? []).filter((l) => String(l.status || "").toLowerCase() !== "aprobado")
+      if (pendientes.length === 0) {
+        toast({ title: "Nada pendiente", description: "Ya no hay líneas de picking sin confirmar." })
+        return
+      }
+      const items = pendientes.map((l) => ({ id: l.id, cantidad: l.cantidad }))
+      const r2 = await confirmPicking(orden.orderId, orden.ordendecargue, items)
+      if (r2.success) {
+        toast({ title: "Picking confirmado", description: `${pendientes.length} línea(s) verificada(s).` })
+        // Fuerza recarga de la hoja (sus líneas ya cambiaron de estado) la
+        // próxima vez que se expanda, y refresca lineasAprobadas/lineasTotal
+        // del tablero (afecta el checklist "Realizar Picking").
+        setHojasPorOrden((prev) => {
+          const next = new Map(prev)
+          next.delete(orden.orderId)
+          return next
+        })
+        await cargar()
+      } else {
+        toast({ title: "Error", description: r2.message || "No se pudo confirmar el picking", variant: "destructive" })
+      }
+    } finally {
+      setConfirmandoPickingId(null)
     }
   }
 
@@ -778,6 +830,8 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                         onReasignar={() => slot.orden && abrirAsignar(slot.orden)}
                         onCambioTipoPago={cargar}
                         onCambioModoCarga={cargar}
+                        onConfirmarPicking={() => slot.orden && confirmarPickingRapido(slot.orden)}
+                        confirmandoPickingId={confirmandoPickingId}
                         pausingOrder={pausingOrder}
                         puedeConcluirSinPersonal={slot.orden ? puedeConcluirSinPersonal(slot.orden) : false}
                         metaPorHoraTrabajador={data.kpis.metaPorHoraTrabajador}
@@ -1283,6 +1337,8 @@ function MuelleRow({
   onReasignar,
   onCambioTipoPago,
   onCambioModoCarga,
+  onConfirmarPicking,
+  confirmandoPickingId,
   pausingOrder,
   puedeConcluirSinPersonal,
   metaPorHoraTrabajador,
@@ -1301,6 +1357,8 @@ function MuelleRow({
   onReasignar: () => void
   onCambioTipoPago: () => void
   onCambioModoCarga: () => void
+  onConfirmarPicking: () => void
+  confirmandoPickingId: number | null
   pausingOrder: string | null
   puedeConcluirSinPersonal: boolean
   metaPorHoraTrabajador: number
@@ -1463,7 +1521,25 @@ function MuelleRow({
           )}
 
           {/* Panel de acción — el paso actual, contextual según quién lo ejecuta */}
-          {pasoActual?.role === "op" ? (
+          {pasoActual?.role === "op" && pasoActual.label === "Realizar Picking" ? (
+            <div className="space-y-2 rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+              <div>
+                🚜 <strong className="text-foreground">Realizar Picking</strong> lo hace normalmente el operario de montacargas
+                desde Picking (celular, con QR) — pero si ya verificó físicamente y no alcanzó a confirmarlo ahí, puedes
+                confirmarlo tú mismo aquí para no dejar la orden sin poder cerrarse.
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 border-amber-400 text-xs text-amber-800 hover:bg-amber-50 dark:text-amber-300"
+                onClick={onConfirmarPicking}
+                disabled={confirmandoPickingId === o.orderId}
+              >
+                <CheckSquare className="mr-1 h-3 w-3" />
+                {confirmandoPickingId === o.orderId ? "Confirmando..." : "Confirmar Picking"}
+              </Button>
+            </div>
+          ) : pasoActual?.role === "op" ? (
             <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
               🚜 <strong className="text-foreground">{pasoActual.label}</strong> lo hace el operario de montacargas desde{" "}
               {o.tipooperacion === "Cargue" ? "Picking" : "Packing"} (celular{o.tipooperacion === "Cargue" ? ", con QR" : ""}) — aquí solo

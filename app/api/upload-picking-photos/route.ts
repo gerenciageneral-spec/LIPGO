@@ -139,6 +139,37 @@ export async function POST(request: NextRequest) {
         }
       }
 
+      // Picking confirmado (invtrans "aprobado") obligatorio SOLO en Cargue.
+      // Sin esto la orden cerraba dejando líneas en "por descontar" para
+      // siempre — el inventario real (saldoinvdetalle) EXCLUYE lo no
+      // aprobado, así que el stock quedaba inflado en libros aunque el
+      // camión ya se había ido. "Cargar fotos" en Picking solo exigía
+      // personal/tipo_pago, nunca picking confirmado. Confirmado con datos
+      // reales 2026-08-29/30: 15 órdenes ya cerradas así. El coordinador
+      // tiene ahora un botón "Confirmar Picking" en Centro de Coordinación
+      // (confirmPicking) para resolverlo él mismo si el montacarguista ya
+      // se fue sin confirmar.
+      if (orderRow.tipooperacion === "Cargue") {
+        const { data: lineasInv } = await supabaseAdmin
+          .from("invtrans")
+          .select("status")
+          .eq("ocargue", orderRow.ordendecargue)
+          .eq("origen", "orden de cargue")
+        const totalLineas = lineasInv?.length ?? 0
+        const lineasAprobadas = (lineasInv ?? []).filter(
+          (l: any) => String(l.status || "").toLowerCase() === "aprobado",
+        ).length
+        if (totalLineas > 0 && lineasAprobadas < totalLineas) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: "Debe confirmar el Picking antes de cerrar la orden (quedan líneas de inventario sin verificar)",
+            },
+            { status: 400 },
+          )
+        }
+      }
+
       const fincargue = await getColombiaTime()
       const { error: updateError } = await supabaseAdmin
         .from("cabeceraoc")
