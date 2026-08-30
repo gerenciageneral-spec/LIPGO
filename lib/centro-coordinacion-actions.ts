@@ -1181,3 +1181,29 @@ export async function getHojaDelMuelle(orderId: number): Promise<{ success: bool
     return { success: false, message: e?.message || "Error al cargar la hoja del muelle." }
   }
 }
+
+/**
+ * Deja trazada en `invtrans.observaciones` la confirmación de Picking hecha
+ * por EXCEPCIÓN desde Centro de Coordinación — para distinguirla de la
+ * confirmación normal del montacarguista en Picking (que no toca este
+ * campo). "Confirmar Picking" sigue siendo su labor; esto es solo el
+ * rescate cuando no se hizo ahí, y sirve para auditar cuánto se usa el
+ * atajo. Se llama DESPUÉS de que `confirmPicking` ya haya aprobado las
+ * líneas — no cambia `status` ni `cantidad`, solo anota quién y por qué.
+ */
+export async function marcarPickingConfirmadoPorExcepcion(
+  lineIds: number[],
+  coordinador: string,
+): Promise<{ success: boolean; message?: string }> {
+  try {
+    if (lineIds.length === 0) return { success: true }
+    const admin: any = await getSupabaseAdmin()
+    const hora = await getColombiaTime()
+    const nota = `Confirmado por excepción desde Centro de Coordinación por ${coordinador} a las ${hora} — el montacarguista no lo confirmó en Picking.`
+    const { error } = await admin.from("invtrans").update({ observaciones: nota }).in("id", lineIds)
+    if (error) return { success: false, message: error.message }
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al anotar la excepción de picking." }
+  }
+}

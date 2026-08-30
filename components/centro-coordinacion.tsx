@@ -37,6 +37,7 @@ import {
   asignarOrdenAMuelle,
   liberarMuelle,
   getHojaDelMuelle,
+  marcarPickingConfirmadoPorExcepcion,
   getParteDeTurno,
   type CentroCoordinacionData,
   type OrdenOperativa,
@@ -428,7 +429,13 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
       const items = pendientes.map((l) => ({ id: l.id, cantidad: l.cantidad }))
       const r2 = await confirmPicking(orden.orderId, orden.ordendecargue, items)
       if (r2.success) {
-        toast({ title: "Picking confirmado", description: `${pendientes.length} línea(s) verificada(s).` })
+        // Traza que esto fue una EXCEPCIÓN (coordinador, no montacarguista) —
+        // no bloquea el flujo si falla, es solo para auditoría.
+        await marcarPickingConfirmadoPorExcepcion(
+          pendientes.map((l) => l.id),
+          profile?.usuario || "Coordinador",
+        )
+        toast({ title: "Picking confirmado", description: `${pendientes.length} línea(s) verificada(s) — quedó registrado como excepción del coordinador.` })
         // Fuerza recarga de la hoja (sus líneas ya cambiaron de estado) la
         // próxima vez que se expanda, y refresca lineasAprobadas/lineasTotal
         // del tablero (afecta el checklist "Realizar Picking").
