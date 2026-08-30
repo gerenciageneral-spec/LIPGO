@@ -310,7 +310,8 @@ export const CATALOGO_APRENDIZAJE: ContenidoAprendizaje[] = [
       },
       {
         nombre: "Inventario detalle (Kardex)",
-        descripcion: "Recorrido movimiento por movimiento de un producto, para reconstruir como llego a su saldo actual.",
+        descripcion:
+          "Recorrido movimiento por movimiento de un producto, para reconstruir como llego a su saldo actual. Al abrir un producto muestra arriba el total de entradas, salidas, traslados, ajustes y merma de ese periodo ya sumado, sin tener que sumar cada movimiento uno por uno.",
       },
       {
         nombre: "Conciliacion mensual y Cuadre diario",
@@ -328,13 +329,14 @@ export const CATALOGO_APRENDIZAJE: ContenidoAprendizaje[] = [
   },
   {
     modulo: "Cuadre de Inventario",
-    resumen: "Conteos de cierre y correcciones que ajustan el stock.",
+    resumen: "Conteo fisico de cierre (varias personas a la vez) y correcciones que ajustan el stock.",
     proposito:
-      "Es el unico modulo donde una diferencia de inventario se convierte en un ajuste real de stock. Maneja el ciclo completo del conteo de cierre: se cuenta, se generan las correcciones, se cierra y se aprueba.",
+      "Es el unico modulo donde una diferencia de inventario se convierte en un ajuste real de stock. Maneja el ciclo completo del conteo de cierre: se cuenta entre varias personas si hace falta, se generan las correcciones, se cierra, se firma y se aprueba. El conteo total firmado del cierre queda como el inventario inicial del mes siguiente.",
     puedes: [
-      "Registrar y guardar un conteo mientras esta en borrador o contado.",
+      "Registrar el conteo fisico mientras esta en borrador o contado: cada linea (producto + lote + ubicacion) se guarda sola al contarla, asi varias personas cuentan el mismo documento a la vez sin pisarse el trabajo del otro.",
+      "Ver, por producto, la cantidad contada por lote y el total sumado, y quien conto cada linea.",
       "Generar las correcciones a partir de un conteo en estado contado.",
-      "Cerrar el mes, lo cual ajusta el stock.",
+      "Cerrar el mes (ajusta el stock) y firmar el acta con firma digital dibujada, como evidencia de auditoria.",
       "Consultar el historico de conteos y de correcciones.",
     ],
     noPuedes: [
@@ -342,6 +344,11 @@ export const CATALOGO_APRENDIZAJE: ContenidoAprendizaje[] = [
       "Ajustar stock saltandose el flujo: el ajuste ocurre unicamente al cerrar el mes.",
     ],
     funcionalidades: [
+      {
+        nombre: "Conteo por linea (varias personas a la vez)",
+        descripcion:
+          "Cada cantidad contada se guarda al momento, por producto + lote + ubicacion, sin borrar lo que otra persona ya conto. La tabla agrupa por producto: arriba el subtotal (sistema, conteo, diferencia) y, debajo, el detalle por lote/ubicacion con quien lo conto y a que hora.",
+      },
       {
         nombre: "Estados del conteo",
         descripcion:
@@ -357,9 +364,15 @@ export const CATALOGO_APRENDIZAJE: ContenidoAprendizaje[] = [
         descripcion:
           "Accion final e irreversible en la practica: aplica las correcciones y deja el stock del sistema igual a lo contado. Revise las correcciones antes de ejecutarla.",
       },
+      {
+        nombre: "Firma del acta",
+        descripcion:
+          "Firma digital dibujada (no solo texto), guardada como evidencia. Un conteo total cerrado o aprobado se enlaza automaticamente como el inventario inicial del mes siguiente al generar el Acta en Conciliacion Mensual (Panel LIP Inventario).",
+      },
     ],
     consejos: [
       "Cerrar el mes ajusta el stock real. Confirme el conteo fisico antes de ejecutarlo, porque el ajuste queda registrado contra el inventario.",
+      "Si varias personas cuentan el mismo documento, cada quien puede trabajar su parte del listado al tiempo: el guardado es por linea, no reemplaza lo que ya conto el companero.",
     ],
   },
   {
