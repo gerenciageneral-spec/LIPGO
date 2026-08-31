@@ -58,6 +58,14 @@
 --     Un domingo que además es festivo entra por la primera regla: 1,90.
 --     El factor se ata a `pct_recargo_dominical`: si cambia la ley, se mueve solo.
 --
+--   - "DESCANSÓ" INCLUYE LA FALTA (`es_descanso`, 2026-08-31): una falta con
+--     novedad '38- Licencia no remunerada' CUENTA como descanso para esta
+--     ventana de 6 días — decisión explícita del usuario, aplica tanto a
+--     permiso aprobado como a falta sin justificación (mismo código de
+--     Siigo para ambos). Caso real: RICHARD ANDRES ALTAMAR CUADRADO (ID2),
+--     falta el viernes 21-ago-2026 → el domingo 23-ago-2026 pasa de tarifa
+--     completa a parcial. 'Retiro' sigue sin contar como descanso.
+--
 --   - EL FESTIVO ENTRA AL RECARGO (CORREGIDO). Antes las dos ramas exigían
 --     `dia_semana = 0`, así que un festivo ENTRE SEMANA no entraba a ninguna: se
 --     pagaba 1,0 (la base, por la rama `es_festivo`) y el recargo quedaba en
@@ -389,10 +397,22 @@ create or replace view public.pagonomina as
                     ELSE 0
                 END AS trabajo_efectivo,
                 -- ¿Ese día la persona DESCANSÓ? Sirve para la ventana semanal de
-                -- abajo. Solo cuentan los códigos de descanso: una licencia no
-                -- remunerada o un retiro no son descanso compensado.
+                -- abajo, que decide si el domingo/festivo trabajado paga tarifa
+                -- completa (1,9x) o parcial (0,9x).
+                --
+                -- '38- Licencia no remunerada' SÍ cuenta aquí (decisión explícita
+                -- del usuario, 2026-08-31): aunque no sea un "Descanso" formal, es
+                -- el código que se usa tanto para permiso aprobado como para falta
+                -- sin justificación (mismo código de Siigo para ambos casos) — y
+                -- para efectos de la tarifa del recargo dominical, la falta cuenta
+                -- como si hubiera descansado esa semana. Caso real: RICHARD ANDRES
+                -- ALTAMAR CUADRADO (ID2), falta el viernes 21-ago-2026 → el domingo
+                -- 23-ago-2026 pasa de tarifa completa (110.890,65) a parcial
+                -- (52.527,15).
+                -- 'Retiro' sigue sin contar: quien se retira no "descansó", dejó de
+                -- estar vinculado.
                 CASE
-                    WHEN (TRIM(BOTH FROM COALESCE(a.asistencia, ''::text)) = ANY (ARRAY['Descanso'::text, 'Descanso compensatorio domingo anterior'::text])) THEN 1
+                    WHEN (TRIM(BOTH FROM COALESCE(a.asistencia, ''::text)) = ANY (ARRAY['Descanso'::text, 'Descanso compensatorio domingo anterior'::text, '38- Licencia no remunerada- Deducción'::text])) THEN 1
                     ELSE 0
                 END AS es_descanso,
                 CASE
