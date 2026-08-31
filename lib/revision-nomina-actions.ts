@@ -599,8 +599,9 @@ function armarPersona(
     //   3. Novedades tipo "Horas" → horas × HOD × factor del concepto, con HOD =
     //      salario/(30×jornada) y los % de la vigencia legal de la quincena (los
     //      mismos con los que LIPgo calculó las horas: hed 25, hedf, hen 75, hef,
-    //      hn 35, dominical). 08 = día adicional por dominical trabajado (×1,00);
-    //      25 = solo el recargo dominical (×pct).
+    //      hn 35, dominical). 08 = hora extra recargo dominical o festivo,
+    //      misma familia que 07/10/11/12 (×(1+pct)); 25 = solo el recargo
+    //      dominical (×pct), sin la hora base.
     //   4. Novedades tipo "Dias" → Siigo descuenta el día de la base y paga el
     //      concepto a su %: 13-Incap 100% (neto 0), 15-Incap 66,67% (neto −33,33%),
     //      14-Incap 50% (neto −50%), 38-Lic. no remunerada (neto −100%),
@@ -713,7 +714,7 @@ function armarPersona(
           else if (nom.startsWith("11")) mult = 1 + pct.hen / 100
           else if (nom.startsWith("12")) mult = 1 + pct.hef / 100
           else if (nom.startsWith("26")) mult = pct.hn / 100
-          else if (nom.startsWith("08")) mult = 1 // día adicional por dominical trabajado
+          else if (nom.startsWith("08")) mult = 1 + pct.dom / 100 // hora extra recargo dominical/festivo, misma familia que 07/10/11/12
           else if (nom.startsWith("25")) mult = pct.dom / 100 // solo el recargo
           conceptos.push({
             concepto: nom,

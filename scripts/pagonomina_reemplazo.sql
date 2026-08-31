@@ -605,8 +605,10 @@ create or replace view public.pagonomina as
                     -- DOMINGO o FESTIVO TRABAJADO (desde 16-jul-2026).
                     --
                     -- Paga SIEMPRE el recargo, venga el día por toneladas o por turno.
-                    -- Cruza contra la novedad "25- Recargo dominical o festivo" del
-                    -- archivo plano.
+                    -- El archivo plano decide 08 vs 25 con la columna
+                    -- recargo_dominical_tasa_completa (ver más abajo): tasa completa
+                    -- (1,90) → "08- Hora extra recargo dominical o festivo"; tasa
+                    -- parcial (0,90) → "25- Recargo dominical o festivo".
                     --
                     -- EL FESTIVO ENTRA AQUÍ (corregido). Antes las dos ramas exigían
                     -- `dia_semana = 0`, así que un festivo ENTRE SEMANA no entraba a
