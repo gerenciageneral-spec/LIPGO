@@ -1701,11 +1701,13 @@ function ConciliacionBascula() {
 
 // ---------------------------------------------------------------------------
 // AJUSTE DE PROYECCIONES
-// La nómina se paga ANTES de cerrar el último día de la quincena, así que ese
-// día el tonelaje se PROYECTA. La proyección NO reemplaza a las órdenes reales:
-// se SUMA a ellas, y el día sigue llegando carga. Aquí se cruza, el día
-// siguiente al pago (16 y 1º), lo REAL contra lo PAGADO, y la diferencia se
-// paga o se descuenta en la quincena siguiente.
+// El último día de cada quincena (el 15, o el último día del mes) a quien
+// gana por destajo se le paga el "día pleno" (salario/30, o el mínimo si no
+// tiene salario propio) SIN mirar el tonelaje — porque cuando se envía la
+// nómina, las órdenes de ese día casi nunca han cerrado. Aquí se cruza, el
+// día siguiente al pago (16 y 1º), lo REAL de ese día (cargue/descargue/
+// distribución ya cerrados) contra ese día pleno, y la diferencia se paga o
+// se descuenta en la quincena siguiente.
 // ---------------------------------------------------------------------------
 function AjusteProyecciones() {
   const { toast } = useToast()
@@ -1800,7 +1802,7 @@ function AjusteProyecciones() {
             </Select>
           </div>
           <div className="space-y-1">
-            <Label>Quincena proyectada</Label>
+            <Label>Quincena a ajustar</Label>
             <Select value={String(quincena)} onValueChange={(v) => setQuincena(Number(v) as 1 | 2)}>
               <SelectTrigger className="w-[130px]"><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -1829,27 +1831,26 @@ function AjusteProyecciones() {
         </CardContent>
       </Card>
 
-      {cruce?.sinProyeccion && (
+      {cruce?.sinMovimiento && (
         <Card>
           <CardContent className="py-8 text-center text-sm text-muted-foreground">
-            No hay órdenes de proyección en esta quincena, así que no hay nada que ajustar.
+            Nadie ganó por destajo el {cruce.fechaCierre}, así que no hay nada que ajustar.
           </CardContent>
         </Card>
       )}
 
-      {cruce && !cruce.sinProyeccion && (
+      {cruce && !cruce.sinMovimiento && (
         <>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Kpi
-              label="Toneladas pagadas vs reales"
-              value={`${t2(cruce.resumen.diferenciaTon)} t`}
-              hint={`pagadas ${t2(cruce.resumen.tonPagada)} · reales ${t2(cruce.resumen.tonReal)}`}
-              tone={cruce.resumen.diferenciaTon >= 0 ? "up" : "down"}
+              label="Día pleno pagado"
+              value={money(cruce.resumen.valorPagado)}
+              hint={`${cruce.resumen.personas} persona(s) · ${t2(cruce.resumen.tonReal)} t reales ese día`}
             />
             <Kpi
               label="Falta pagar"
               value={money(cruce.resumen.valorAFavorTrabajador)}
-              hint="se movió más de lo proyectado"
+              hint="produjo más que el día pleno"
               tone={cruce.resumen.valorAFavorTrabajador > 0 ? "up" : undefined}
             />
             <Kpi
@@ -1861,13 +1862,13 @@ function AjusteProyecciones() {
             <Kpi
               label="Neto del ajuste"
               value={signed(cruce.resumen.neto)}
-              hint={`${cruce.resumen.personas} persona(s) · aplica en ${MESES[cruce.aplicaEn.mes - 1]} ${cruce.aplicaEn.quincena}ª`}
+              hint={`aplica en ${MESES[cruce.aplicaEn.mes - 1]} ${cruce.aplicaEn.quincena}ª`}
             />
           </div>
 
           <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 p-3 text-xs">
             <span>
-              Día(s) proyectado(s): <strong>{cruce.diasProyectados.join(", ")}</strong>. El ajuste se aplicará en la{" "}
+              Día de cierre: <strong>{cruce.fechaCierre}</strong>. El ajuste se aplicará en la{" "}
               <strong>{cruce.aplicaEn.quincena}ª quincena de {MESES[cruce.aplicaEn.mes - 1]} {cruce.aplicaEn.anio}</strong>.
               {cruce.resumen.tonDistribucionAvimolExcluida > 0 && (
                 <span className="text-muted-foreground">
@@ -1883,7 +1884,7 @@ function AjusteProyecciones() {
 
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base">Cruce del día proyectado — {cruce.lineas.length} diferencia(s)</CardTitle>
+              <CardTitle className="text-base">Cruce del día pleno — {cruce.lineas.length} diferencia(s)</CardTitle>
             </CardHeader>
             <CardContent className="overflow-x-auto">
               <Table>
@@ -1892,18 +1893,16 @@ function AjusteProyecciones() {
                     <TableHead>Fecha</TableHead>
                     <TableHead>Persona</TableHead>
                     <TableHead>Proyecto</TableHead>
-                    <TableHead className="text-right">Ton pagadas</TableHead>
                     <TableHead className="text-right">Ton reales</TableHead>
-                    <TableHead className="text-right">Δ ton</TableHead>
-                    <TableHead className="text-right">Valor pagado</TableHead>
-                    <TableHead className="text-right">Valor real</TableHead>
+                    <TableHead className="text-right">Día pleno pagado</TableHead>
+                    <TableHead className="text-right">Devengado real</TableHead>
                     <TableHead className="text-right">Ajuste</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody className="tabular-nums">
                   {cruce.lineas.length === 0 ? (
-                    <TableRow><TableCell colSpan={9} className="h-20 text-center text-sm text-muted-foreground">
-                      La proyección coincidió con lo real. No hay nada que ajustar.
+                    <TableRow><TableCell colSpan={7} className="h-20 text-center text-sm text-muted-foreground">
+                      El día pleno coincidió con lo real. No hay nada que ajustar.
                     </TableCell></TableRow>
                   ) : (
                     cruce.lineas.map((l, i) => (
@@ -1914,11 +1913,7 @@ function AjusteProyecciones() {
                           {!l.identificacion && <div className="text-[10px] text-amber-600 dark:text-amber-400">sin cédula en Head Count</div>}
                         </TableCell>
                         <TableCell className="text-xs">{PLANTAS[l.idempresa] || `ID ${l.idempresa}`}</TableCell>
-                        <TableCell className="text-right">{t2(l.tonPagada)}</TableCell>
                         <TableCell className="text-right">{t2(l.tonReal)}</TableCell>
-                        <TableCell className={`text-right font-medium ${l.diferenciaTon < 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`}>
-                          {l.diferenciaTon >= 0 ? "+" : ""}{t2(l.diferenciaTon)}
-                        </TableCell>
                         <TableCell className="text-right text-muted-foreground">{money(l.valorPagado)}</TableCell>
                         <TableCell className="text-right text-muted-foreground">{money(l.valorReal)}</TableCell>
                         <TableCell className={`text-right font-semibold ${l.valorAjuste < 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`}>
@@ -1930,9 +1925,9 @@ function AjusteProyecciones() {
                 </TableBody>
               </Table>
               <p className="mt-2 text-xs text-muted-foreground">
-                <strong>Ton pagadas</strong> = lo que pagonomina liquidó ese día (proyección + órdenes reales que ya
-                habían entrado al momento del pago). <strong>Ton reales</strong> = solo las órdenes reales del día con
-                su tiquete de báscula, ya cerrado el día. La diferencia es lo que falta pagar o lo que se pagó de más.
+                <strong>Día pleno pagado</strong> = la base fija que se le pagó ese día (salario/30, o el mínimo si no
+                tiene salario propio). <strong>Devengado real</strong> = lo que produjo ese día en cargue/descargue/
+                distribución, ya cerrado. La diferencia es lo que falta pagar o lo que se pagó de más.
                 Volver a generar <strong>actualiza</strong> el ajuste existente, no lo duplica.
               </p>
             </CardContent>
@@ -1967,7 +1962,7 @@ function AjusteProyecciones() {
                   <TableHead className="w-8"></TableHead>
                   <TableHead>Fecha</TableHead>
                   <TableHead>Persona</TableHead>
-                  <TableHead className="text-right">Δ ton</TableHead>
+                  <TableHead className="text-right">Ton reales</TableHead>
                   <TableHead className="text-right">Ajuste</TableHead>
                   <TableHead>Novedad Siigo</TableHead>
                   <TableHead>Aplica en</TableHead>
@@ -1985,7 +1980,7 @@ function AjusteProyecciones() {
                     </TableCell>
                     <TableCell className="whitespace-nowrap">{a.fechaProyectada}</TableCell>
                     <TableCell>{a.persona}</TableCell>
-                    <TableCell className="text-right">{a.diferenciaTon >= 0 ? "+" : ""}{t2(a.diferenciaTon)}</TableCell>
+                    <TableCell className="text-right">{t2(a.tonReal)}</TableCell>
                     <TableCell className={`text-right font-medium ${a.valorAjuste < 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`}>
                       {signed(a.valorAjuste)}
                     </TableCell>

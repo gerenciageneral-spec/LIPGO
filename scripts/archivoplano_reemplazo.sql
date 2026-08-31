@@ -15,6 +15,12 @@
 --     proyectado y lo realmente movido el último día de la quincena anterior.
 --     Solo los APROBADOS. Novedades 72 (ingreso) y 73 (deducción).
 --     Requiere scripts/create_ajustes_proyeccion.sql.
+--   · EXCLUIR EL DÍA DE CIERRE DEL BONO DE LA MISMA QUINCENA (desde 2026-09-01,
+--     ver `total_bono_nomina` en `agrupado_quincena`): el 15 y el último día
+--     del mes se pagan por el "día pleno" (base fija, ver pagonomina_reemplazo.sql)
+--     y su diferencia por tonelaje va SIEMPRE diferida a la quincena siguiente
+--     vía Ajuste de Proyecciones — nunca dentro de la misma quincena. Sin esto,
+--     esa diferencia se pagaría dos veces (novedad 52- Y 72/73-).
 --   · BONOS no prestacionales (Compensación › Bonos): rama propia al final que
 --     lee `bonos_nomina` (solo APROBADOS), una fila por código de novedad
 --     (43/50/66). NO se mezclan con la novedad 52- del bono de productividad.
@@ -151,7 +157,24 @@ create view public.archivoplano as
             -- OJO: aquí va SOLO `bonif_prestacional`. `bonif_no_prestacional` (los
             -- bonos del módulo Compensación › Bonos) NO se mezcla con la novedad
             -- 52-: sale por su propia rama al final, con su código 43/50/66.
-            sum(base_datos.bonif_prestacional) AS total_bono_nomina,
+            --
+            -- EXCLUIR EL DÍA DE CIERRE (desde 2026-09-01): el 15 y el último día
+            -- del mes ya NO se pagan por tonelaje ese mismo día — se paga el "día
+            -- pleno" (ver pagonomina_reemplazo.sql) y lo que produjo de más/menos
+            -- se ajusta en la quincena SIGUIENTE (Revisión de nómina › Ajuste de
+            -- Proyecciones, novedad 72/73 más abajo). Si ese día se dejara sumar
+            -- aquí, la misma diferencia viajaría DOS VECES: una de una vez (esta
+            -- novedad 52-) y otra diferida (72/73). Antes del 2026-09-01 se
+            -- conserva el comportamiento viejo (sí suma), para no reescribir
+            -- quincenas ya enviadas a Siigo con ese criterio.
+            sum(
+                CASE
+                    WHEN ((base_datos.fecha >= DATE '2026-09-01')
+                      AND ((EXTRACT(day FROM base_datos.fecha) = 15)
+                        OR (base_datos.fecha = ((date_trunc('month'::text, (base_datos.fecha)::timestamp with time zone) + interval '1 month' - interval '1 day'))::date)))
+                    THEN (0)::numeric
+                    ELSE base_datos.bonif_prestacional
+                END) AS total_bono_nomina,
             sum(COALESCE(base_datos.hed, (0)::numeric)) AS total_hed_moneda,
             sum(COALESCE(base_datos.horas_hed, (0)::numeric)) AS total_hed_horas
            FROM base_datos

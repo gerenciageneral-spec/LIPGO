@@ -3,21 +3,29 @@
 /**
  * Server actions de "Ajuste de Proyecciones" (Compensación › Revisión de nómina).
  *
- * La nómina se paga ANTES de que cierre el último día de la quincena, así que
- * ese día el tonelaje se PROYECTA (`cabeceraoc.tipooperacion = 'proyeccion'`).
- * La proyección NO reemplaza a las órdenes reales: se SUMA a ellas — el día
- * sigue y siguen llegando órdenes. Al cerrar, lo real casi nunca coincide con
- * lo pagado.
+ * MODELO VIGENTE (desde 2026-08-31): ya NO se proyecta nada a mano. El último
+ * día de cada quincena (el 15, o el último día del mes) a quien gana por
+ * destajo se le paga el "día pleno" — un día de base fija (salario/30, o el
+ * mínimo $58.364 si no tiene salario propio), igual que a cualquier otro día,
+ * SIN mirar el tonelaje — porque cuando se genera y envía la nómina, las
+ * órdenes de ese día casi nunca han cerrado todavía.
  *
  * Este módulo cruza, el día siguiente al pago (el 16 y el 1º):
- *     ton_real   (SOLO órdenes reales, con tiquete de báscula)
- *   − ton_pagada (lo que pagonomina liquidó ese día: proyección + real)
+ *     valor_real   (SOLO órdenes reales de cargue/descargue/distribución de
+ *                   ESE día, ya cerradas, en plata según tarifaspersonal)
+ *   − valor_pagado (el día pleno que se le pagó de base: salario/30 o $58.364)
  *   = diferencia -> se paga o se descuenta en la quincena SIGUIENTE.
  *
  * El reparto por persona replica EXACTAMENTE el de `pagonomina`
  * (peso_base_calculo ÷ cantidad_auxiliares), para que la comparación sea 1:1.
+ * Solo aplica a quien gana por TONELADAS ese día (quien aparece en los
+ * auxiliares de una orden real) — el personal de turno no entra aquí.
  *
  * Los ajustes nacen 'pendiente'; solo al aprobarse salen al archivo plano.
+ *
+ * Histórico: hasta 2026-08-30 este cruce comparaba contra una proyección
+ * manual (`cabeceraoc.tipooperacion = 'proyeccion'`) que el negocio dejó de
+ * usar. Los ajustes ya generados/aprobados con el modelo viejo no se tocan.
  */
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
@@ -31,8 +39,6 @@ import {
 } from "@/lib/ajuste-proyeccion-constants"
 
 const num = (v: any) => Number(v || 0)
-/** Diferencias por debajo de esto son ruido de redondeo, no ajuste real. */
-const TOLERANCIA_TON = 0.01
 
 /** Réplica de `peso_base_calculo` de pagonomina_reemplazo.sql. */
 function pesoBaseCalculo(idempresa: number, tipooperacion: string, pesovascula: number, pesoorden: number): number {
@@ -69,13 +75,12 @@ export interface AjusteLinea {
   fechaProyectada: string
   persona: string
   identificacion: string | null
-  /** Toneladas de la orden `tipooperacion='proyeccion'` (lo que se proyectó, aparte de lo real). */
+  /** Histórico (modelo viejo): siempre 0 con el modelo de día pleno. */
   tonProyectada: number
-  /** Hora en que quedó guardada la proyección de ese día+empresa (fincargue, MAX si hubo varias). */
+  /** Histórico (modelo viejo): siempre null con el modelo de día pleno. */
   horaCorte: string | null
-  tonPagada: number
+  /** Toneladas reales del día de cierre (informativo — el pagado ya no es tonelaje). */
   tonReal: number
-  diferenciaTon: number
   valorPagado: number
   valorReal: number
   valorAjuste: number
@@ -88,23 +93,23 @@ export interface AjusteLinea {
 export interface CruceProyeccionData {
   quincena: { anio: number; mes: number; num: number; desde: string; hasta: string }
   aplicaEn: { anio: number; mes: number; quincena: number }
-  /** Días de la quincena que tuvieron órdenes de proyección. */
-  diasProyectados: string[]
+  /** El único día de cierre de la quincena (el 15, o el último día del mes). */
+  fechaCierre: string
   resumen: {
     personas: number
-    tonPagada: number
     tonReal: number
-    diferenciaTon: number
+    valorPagado: number
+    valorReal: number
     valorAFavorTrabajador: number
     valorAFavorEmpresa: number
     neto: number
     yaRegistrados: number
-    /** Toneladas de Distribución en Avimol en los días proyectados — ya excluidas del destajo, solo informativo. */
+    /** Toneladas de Distribución en Avimol el día de cierre — ya excluidas del destajo, solo informativo. */
     tonDistribucionAvimolExcluida: number
   }
   lineas: AjusteLinea[]
-  /** Sin días de proyección en la quincena: no hay nada que ajustar. */
-  sinProyeccion: boolean
+  /** Nadie ganó por destajo el día de cierre: no hay nada que ajustar. */
+  sinMovimiento: boolean
 }
 
 async function paginar(sb: any, tabla: string, cols: string, filtros: (q: any) => any): Promise<any[]> {
@@ -133,60 +138,26 @@ export async function getCruceProyeccion(
     const sb: any = await getSupabaseAdmin()
     const { desde, hasta } = rangoQuincena(anio, mes, quincena)
     const emps = [1, 2, 3, 4, 6].includes(empresa) ? [empresa] : null
+    // El día de cierre es SIEMPRE el último de la quincena (el 15, o el
+    // último día del mes) — ya no se detecta desde una proyección manual.
+    const fechaCierre = hasta
+    const aplicaEn = quincenaSiguiente(anio, mes, quincena)
 
-    // 1) Órdenes de la quincena. Mismo universo que pagonomina (fincargue).
-    //    `fincargue` también se trae como HORA (HH:MM:SS) — en las órdenes
-    //    reales es la hora real de cierre; en las de proyección, la hora en
-    //    que se guardó (saveProyeccion, lib/orders-actions.tsx). Comparación
-    //    lexicográfica de string funciona porque el formato siempre es
-    //    zero-padded HH:MM:SS.
+    // 1) Órdenes REALES cerradas ese único día (mismo universo que pagonomina:
+    //    fincargue no nulo). Se descarta `tipooperacion='proyeccion'` por si
+    //    queda alguna fila vieja del modelo manual — ya no cuenta como real.
     const ordenes = await paginar(
       sb,
       "cabeceraoc",
-      "id, idempresa, ordendecargue, fechacargue, tipooperacion, pesovascula, pesoorden, auxiliares, fincargue",
+      "id, idempresa, ordendecargue, fechacargue, tipooperacion, pesovascula, pesoorden, auxiliares",
       (q: any) => {
-        let x = q.gte("fechacargue", desde).lte("fechacargue", hasta).not("fincargue", "is", null)
+        let x = q.eq("fechacargue", fechaCierre).not("fincargue", "is", null)
         if (emps) x = x.in("idempresa", emps)
         return x
       },
     )
 
-    // 2) Días con proyección: no se asume "el 15 / el último"; se detectan.
-    //    En los datos reales hay proyecciones el 13, 14, 15, 30 y 31.
-    const diasProyectados = Array.from(
-      new Set(
-        ordenes
-          .filter((o) => String(o.tipooperacion || "").trim() === "proyeccion")
-          .map((o) => String(o.fechacargue).slice(0, 10)),
-      ),
-    ).sort()
-
-    const aplicaEn = quincenaSiguiente(anio, mes, quincena)
-    if (diasProyectados.length === 0) {
-      return {
-        success: true,
-        data: {
-          quincena: { anio, mes, num: quincena, desde, hasta },
-          aplicaEn,
-          diasProyectados: [],
-          resumen: {
-            personas: 0,
-            tonPagada: 0,
-            tonReal: 0,
-            diferenciaTon: 0,
-            valorAFavorTrabajador: 0,
-            valorAFavorEmpresa: 0,
-            neto: 0,
-            yaRegistrados: 0,
-            tonDistribucionAvimolExcluida: 0,
-          },
-          lineas: [],
-          sinProyeccion: true,
-        },
-      }
-    }
-
-    // 3) Tarifas de destajo vigentes (mismo join que pagonomina).
+    // 2) Tarifas de destajo vigentes (mismo join que pagonomina).
     const tarifas = await paginar(sb, "tarifaspersonal", "empresaid, operacion, tarifa, fechaini, fechafin", (q: any) => q)
     const tarifaDe = (empresaId: number, operacion: string, fecha: string): number => {
       for (const t of tarifas) {
@@ -197,21 +168,17 @@ export async function getCruceProyeccion(
       return 0
     }
 
-    // 4) REAL por (fecha, persona): solo órdenes que NO son proyección.
-    //    Reparto idéntico al de pagonomina: peso ÷ cantidad de auxiliares.
-    //    Excluye Avimol+Distribución (ver excluirAvimolDistribucion) para que
-    //    "real" no incluya algo que pagonomina tampoco paga.
+    // 3) REAL por persona ese día: reparto idéntico al de pagonomina
+    //    (peso ÷ cantidad de auxiliares), convertido a plata con la tarifa
+    //    vigente. Excluye Avimol+Distribución (ver excluirAvimolDistribucion)
+    //    para que "real" no incluya algo que pagonomina tampoco paga.
     const realTon = new Map<string, number>()
     const realVal = new Map<string, number>()
     const empresaDe = new Map<string, number>()
-    // Toneladas de Distribución en Avimol (informativo, ver punto 4 del plan) —
-    // se mide ANTES de excluir, para poder mostrar cuánto quedó fuera.
     let tonDistribucionAvimolExcluida = 0
     for (const o of ordenes) {
       const tipo = String(o.tipooperacion || "").trim()
       if (tipo === "proyeccion") continue
-      const fecha = String(o.fechacargue).slice(0, 10)
-      if (!diasProyectados.includes(fecha)) continue
       const emp = Number(o.idempresa)
       const aux = String(o.auxiliares || "")
         .split(",")
@@ -224,111 +191,37 @@ export async function getCruceProyeccion(
       }
       if (aux.length === 0 || peso <= 0) continue
       const porPersona = peso / aux.length
-      const tarifa = tarifaDe(emp, tipo, fecha)
+      const tarifa = tarifaDe(emp, tipo, fechaCierre)
       for (const p of aux) {
-        const k = `${fecha}|${p.toUpperCase()}`
+        const k = p.toUpperCase()
         realTon.set(k, (realTon.get(k) || 0) + porPersona)
         realVal.set(k, (realVal.get(k) || 0) + porPersona * tarifa)
         if (!empresaDe.has(k)) empresaDe.set(k, emp)
       }
     }
 
-    // 5) HORA DE CORTE por (fecha, empresa): la hora en que quedó guardada la
-    //    proyección (fincargue de la fila tipooperacion='proyeccion'; si hubo
-    //    más de un guardado ese día, se usa la ÚLTIMA — el punto real de
-    //    corte es el último que se guardó).
-    const horaCortePorFechaEmpresa = new Map<string, string>()
-    for (const o of ordenes) {
-      if (String(o.tipooperacion || "").trim() !== "proyeccion") continue
-      const fecha = String(o.fechacargue).slice(0, 10)
-      const emp = Number(o.idempresa)
-      const hora = String(o.fincargue || "")
-      if (!hora) continue
-      const k = `${fecha}|${emp}`
-      const actual = horaCortePorFechaEmpresa.get(k)
-      if (!actual || hora > actual) horaCortePorFechaEmpresa.set(k, hora)
-    }
-
-    // 6) PAGADO = PROYECTADO (tonelaje propio de la orden de proyección) +
-    //    REAL ANTES DEL CORTE (órdenes reales de ese mismo día cuyo fincargue
-    //    ya estaba cerrado al momento del corte). Reemplaza la lectura previa
-    //    de `pagonomina` en vivo: esa vista SUMA proyección + real del día
-    //    sin distinguirlos, así que si después del corte se cerraban MÁS
-    //    órdenes reales ese mismo día, "lo pagado" seguía creciendo — ya no
-    //    era una foto de lo que realmente se envió al archivo plano ese día.
-    const pagTon = new Map<string, number>()
-    const pagVal = new Map<string, number>()
-    const proyTon = new Map<string, number>()
-    const horaCorteDe = new Map<string, string>()
-
-    // 6a) PROYECTADO: tonelaje propio de las filas tipooperacion='proyeccion'.
-    for (const o of ordenes) {
-      const tipo = String(o.tipooperacion || "").trim()
-      if (tipo !== "proyeccion") continue
-      const fecha = String(o.fechacargue).slice(0, 10)
-      const emp = Number(o.idempresa)
-      const aux = String(o.auxiliares || "")
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean)
-      const peso = num(o.pesoorden) // proyección: pesoorden = pesovascula = peso digitado
-      if (aux.length === 0 || peso <= 0) continue
-      const porPersona = peso / aux.length
-      const tarifa = tarifaDe(emp, "proyeccion", fecha)
-      const horaCorte = horaCortePorFechaEmpresa.get(`${fecha}|${emp}`) || null
-      for (const p of aux) {
-        const k = `${fecha}|${p.toUpperCase()}`
-        proyTon.set(k, (proyTon.get(k) || 0) + porPersona)
-        pagTon.set(k, (pagTon.get(k) || 0) + porPersona)
-        pagVal.set(k, (pagVal.get(k) || 0) + porPersona * tarifa)
-        if (!empresaDe.has(k)) empresaDe.set(k, emp)
-        if (horaCorte) horaCorteDe.set(k, horaCorte)
-      }
-    }
-
-    // 6b) REAL ANTES DEL CORTE: mismo criterio que el REAL completo (paso 4,
-    //     incluye la exclusión Avimol+Distribución), pero solo órdenes cuyo
-    //     `fincargue` es <= la hora de corte de ese día+empresa. Si ese
-    //     día+empresa no tuvo proyección, no hay corte que aplicar (no debería
-    //     pasar porque solo se recorren `diasProyectados`, pero por empresa
-    //     dentro del mismo día sí puede faltar si esa empresa no proyectó).
-    for (const o of ordenes) {
-      const tipo = String(o.tipooperacion || "").trim()
-      if (tipo === "proyeccion") continue
-      const fecha = String(o.fechacargue).slice(0, 10)
-      if (!diasProyectados.includes(fecha)) continue
-      const emp = Number(o.idempresa)
-      if (excluirAvimolDistribucion(emp, tipo)) continue
-      const horaCorte = horaCortePorFechaEmpresa.get(`${fecha}|${emp}`)
-      if (!horaCorte) continue // esta empresa no proyectó ese día: nada "antes del corte"
-      const hora = String(o.fincargue || "")
-      if (!hora || hora > horaCorte) continue // llegó DESPUÉS del corte: no estaba pagado
-      const aux = String(o.auxiliares || "")
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean)
-      const peso = pesoBaseCalculo(emp, tipo, num(o.pesovascula), num(o.pesoorden))
-      if (aux.length === 0 || peso <= 0) continue
-      const porPersona = peso / aux.length
-      const tarifa = tarifaDe(emp, tipo, fecha)
-      for (const p of aux) {
-        const k = `${fecha}|${p.toUpperCase()}`
-        pagTon.set(k, (pagTon.get(k) || 0) + porPersona)
-        pagVal.set(k, (pagVal.get(k) || 0) + porPersona * tarifa)
-        if (!empresaDe.has(k)) empresaDe.set(k, emp)
-      }
-    }
-
-    // 6) Cédulas (el archivo plano paga por identificación).
-    const hc = await paginar(sb, "headcount", "nombre, identificacion", (q: any) => q)
+    // 4) PAGADO = "día pleno" (salario/30, o $58.364 si no tiene salario
+    //    propio) — el mismo `valor_diario_ley` que usa pagonomina para
+    //    cualquier día. Ya no depende de una proyección ni de una hora de
+    //    corte: es un valor fijo, igual para todos los que ganan por
+    //    destajo, solo aplica a quien tuvo tonelaje real ese día (arriba).
+    const hc = await paginar(sb, "headcount", "nombre, identificacion, salario", (q: any) => q)
+    const salarioDe = new Map<string, number>()
     const cedulaDe = new Map<string, string>()
     for (const h of hc) {
       const k = String(h.nombre || "").trim().toUpperCase()
+      if (!k) continue
+      if (!salarioDe.has(k)) salarioDe.set(k, num(h.salario))
       const c = String(h.identificacion || "").trim()
-      if (k && c && !cedulaDe.has(k)) cedulaDe.set(k, c)
+      if (c && !cedulaDe.has(k)) cedulaDe.set(k, c)
+    }
+    const DIA_PLENO_MINIMO = 58364
+    const diaPlenoDe = (personaUpper: string): number => {
+      const salario = salarioDe.get(personaUpper) || 0
+      return salario > 0 ? salario / 30 : DIA_PLENO_MINIMO
     }
 
-    // 7) Nombre "bonito" tal como viene de cabeceraoc.auxiliares.
+    // 5) Nombre "bonito" tal como viene de cabeceraoc.auxiliares.
     const nombreReal = new Map<string, string>()
     for (const o of ordenes) {
       for (const p of String(o.auxiliares || "").split(",")) {
@@ -337,42 +230,38 @@ export async function getCruceProyeccion(
       }
     }
 
-    // 8) Armar las líneas.
-    const claves = new Set([...pagTon.keys(), ...realTon.keys()])
+    // 6) Armar las líneas: solo quien tuvo tonelaje real ese día (sin eso no
+    //    hay nada que comparar contra el día pleno).
     const lineas: AjusteLinea[] = []
-    for (const k of claves) {
-      const [fecha, personaUpper] = k.split("|")
+    for (const personaUpper of realTon.keys()) {
       const persona = nombreReal.get(personaUpper) || personaUpper
       if (/prueba/i.test(persona)) continue // pagonomina nunca les paga
-      const tonPagada = pagTon.get(k) || 0
-      const tonReal = realTon.get(k) || 0
-      const diferenciaTon = tonReal - tonPagada
-      if (Math.abs(diferenciaTon) <= TOLERANCIA_TON) continue
-      const valorPagado = pagVal.get(k) || 0
-      const valorReal = realVal.get(k) || 0
+      const tonReal = realTon.get(personaUpper) || 0
+      const valorReal = realVal.get(personaUpper) || 0
+      const valorPagado = diaPlenoDe(personaUpper)
+      const valorAjuste = valorReal - valorPagado
+      if (Math.abs(valorAjuste) < 1) continue // menos de $1: ruido de redondeo
       lineas.push({
-        idempresa: empresaDe.get(k) || 0,
-        fechaProyectada: fecha,
+        idempresa: empresaDe.get(personaUpper) || 0,
+        fechaProyectada: fechaCierre,
         persona,
         identificacion: cedulaDe.get(personaUpper) || null,
-        tonProyectada: proyTon.get(k) || 0,
-        horaCorte: horaCorteDe.get(k) || null,
-        tonPagada,
+        tonProyectada: 0,
+        horaCorte: null,
         tonReal,
-        diferenciaTon,
         valorPagado,
         valorReal,
-        valorAjuste: valorReal - valorPagado,
-        novedadSiigo: valorReal - valorPagado >= 0 ? NOVEDAD_AJUSTE_INGRESO : NOVEDAD_AJUSTE_DEDUCCION,
+        valorAjuste,
+        novedadSiigo: valorAjuste >= 0 ? NOVEDAD_AJUSTE_INGRESO : NOVEDAD_AJUSTE_DEDUCCION,
       })
     }
     lineas.sort((a, b) => Math.abs(b.valorAjuste) - Math.abs(a.valorAjuste))
 
-    // 9) ¿Cuántos ya están registrados? (para no re-generar a ciegas)
+    // 7) ¿Cuántos ya están registrados? (para no re-generar a ciegas)
     const { data: yaReg } = await sb
       .from("ajustes_proyeccion")
       .select("id", { count: "exact" })
-      .in("fecha_proyectada", diasProyectados)
+      .eq("fecha_proyectada", fechaCierre)
 
     const aFavorTrab = lineas.filter((l) => l.valorAjuste > 0).reduce((a, l) => a + l.valorAjuste, 0)
     const aFavorEmp = lineas.filter((l) => l.valorAjuste < 0).reduce((a, l) => a + l.valorAjuste, 0)
@@ -382,12 +271,12 @@ export async function getCruceProyeccion(
       data: {
         quincena: { anio, mes, num: quincena, desde, hasta },
         aplicaEn,
-        diasProyectados,
+        fechaCierre,
         resumen: {
-          personas: new Set(lineas.map((l) => l.persona)).size,
-          tonPagada: lineas.reduce((a, l) => a + l.tonPagada, 0),
+          personas: lineas.length,
           tonReal: lineas.reduce((a, l) => a + l.tonReal, 0),
-          diferenciaTon: lineas.reduce((a, l) => a + l.diferenciaTon, 0),
+          valorPagado: lineas.reduce((a, l) => a + l.valorPagado, 0),
+          valorReal: lineas.reduce((a, l) => a + l.valorReal, 0),
           valorAFavorTrabajador: aFavorTrab,
           valorAFavorEmpresa: aFavorEmp,
           neto: aFavorTrab + aFavorEmp,
@@ -395,15 +284,26 @@ export async function getCruceProyeccion(
           tonDistribucionAvimolExcluida,
         },
         lineas,
-        sinProyeccion: false,
+        sinMovimiento: lineas.length === 0,
       },
     }
   } catch (e: any) {
-    return { success: false, message: e?.message || "Error al calcular el cruce de proyección." }
+    return { success: false, message: e?.message || "Error al calcular el cruce del día pleno." }
   }
 }
 
 /** Persiste el cruce como ajustes PENDIENTES (upsert: re-correr no duplica). */
+/**
+ * Piso de vigencia del modelo de día pleno: antes de esta fecha, el día de
+ * cierre TODAVÍA manda su excedente de destajo dentro de la MISMA quincena
+ * (archivoplano no lo excluye todavía — ver scripts/archivoplano_reemplazo.sql,
+ * "EXCLUIR EL DÍA DE CIERRE"). Generar un ajuste diferido para un día anterior
+ * a este piso pagaría esa diferencia DOS VECES: una de una vez (novedad 52) y
+ * otra en la quincena siguiente (novedad 72/73). No mover sin correr antes esa
+ * migración Y confirmar que ya está desplegada.
+ */
+const PISO_VIGENCIA_DIA_PLENO = "2026-09-01"
+
 export async function generarAjustes(
   anio: number,
   mes: number,
@@ -413,6 +313,12 @@ export async function generarAjustes(
   try {
     const cruce = await getCruceProyeccion(anio, mes, quincena, empresa)
     if (!cruce.success || !cruce.data) return { success: false, message: cruce.message }
+    if (cruce.data.fechaCierre < PISO_VIGENCIA_DIA_PLENO) {
+      return {
+        success: false,
+        message: `El día de cierre (${cruce.data.fechaCierre}) es anterior al ${PISO_VIGENCIA_DIA_PLENO}: ese día todavía envía su excedente de destajo en la misma quincena, así que generar este ajuste lo pagaría dos veces. Este cruce solo aplica desde cierres del ${PISO_VIGENCIA_DIA_PLENO} en adelante.`,
+      }
+    }
     if (cruce.data.lineas.length === 0) return { success: false, message: "No hay diferencias que ajustar." }
 
     const sb: any = await getSupabaseAdmin()
@@ -429,9 +335,9 @@ export async function generarAjustes(
       identificacion: l.identificacion,
       ton_proyectada: l.tonProyectada,
       hora_corte: l.horaCorte,
-      ton_pagada: l.tonPagada,
+      ton_pagada: 0,
       ton_real: l.tonReal,
-      diferencia_ton: l.diferenciaTon,
+      diferencia_ton: 0,
       valor_pagado: l.valorPagado,
       valor_real: l.valorReal,
       valor_ajuste: l.valorAjuste,
@@ -500,9 +406,7 @@ export async function getAjustes(filtros: {
         identificacion: r.identificacion || null,
         tonProyectada: num(r.ton_proyectada),
         horaCorte: r.hora_corte || null,
-        tonPagada: num(r.ton_pagada),
         tonReal: num(r.ton_real),
-        diferenciaTon: num(r.diferencia_ton),
         valorPagado: num(r.valor_pagado),
         valorReal: num(r.valor_real),
         valorAjuste: num(r.valor_ajuste),

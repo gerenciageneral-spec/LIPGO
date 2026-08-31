@@ -17,15 +17,20 @@
 --     jun-2026 → 7,3333 h/80%/hedf 2,05; desde 16-jul-2026 → 7 h/90%/hedf 2,15. Automático.
 --     Unifica y reemplaza jornada_legal + recargo_dominical_legal.
 --   - DÍA 31 — MES CALENDARIO DE 30 DÍAS (regla histórica del negocio): el día 31
---     NO paga base salarial ni dominical/festivo, para NADIE. Solo lleva las
---     NOVEDADES del día (horas extra, en total_recargos) y, para quien trabaja por
---     TONELADAS, lo producido — pero ese tonelaje va COMPLETO al EXCEDENTE
---     (bonif_prestacional), NO a la base. Razón: el archivo plano no transmite la
---     base (Siigo la paga sola desde el contrato); si el tonelaje fuera a base, se
---     vería en pagonomina pero nunca le llegaría al trabajador y descuadraría
---     contra Siigo. En excedente sale por la novedad 71 y además queda sujeto al
---     Ajuste de Proyecciones.
---     Aplica a TODO el histórico (sin piso de vigencia), por decisión del negocio.
+--     NUNCA paga dominical/festivo, para NADIE, y el TURNO nunca paga base ese día
+--     (solo sus novedades del día — horas extra, en total_recargos). Aplica a TODO
+--     el histórico (sin piso de vigencia), por decisión del negocio.
+--     El DESTAJO es distinto DESDE 2026-10-31 (modelo "día pleno" de Ajuste de
+--     Proyecciones, Revisión de nómina): ese día SÍ paga la base (valor_diario_ley,
+--     igual que un día normal), y lo producido de más/menos por tonelaje se ajusta
+--     en la quincena SIGUIENTE (nunca dentro de esta), vía Ajuste de Proyecciones.
+--     Antes del 2026-10-31 se conserva el criterio viejo tal cual estaba (sin base
+--     para nadie, el tonelaje completo va al excedente novedad 71/52 de la MISMA
+--     quincena) — no se reescriben quincenas ya enviadas a Siigo.
+--     Requiere ir junto con scripts/archivoplano_reemplazo.sql ("EXCLUIR EL DÍA DE
+--     CIERRE"): sin esa migración, el destajo del 31 se pagaría dos veces desde esa
+--     fecha (una de una vez en esta quincena, otra diferida por Ajuste de
+--     Proyecciones).
 --   - DOMINGO TRABAJADO, DESDE EL 16-JUL-2026: el día trabajado lo cubre la base
 --     y encima va el RECARGO dominical; NO se paga además el día de descanso.
 --     Se separa del TONELAJE: aplica igual venga el día por toneladas o por
@@ -506,21 +511,28 @@ create or replace view public.pagonomina as
             calculo_nomina_base.tiene_compensatorio_posterior,
                 CASE
                     -- DÍA 31 — MES CALENDARIO DE 30 DÍAS. El salario mensual ya cubre
-                    -- el mes completo, así que el 31 NO paga base salarial: NADIE, ni
-                    -- siquiera el destajo.
+                    -- el mes completo, así que el 31 NUNCA paga la base del TURNO (eso
+                    -- no cambia). El DESTAJO es distinto DESDE 2026-10-31 (modelo "día
+                    -- pleno" de Ajuste de Proyecciones): ese día SÍ se le paga el día
+                    -- pleno (igual que un día normal), y lo que produjo de más/menos por
+                    -- tonelaje se ajusta en la quincena SIGUIENTE — ya NO dentro de esta
+                    -- misma quincena (ver scripts/archivoplano_reemplazo.sql, "EXCLUIR EL
+                    -- DÍA DE CIERRE"; ambas migraciones van juntas o ninguna, si no hay
+                    -- riesgo real de pagar la diferencia dos veces).
                     --
-                    -- OJO — por qué el destajo tampoco va en base: el ARCHIVO PLANO no
-                    -- transmite la base (Siigo la paga sola desde el contrato, 15 días
-                    -- fijos). Solo viajan las NOVEDADES. Si el tonelaje del 31 se
-                    -- pusiera aquí, se vería en pagonomina pero NUNCA le llegaría al
-                    -- trabajador por Siigo, y además descuadraría contra el plano.
-                    -- Por eso todo el tonelaje del 31 se va al EXCEDENTE
-                    -- (excedente_bruto_destajo, más abajo), que sí sale como novedad 71
-                    -- y además queda sujeto al Ajuste de Proyecciones.
+                    -- Antes del 2026-10-31 se conserva EXACTO el comportamiento viejo
+                    -- (sin base para nadie, ni destajo) — no se reescriben quincenas ya
+                    -- enviadas a Siigo con ese criterio.
                     --
                     -- Va PRIMERO para ganarle a festivo/novedades: el 31 no paga base
                     -- ni aunque sea festivo (ver también valor_domingo_final abajo).
-                    WHEN (EXTRACT(day FROM calculo_nomina_base.fecha) = (31)::numeric) THEN (0)::numeric
+                    WHEN (EXTRACT(day FROM calculo_nomina_base.fecha) = (31)::numeric) THEN
+                    CASE
+                        WHEN (calculo_nomina_base.fecha < DATE '2026-10-31') THEN (0)::numeric
+                        WHEN ((calculo_nomina_base.especialidad = true) AND (calculo_nomina_base.base_turno IS NOT NULL)) THEN (0)::numeric
+                        WHEN (calculo_nomina_base.asistio_ok = 1) THEN calculo_nomina_base.valor_diario_ley
+                        ELSE (0)::numeric
+                    END
                     WHEN (TRIM(BOTH FROM calculo_nomina_base.asistencia_texto) = '15- Incapacidad por enfermedad general al 66%- ingreso'::text) THEN (calculo_nomina_base.valor_diario_ley * 0.6667)
                     WHEN (calculo_nomina_base.es_festivo = 1) THEN calculo_nomina_base.valor_diario_ley
                     WHEN (TRIM(BOTH FROM calculo_nomina_base.asistencia_texto) = ANY (ARRAY['13- Incapacidad por enfermedad general al 100%'::text, '31- Vacaciones disfrutadas'::text, '14- Incapacidad por enfermedad general al 50'::text, 'Descanso'::text, 'Descanso compensatorio domingo anterior'::text])) THEN calculo_nomina_base.valor_diario_ley
@@ -729,15 +741,12 @@ create or replace view public.pagonomina as
     recargodominical,
     (((
         CASE
-            -- DÍA 31 (mes calendario de 30 días): SIN BASE para nadie. El tonelaje
-            -- del destajo NO va aquí: se liquida por `excedente_bruto_destajo` ->
-            -- novedad 71 del archivo plano (la base no viaja en el plano; Siigo la
-            -- paga sola desde el contrato). Así el total del día queda solo con las
-            -- novedades (horas extra), y el tonelaje se paga por el bono, sujeto al
-            -- Ajuste de Proyecciones. Debe ir PRIMERO y en sincronía con la misma
-            -- rama de `valor_base_final` (pre_calculo_valores) — este CASE es un
-            -- duplicado histórico de aquel; si se toca uno, tocar el otro.
-            WHEN (EXTRACT(day FROM fecha) = (31)::numeric) THEN (0)::numeric
+            -- DÍA 31 (mes calendario de 30 días): delega en `valor_base_final`, que
+            -- YA trae la regla completa (turno sin base siempre; destajo sin base
+            -- antes del 2026-10-31, día pleno desde esa fecha — ver esa misma rama
+            -- en pre_calculo_valores). Va PRIMERO en sincronía con esa rama — este
+            -- CASE es un duplicado histórico de aquel; si se toca uno, tocar el otro.
+            WHEN (EXTRACT(day FROM fecha) = (31)::numeric) THEN valor_base_final
             WHEN (TRIM(BOTH FROM asistencia_texto) = '15- Incapacidad por enfermedad general al 66%- ingreso'::text) THEN (valor_diario_ley * 0.6667)
             WHEN (es_festivo = 1) THEN valor_diario_ley
             WHEN (TRIM(BOTH FROM asistencia_texto) = ANY (ARRAY['13- Incapacidad por enfermedad general al 100%'::text, '31- Vacaciones disfrutadas'::text, '14- Incapacidad por enfermedad general al 50'::text, 'Descanso'::text, 'Descanso compensatorio domingo anterior'::text])) THEN valor_diario_ley

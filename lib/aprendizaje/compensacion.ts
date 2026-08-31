@@ -175,7 +175,7 @@ export const APRENDIZAJE_COMPENSACION: ContenidoAprendizaje[] = [
       "Consultar las personas reales que movieron toneladas cada dia frente al plan configurado.",
       "Conciliar las toneladas de bascula contra las asignadas al personal y las que liquida la nomina, con alertas cuando algo no cuadra.",
       "Cruzar quien cobro tonelaje contra su asistencia del dia: en regla, sin marcar, con novedad o sin registro.",
-      "Generar, aprobar o rechazar los ajustes de proyeccion: la diferencia entre lo pagado proyectado y lo real de bascula, que se aplica en la siguiente quincena.",
+      "Generar, aprobar o rechazar los ajustes de proyeccion: para quien gana por toneladas, la diferencia entre el dia pleno que se le pago el ultimo dia de la quincena (base fija, sin mirar el tonelaje) y lo que produjo real ese dia; se aplica en la siguiente quincena.",
     ],
     noPuedes: [
       "Editar la liquidacion a mano: el cuadro se arma con lo ya registrado en operaciones, asistencia y novedades.",
@@ -206,7 +206,7 @@ export const APRENDIZAJE_COMPENSACION: ContenidoAprendizaje[] = [
       {
         nombre: "Ajuste de Proyecciones",
         descripcion:
-          "Para los dias que se pagaron con proyeccion: cruza toneladas pagadas contra las reales ya cerradas, genera lineas de ajuste (a favor o en contra) que quedan pendientes, y permite aprobarlas o rechazarlas. Volver a generar actualiza el ajuste, no lo duplica.",
+          "El ultimo dia de cada quincena (el 15, o el ultimo dia del mes) a quien gana por toneladas se le paga el 'dia pleno' (base fija, sin mirar produccion). Esta pantalla cruza ese dia pleno pagado contra lo que realmente produjo ese dia en cargue/descargue/distribucion, genera lineas de ajuste (a favor o en contra) que quedan pendientes, y permite aprobarlas o rechazarlas. Volver a generar actualiza el ajuste, no lo duplica.",
       },
     ],
     consejos: [
