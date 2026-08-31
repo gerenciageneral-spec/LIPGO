@@ -345,6 +345,11 @@ function Resultado({
 }) {
   const { colaborador: c, quincena: q, dias, resumen: r, metaResumen: mr, plano, siigo } = data
   const sinDatos = dias.length === 0
+  // Días altos/bajos EXCLUYENDO el día de cierre (mismo criterio que
+  // `sumaBajos` y `resumen.netoDestajo`), para que el conteo de la etiqueta
+  // cuadre exactamente con el valor que se muestra al lado.
+  const diasAltosNeto = dias.filter((d) => d.esDestajo && !d.diaCierre && d.excedente >= 0).length
+  const diasBajosNeto = dias.filter((d) => d.esDestajo && !d.diaCierre && d.excedente < 0).length
   const ton1 = (x: number) => (Number(x) || 0).toLocaleString("es-CO", { maximumFractionDigits: 1 })
   // Moneda con signo (para deducciones y deltas del cruce Siigo)
   const moneyS = (n: number) =>
@@ -383,7 +388,7 @@ function Resultado({
             <Kpi
               label="Bono destajo (neto)"
               value={money(r.bono)}
-              hint={`${r.diasAltos} altos · ${r.diasBajos} bajos`}
+              hint={`${diasAltosNeto} altos · ${diasBajosNeto} bajos${r.excedenteDiaCierre !== 0 ? " · día de cierre diferido" : ""}`}
               tone={r.bono > 0 ? "up" : undefined}
             />
             {r.bonosNoPrestacionales > 0 && (
@@ -497,7 +502,10 @@ function Resultado({
                 </TableHeader>
                 <TableBody className="tabular-nums">
                   {dias.map((d) => (
-                    <TableRow key={d.fecha} className={d.anomalia ? "bg-destructive/5" : ""}>
+                    <TableRow
+                      key={d.fecha}
+                      className={d.anomalia ? "bg-destructive/5" : d.diaCierre ? "bg-amber-50 dark:bg-amber-950/20" : ""}
+                    >
                       <TableCell className="whitespace-nowrap">
                         {d.dow} {d.fecha.slice(8)}
                       </TableCell>
@@ -541,6 +549,11 @@ function Resultado({
                         className={`text-right ${d.esDestajo ? (d.excedente >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400") : ""}`}
                       >
                         {d.esDestajo ? signed(d.excedente) : ""}
+                        {d.esDestajo && d.diaCierre && (
+                          <span className="ml-1 text-[10px] font-normal text-amber-600 dark:text-amber-400">
+                            diferido
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell className="text-right font-medium">{money(d.total)}</TableCell>
                     </TableRow>
@@ -549,7 +562,9 @@ function Resultado({
               </Table>
               <p className="mt-2 text-xs text-muted-foreground">
                 Cada día de destajo se liquida a su <strong>base</strong> (no al valor de sus toneladas); el excedente
-                (columna <em>Excedente</em>) se netea por quincena y se paga como bono. El turno suma sus recargos.
+                (columna <em>Excedente</em>) se netea por quincena y se paga como bono. El turno suma sus recargos. El
+                día de cierre (15 o último del mes, resaltado) ya se paga a día pleno: su excedente NO entra al neto de
+                esta quincena — queda <strong>diferido</strong> a la siguiente vía Ajuste Nómina Anterior.
               </p>
             </CardContent>
           </Card>
@@ -561,8 +576,8 @@ function Resultado({
             </CardHeader>
             <CardContent>
               <div className="space-y-1 text-sm">
-                <Fila label={`Días altos aportan (${r.diasAltos})`} value={signed(Math.max(0, r.netoDestajo + sumaBajos(dias)))} />
-                <Fila label={`Días bajos consumen (${r.diasBajos})`} value={signed(sumaBajos(dias))} />
+                <Fila label={`Días altos aportan (${diasAltosNeto})`} value={signed(Math.max(0, r.netoDestajo + sumaBajos(dias)))} />
+                <Fila label={`Días bajos consumen (${diasBajosNeto})`} value={signed(sumaBajos(dias))} />
                 <div className="my-1 border-t" />
                 <Fila label="Neto de la quincena" value={signed(r.netoDestajo)} bold />
                 {r.netoDestajo >= 0 ? (
@@ -574,6 +589,20 @@ function Resultado({
                     bold
                     tone="down"
                   />
+                )}
+                {r.excedenteDiaCierre !== 0 && (
+                  <>
+                    <div className="my-1 border-t" />
+                    <Fila
+                      label="Día de cierre — diferido a la próxima quincena"
+                      value={signed(r.excedenteDiaCierre)}
+                      tone="down"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      No está incluido arriba: ese día se pagó a día pleno y su excedente se ajusta en la quincena
+                      siguiente vía "Ajuste Nómina Anterior".
+                    </p>
+                  </>
                 )}
               </div>
             </CardContent>
@@ -1124,7 +1153,10 @@ function FilaProyecto({
 }
 
 function sumaBajos(dias: RevisionNominaData["dias"]) {
-  return dias.reduce((a, d) => (d.esDestajo && d.excedente < 0 ? a + d.excedente : a), 0)
+  // Excluye el día de cierre: su excedente no entra al neto de esta quincena
+  // (ver `resumen.netoDestajo` en lib/revision-nomina-actions.ts) — sumarlo
+  // aquí rompería la identidad altos + bajos = neto.
+  return dias.reduce((a, d) => (d.esDestajo && !d.diaCierre && d.excedente < 0 ? a + d.excedente : a), 0)
 }
 
 function Kpi({

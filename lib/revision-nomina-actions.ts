@@ -40,6 +40,11 @@ export interface DiaRevision {
   cumpleMeta: boolean // solo destajo: toneladas >= meta
   hcDia: number // HC real (pagonomina): trabajadores que movieron toneladas ese día en el proyecto
   hcAsistenciaDia: number // HC real (registroasistencia): auxiliares de Cargue/Distribución con asistencia real ese día
+  /** El 15 o el último día del mes (desde el piso 2026-08-15): su excedente NO
+   * entra al neto de ESTA quincena — queda diferido a la siguiente vía Ajuste
+   * Nómina Anterior. Mismo criterio que archivoplano_reemplazo.sql
+   * ("EXCLUIR EL DÍA DE CIERRE"). */
+  diaCierre: boolean
 }
 
 export interface MetaResumen {
@@ -65,6 +70,11 @@ export interface ResumenRevision {
   perdida: number
   /** Bonos del módulo Bonos (43/50/66). No cotizan al IBC, pero sí se pagan. */
   bonosNoPrestacionales: number
+  /** Excedente (con signo) del día de cierre de ESTA quincena (0 si no aplica
+   * o si esta quincena todavía no llegó a su día de cierre). Ya NO está
+   * dentro de `netoDestajo`/`bono`: se paga el día pleno ese día y este valor
+   * queda diferido a la quincena SIGUIENTE vía Ajuste Nómina Anterior. */
+  excedenteDiaCierre: number
   total: number
   diasDestajo: number
   diasAltos: number
@@ -130,6 +140,22 @@ export interface RevisionNominaData {
 const DOW = ["Do", "Lu", "Ma", "Mi", "Ju", "Vi", "Sa"]
 const num = (v: any) => Number(v || 0)
 const fin = (anio: number, mes: number) => new Date(anio, mes, 0).getDate()
+
+// El 15 y el último día del mes son el día de cierre de su quincena (desde el
+// piso 2026-08-15): ese día se paga el "día pleno" (ver pagonomina_reemplazo.sql)
+// y su excedente de destajo NO entra al neto de ESTA quincena — queda diferido a
+// la SIGUIENTE vía Ajuste Nómina Anterior. MISMO criterio, MISMA fecha de piso,
+// que `agrupado_quincena.total_bono_nomina` en archivoplano_reemplazo.sql — si se
+// toca uno, tocar el otro.
+const PISO_EXCLUSION_DIA_CIERRE = "2026-08-15"
+function esDiaCierre(fechaISO: string): boolean {
+  if (fechaISO < PISO_EXCLUSION_DIA_CIERRE) return false
+  const d = new Date(fechaISO + "T12:00:00Z")
+  const dia = d.getUTCDate()
+  if (dia === 15) return true
+  const ultimoDiaMes = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate()
+  return dia === ultimoDiaMes
+}
 
 // Supabase topa toda respuesta en 1000 filas aunque se pida más: para leer el
 // proyecto completo (todas las personas × todos los días) hay que paginar con
@@ -359,6 +385,7 @@ function armarPersona(
       ingTurno = 0,
       recDom = 0,
       neto = 0,
+      excedenteDiaCierre = 0,
       diasDestajo = 0,
       diasAltos = 0,
       diasBajos = 0,
@@ -404,6 +431,7 @@ function armarPersona(
       const empDia =
         r.idempresaliquidacion != null ? Number(r.idempresaliquidacion) : r.idempresa != null ? Number(r.idempresa) : 0
       const fechaStr = String(r.fecha).slice(0, 10)
+      const diaCierre = esDiaCierre(fechaStr)
       // Meta INDIVIDUAL de ese día = ton/hora real del proyecto ese día × las
       // horas programadas de ESTA persona ese día (0 si no hay programación,
       // no un número plano igual para todos — ver lib/meta-productividad-actions.ts).
@@ -424,7 +452,13 @@ function armarPersona(
         else domDescanso += domingo
       }
       if (esDestajo) {
-        neto += excedente
+        // EXCLUIR EL DÍA DE CIERRE del neto de ESTA quincena — igual que
+        // archivoplano_reemplazo.sql: ese día ya se pagó a día pleno, y su
+        // excedente queda diferido a la quincena SIGUIENTE (Ajuste Nómina
+        // Anterior). Sin esto, el "Neto de la quincena" de esta pantalla no
+        // cuadraba con lo que de verdad viaja al archivo plano.
+        if (diaCierre) excedenteDiaCierre += excedente
+        else neto += excedente
         diasDestajo += 1
         if (excedente >= 0) diasAltos += 1
         else diasBajos += 1
@@ -457,6 +491,7 @@ function armarPersona(
         cumpleMeta,
         hcDia,
         hcAsistenciaDia,
+        diaCierre,
       })
     }
 
@@ -498,6 +533,7 @@ function armarPersona(
       bono,
       perdida,
       bonosNoPrestacionales: bonosNoPrest,
+      excedenteDiaCierre,
       total: baseGar + ingTurno + recDom + bono + bonosNoPrest,
       diasDestajo,
       diasAltos,
