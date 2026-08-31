@@ -302,7 +302,7 @@ export async function getCruceProyeccion(
  * otra en la quincena siguiente (novedad 72/73). No mover sin correr antes esa
  * migración Y confirmar que ya está desplegada.
  */
-const PISO_VIGENCIA_DIA_PLENO = "2026-09-01"
+const PISO_VIGENCIA_DIA_PLENO = "2026-08-31"
 
 export async function generarAjustes(
   anio: number,

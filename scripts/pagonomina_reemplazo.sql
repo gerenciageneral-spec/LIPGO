@@ -20,11 +20,11 @@
 --     NUNCA paga dominical/festivo, para NADIE, y el TURNO nunca paga base ese día
 --     (solo sus novedades del día — horas extra, en total_recargos). Aplica a TODO
 --     el histórico (sin piso de vigencia), por decisión del negocio.
---     El DESTAJO es distinto DESDE 2026-10-31 (modelo "día pleno" de Ajuste de
+--     El DESTAJO es distinto DESDE 2026-08-31 (modelo "día pleno" de Ajuste de
 --     Proyecciones, Revisión de nómina): ese día SÍ paga la base (valor_diario_ley,
 --     igual que un día normal), y lo producido de más/menos por tonelaje se ajusta
 --     en la quincena SIGUIENTE (nunca dentro de esta), vía Ajuste de Proyecciones.
---     Antes del 2026-10-31 se conserva el criterio viejo tal cual estaba (sin base
+--     Antes del 2026-08-31 se conserva el criterio viejo tal cual estaba (sin base
 --     para nadie, el tonelaje completo va al excedente novedad 71/52 de la MISMA
 --     quincena) — no se reescriben quincenas ya enviadas a Siigo.
 --     Requiere ir junto con scripts/archivoplano_reemplazo.sql ("EXCLUIR EL DÍA DE
@@ -512,7 +512,7 @@ create or replace view public.pagonomina as
                 CASE
                     -- DÍA 31 — MES CALENDARIO DE 30 DÍAS. El salario mensual ya cubre
                     -- el mes completo, así que el 31 NUNCA paga la base del TURNO (eso
-                    -- no cambia). El DESTAJO es distinto DESDE 2026-10-31 (modelo "día
+                    -- no cambia). El DESTAJO es distinto DESDE 2026-08-31 (modelo "día
                     -- pleno" de Ajuste de Proyecciones): ese día SÍ se le paga el día
                     -- pleno (igual que un día normal), y lo que produjo de más/menos por
                     -- tonelaje se ajusta en la quincena SIGUIENTE — ya NO dentro de esta
@@ -520,7 +520,7 @@ create or replace view public.pagonomina as
                     -- DÍA DE CIERRE"; ambas migraciones van juntas o ninguna, si no hay
                     -- riesgo real de pagar la diferencia dos veces).
                     --
-                    -- Antes del 2026-10-31 se conserva EXACTO el comportamiento viejo
+                    -- Antes del 2026-08-31 se conserva EXACTO el comportamiento viejo
                     -- (sin base para nadie, ni destajo) — no se reescriben quincenas ya
                     -- enviadas a Siigo con ese criterio.
                     --
@@ -528,7 +528,7 @@ create or replace view public.pagonomina as
                     -- ni aunque sea festivo (ver también valor_domingo_final abajo).
                     WHEN (EXTRACT(day FROM calculo_nomina_base.fecha) = (31)::numeric) THEN
                     CASE
-                        WHEN (calculo_nomina_base.fecha < DATE '2026-10-31') THEN (0)::numeric
+                        WHEN (calculo_nomina_base.fecha < DATE '2026-08-31') THEN (0)::numeric
                         WHEN ((calculo_nomina_base.especialidad = true) AND (calculo_nomina_base.base_turno IS NOT NULL)) THEN (0)::numeric
                         WHEN (calculo_nomina_base.asistio_ok = 1) THEN calculo_nomina_base.valor_diario_ley
                         ELSE (0)::numeric
@@ -743,7 +743,7 @@ create or replace view public.pagonomina as
         CASE
             -- DÍA 31 (mes calendario de 30 días): delega en `valor_base_final`, que
             -- YA trae la regla completa (turno sin base siempre; destajo sin base
-            -- antes del 2026-10-31, día pleno desde esa fecha — ver esa misma rama
+            -- antes del 2026-08-31, día pleno desde esa fecha — ver esa misma rama
             -- en pre_calculo_valores). Va PRIMERO en sincronía con esa rama — este
             -- CASE es un duplicado histórico de aquel; si se toca uno, tocar el otro.
             WHEN (EXTRACT(day FROM fecha) = (31)::numeric) THEN valor_base_final
