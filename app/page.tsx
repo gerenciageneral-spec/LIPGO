@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react"
 import { Sidebar } from "@/components/sidebar"
 import { MainContent } from "@/components/main-content"
+import { ErrorBoundary } from "@/components/error-boundary"
 import { SplashScreen } from "@/components/splash-screen"
 import { LipbotDock } from "@/components/lipbot-dock"
 import { groups, type GroupKey } from "@/lib/dashboard-data"
@@ -136,23 +137,30 @@ export default function DashboardPage() {
         onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
       />
 
-      {/* Main Content */}
-      <MainContent
-        selectedGroup={selectedGroup}
-        selectedModule={selectedModule}
-        onSelectModule={setSelectedModule}
-        onNavigateModule={navigateToModule}
-        onOpenGroup={openGroup}
-        onBack={() => {
-          if (selectedModule) {
-            setSelectedModule(null)
-          } else {
-            setSelectedGroup(null)
-          }
-        }}
-        onSelectGroup={setSelectedGroup}
-        sidebarCollapsed={sidebarCollapsed}
-      />
+      {/* Main Content — el ErrorBoundary evita que un error de render en un
+          módulo (p. ej. al desbloquear una clave y montar contenido por
+          primera vez) se lleve puesto TODO el árbol, sidebar incluido (ver
+          components/error-boundary.tsx). El `key` remonta el boundary limpio
+          cada vez que cambia el módulo/grupo seleccionado, así que navegar
+          fuera de un módulo roto lo recupera solo. */}
+      <ErrorBoundary key={`${selectedGroup ?? ""}|${selectedModule ?? ""}`}>
+        <MainContent
+          selectedGroup={selectedGroup}
+          selectedModule={selectedModule}
+          onSelectModule={setSelectedModule}
+          onNavigateModule={navigateToModule}
+          onOpenGroup={openGroup}
+          onBack={() => {
+            if (selectedModule) {
+              setSelectedModule(null)
+            } else {
+              setSelectedGroup(null)
+            }
+          }}
+          onSelectGroup={setSelectedGroup}
+          sidebarCollapsed={sidebarCollapsed}
+        />
+      </ErrorBoundary>
 
       {/* LIPbot flotante — en submenús y módulos. En el INICIO no se muestra
           porque ahí LIPbot es el HÉROE (protagonista, embebido arriba), así que
