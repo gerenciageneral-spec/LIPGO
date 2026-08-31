@@ -573,12 +573,16 @@ create or replace view public.pagonomina as
                 -- con días bajos (el bono nunca baja la base; ver archivoplano). Excluye
                 -- especialidad (esos días son por turno/horas, no por tonelaje).
                 CASE
-                    -- DÍA 31: TODO el tonelaje va al excedente, COMPLETO (sin restarle
-                    -- base, porque ese día no hay base que descontar). Es la única vía
-                    -- por la que ese pago llega al trabajador: el excedente se netea
-                    -- por quincena y sale como novedad 71 en el archivo plano — la base
-                    -- no viaja en el plano. Además, al quedar en excedente queda sujeto
-                    -- al Ajuste de Proyecciones, que es el objetivo del negocio.
+                    -- DÍA 31 — HISTÓRICO (antes del 16-jul-2026): TODO el tonelaje va al
+                    -- excedente, COMPLETO (sin restarle base, porque ese día no había
+                    -- base que descontar). DESDE el 16-jul-2026 esta rama queda MUERTA
+                    -- para el destajo normal: la manda la rama de más abajo
+                    -- (`pago_produccion - valor_base_final` en el SELECT final, con piso
+                    -- `fecha >= 2026-07-16`), que desde el piso `2026-08-31` de
+                    -- `valor_base_final` ya resta el día pleno correcto también en el 31
+                    -- — no la producción completa. Esta rama solo sigue viva para fechas
+                    -- anteriores al 16-jul-2026 o para turno con la excepción de apoyo en
+                    -- cargue (`especialidad=true` no entra a la rama de abajo).
                     WHEN (EXTRACT(day FROM calculo_nomina_base.fecha) = (31)::numeric) THEN
                     CASE
                         -- EXCEPCIÓN "apoyo en cargue": una persona de especialidad=true
@@ -703,10 +707,18 @@ create or replace view public.pagonomina as
         -- real— daba +$14.803. Esa era la diferencia entre LIPgo y el archivo plano.
         --
         -- En un día normal las dos fórmulas dan lo MISMO (valor_base_final =
-        -- valor_diario_ley), y en el día 31 también (valor_base_final = 0, así que
-        -- el tonelaje entra completo al excedente, igual que la rama del 31).
-        -- Solo difieren en los días con tonelaje y sin base pagada: 5 personas en
-        -- la quincena en curso.
+        -- valor_diario_ley). Solo difieren en los días con tonelaje y sin base
+        -- pagada: 5 personas en la quincena en curso.
+        --
+        -- DÍA 31 — esta rama (con piso `fecha >= 2026-07-16`) es la que MANDA
+        -- para el destajo, y desde el piso `2026-08-31` de `valor_base_final`
+        -- (arriba) las dos fórmulas también coinciden ahí: valor_base_final ya
+        -- es el día pleno ese día, así que `pago_produccion - valor_base_final`
+        -- da el excedente/déficit correcto contra esa base — no la producción
+        -- completa. El día-31 propio de `excedente_bruto_destajo` (rama de
+        -- abajo) queda como código histórico: solo se usa para fechas
+        -- anteriores al 16-jul-2026 o para turno con la excepción de apoyo en
+        -- cargue — nunca para el destajo normal de hoy en adelante.
         --
         -- PISO 16-jul-2026: antes de esa fecha se conserva `excedente_bruto_destajo`
         -- tal como estaba, para no reescribir quincenas ya enviadas a Siigo.
