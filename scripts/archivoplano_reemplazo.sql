@@ -21,6 +21,21 @@
 --     y su diferencia por tonelaje va SIEMPRE diferida a la quincena siguiente
 --     vía Ajuste de Proyecciones — nunca dentro de la misma quincena. Sin esto,
 --     esa diferencia se pagaría dos veces (novedad 52- Y 72/73-).
+--   · FASE 2 — DIFERIR LOS ADICIONALES DE TURNO DEL DÍA DE CIERRE (desde
+--     2026-09-01, columna `base_datos.fecha_efectiva_turno`): la BASE del
+--     turno el día de cierre no cambia (ni siquiera viaja por este archivo,
+--     Siigo la paga sola). Lo que sí cambia son sus NOVEDADES adicionales
+--     de ESE día — horas extra (10/07/11/12/26) y recargo dominical o
+--     festivo (08/25) — que ahora se agrupan por `fecha_efectiva_turno` en
+--     vez de la fecha real: para cualquier día normal es la misma fecha, pero
+--     para el 15 o el último día del mes es esa fecha + 1 día, lo que cae
+--     exactamente en la quincena/mes/año siguiente (aritmética de fechas de
+--     Postgres, sin lógica de calendario a mano). El WHERE de las ramas 08/25
+--     sigue mirando la fecha REAL (si ESE día fue domingo o no) — solo el "a
+--     qué quincena pertenece" se desplaza. Antes del 2026-09-01 se conserva
+--     el comportamiento viejo. La rama 10 dejó de leer de `nivelacion` (que
+--     sigue sirviendo solo al bono de destajo, sin tocar) y ahora suma directo
+--     de `base_datos`, igual que las otras ramas de horas.
 --   · BONOS no prestacionales (Compensación › Bonos): rama propia al final que
 --     lee `bonos_nomina` (solo APROBADOS), una fila por código de novedad
 --     (43/50/66). NO se mezclan con la novedad 52- del bono de productividad.
@@ -108,6 +123,26 @@ create view public.archivoplano as
                     WHEN (EXTRACT(day FROM p.fecha) <= (15)::numeric) THEN 1
                     ELSE 2
                 END AS num_quincena,
+            -- FECHA EFECTIVA PARA TURNO (horas extra / recargo dominical-festivo),
+            -- desde 2026-09-01: el 15 y el último día del mes son el día de cierre
+            -- de su quincena — el turno YA cobra su base ese día (sin cambio, la
+            -- base ni siquiera viaja por este archivo), pero sus NOVEDADES
+            -- adicionales (horas extra, recargo dominical/festivo) se pagan en la
+            -- quincena SIGUIENTE, mismo criterio que el destajo (ver "EXCLUIR EL
+            -- DÍA DE CIERRE" más abajo). Sumarle 1 día a la fecha de cierre cae
+            -- exactamente en la quincena/mes/año siguiente (15+1=16 mismo mes;
+            -- último día del mes +1 = día 1 del mes siguiente, con año incluido si
+            -- hace falta) — no hace falta lógica de calendario aparte, la resuelve
+            -- la aritmética de fechas de Postgres.
+            -- Antes del 2026-09-01 se conserva el criterio viejo (mismo día, sin
+            -- desplazar), para no reescribir quincenas ya enviadas a Siigo.
+                CASE
+                    WHEN ((p.fecha >= DATE '2026-09-01')
+                      AND ((EXTRACT(day FROM p.fecha) = 15)
+                        OR (p.fecha = ((date_trunc('month'::text, (p.fecha)::timestamp with time zone) + interval '1 month' - interval '1 day'))::date)))
+                    THEN (p.fecha + interval '1 day')::date
+                    ELSE p.fecha
+                END AS fecha_efectiva_turno,
             to_char((p.fecha)::timestamp with time zone, 'DD/MM/YYYY'::text) AS fecha_evento
            FROM (pagonomina p
              -- TRIM en los DOS lados, igual que en pagonomina: `headcount.nombre`
@@ -263,24 +298,47 @@ UNION ALL
          -- en el plano.
          AND (EXTRACT(day FROM base_datos.fecha) <> (31)::numeric))
 UNION ALL
- SELECT nivelacion.mes_txt AS mes,
-    nivelacion.num_quincena AS quincena,
-    nivelacion.idempresa,
-    nivelacion.identificacion AS identificacionempleado,
-    nivelacion.nombre_ref AS nombreempleado,
-    nivelacion.contratosiigo AS contratoempleado,
+-- DÍA DE CIERRE DIFERIDO (desde 2026-09-01): igual que las otras ramas de
+-- horas extra de más abajo, agrupa por `fecha_efectiva_turno` en vez de la
+-- fecha real, para que las horas del día de cierre caigan en la quincena
+-- SIGUIENTE. Antes salía de `nivelacion` (que agrupa por la fecha real, sin
+-- desplazar) — se pasó a sumar directo de `base_datos`, mismo patrón que las
+-- ramas 07/11/12/26, para poder aplicar el desplazamiento sin tocar
+-- `agrupado_quincena`/`nivelacion` (esas siguen sirviendo solo al bono de
+-- destajo — ver "EXCLUIR EL DÍA DE CIERRE").
+ SELECT to_char((base_datos.fecha_efectiva_turno)::timestamp with time zone, 'MM'::text) AS mes,
+        CASE
+            WHEN (EXTRACT(day FROM base_datos.fecha_efectiva_turno) <= (15)::numeric) THEN 1
+            ELSE 2
+        END AS quincena,
+    base_datos.idempresa,
+    base_datos.identificacion AS identificacionempleado,
+    max(base_datos.persona) AS nombreempleado,  -- rama agrupada: MAX sobre una sola persona
+    base_datos.contratosiigo AS contratoempleado,
     '10- Horas extras diurnas 125%- Ingreso'::text AS nombrenovedad,
     'Horas'::text AS tiponovedad,
-    nivelacion.hed_horas_final AS cantidadvalor,
+    round(sum(COALESCE(base_datos.horas_hed, (0)::numeric)), 2) AS cantidadvalor,
     0 AS nominaproyectada,
     NULL::text AS fechainicio,
     NULL::text AS fechafin,
     0 AS diasnohabiles
-   FROM nivelacion
-  WHERE (nivelacion.hed_horas_final > (0)::numeric)
+   FROM base_datos
+  WHERE (base_datos.horas_hed > (0)::numeric)
+  GROUP BY to_char((base_datos.fecha_efectiva_turno)::timestamp with time zone, 'MM'::text),
+        CASE
+            WHEN (EXTRACT(day FROM base_datos.fecha_efectiva_turno) <= (15)::numeric) THEN 1
+            ELSE 2
+        END,
+    EXTRACT(month FROM base_datos.fecha_efectiva_turno), EXTRACT(year FROM base_datos.fecha_efectiva_turno),
+    base_datos.idempresa, base_datos.identificacion, base_datos.contratosiigo
 UNION ALL
- SELECT base_datos.mes_txt AS mes,
-    base_datos.num_quincena AS quincena,
+-- DÍA DE CIERRE DIFERIDO (desde 2026-09-01): agrupa por `fecha_efectiva_turno`
+-- en vez de la fecha real — ver el comentario en `base_datos.fecha_efectiva_turno`.
+ SELECT to_char((base_datos.fecha_efectiva_turno)::timestamp with time zone, 'MM'::text) AS mes,
+        CASE
+            WHEN (EXTRACT(day FROM base_datos.fecha_efectiva_turno) <= (15)::numeric) THEN 1
+            ELSE 2
+        END AS quincena,
     base_datos.idempresa,
     base_datos.identificacion AS identificacionempleado,
     max(base_datos.persona) AS nombreempleado,  -- rama agrupada: MAX sobre una sola persona
@@ -294,10 +352,20 @@ UNION ALL
     0 AS diasnohabiles
    FROM base_datos
   WHERE (base_datos.horas_hedf > (0)::numeric)
-  GROUP BY base_datos.mes_txt, base_datos.mes_num, base_datos.anio_num, base_datos.num_quincena, base_datos.idempresa, base_datos.identificacion, base_datos.contratosiigo
+  GROUP BY to_char((base_datos.fecha_efectiva_turno)::timestamp with time zone, 'MM'::text),
+        CASE
+            WHEN (EXTRACT(day FROM base_datos.fecha_efectiva_turno) <= (15)::numeric) THEN 1
+            ELSE 2
+        END,
+    EXTRACT(month FROM base_datos.fecha_efectiva_turno), EXTRACT(year FROM base_datos.fecha_efectiva_turno),
+    base_datos.idempresa, base_datos.identificacion, base_datos.contratosiigo
 UNION ALL
- SELECT base_datos.mes_txt AS mes,
-    base_datos.num_quincena AS quincena,
+-- DÍA DE CIERRE DIFERIDO (desde 2026-09-01): mismo criterio que la rama 07.
+ SELECT to_char((base_datos.fecha_efectiva_turno)::timestamp with time zone, 'MM'::text) AS mes,
+        CASE
+            WHEN (EXTRACT(day FROM base_datos.fecha_efectiva_turno) <= (15)::numeric) THEN 1
+            ELSE 2
+        END AS quincena,
     base_datos.idempresa,
     base_datos.identificacion AS identificacionempleado,
     max(base_datos.persona) AS nombreempleado,  -- rama agrupada: MAX sobre una sola persona
@@ -311,10 +379,20 @@ UNION ALL
     0 AS diasnohabiles
    FROM base_datos
   WHERE (base_datos.horas_hen > (0)::numeric)
-  GROUP BY base_datos.mes_txt, base_datos.mes_num, base_datos.anio_num, base_datos.num_quincena, base_datos.idempresa, base_datos.identificacion, base_datos.contratosiigo
+  GROUP BY to_char((base_datos.fecha_efectiva_turno)::timestamp with time zone, 'MM'::text),
+        CASE
+            WHEN (EXTRACT(day FROM base_datos.fecha_efectiva_turno) <= (15)::numeric) THEN 1
+            ELSE 2
+        END,
+    EXTRACT(month FROM base_datos.fecha_efectiva_turno), EXTRACT(year FROM base_datos.fecha_efectiva_turno),
+    base_datos.idempresa, base_datos.identificacion, base_datos.contratosiigo
 UNION ALL
- SELECT base_datos.mes_txt AS mes,
-    base_datos.num_quincena AS quincena,
+-- DÍA DE CIERRE DIFERIDO (desde 2026-09-01): mismo criterio que la rama 07.
+ SELECT to_char((base_datos.fecha_efectiva_turno)::timestamp with time zone, 'MM'::text) AS mes,
+        CASE
+            WHEN (EXTRACT(day FROM base_datos.fecha_efectiva_turno) <= (15)::numeric) THEN 1
+            ELSE 2
+        END AS quincena,
     base_datos.idempresa,
     base_datos.identificacion AS identificacionempleado,
     max(base_datos.persona) AS nombreempleado,  -- rama agrupada: MAX sobre una sola persona
@@ -328,10 +406,20 @@ UNION ALL
     0 AS diasnohabiles
    FROM base_datos
   WHERE (base_datos.horas_hef > (0)::numeric)
-  GROUP BY base_datos.mes_txt, base_datos.mes_num, base_datos.anio_num, base_datos.num_quincena, base_datos.idempresa, base_datos.identificacion, base_datos.contratosiigo
+  GROUP BY to_char((base_datos.fecha_efectiva_turno)::timestamp with time zone, 'MM'::text),
+        CASE
+            WHEN (EXTRACT(day FROM base_datos.fecha_efectiva_turno) <= (15)::numeric) THEN 1
+            ELSE 2
+        END,
+    EXTRACT(month FROM base_datos.fecha_efectiva_turno), EXTRACT(year FROM base_datos.fecha_efectiva_turno),
+    base_datos.idempresa, base_datos.identificacion, base_datos.contratosiigo
 UNION ALL
- SELECT base_datos.mes_txt AS mes,
-    base_datos.num_quincena AS quincena,
+-- DÍA DE CIERRE DIFERIDO (desde 2026-09-01): mismo criterio que la rama 07.
+ SELECT to_char((base_datos.fecha_efectiva_turno)::timestamp with time zone, 'MM'::text) AS mes,
+        CASE
+            WHEN (EXTRACT(day FROM base_datos.fecha_efectiva_turno) <= (15)::numeric) THEN 1
+            ELSE 2
+        END AS quincena,
     base_datos.idempresa,
     base_datos.identificacion AS identificacionempleado,
     max(base_datos.persona) AS nombreempleado,  -- rama agrupada: MAX sobre una sola persona
@@ -345,10 +433,22 @@ UNION ALL
     0 AS diasnohabiles
    FROM base_datos
   WHERE (base_datos.horas_hn > (0)::numeric)
-  GROUP BY base_datos.mes_txt, base_datos.mes_num, base_datos.anio_num, base_datos.num_quincena, base_datos.idempresa, base_datos.identificacion, base_datos.contratosiigo
+  GROUP BY to_char((base_datos.fecha_efectiva_turno)::timestamp with time zone, 'MM'::text),
+        CASE
+            WHEN (EXTRACT(day FROM base_datos.fecha_efectiva_turno) <= (15)::numeric) THEN 1
+            ELSE 2
+        END,
+    EXTRACT(month FROM base_datos.fecha_efectiva_turno), EXTRACT(year FROM base_datos.fecha_efectiva_turno),
+    base_datos.idempresa, base_datos.identificacion, base_datos.contratosiigo
 UNION ALL
- SELECT base_datos.mes_txt AS mes,
-    base_datos.num_quincena AS quincena,
+-- DÍA DE CIERRE DIFERIDO (desde 2026-09-01): agrupa por `fecha_efectiva_turno`
+-- — el WHERE sigue mirando la fecha REAL (fue domingo o no ese día concreto),
+-- solo el "a qué quincena pertenece" se desplaza.
+ SELECT to_char((base_datos.fecha_efectiva_turno)::timestamp with time zone, 'MM'::text) AS mes,
+        CASE
+            WHEN (EXTRACT(day FROM base_datos.fecha_efectiva_turno) <= (15)::numeric) THEN 1
+            ELSE 2
+        END AS quincena,
     base_datos.idempresa,
     base_datos.identificacion AS identificacionempleado,
     max(base_datos.persona) AS nombreempleado,  -- rama agrupada: MAX sobre una sola persona
@@ -362,10 +462,20 @@ UNION ALL
     0 AS diasnohabiles
    FROM base_datos
   WHERE ((EXTRACT(dow FROM base_datos.fecha) = (0)::numeric) AND ((base_datos.recargodominical > (0)::numeric) OR (base_datos.toneladas > (0)::numeric) OR (base_datos.especialidad = true)) AND (COALESCE(base_datos.pago_domingo, (0)::numeric) > (0)::numeric))
-  GROUP BY base_datos.mes_txt, base_datos.mes_num, base_datos.anio_num, base_datos.num_quincena, base_datos.idempresa, base_datos.identificacion, base_datos.contratosiigo
+  GROUP BY to_char((base_datos.fecha_efectiva_turno)::timestamp with time zone, 'MM'::text),
+        CASE
+            WHEN (EXTRACT(day FROM base_datos.fecha_efectiva_turno) <= (15)::numeric) THEN 1
+            ELSE 2
+        END,
+    EXTRACT(month FROM base_datos.fecha_efectiva_turno), EXTRACT(year FROM base_datos.fecha_efectiva_turno),
+    base_datos.idempresa, base_datos.identificacion, base_datos.contratosiigo
 UNION ALL
- SELECT base_datos.mes_txt AS mes,
-    base_datos.num_quincena AS quincena,
+-- DÍA DE CIERRE DIFERIDO (desde 2026-09-01): mismo criterio que la rama 08.
+ SELECT to_char((base_datos.fecha_efectiva_turno)::timestamp with time zone, 'MM'::text) AS mes,
+        CASE
+            WHEN (EXTRACT(day FROM base_datos.fecha_efectiva_turno) <= (15)::numeric) THEN 1
+            ELSE 2
+        END AS quincena,
     base_datos.idempresa,
     base_datos.identificacion AS identificacionempleado,
     max(base_datos.persona) AS nombreempleado,  -- rama agrupada: MAX sobre una sola persona
@@ -379,7 +489,13 @@ UNION ALL
     0 AS diasnohabiles
    FROM base_datos
   WHERE ((EXTRACT(dow FROM base_datos.fecha) = (0)::numeric) AND ((base_datos.recargodominical > (0)::numeric) OR (base_datos.toneladas > (0)::numeric) OR (base_datos.especialidad = true)) AND (COALESCE(base_datos.pago_domingo, (0)::numeric) = (0)::numeric))
-  GROUP BY base_datos.mes_txt, base_datos.mes_num, base_datos.anio_num, base_datos.num_quincena, base_datos.idempresa, base_datos.identificacion, base_datos.contratosiigo
+  GROUP BY to_char((base_datos.fecha_efectiva_turno)::timestamp with time zone, 'MM'::text),
+        CASE
+            WHEN (EXTRACT(day FROM base_datos.fecha_efectiva_turno) <= (15)::numeric) THEN 1
+            ELSE 2
+        END,
+    EXTRACT(month FROM base_datos.fecha_efectiva_turno), EXTRACT(year FROM base_datos.fecha_efectiva_turno),
+    base_datos.idempresa, base_datos.identificacion, base_datos.contratosiigo
 UNION ALL
 -- BONOS no prestacionales (Compensación › Bonos). Una fila por CÓDIGO de
 -- novedad (43 ocasionales / 50 no prestacional / 66 aux. movilidad), para que
