@@ -95,7 +95,7 @@ export interface ProvisionesSegSocial {
 }
 
 export interface CostoNominaData {
-  /** Suma de pagonomina.total_liquidado_dia en el rango. */
+  /** Suma de pagonomina.total_liquidado_dia en el rango (base + bono destajo). */
   totalLiquidado: number
   /** Numero de registros (filas-dia) usados para calcular el total. */
   registros: number
@@ -103,7 +103,12 @@ export interface CostoNominaData {
   prestaciones: ProvisionesPrestaciones
   /** Provisiones de seguridad social calculadas sobre `totalLiquidado`. */
   segSocial: ProvisionesSegSocial
-  /** Costo total = nomina + prestaciones.total + segSocial.total */
+  /** Bonos APROBADOS del modulo Bonos (43/50/66, bonos_nomina). NO generan
+   * provision (son "no prestacionales" por definicion — no cotizan IBC),
+   * pero SI son costo real pagado: se suman al costo total, igual que en
+   * el archivo plano (rama propia, aparte de la novedad 52-). */
+  bonosNoPrestacionales: number
+  /** Costo total = nomina + prestaciones.total + segSocial.total + bonosNoPrestacionales */
   costoTotal: number
 }
 
@@ -182,8 +187,26 @@ export function useCostoNomina({
         offset += PAGE_SIZE
       }
 
+      // RETIRADOS (headcount.estado = 'Inactivo') quedan FUERA — MISMO
+      // filtro que archivoplano_reemplazo.sql: su nomina pendiente se paga
+      // por el submodulo Liquidaciones, no por el plano, asi que no debe
+      // contar como costo aqui tampoco. Match por NOMBRE (igual que
+      // pagonomina/archivoplano — no hay una llave mas fuerte disponible
+      // en `pagonomina.persona`).
+      const { data: retirados, error: retiradosError } = await supabase
+        .from("headcount")
+        .select("nombre")
+        .eq("estado", "Inactivo")
+      if (retiradosError) throw retiradosError
+      const nombresRetirados = new Set(
+        (retirados || []).map((h: any) => String(h.nombre || "").trim().toUpperCase()),
+      )
+      const filasActivas = allRows.filter(
+        (r: any) => !nombresRetirados.has(String(r.persona || "").trim().toUpperCase()),
+      )
+
       // Base diaria liquidada (cada dia trabajado = su base, nuevo modelo).
-      const totalBase = allRows.reduce(
+      const totalBase = filasActivas.reduce(
         (acc, r: any) => acc + (Number(r.total_liquidado_dia) || 0),
         0,
       )
@@ -199,7 +222,7 @@ export function useCostoNomina({
       // que nunca salio.
       const BONO_DESDE = "2026-07-16"
       const excBucket = new Map<string, number>()
-      for (const r of allRows) {
+      for (const r of filasActivas) {
         const f = String((r as any).fecha || "")
         if (f.length < 10 || f.slice(0, 10) < BONO_DESDE) continue
         // EXCLUIR EL DIA DE CIERRE (15 o ultimo del mes, desde el piso
@@ -230,6 +253,9 @@ export function useCostoNomina({
           .in("idempresa", ids)
         if (ajustesError) throw ajustesError
         for (const a of ajustes || []) {
+          // Mismo filtro de retirados que arriba (y que `ajustes_aplicables`
+          // en archivoplano_reemplazo.sql).
+          if (nombresRetirados.has(String((a as any).persona || "").trim().toUpperCase())) continue
           const periodo = bucketQuincena(Number((a as any).anio_aplica), Number((a as any).mes_aplica), Number((a as any).quincena_aplica) as 1 | 2)
           if (!periodosEnRango.has(periodo)) continue
           const key = String((a as any).persona || "") + "|" + periodo
@@ -240,7 +266,27 @@ export function useCostoNomina({
       let totalBono = 0
       for (const v of excBucket.values()) totalBono += Math.max(0, v)
       // Costo real de nomina del periodo = base garantizada + bono neto de destajo.
+      // Esta es la base sobre la que se calculan las provisiones abajo — SOLO
+      // esto es prestacional (cotiza IBC). Los bonos no prestacionales
+      // (43/50/66, mas abajo) se suman DESPUES, sin generar provision.
       const totalLiquidado = totalBase + totalBono
+
+      // BONOS NO PRESTACIONALES (Compensacion > Bonos, modulo aparte de la
+      // novedad 52-) — MISMO criterio que la rama propia de archivoplano:
+      // solo APROBADOS, retirados fuera. Por definicion NO cotizan IBC (por
+      // eso "no prestacional"), asi que NO entran a `totalLiquidado` ni a la
+      // base de las provisiones de abajo — se suman directo al costo total.
+      const { data: bonosNomina, error: bonosError } = await supabase
+        .from("bonos_nomina")
+        .select("nombre, valor")
+        .eq("estado", "aprobado")
+        .in("idempresa", ids)
+        .gte("fecha", desde)
+        .lte("fecha", hasta)
+      if (bonosError) throw bonosError
+      const totalBonosNoPrestacionales = (bonosNomina || [])
+        .filter((b: any) => !nombresRetirados.has(String(b.nombre || "").trim().toUpperCase()))
+        .reduce((acc: number, b: any) => acc + (Number(b.valor) || 0), 0)
 
       // --- Provisiones de prestaciones sociales --------------------
       const cesantias = totalLiquidado * PROVISIONES_PRESTACIONES.cesantias
@@ -263,11 +309,11 @@ export function useCostoNomina({
       const totalSegSocial =
         pensionEmpresa + cajaCompensacion + provisionEmpresa
 
-      const costoTotal = totalLiquidado + totalPrestaciones + totalSegSocial
+      const costoTotal = totalLiquidado + totalPrestaciones + totalSegSocial + totalBonosNoPrestacionales
 
       return {
         totalLiquidado,
-        registros: allRows.length,
+        registros: filasActivas.length,
         prestaciones: {
           cesantias,
           interesesCesantias,
@@ -281,6 +327,7 @@ export function useCostoNomina({
           provisionEmpresa,
           total: totalSegSocial,
         },
+        bonosNoPrestacionales: totalBonosNoPrestacionales,
         costoTotal,
       }
     },

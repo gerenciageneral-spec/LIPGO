@@ -192,6 +192,21 @@ export default function SeccionCostoNomina({
               </div>
             </div>
 
+            {/* --------------- Bonos no prestacionales --------------- */}
+            {data && data.bonosNoPrestacionales > 0 ? (
+              <div className="flex items-center justify-between gap-4 rounded-md bg-muted/30 px-2 py-2 text-sm">
+                <div>
+                  <p className="font-medium">Bonos no prestacionales</p>
+                  <p className="text-xs text-muted-foreground">
+                    Modulo Bonos (43/50/66) · aprobados · no cotizan IBC, sin provision
+                  </p>
+                </div>
+                <span className="tabular-nums font-semibold">
+                  {fmtCOP(data.bonosNoPrestacionales)}
+                </span>
+              </div>
+            ) : null}
+
             {/* ------------------- Costo total nomina ------------------- */}
             <FilaTotal
               label="Costo total nomina"
