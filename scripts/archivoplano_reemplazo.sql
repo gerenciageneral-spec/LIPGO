@@ -71,6 +71,16 @@
 --     completa). Caso real: ROBERTO ENRIQUE HOYOS VIDEZ (ID2), domingo
 --     30-ago-2026, 7 días seguidos sin descanso → tarifa completa
 --     (58.363,50 × 1,9 = 110.890,65, verificado) y el plano lo mandaba en 25.
+--   · 08/25 YA NO EXIGEN `dow = 0` (corregido): el filtro exigia que el dia
+--     fuera domingo, asi que cualquier FESTIVO ENTRE SEMANA (lunes, martes,
+--     etc.) quedaba fuera de las DOS ramas -- el recargo no se perdia en
+--     LIPgo, pero JAMAS llegaba al plano de Siigo. Caso real: lunes
+--     17-ago-2026 (festivo) y viernes 07-ago-2026 (festivo), 19
+--     personas-caso, $2.788.449 nunca enviados. `recargo_dominical_tasa_completa`
+--     ya viene gateada en pagonomina por dia domingo O festivo, asi que
+--     repetir el chequeo de dia de semana aqui era redundante y, peor,
+--     excluia el caso festivo. La quincena del 07-ago YA se envio a Siigo:
+--     requiere correccion MANUAL aparte (no la resuelve este despliegue).
 --   · ANTICIPO DE NÓMINA (Gestión de Solicitudes › Anticipo): rama propia al
 --     final que lee `solicitudes_trabajadores` DIRECTO (mismo patrón que
 --     bonos_nomina — cédula como llave natural, no el nombre frágil de
@@ -566,7 +576,30 @@ UNION ALL
   -- real: ROBERTO ENRIQUE HOYOS VIDEZ (ID2), domingo 30-ago-2026, 7 días
   -- seguidos sin descanso → tarifa completa (verificado: 58.363,50 × 1,9 =
   -- 110.890,65) y el plano lo mandaba en 25.
-  WHERE ((EXTRACT(dow FROM base_datos.fecha) = (0)::numeric) AND ((base_datos.recargodominical > (0)::numeric) OR (base_datos.toneladas > (0)::numeric) OR (base_datos.especialidad = true)) AND (base_datos.recargo_dominical_tasa_completa = true))
+  --
+  -- SIN el filtro `dow = 0` (corregido): antes exigía que el día fuera
+  -- domingo, así que cualquier FESTIVO ENTRE SEMANA (ej. lunes 17-ago-2026)
+  -- quedaba fuera de esta rama Y de la 25 — el recargo no se perdía en
+  -- LIPgo (pagonomina lo calcula bien), pero JAMÁS llegaba al plano de
+  -- Siigo, para nadie. No hace falta re-chequear el día de la semana aquí:
+  -- `recargo_dominical_tasa_completa` ya viene gateado en pagonomina por
+  -- `(dow=0 OR es_festivo=1) AND trabajo_efectivo=1`, así que solo puede
+  -- ser verdadero en un domingo o festivo realmente trabajado. Verificado
+  -- con datos reales: 19 personas-caso, $2.788.449 entre el viernes
+  -- 07-ago-2026 (17 personas, quincena YA enviada — requiere corrección
+  -- manual en Siigo) y el lunes 17-ago-2026 (8 personas, quincena en curso).
+  --
+  -- SEGUNDA CORRECCIÓN EL MISMO DÍA: el WHERE traía además `OR toneladas>0
+  -- OR especialidad=true`, una condición floja que el `dow=0` de arriba
+  -- disimulaba (restringía a domingos igual). Al quitar `dow=0` esa condición
+  -- quedó expuesta: para CUALQUIER turno (especialidad=true) se cumplía TODOS
+  -- los días trabajados, no solo domingo/festivo -- la novedad se inflaba con
+  -- horas de días normales. Caso real: RICHARD ANDRES ALTAMAR CUADRADO
+  -- (ID2) mostraba 77 horas en la novedad 25 cuando le correspondían 0 (nunca
+  -- tuvo un domingo a tasa parcial esta quincena); hallado gente hasta con 91
+  -- horas, en los 4 ID. `recargodominical > 0` solo, sin el OR, es la única
+  -- condición necesaria y suficiente -- ya viene gateada dentro de pagonomina.
+  WHERE ((base_datos.recargodominical > (0)::numeric) AND (base_datos.recargo_dominical_tasa_completa = true))
   GROUP BY to_char((base_datos.fecha_efectiva_turno)::timestamp with time zone, 'MM'::text),
         CASE
             WHEN (EXTRACT(day FROM base_datos.fecha_efectiva_turno) <= (15)::numeric) THEN 1
@@ -595,8 +628,11 @@ UNION ALL
    FROM base_datos
   -- 25 = SOLO el recargo (pct, ej. 0,90): domingo trabajado CON descanso
   -- previo o compensatorio posterior — mismo criterio que decide la tarifa
-  -- dentro de `recargodominical`, ver comentario de la rama 08.
-  WHERE ((EXTRACT(dow FROM base_datos.fecha) = (0)::numeric) AND ((base_datos.recargodominical > (0)::numeric) OR (base_datos.toneladas > (0)::numeric) OR (base_datos.especialidad = true)) AND (COALESCE(base_datos.recargo_dominical_tasa_completa, false) = false))
+  -- dentro de `recargodominical`, ver comentario de la rama 08. MISMO fix:
+  -- sin el filtro `dow = 0` (un festivo entre semana con descanso ya tomado
+  -- también debe viajar aquí, no perderse). Mismo segundo fix que la
+  -- rama 08: sin `OR toneladas>0 OR especialidad=true`.
+  WHERE ((base_datos.recargodominical > (0)::numeric) AND (COALESCE(base_datos.recargo_dominical_tasa_completa, false) = false))
   GROUP BY to_char((base_datos.fecha_efectiva_turno)::timestamp with time zone, 'MM'::text),
         CASE
             WHEN (EXTRACT(day FROM base_datos.fecha_efectiva_turno) <= (15)::numeric) THEN 1
