@@ -4,7 +4,7 @@
  * Server actions de "Ajuste Nómina Anterior" (Compensación › Revisión de nómina;
  * antes "Ajuste de Proyecciones" — renombrado, ya no se proyecta nada a mano).
  *
- * MODELO VIGENTE (desde 2026-08-31): ya NO se proyecta nada a mano. El último
+ * MODELO VIGENTE (desde el cierre del 2026-08-15): ya NO se proyecta nada a mano. El último
  * día de cada quincena (el 15, o el último día del mes) a quien gana por
  * destajo se le paga el "día pleno" — un día de base fija (salario/30, o el
  * mínimo $58.364 si no tiene salario propio), igual que a cualquier otro día,
@@ -299,11 +299,12 @@ export async function getCruceProyeccion(
  * cierre TODAVÍA manda su excedente de destajo dentro de la MISMA quincena
  * (archivoplano no lo excluye todavía — ver scripts/archivoplano_reemplazo.sql,
  * "EXCLUIR EL DÍA DE CIERRE"). Generar un ajuste diferido para un día anterior
- * a este piso pagaría esa diferencia DOS VECES: una de una vez (novedad 52) y
- * otra en la quincena siguiente (novedad 72/73). No mover sin correr antes esa
- * migración Y confirmar que ya está desplegada.
+ * a este piso pagaría esa diferencia DOS VECES: una de una vez (novedad 52 de
+ * esa quincena) y otra fundida en el 52- de la quincena siguiente (ver
+ * `ajustes_aplicables` en archivoplano_reemplazo.sql). No mover sin correr
+ * antes esa migración Y confirmar que ya está desplegada.
  */
-const PISO_VIGENCIA_DIA_PLENO = "2026-08-31"
+const PISO_VIGENCIA_DIA_PLENO = "2026-08-15"
 
 export async function generarAjustes(
   anio: number,

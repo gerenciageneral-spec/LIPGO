@@ -1,25 +1,17 @@
 -- ============================================================================
--- AJUSTES DE PROYECCIÓN (Compensación › Revisión de nómina › Ajuste de Proyecciones)
+-- AJUSTES DE PROYECCIÓN — tabla base de "Ajuste Nómina Anterior"
+-- (Compensación › Revisión de nómina; antes "Ajuste de Proyecciones")
 -- ----------------------------------------------------------------------------
--- Por qué existe: la nómina se paga ANTES de que termine el último día de la
--- quincena, así que ese día se PROYECTA el tonelaje (órdenes con
--- `cabeceraoc.tipooperacion = 'proyeccion'`). La proyección NO reemplaza a las
--- órdenes reales: se SUMA a ellas — verificado en datos, un auxiliar del
--- 31-jul-2026 tenía 18,857 t de proyección + 1,139 t reales = 19,996 t
--- liquidadas. El día sigue y llegan más órdenes, así que al cerrar el día lo
--- real casi nunca coincide con lo pagado.
---
--- Este control cruza, el día siguiente al pago (el 16 y el 1º):
---     ton_real (solo órdenes reales, con tiquete de báscula)
---   − ton_pagada (lo que pagonomina liquidó ese día: proyección + real)
---   = diferencia  ->  se paga o se descuenta en la quincena SIGUIENTE
---
--- Así se sigue cumpliendo la norma de pagar lo que se factura.
---
--- Los ajustes nacen 'pendiente' y solo salen al archivo plano al APROBARSE,
--- con su novedad propia:
---   · a favor del trabajador -> "72-Ajuste proyección toneladas ingreso-Ingreso"
---   · pagado de más          -> "73-Ajuste mayor valor pagado toneladas-Deducción"
+-- HISTÓRICO — este script ya se corrió en producción, se deja como registro de
+-- cómo se creó la tabla. El diseño actual del cruce y de la novedad Siigo NO es
+-- el que describía este comentario originalmente (proyección manual + novedad
+-- propia 72/73): ver el header de scripts/archivoplano_reemplazo.sql y de
+-- lib/ajuste-proyeccion-actions.ts para el modelo VIGENTE (día pleno, sin
+-- proyección manual; el ajuste se funde en la novedad 52- normal de la
+-- quincena que aplica, con piso $0 — ya no existe una novedad 72/73 propia).
+-- Los campos `ton_pagada`/`ton_real`/`novedad_siigo` de abajo son los mismos
+-- nombres de columna de siempre; solo cambió cómo se llenan y qué significan
+-- en el flujo vigente (ver el código que escribe/lee esta tabla).
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS public.ajustes_proyeccion (

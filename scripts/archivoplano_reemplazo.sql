@@ -10,19 +10,27 @@
 --     que pagonomina (antes leía jornada_legal y podían divergir). jun-2026 →
 --     7,3333; desde 16-jul-2026 → 7. Requiere create_parametros_legales_vigencia.sql.
 --   · nominaproyectada = salario quincenal por trabajador (antes fijo 875452).
---   · AJUSTE DE PROYECCIÓN (Revisión de nómina › Ajuste de Proyecciones): rama
---     propia que liquida, en la quincena SIGUIENTE, la diferencia entre lo
---     proyectado y lo realmente movido el último día de la quincena anterior.
---     Solo los APROBADOS. Novedades 72 (ingreso) y 73 (deducción).
---     Requiere scripts/create_ajustes_proyeccion.sql.
---   · EXCLUIR EL DÍA DE CIERRE DEL BONO DE LA MISMA QUINCENA (desde 2026-08-31,
+--   · AJUSTE NÓMINA ANTERIOR (Revisión de nómina; antes "Ajuste de
+--     Proyecciones"): liquida, en la quincena SIGUIENTE, la diferencia entre
+--     el "día pleno" pagado y lo realmente movido el último día de la
+--     quincena anterior. Solo los APROBADOS. Ya NO tiene novedad propia
+--     (antes 72-ingreso/73-deducción): el positivo Y el negativo se FUNDEN en
+--     la novedad 52- normal de la quincena que aplica (ver `ajustes_aplicables`
+--     y `agrupado_quincena.total_bono_nomina`) — es el MISMO concepto de bono
+--     de productividad, solo que del día de cierre. El piso en $0 de
+--     `nivelacion.bono_final` protege al trabajador igual que en cualquier
+--     quincena floja: si el negativo del ajuste supera lo acumulado, el 52-
+--     de esa quincena queda en $0, nunca se genera una deducción aparte — la
+--     empresa absorbe el sobrante. Requiere scripts/create_ajustes_proyeccion.sql.
+--   · EXCLUIR EL DÍA DE CIERRE DEL BONO DE LA MISMA QUINCENA (desde 2026-08-15,
 --     ver `total_bono_nomina` en `agrupado_quincena`): el 15 y el último día
 --     del mes se pagan por el "día pleno" (base fija, ver pagonomina_reemplazo.sql)
 --     y su diferencia por tonelaje va SIEMPRE diferida a la quincena siguiente
---     vía Ajuste de Proyecciones — nunca dentro de la misma quincena. Sin esto,
---     esa diferencia se pagaría dos veces (novedad 52- Y 72/73-).
+--     vía Ajuste Nómina Anterior — nunca dentro de la misma quincena. Sin esto,
+--     esa diferencia se pagaría dos veces (novedad 52- de esta quincena Y otra
+--     vez fundida en el 52- de la siguiente).
 --   · FASE 2 — DIFERIR LOS ADICIONALES DE TURNO DEL DÍA DE CIERRE (desde
---     2026-08-31, columna `base_datos.fecha_efectiva_turno`): la BASE del
+--     2026-08-15, columna `base_datos.fecha_efectiva_turno`): la BASE del
 --     turno el día de cierre no cambia (ni siquiera viaja por este archivo,
 --     Siigo la paga sola). Lo que sí cambia son sus NOVEDADES adicionales
 --     de ESE día — horas extra (10/07/11/12/26) y recargo dominical o
@@ -32,7 +40,7 @@
 --     exactamente en la quincena/mes/año siguiente (aritmética de fechas de
 --     Postgres, sin lógica de calendario a mano). El WHERE de las ramas 08/25
 --     sigue mirando la fecha REAL (si ESE día fue domingo o no) — solo el "a
---     qué quincena pertenece" se desplaza. Antes del 2026-08-31 se conserva
+--     qué quincena pertenece" se desplaza. Antes del 2026-08-15 se conserva
 --     el comportamiento viejo. La rama 10 dejó de leer de `nivelacion` (que
 --     sigue sirviendo solo al bono de destajo, sin tocar) y ahora suma directo
 --     de `base_datos`, igual que las otras ramas de horas.
@@ -124,7 +132,7 @@ create view public.archivoplano as
                     ELSE 2
                 END AS num_quincena,
             -- FECHA EFECTIVA PARA TURNO (horas extra / recargo dominical-festivo),
-            -- desde 2026-08-31: el 15 y el último día del mes son el día de cierre
+            -- desde 2026-08-15: el 15 y el último día del mes son el día de cierre
             -- de su quincena — el turno YA cobra su base ese día (sin cambio, la
             -- base ni siquiera viaja por este archivo), pero sus NOVEDADES
             -- adicionales (horas extra, recargo dominical/festivo) se pagan en la
@@ -134,10 +142,10 @@ create view public.archivoplano as
             -- último día del mes +1 = día 1 del mes siguiente, con año incluido si
             -- hace falta) — no hace falta lógica de calendario aparte, la resuelve
             -- la aritmética de fechas de Postgres.
-            -- Antes del 2026-08-31 se conserva el criterio viejo (mismo día, sin
+            -- Antes del 2026-08-15 se conserva el criterio viejo (mismo día, sin
             -- desplazar), para no reescribir quincenas ya enviadas a Siigo.
                 CASE
-                    WHEN ((p.fecha >= DATE '2026-08-31')
+                    WHEN ((p.fecha >= DATE '2026-08-15')
                       AND ((EXTRACT(day FROM p.fecha) = 15)
                         OR (p.fecha = ((date_trunc('month'::text, (p.fecha)::timestamp with time zone) + interval '1 month' - interval '1 day'))::date)))
                     THEN (p.fecha + interval '1 day')::date
@@ -174,6 +182,38 @@ create view public.archivoplano as
             AND (TRIM(BOTH FROM h.identificacion) <> ''::text)
             AND (h.contratosiigo IS NOT NULL)
             AND (TRIM(BOTH FROM h.contratosiigo) <> ''::text)
+        ), ajustes_aplicables AS (
+         -- Ajuste Nómina Anterior — TODO el signo (positivo Y negativo) se
+         -- funde en la MISMA novedad 52 de la quincena en la que aplica, en
+         -- vez de viajar aparte (novedad 72/73): conceptualmente es el mismo
+         -- bono de productividad, solo que del día de cierre, diferido un
+         -- ciclo porque las órdenes de ese día todavía no habían cerrado. Se
+         -- agrega por persona + período de aplicación para unirlo más abajo
+         -- contra la MISMA llave con la que ya se agrupa el bono normal
+         -- (agrupado_quincena).
+         --
+         -- El NEGATIVO ("se pagó de más ese día") también entra aquí a
+         -- propósito: se resta del acumulado normal de la quincena que
+         -- aplica, y el piso en $0 de `nivelacion.bono_final` (más abajo)
+         -- protege al trabajador exactamente igual que en cualquier quincena
+         -- floja — nunca se le descuenta de más, la empresa absorbe el
+         -- sobrante. Por eso ya NO existe una novedad 73 de deducción aparte
+         -- para esto.
+         SELECT a.anio_aplica,
+            a.mes_aplica,
+            a.quincena_aplica,
+            a.idempresa,
+            -- TRIM: esta columna es la llave con la que `agrupado_quincena` cruza
+            -- más abajo contra `base_datos.identificacion` (también TRIM'da ahí).
+            -- Sin TRIM en los DOS lados el cruce puede fallar en silencio si la
+            -- cédula trae espacios de sobra en headcount — MISMO riesgo ya
+            -- documentado arriba en el JOIN de `base_datos` con headcount.
+            TRIM(BOTH FROM a.identificacion) AS identificacion,
+            sum(a.valor_ajuste) AS total_ajuste
+           FROM (ajustes_proyeccion a
+             LEFT JOIN headcount h ON ((TRIM(BOTH FROM h.identificacion) = TRIM(BOTH FROM a.identificacion))))
+          WHERE ((a.estado = 'aprobado'::text) AND (lower(COALESCE(h.estado, 'activo'::text)) <> 'inactivo'::text))
+          GROUP BY a.anio_aplica, a.mes_aplica, a.quincena_aplica, a.idempresa, TRIM(BOTH FROM a.identificacion)
         ), agrupado_quincena AS (
          SELECT base_datos.mes_txt,
             base_datos.mes_num,
@@ -193,26 +233,39 @@ create view public.archivoplano as
             -- bonos del módulo Compensación › Bonos) NO se mezcla con la novedad
             -- 52-: sale por su propia rama al final, con su código 43/50/66.
             --
-            -- EXCLUIR EL DÍA DE CIERRE (desde 2026-08-31): el 15 y el último día
+            -- EXCLUIR EL DÍA DE CIERRE (desde 2026-08-15): el 15 y el último día
             -- del mes ya NO se pagan por tonelaje ese mismo día — se paga el "día
             -- pleno" (ver pagonomina_reemplazo.sql) y lo que produjo de más/menos
-            -- se ajusta en la quincena SIGUIENTE (Revisión de nómina › Ajuste de
-            -- Proyecciones, novedad 72/73 más abajo). Si ese día se dejara sumar
-            -- aquí, la misma diferencia viajaría DOS VECES: una de una vez (esta
-            -- novedad 52-) y otra diferida (72/73). Antes del 2026-08-31 se
+            -- se ajusta en la quincena SIGUIENTE (Revisión de nómina › Ajuste
+            -- Nómina Anterior, fusionado en el 52- de esa quincena — ver abajo).
+            -- Si ese día se dejara sumar aquí, la misma diferencia viajaría DOS
+            -- VECES: una de una vez (esta novedad 52-) y otra diferida (fusionada
+            -- en el 52- de la quincena siguiente). Antes del 2026-08-15 se
             -- conserva el comportamiento viejo (sí suma), para no reescribir
             -- quincenas ya enviadas a Siigo con ese criterio.
-            sum(
+            --
+            -- FUSIÓN DEL AJUSTE NÓMINA ANTERIOR (positivo Y negativo): se suma
+            -- aquí mismo, ANTES del piso en $0 de `nivelacion.bono_final` — así
+            -- el ajuste del día de cierre se comporta exactamente como cualquier
+            -- otro día de la quincena (sube o baja el acumulado, y el piso en $0
+            -- sigue protegiendo al trabajador si el neto de la quincena da
+            -- negativo — nunca se le descuenta de más, la empresa absorbe el
+            -- sobrante). `max(...)` y no `sum(...)` porque el JOIN de abajo
+            -- repite el mismo total en cada fila-día de `base_datos`: sumarlo
+            -- multiplicaría el ajuste por la cantidad de días de la quincena.
+            (sum(
                 CASE
-                    WHEN ((base_datos.fecha >= DATE '2026-08-31')
+                    WHEN ((base_datos.fecha >= DATE '2026-08-15')
                       AND ((EXTRACT(day FROM base_datos.fecha) = 15)
                         OR (base_datos.fecha = ((date_trunc('month'::text, (base_datos.fecha)::timestamp with time zone) + interval '1 month' - interval '1 day'))::date)))
                     THEN (0)::numeric
                     ELSE base_datos.bonif_prestacional
-                END) AS total_bono_nomina,
+                END)
+             + COALESCE(max(aa.total_ajuste), (0)::numeric)) AS total_bono_nomina,
             sum(COALESCE(base_datos.hed, (0)::numeric)) AS total_hed_moneda,
             sum(COALESCE(base_datos.horas_hed, (0)::numeric)) AS total_hed_horas
-           FROM base_datos
+           FROM (base_datos
+             LEFT JOIN ajustes_aplicables aa ON (((aa.anio_aplica = base_datos.anio_num) AND (aa.mes_aplica = base_datos.mes_num) AND (aa.quincena_aplica = base_datos.num_quincena) AND (aa.idempresa = base_datos.idempresa) AND (aa.identificacion = TRIM(BOTH FROM base_datos.identificacion)))))
           GROUP BY base_datos.mes_txt, base_datos.mes_num, base_datos.anio_num, base_datos.num_quincena, base_datos.idempresa, base_datos.identificacion, base_datos.contratosiigo
         ), nivelacion AS (
          SELECT agrupado_quincena.mes_txt,
@@ -298,7 +351,7 @@ UNION ALL
          -- en el plano.
          AND (EXTRACT(day FROM base_datos.fecha) <> (31)::numeric))
 UNION ALL
--- DÍA DE CIERRE DIFERIDO (desde 2026-08-31): igual que las otras ramas de
+-- DÍA DE CIERRE DIFERIDO (desde 2026-08-15): igual que las otras ramas de
 -- horas extra de más abajo, agrupa por `fecha_efectiva_turno` en vez de la
 -- fecha real, para que las horas del día de cierre caigan en la quincena
 -- SIGUIENTE. Antes salía de `nivelacion` (que agrupa por la fecha real, sin
@@ -332,7 +385,7 @@ UNION ALL
     EXTRACT(month FROM base_datos.fecha_efectiva_turno), EXTRACT(year FROM base_datos.fecha_efectiva_turno),
     base_datos.idempresa, base_datos.identificacion, base_datos.contratosiigo
 UNION ALL
--- DÍA DE CIERRE DIFERIDO (desde 2026-08-31): agrupa por `fecha_efectiva_turno`
+-- DÍA DE CIERRE DIFERIDO (desde 2026-08-15): agrupa por `fecha_efectiva_turno`
 -- en vez de la fecha real — ver el comentario en `base_datos.fecha_efectiva_turno`.
  SELECT to_char((base_datos.fecha_efectiva_turno)::timestamp with time zone, 'MM'::text) AS mes,
         CASE
@@ -360,7 +413,7 @@ UNION ALL
     EXTRACT(month FROM base_datos.fecha_efectiva_turno), EXTRACT(year FROM base_datos.fecha_efectiva_turno),
     base_datos.idempresa, base_datos.identificacion, base_datos.contratosiigo
 UNION ALL
--- DÍA DE CIERRE DIFERIDO (desde 2026-08-31): mismo criterio que la rama 07.
+-- DÍA DE CIERRE DIFERIDO (desde 2026-08-15): mismo criterio que la rama 07.
  SELECT to_char((base_datos.fecha_efectiva_turno)::timestamp with time zone, 'MM'::text) AS mes,
         CASE
             WHEN (EXTRACT(day FROM base_datos.fecha_efectiva_turno) <= (15)::numeric) THEN 1
@@ -387,7 +440,7 @@ UNION ALL
     EXTRACT(month FROM base_datos.fecha_efectiva_turno), EXTRACT(year FROM base_datos.fecha_efectiva_turno),
     base_datos.idempresa, base_datos.identificacion, base_datos.contratosiigo
 UNION ALL
--- DÍA DE CIERRE DIFERIDO (desde 2026-08-31): mismo criterio que la rama 07.
+-- DÍA DE CIERRE DIFERIDO (desde 2026-08-15): mismo criterio que la rama 07.
  SELECT to_char((base_datos.fecha_efectiva_turno)::timestamp with time zone, 'MM'::text) AS mes,
         CASE
             WHEN (EXTRACT(day FROM base_datos.fecha_efectiva_turno) <= (15)::numeric) THEN 1
@@ -414,7 +467,7 @@ UNION ALL
     EXTRACT(month FROM base_datos.fecha_efectiva_turno), EXTRACT(year FROM base_datos.fecha_efectiva_turno),
     base_datos.idempresa, base_datos.identificacion, base_datos.contratosiigo
 UNION ALL
--- DÍA DE CIERRE DIFERIDO (desde 2026-08-31): mismo criterio que la rama 07.
+-- DÍA DE CIERRE DIFERIDO (desde 2026-08-15): mismo criterio que la rama 07.
  SELECT to_char((base_datos.fecha_efectiva_turno)::timestamp with time zone, 'MM'::text) AS mes,
         CASE
             WHEN (EXTRACT(day FROM base_datos.fecha_efectiva_turno) <= (15)::numeric) THEN 1
@@ -441,7 +494,7 @@ UNION ALL
     EXTRACT(month FROM base_datos.fecha_efectiva_turno), EXTRACT(year FROM base_datos.fecha_efectiva_turno),
     base_datos.idempresa, base_datos.identificacion, base_datos.contratosiigo
 UNION ALL
--- DÍA DE CIERRE DIFERIDO (desde 2026-08-31): agrupa por `fecha_efectiva_turno`
+-- DÍA DE CIERRE DIFERIDO (desde 2026-08-15): agrupa por `fecha_efectiva_turno`
 -- — el WHERE sigue mirando la fecha REAL (fue domingo o no ese día concreto),
 -- solo el "a qué quincena pertenece" se desplaza.
  SELECT to_char((base_datos.fecha_efectiva_turno)::timestamp with time zone, 'MM'::text) AS mes,
@@ -470,7 +523,7 @@ UNION ALL
     EXTRACT(month FROM base_datos.fecha_efectiva_turno), EXTRACT(year FROM base_datos.fecha_efectiva_turno),
     base_datos.idempresa, base_datos.identificacion, base_datos.contratosiigo
 UNION ALL
--- DÍA DE CIERRE DIFERIDO (desde 2026-08-31): mismo criterio que la rama 08.
+-- DÍA DE CIERRE DIFERIDO (desde 2026-08-15): mismo criterio que la rama 08.
  SELECT to_char((base_datos.fecha_efectiva_turno)::timestamp with time zone, 'MM'::text) AS mes,
         CASE
             WHEN (EXTRACT(day FROM base_datos.fecha_efectiva_turno) <= (15)::numeric) THEN 1
@@ -532,38 +585,6 @@ UNION ALL
             ELSE 2
         END,
     b.idempresa, b.identificacion, h.contratosiigo, b.novedad_siigo
-UNION ALL
--- AJUSTE DE PROYECCIÓN (Revisión de nómina › Ajuste de Proyecciones).
--- La nómina se paga antes de cerrar el último día de la quincena, así que ese
--- día el tonelaje se PROYECTA; al cerrar, lo real casi nunca coincide. La
--- diferencia se liquida en la quincena SIGUIENTE (anio_aplica/mes_aplica/
--- quincena_aplica), con su novedad propia:
---   · a favor del trabajador -> 72-Ajuste proyección toneladas ingreso-Ingreso
---   · pagado de más          -> 73-Ajuste mayor valor pagado toneladas-Deducción
--- Solo entran los APROBADOS. Se agrupa por novedad para que ingreso y deducción
--- salgan en filas separadas. `cantidadvalor` va en VALOR ABSOLUTO: el signo lo
--- da el concepto (la 73 es de deducción), no un número negativo en el plano.
- SELECT to_char(make_date(a.anio_aplica, a.mes_aplica, 1), 'MM'::text) AS mes,
-    a.quincena_aplica AS quincena,
-    a.idempresa,
-    a.identificacion AS identificacionempleado,
-    -- Mismo criterio que la rama de bonos: `ajustes_proyeccion.persona` es el
-    -- respaldo si la cédula no cruza con Head Count.
-    COALESCE(max(h.nombre), max(a.persona)) AS nombreempleado,
-    h.contratosiigo AS contratoempleado,
-    a.novedad_siigo AS nombrenovedad,
-    'Valor'::text AS tiponovedad,
-    round(abs(sum(a.valor_ajuste))) AS cantidadvalor,
-    round(COALESCE(max(h.salario), (1750905)::numeric) / (2)::numeric)::integer AS nominaproyectada,
-    NULL::text AS fechainicio,
-    NULL::text AS fechafin,
-    0 AS diasnohabiles
-   FROM (ajustes_proyeccion a
-     LEFT JOIN headcount h ON ((TRIM(BOTH FROM h.identificacion) = TRIM(BOTH FROM a.identificacion))))
-  WHERE ((a.estado = 'aprobado'::text) AND (lower(COALESCE(h.estado, 'activo'::text)) <> 'inactivo'::text))
-  GROUP BY to_char(make_date(a.anio_aplica, a.mes_aplica, 1), 'MM'::text),
-    a.quincena_aplica, a.idempresa, a.identificacion, h.contratosiigo, a.novedad_siigo
- HAVING (round(abs(sum(a.valor_ajuste))) > (0)::numeric)
 UNION ALL
 -- ANTICIPO DE NÓMINA (Gestión de Solicitudes › Anticipo). Se lee
 -- `solicitudes_trabajadores` DIRECTO (no vía pagonomina), mismo patrón que

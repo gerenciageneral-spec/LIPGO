@@ -6,11 +6,17 @@
 // arranque de la app). Mismo criterio que lib/bonos-constants.ts.
 
 /**
- * Novedades de Siigo que emite el ajuste en el archivo plano de la quincena
- * SIGUIENTE. El nombre es el string EXACTO que va a `archivoplano.nombrenovedad`.
+ * Etiqueta interna del signo del ajuste (columna "Novedad Siigo" de la
+ * pantalla "Ajustes registrados"). YA NO son códigos de novedad que se
+ * envíen a Siigo: el positivo y el negativo se FUNDEN en la novedad
+ * "52-Bonificación Por Productividad-Ingreso" normal de la quincena que
+ * aplica (ver scripts/archivoplano_reemplazo.sql, `ajustes_aplicables`) — es
+ * el MISMO concepto de bono, solo que del día de cierre. Esto es solo texto
+ * para que el coordinador vea de un vistazo si el ajuste sube o baja el
+ * acumulado, antes de aprobarlo.
  */
-export const NOVEDAD_AJUSTE_INGRESO = "72-Ajuste proyección toneladas ingreso-Ingreso"
-export const NOVEDAD_AJUSTE_DEDUCCION = "73-Ajuste mayor valor pagado toneladas-Deducción"
+export const NOVEDAD_AJUSTE_INGRESO = "A favor del trabajador (se funde en el 52- de la quincena)"
+export const NOVEDAD_AJUSTE_DEDUCCION = "Pagado de más (resta del 52- de la quincena, con piso $0)"
 
 export type EstadoAjuste = "pendiente" | "aprobado" | "rechazado"
 
