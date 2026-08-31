@@ -164,9 +164,9 @@ export const APRENDIZAJE_COMPENSACION: ContenidoAprendizaje[] = [
   // ==========================================================================
   {
     modulo: "Revisión de nómina",
-    resumen: "Arma el cuadro definitivo de la quincena y cruza nomina, bascula, asistencia y proyecciones.",
+    resumen: "Arma el cuadro definitivo de la quincena y cruza nomina, bascula, asistencia y el ajuste de la quincena anterior.",
     proposito:
-      "Es el modulo de auditoria de la nomina antes de pagar. Para un colaborador (o el proyecto completo) y una quincena, arma el cuadro definitivo del modelo base + bono: liquidacion diaria, cruce del destajo contra la base, archivo plano y simulacion de como quedaria el pago en Siigo. Ademas trae cruces de control: personas reales por dia contra el plan, toneladas de bascula contra lo pagado, auxiliares que cobraron tonelaje contra su asistencia, y el ajuste de los dias que se pagaron proyectados.",
+      "Es el modulo de auditoria de la nomina antes de pagar. Para un colaborador (o el proyecto completo) y una quincena, arma el cuadro definitivo del modelo base + bono: liquidacion diaria, cruce del destajo contra la base, archivo plano y simulacion de como quedaria el pago en Siigo. Ademas trae cruces de control: personas reales por dia contra el plan, toneladas de bascula contra lo pagado, auxiliares que cobraron tonelaje contra su asistencia, y el Ajuste Nomina Anterior de los dias que se pagaron a dia pleno.",
     puedes: [
       "Revisar a un colaborador o al proyecto completo por año, mes y quincena con un solo boton.",
       "Ver la liquidacion diaria (cada dia paga su base; el turno suma recargos) y el cruce del destajo: dias altos aportan, dias bajos consumen, y el neto define el bono o la perdida que asume la empresa.",
@@ -175,11 +175,11 @@ export const APRENDIZAJE_COMPENSACION: ContenidoAprendizaje[] = [
       "Consultar las personas reales que movieron toneladas cada dia frente al plan configurado.",
       "Conciliar las toneladas de bascula contra las asignadas al personal y las que liquida la nomina, con alertas cuando algo no cuadra.",
       "Cruzar quien cobro tonelaje contra su asistencia del dia: en regla, sin marcar, con novedad o sin registro.",
-      "Generar, aprobar o rechazar los ajustes de proyeccion: para quien gana por toneladas, la diferencia entre el dia pleno que se le pago el ultimo dia de la quincena (base fija, sin mirar el tonelaje) y lo que produjo real ese dia; se aplica en la siguiente quincena.",
+      "Generar, aprobar o rechazar el Ajuste Nomina Anterior: para quien gana por toneladas, la diferencia entre el dia pleno que se le pago el ultimo dia de la quincena (base fija, sin mirar el tonelaje) y lo que produjo real ese dia; se aplica en la siguiente quincena.",
     ],
     noPuedes: [
       "Editar la liquidacion a mano: el cuadro se arma con lo ya registrado en operaciones, asistencia y novedades.",
-      "Pagar desde aqui: es revision; el unico cambio que produce son los ajustes de proyeccion aprobados, que entran como novedad a la quincena siguiente.",
+      "Pagar desde aqui: es revision; el unico cambio que produce son los ajustes de nomina anterior aprobados, que entran como novedad a la quincena siguiente.",
       "Revisar colaboradores de otro proyecto: el listado sigue el selector global.",
     ],
     funcionalidades: [
@@ -204,7 +204,7 @@ export const APRENDIZAJE_COMPENSACION: ContenidoAprendizaje[] = [
           "Cruza quien cobro tonelaje en las ordenes contra los registros de asistencia del dia. Clasifica cada asignacion: en regla, programado sin marcar ingreso, con novedad (incapacidad o ausencia ese dia) o sin ningun registro.",
       },
       {
-        nombre: "Ajuste de Proyecciones",
+        nombre: "Ajuste Nomina Anterior",
         descripcion:
           "El ultimo dia de cada quincena (el 15, o el ultimo dia del mes) a quien gana por toneladas se le paga el 'dia pleno' (base fija, sin mirar produccion). Esta pantalla cruza ese dia pleno pagado contra lo que realmente produjo ese dia en cargue/descargue/distribucion, genera lineas de ajuste (a favor o en contra) que quedan pendientes, y permite aprobarlas o rechazarlas. Volver a generar actualiza el ajuste, no lo duplica.",
       },

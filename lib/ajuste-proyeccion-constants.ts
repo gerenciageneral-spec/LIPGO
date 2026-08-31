@@ -1,4 +1,5 @@
-// Constantes y tipos del submódulo "Ajuste de Proyecciones" (Revisión de nómina).
+// Constantes y tipos del submódulo "Ajuste Nómina Anterior" (Revisión de nómina;
+// antes "Ajuste de Proyecciones").
 //
 // Viven FUERA del archivo de server actions a propósito: ese lleva "use server"
 // y ahí solo se pueden exportar funciones async (exportar un objeto rompe el

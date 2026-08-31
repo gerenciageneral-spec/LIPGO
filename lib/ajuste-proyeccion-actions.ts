@@ -1,7 +1,8 @@
 "use server"
 
 /**
- * Server actions de "Ajuste de Proyecciones" (Compensación › Revisión de nómina).
+ * Server actions de "Ajuste Nómina Anterior" (Compensación › Revisión de nómina;
+ * antes "Ajuste de Proyecciones" — renombrado, ya no se proyecta nada a mano).
  *
  * MODELO VIGENTE (desde 2026-08-31): ya NO se proyecta nada a mano. El último
  * día de cada quincena (el 15, o el último día del mes) a quien gana por

@@ -175,7 +175,7 @@ export default function RevisionNomina() {
           <TabsTrigger value="hc">HC por día (por proyecto)</TabsTrigger>
           <TabsTrigger value="conciliacion">Conciliación báscula ↔ pago</TabsTrigger>
           <TabsTrigger value="asistencia">Auxiliares vs. Asistencia</TabsTrigger>
-          <TabsTrigger value="ajuste">Ajuste de Proyecciones</TabsTrigger>
+          <TabsTrigger value="ajuste">Ajuste Nómina Anterior</TabsTrigger>
         </TabsList>
 
         <TabsContent value="colaborador" className="mt-4 space-y-4">
@@ -1700,7 +1700,8 @@ function ConciliacionBascula() {
 }
 
 // ---------------------------------------------------------------------------
-// AJUSTE DE PROYECCIONES
+// AJUSTE NÓMINA ANTERIOR (antes "Ajuste de Proyecciones" — ya no se proyecta
+// nada a mano, se renombró para reflejar el modelo de día pleno).
 // El último día de cada quincena (el 15, o el último día del mes) a quien
 // gana por destajo se le paga el "día pleno" (salario/30, o el mínimo si no
 // tiene salario propio) SIN mirar el tonelaje — porque cuando se envía la
@@ -1948,7 +1949,7 @@ function AjusteProyecciones() {
                     <Check className="mr-1 h-3 w-3" /> Aprobar {sel.size}
                   </Button>
                   <Button size="sm" variant="outline" disabled={guardando}
-                    onClick={() => accion(() => rechazarAjustes([...sel], "Rechazado desde Ajuste de Proyecciones"), "Ajustes rechazados")}>
+                    onClick={() => accion(() => rechazarAjustes([...sel], "Rechazado desde Ajuste Nómina Anterior"), "Ajustes rechazados")}>
                     Rechazar
                   </Button>
                 </div>

@@ -414,7 +414,7 @@ export const APRENDIZAJE_RRHH_B: ContenidoAprendizaje[] = [
     ],
     noPuedes: [
       "Reemplazar las ordenes reales del dia: la proyeccion se suma a ellas, no las sustituye.",
-      "Ajustar aqui la diferencia entre lo proyectado y lo real: ese cruce se hace en Revision de Nomina (Ajuste de Proyecciones).",
+      "Ajustar aqui la diferencia entre lo proyectado y lo real: el ajuste automatico del ultimo dia de cada quincena (dia pleno pagado vs. lo producido real) se gestiona en Revision de Nomina (Ajuste Nomina Anterior), sin depender de lo que se registre aqui.",
       "Asignar personal inactivo: el buscador solo ofrece colaboradores activos del proyecto seleccionado.",
     ],
     funcionalidades: [
