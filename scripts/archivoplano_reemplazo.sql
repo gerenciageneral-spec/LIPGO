@@ -53,6 +53,15 @@
 --     la 1ª quincena de julio sigue saliendo como '71-Bonificación Ajuste
 --     Toneladas-Ingreso', porque esos planos ya se enviaron a Siigo con ese
 --     código. Cambia SOLO la etiqueta: el cálculo es el mismo en ambas ramas.
+--   · CONSOLIDADO POR PERSONA, NO POR ID TRABAJADO (novedad 52-/71-): se agrupa
+--     por el ID de ORIGEN de Head Count (`base_datos.idempresa_home`), no por el
+--     ID donde se movió el tonelaje ese día (`base_datos.idempresa`, que las
+--     demás ramas — Días, Horas, Bonos, Anticipo — SÍ siguen usando, sin
+--     cambio). Antes, alguien que ayudaba en otro ID la misma quincena quedaba
+--     con una fila de bono POR CADA ID, y si solo se descargaba/subía el plano
+--     de uno de esos IDs la plata del otro nunca llegaba a Siigo. Caso real:
+--     ARLEIS JESUS CABELLO JULIO, quincena 16-31 ago 2026: $219.694 en el
+--     plano de ID1 + $165.485 en el de ID3, dos filas del MISMO contrato.
 --   · ANTICIPO DE NÓMINA (Gestión de Solicitudes › Anticipo): rama propia al
 --     final que lee `solicitudes_trabajadores` DIRECTO (mismo patrón que
 --     bonos_nomina — cédula como llave natural, no el nombre frágil de
@@ -86,6 +95,15 @@ create view public.archivoplano as
  WITH base_datos AS (
          SELECT p.fecha,
             p.idempresa,
+            -- ID de ORIGEN de la persona (Head Count) — DISTINTO de `p.idempresa`
+            -- (el ID donde se movió el tonelaje ESE día). El bono de destajo
+            -- (novedad 52-/71-, ver `agrupado_quincena` más abajo) se consolida
+            -- por este ID, no por el trabajado: alguien de Head Count del ID1
+            -- que un día ayuda en el ID3 no debe generarle una fila APARTE en
+            -- el plano del ID3 (que fácilmente queda sin descargar/subir) —
+            -- todo su bono, se haya generado donde se haya generado, viaja
+            -- junto en el plano de SU ID de origen.
+            h.idempresa AS idempresa_home,
             p.persona,
             h.identificacion,
             h.contratosiigo,
@@ -199,10 +217,16 @@ create view public.archivoplano as
          -- floja — nunca se le descuenta de más, la empresa absorbe el
          -- sobrante. Por eso ya NO existe una novedad 73 de deducción aparte
          -- para esto.
+         --
+         -- SIN `idempresa` en la llave/GROUP BY a propósito: el ajuste se
+         -- generó en el ID donde se movió el tonelaje ese día de cierre, pero
+         -- el bono ya NO se reparte por ID (ver `idempresa_home` en
+         -- base_datos) — si una persona tuviera ajustes de MÁS de un ID
+         -- aplicando a la misma quincena, deben sumarse juntos en su única
+         -- fila consolidada, no perderse uno contra el otro.
          SELECT a.anio_aplica,
             a.mes_aplica,
             a.quincena_aplica,
-            a.idempresa,
             -- TRIM: esta columna es la llave con la que `agrupado_quincena` cruza
             -- más abajo contra `base_datos.identificacion` (también TRIM'da ahí).
             -- Sin TRIM en los DOS lados el cruce puede fallar en silencio si la
@@ -213,13 +237,23 @@ create view public.archivoplano as
            FROM (ajustes_proyeccion a
              LEFT JOIN headcount h ON ((TRIM(BOTH FROM h.identificacion) = TRIM(BOTH FROM a.identificacion))))
           WHERE ((a.estado = 'aprobado'::text) AND (lower(COALESCE(h.estado, 'activo'::text)) <> 'inactivo'::text))
-          GROUP BY a.anio_aplica, a.mes_aplica, a.quincena_aplica, a.idempresa, TRIM(BOTH FROM a.identificacion)
+          GROUP BY a.anio_aplica, a.mes_aplica, a.quincena_aplica, TRIM(BOTH FROM a.identificacion)
         ), agrupado_quincena AS (
+         -- CONSOLIDADO POR PERSONA (no por ID trabajado): se agrupa por
+         -- `idempresa_home` (Head Count), NO por `base_datos.idempresa` (el ID
+         -- donde se movió el tonelaje ese día). Antes, alguien que trabajaba
+         -- en más de un ID la misma quincena quedaba con una fila de novedad
+         -- 52-/71- POR CADA ID — y si solo se descargaba/subía el plano de
+         -- uno de esos IDs, la plata generada en el otro nunca llegaba a
+         -- Siigo. Caso real: ARLEIS JESUS CABELLO JULIO, quincena 16-31 ago
+         -- 2026, $219.694 en el plano de ID1 + $165.485 en el de ID3 — dos
+         -- filas separadas del MISMO contrato. Ahora es una sola fila, bajo
+         -- el ID de origen, con la suma completa.
          SELECT base_datos.mes_txt,
             base_datos.mes_num,
             base_datos.anio_num,
             base_datos.num_quincena,
-            base_datos.idempresa,
+            base_datos.idempresa_home AS idempresa,
             base_datos.identificacion,
             base_datos.contratosiigo,
             max(base_datos.salario) AS salario_ref,
@@ -265,8 +299,8 @@ create view public.archivoplano as
             sum(COALESCE(base_datos.hed, (0)::numeric)) AS total_hed_moneda,
             sum(COALESCE(base_datos.horas_hed, (0)::numeric)) AS total_hed_horas
            FROM (base_datos
-             LEFT JOIN ajustes_aplicables aa ON (((aa.anio_aplica = base_datos.anio_num) AND (aa.mes_aplica = base_datos.mes_num) AND (aa.quincena_aplica = base_datos.num_quincena) AND (aa.idempresa = base_datos.idempresa) AND (aa.identificacion = TRIM(BOTH FROM base_datos.identificacion)))))
-          GROUP BY base_datos.mes_txt, base_datos.mes_num, base_datos.anio_num, base_datos.num_quincena, base_datos.idempresa, base_datos.identificacion, base_datos.contratosiigo
+             LEFT JOIN ajustes_aplicables aa ON (((aa.anio_aplica = base_datos.anio_num) AND (aa.mes_aplica = base_datos.mes_num) AND (aa.quincena_aplica = base_datos.num_quincena) AND (aa.identificacion = TRIM(BOTH FROM base_datos.identificacion)))))
+          GROUP BY base_datos.mes_txt, base_datos.mes_num, base_datos.anio_num, base_datos.num_quincena, base_datos.idempresa_home, base_datos.identificacion, base_datos.contratosiigo
         ), nivelacion AS (
          SELECT agrupado_quincena.mes_txt,
             agrupado_quincena.mes_num,
