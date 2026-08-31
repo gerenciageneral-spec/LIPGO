@@ -3,6 +3,56 @@
 import useSWR from "swr"
 import { supabase } from "@/lib/supabase-client"
 
+// El 15 y el ultimo dia del mes son el dia de cierre de su quincena (desde el
+// piso 2026-08-15): ese dia se paga el "dia pleno" y su excedente de destajo
+// NO entra al bono de ESA quincena -- queda diferido a la SIGUIENTE via
+// Ajuste Nomina Anterior. MISMO criterio, MISMA fecha de piso, que
+// `agrupado_quincena.total_bono_nomina` en scripts/archivoplano_reemplazo.sql
+// y que `esDiaCierre` en lib/revision-nomina-actions.ts -- si se toca uno,
+// tocar los tres.
+const PISO_EXCLUSION_DIA_CIERRE = "2026-08-15"
+function esDiaCierre(fechaISO: string): boolean {
+  if (fechaISO < PISO_EXCLUSION_DIA_CIERRE) return false
+  const d = new Date(fechaISO + "T12:00:00Z")
+  const dia = d.getUTCDate()
+  if (dia === 15) return true
+  const ultimo = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate()
+  return dia === ultimo
+}
+
+/** Llave de bucket quincena, formato "yyyy-mmQ1"/"yyyy-mmQ2" -- MISMO formato
+ * que ya usaba `excBucket` de este archivo (persona + este sufijo). */
+function bucketQuincena(anio: number, mes: number, quincena: 1 | 2): string {
+  return `${anio}-${String(mes).padStart(2, "0")}Q${quincena}`
+}
+
+/** Todas las quincenas (anio, mes, quincena) cubiertas por [desde, hasta] --
+ * `getPeriodoRango` SIEMPRE alinea el rango a fronteras de quincena (1-15,
+ * 16-fin), así que basta recorrer mes a mes entre las dos fechas. */
+function quincenasEnRango(desde: string, hasta: string): Array<{ anio: number; mes: number; quincena: 1 | 2 }> {
+  const out: Array<{ anio: number; mes: number; quincena: 1 | 2 }> = []
+  const [ay, am] = desde.slice(0, 7).split("-").map(Number)
+  const [by, bm] = hasta.slice(0, 7).split("-").map(Number)
+  const diaDesde = Number(desde.slice(8, 10))
+  const diaHasta = Number(hasta.slice(8, 10))
+  let y = ay
+  let m = am
+  while (y < by || (y === by && m <= bm)) {
+    const esPrimerMes = y === ay && m === am
+    const esUltimoMes = y === by && m === bm
+    const incluyeQ1 = !esPrimerMes || diaDesde <= 15
+    const incluyeQ2 = !esUltimoMes || diaHasta > 15
+    if (incluyeQ1) out.push({ anio: y, mes: m, quincena: 1 })
+    if (incluyeQ2) out.push({ anio: y, mes: m, quincena: 2 })
+    m += 1
+    if (m > 12) {
+      m = 1
+      y += 1
+    }
+  }
+  return out
+}
+
 /**
  * Porcentajes regulatorios usados en Colombia para calcular las
  * provisiones a partir del valor liquidado de nomina del periodo.
@@ -152,10 +202,41 @@ export function useCostoNomina({
       for (const r of allRows) {
         const f = String((r as any).fecha || "")
         if (f.length < 10 || f.slice(0, 10) < BONO_DESDE) continue
-        const q = Number(f.slice(8, 10)) <= 15 ? "Q1" : "Q2"
-        const key = String((r as any).persona || "") + "|" + f.slice(0, 7) + q
+        // EXCLUIR EL DIA DE CIERRE (15 o ultimo del mes, desde el piso
+        // 2026-08-15): ese dia ya se pago a dia pleno, y su excedente NO
+        // entra al bono de ESTA quincena -- queda diferido a la siguiente y
+        // se recupera mas abajo via `ajustes_proyeccion` (Ajuste Nomina
+        // Anterior). Sin esto, este bucket contaba esa plata en la quincena
+        // equivocada.
+        if (esDiaCierre(f.slice(0, 10))) continue
+        const q = Number(f.slice(8, 10)) <= 15 ? 1 : 2
+        const key = String((r as any).persona || "") + "|" + bucketQuincena(Number(f.slice(0, 4)), Number(f.slice(5, 7)), q)
         excBucket.set(key, (excBucket.get(key) || 0) + (Number((r as any).bonif_prestacional) || 0))
       }
+
+      // Ajuste Nomina Anterior APROBADO que aplica a alguna quincena cubierta
+      // por [desde, hasta] -- MISMO mecanismo que `ajustes_aplicables` en
+      // archivoplano_reemplazo.sql: el excedente del dia de cierre que se
+      // excluyo arriba reaparece aqui, sumado al bucket de la quincena
+      // SIGUIENTE (positivo o negativo, antes del piso $0 por bucket).
+      const periodosEnRango = new Set(
+        quincenasEnRango(desde, hasta).map((p) => bucketQuincena(p.anio, p.mes, p.quincena)),
+      )
+      if (periodosEnRango.size > 0) {
+        const { data: ajustes, error: ajustesError } = await supabase
+          .from("ajustes_proyeccion")
+          .select("persona, idempresa, valor_ajuste, anio_aplica, mes_aplica, quincena_aplica")
+          .eq("estado", "aprobado")
+          .in("idempresa", ids)
+        if (ajustesError) throw ajustesError
+        for (const a of ajustes || []) {
+          const periodo = bucketQuincena(Number((a as any).anio_aplica), Number((a as any).mes_aplica), Number((a as any).quincena_aplica) as 1 | 2)
+          if (!periodosEnRango.has(periodo)) continue
+          const key = String((a as any).persona || "") + "|" + periodo
+          excBucket.set(key, (excBucket.get(key) || 0) + (Number((a as any).valor_ajuste) || 0))
+        }
+      }
+
       let totalBono = 0
       for (const v of excBucket.values()) totalBono += Math.max(0, v)
       // Costo real de nomina del periodo = base garantizada + bono neto de destajo.
