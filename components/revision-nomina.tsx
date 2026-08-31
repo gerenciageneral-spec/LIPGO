@@ -388,7 +388,7 @@ function Resultado({
             <Kpi
               label="Bono destajo (neto)"
               value={money(r.bono)}
-              hint={`${diasAltosNeto} altos · ${diasBajosNeto} bajos${r.excedenteDiaCierre !== 0 ? " · día de cierre diferido" : ""}`}
+              hint={`${diasAltosNeto} altos · ${diasBajosNeto} bajos${r.excedenteDiaCierre !== 0 ? " · día de cierre diferido" : ""}${r.ajusteNominaAnterior !== 0 ? " · incl. ajuste anterior" : ""}`}
               tone={r.bono > 0 ? "up" : undefined}
             />
             {r.bonosNoPrestacionales > 0 && (
@@ -579,8 +579,17 @@ function Resultado({
                 <Fila label={`Días altos aportan (${diasAltosNeto})`} value={signed(Math.max(0, r.netoDestajo + sumaBajos(dias)))} />
                 <Fila label={`Días bajos consumen (${diasBajosNeto})`} value={signed(sumaBajos(dias))} />
                 <div className="my-1 border-t" />
-                <Fila label="Neto de la quincena" value={signed(r.netoDestajo)} bold />
-                {r.netoDestajo >= 0 ? (
+                <Fila label="Neto de tonelaje esta quincena" value={signed(r.netoDestajo)} />
+                {r.ajusteNominaAnterior !== 0 && (
+                  <Fila
+                    label="+ Ajuste Nómina Anterior aplicado (día de cierre pasado)"
+                    value={signed(r.ajusteNominaAnterior)}
+                    tone={r.ajusteNominaAnterior >= 0 ? "up" : "down"}
+                  />
+                )}
+                <div className="my-1 border-t" />
+                <Fila label="Neto total de la quincena" value={signed(r.netoDestajo + r.ajusteNominaAnterior)} bold />
+                {r.netoDestajo + r.ajusteNominaAnterior >= 0 ? (
                   <Fila label="→ Bono prestacional (MAX 0)" value={money(r.bono)} bold tone="up" />
                 ) : (
                   <Fila

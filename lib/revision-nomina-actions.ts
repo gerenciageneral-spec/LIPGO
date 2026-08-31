@@ -75,6 +75,11 @@ export interface ResumenRevision {
    * dentro de `netoDestajo`/`bono`: se paga el día pleno ese día y este valor
    * queda diferido a la quincena SIGUIENTE vía Ajuste Nómina Anterior. */
   excedenteDiaCierre: number
+  /** Ajuste Nómina Anterior APROBADO que APLICA a esta quincena (viene del
+   * día de cierre de la quincena ANTERIOR). Ya está sumado dentro de `bono`/
+   * `perdida` (antes del piso $0) — se muestra aparte para que sea visible
+   * de dónde sale la diferencia contra el tonelaje puro de esta quincena. */
+  ajusteNominaAnterior: number
   total: number
   diasDestajo: number
   diasAltos: number
@@ -252,6 +257,12 @@ interface CtxRevision {
   hcAsistenciaPorDia: Map<string, number>
   hcReal: (fecha: string, emp: number) => number
   vig: any | null
+  /** Ajuste Nómina Anterior APROBADO que aplica a ESTA quincena (positivo o
+   * negativo) — "idempresa|identificacion". MISMA llave y MISMO criterio que
+   * `ajustes_aplicables` en archivoplano_reemplazo.sql: sin esto, el "Neto de
+   * la quincena" de esta pantalla no incluye el ajuste que SÍ ya está fundido
+   * en la novedad 52- que le llega a Siigo. */
+  ajustesAplicables: Map<string, number>
 }
 
 /** Rango [desde, hasta] de la quincena, en ISO. */
@@ -345,6 +356,25 @@ async function armarContexto(
     .limit(1)
     .maybeSingle()
 
+  // Ajuste Nómina Anterior APROBADO que aplica a ESTA quincena. MISMO join
+  // (idempresa + identificacion TRIM) y MISMA suma que `ajustes_aplicables`
+  // en archivoplano_reemplazo.sql — para que esta pantalla reconcilie exacto
+  // contra lo que de verdad viaja a Siigo.
+  const { data: ajustesRows } = await admin
+    .from("ajustes_proyeccion")
+    .select("idempresa, identificacion, valor_ajuste")
+    .eq("estado", "aprobado")
+    .eq("anio_aplica", anio)
+    .eq("mes_aplica", mes)
+    .eq("quincena_aplica", quincena)
+  const ajustesAplicables = new Map<string, number>()
+  for (const a of ajustesRows || []) {
+    const ident = String(a.identificacion || "").trim()
+    if (!ident) continue
+    const key = `${Number(a.idempresa)}|${ident}`
+    ajustesAplicables.set(key, (ajustesAplicables.get(key) || 0) + num(a.valor_ajuste))
+  }
+
   return {
     anio,
     mes,
@@ -356,6 +386,7 @@ async function armarContexto(
     hcAsistenciaPorDia,
     hcReal: (fecha: string, emp: number) => hcPorFechaEmp.get(fecha + "|" + emp)?.size || 0,
     vig: vig || null,
+    ajustesAplicables,
   }
 }
 
@@ -371,7 +402,8 @@ function armarPersona(
   planoRows: any[],
   ctx: CtxRevision,
 ): RevisionNominaData {
-  const { anio, mes, quincena, desde, hasta, metaPorHoraPorDia, horasPersonaPorDia, hcAsistenciaPorDia, hcReal } = ctx
+  const { anio, mes, quincena, desde, hasta, metaPorHoraPorDia, horasPersonaPorDia, hcAsistenciaPorDia, hcReal, ajustesAplicables } =
+    ctx
   const identificacion = String(hc?.identificacion || "").trim()
   const salario = num(hc?.salario)
   const baseDia = salario > 0 ? salario / 30 : 58364
@@ -523,8 +555,15 @@ function armarPersona(
       hcPromedioReal,
     }
 
-    const bono = Math.max(0, neto)
-    const perdida = Math.max(0, -neto)
+    // Ajuste Nómina Anterior aprobado que APLICA a esta quincena (viene del
+    // día de cierre de la quincena ANTERIOR) — se suma ANTES del piso $0,
+    // exactamente como `agrupado_quincena.total_bono_nomina` en
+    // archivoplano_reemplazo.sql. Sin esto, "Neto de la quincena" no incluye
+    // lo que YA está fundido en la novedad 52- que le llega a Siigo.
+    const ajusteNominaAnterior = empresa != null ? ajustesAplicables.get(`${empresa}|${identificacion}`) || 0 : 0
+    const netoConAjuste = neto + ajusteNominaAnterior
+    const bono = Math.max(0, netoConAjuste)
+    const perdida = Math.max(0, -netoConAjuste)
     const resumen: ResumenRevision = {
       baseGarantizada: baseGar,
       ingresoTurno: ingTurno,
@@ -534,6 +573,7 @@ function armarPersona(
       perdida,
       bonosNoPrestacionales: bonosNoPrest,
       excedenteDiaCierre,
+      ajusteNominaAnterior,
       total: baseGar + ingTurno + recDom + bono + bonosNoPrest,
       diasDestajo,
       diasAltos,
