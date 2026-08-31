@@ -19,7 +19,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { AlertTriangle, Briefcase, Check, ChevronsUpDown, Gift, Loader2, Lock, Trash2, Users, X } from "lucide-react"
+import { AlertTriangle, Briefcase, Check, ChevronsUpDown, Eye, EyeOff, Gift, Loader2, Lock, Trash2, Users, X } from "lucide-react"
 import { useAuth } from "@/components/auth-provider"
 import {
   getColaboradoresBonos,
@@ -420,6 +420,7 @@ function ListadoBonosTab() {
   const [claveOk, setClaveOk] = useState(false)
   const [verificando, setVerificando] = useState(false)
   const [claveError, setClaveError] = useState<string | null>(null)
+  const [mostrarClave, setMostrarClave] = useState(false)
 
   const verificarClave = useCallback(async () => {
     setVerificando(true)
@@ -439,6 +440,7 @@ function ListadoBonosTab() {
     setClaveOk(false)
     setClave("")
     setClaveError(null)
+    setMostrarClave(false)
   }, [])
 
   const consultar = useCallback(async () => {
@@ -578,20 +580,36 @@ function ListadoBonosTab() {
                 <Label className="flex items-center gap-1.5">
                   <Lock className="h-3.5 w-3.5" /> Clave de aprobación
                 </Label>
-                <Input
-                  type="password"
-                  value={clave}
-                  onChange={(e) => {
-                    setClave(e.target.value)
-                    setClaveError(null)
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && clave) verificarClave()
-                  }}
-                  placeholder="••••••••"
-                  className="w-[200px]"
-                  autoComplete="off"
-                />
+                <div className="relative w-[200px]">
+                  <Input
+                    type={mostrarClave ? "text" : "password"}
+                    value={clave}
+                    onChange={(e) => {
+                      setClave(e.target.value)
+                      setClaveError(null)
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && clave) verificarClave()
+                    }}
+                    placeholder="••••••••"
+                    className="pr-10"
+                    autoComplete="off"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                    onClick={() => setMostrarClave(!mostrarClave)}
+                  >
+                    {mostrarClave ? (
+                      <EyeOff className="h-4 w-4 text-muted-foreground" />
+                    ) : (
+                      <Eye className="h-4 w-4 text-muted-foreground" />
+                    )}
+                    <span className="sr-only">{mostrarClave ? "Ocultar clave" : "Mostrar clave"}</span>
+                  </Button>
+                </div>
               </div>
               <Button onClick={verificarClave} disabled={!clave || verificando} className="min-w-[130px]">
                 {verificando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Lock className="mr-2 h-4 w-4" />}
