@@ -664,7 +664,36 @@ create or replace view public.pagonomina as
                     -- estaba para no reescribir quincenas ya pagadas y conciliadas.
                     WHEN ((calculo_nomina_base.dia_semana = (0)::numeric) AND (calculo_nomina_base.asistio_ok = 1) AND (calculo_nomina_base.especialidad = true) AND (COALESCE(calculo_nomina_base.toneladas, (0)::numeric) = (0)::numeric)) THEN (calculo_nomina_base.valor_diario_ley * (calculo_nomina_base.pct_recargo_dominical / 100.0))
                     ELSE (0)::numeric
-                END AS recargodominical
+                END AS recargodominical,
+                -- ¿El `recargodominical` de arriba se pagó a tarifa COMPLETA
+                -- (1 + pct, ej. 1,90) o solo al pct del recargo (ej. 0,90)?
+                -- MISMA condición que decide el factor dentro de `recargodominical`
+                -- (si se toca una, tocar la otra): festivo trabajado SIEMPRE
+                -- completo; domingo trabajado completo SOLO si no descansó en
+                -- los 6 días previos ni tiene compensatorio después.
+                --
+                -- Existe para que `archivoplano` pueda mandar la novedad correcta
+                -- a Siigo: "08- Hora extra recargo dominical o festivo" cuando es
+                -- tarifa completa (equivale a una hora extra encima del recargo),
+                -- "25- Recargo dominical o festivo" cuando es solo el recargo.
+                -- ANTES archivoplano decidía 08 vs 25 mirando `pago_domingo` (el
+                -- pago del DÍA DE DESCANSO de quien NO trabajó) — una variable sin
+                -- relación real con la tarifa aplicada, así que CUALQUIER domingo/
+                -- festivo TRABAJADO caía siempre en 25, incluso a tarifa completa.
+                -- Caso real: ROBERTO ENRIQUE HOYOS VIDEZ (ID2), domingo 30-ago-2026,
+                -- trabajó los 7 días previos sin descanso → tarifa completa
+                -- (58.363,50 × 1,9 = 110.890,65, verificado) → debía ir en 08, y
+                -- archivoplano lo mandaba en 25.
+                CASE
+                    WHEN (EXTRACT(day FROM calculo_nomina_base.fecha) = (31)::numeric) THEN false
+                    WHEN ((calculo_nomina_base.fecha >= DATE '2026-07-16')
+                      AND ((calculo_nomina_base.dia_semana = (0)::numeric) OR (calculo_nomina_base.es_festivo = 1))
+                      AND (calculo_nomina_base.trabajo_efectivo = 1)) THEN
+                        (calculo_nomina_base.es_festivo = 1)
+                        OR ((COALESCE(calculo_nomina_base.descansos_semana_anterior, 0) = 0)
+                          AND (COALESCE(calculo_nomina_base.tiene_compensatorio_posterior, 0) = 0))
+                    ELSE false
+                END AS recargo_dominical_tasa_completa
            FROM calculo_nomina_base
         )
  SELECT fecha,
@@ -773,7 +802,12 @@ create or replace view public.pagonomina as
         CASE
             WHEN (TRIM(BOTH FROM asistencia_texto) = ANY (ARRAY['Descanso'::text, '31- Vacaciones disfrutadas'::text, 'Descanso compensatorio domingo anterior'::text, '13- Incapacidad por enfermedad general al 100%'::text, '14- Incapacidad por enfermedad general al 50'::text, '15- Incapacidad por enfermedad general al 66%- ingreso'::text])) THEN (0)::numeric
             ELSE valor_domingo_final
-        END) + recargodominical) AS total_liquidado_dia
+        END) + recargodominical) AS total_liquidado_dia,
+    -- AL FINAL a propósito: esta vista usa CREATE OR REPLACE (no DROP+CREATE
+    -- como archivoplano, que sí depende de ella), y Postgres solo deja AÑADIR
+    -- columnas al final de un CREATE OR REPLACE VIEW — insertarla antes de
+    -- `total_liquidado_dia` rompe con error 42P16.
+    recargo_dominical_tasa_completa
    FROM pre_calculo_valores pc
   WHERE (fecha <= CURRENT_DATE)
     -- Auxiliares de PRUEBA (todos los ID): NUNCA entran a la nómina a pagar.

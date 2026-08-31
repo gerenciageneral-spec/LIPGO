@@ -62,6 +62,15 @@
 --     de uno de esos IDs la plata del otro nunca llegaba a Siigo. Caso real:
 --     ARLEIS JESUS CABELLO JULIO, quincena 16-31 ago 2026: $219.694 en el
 --     plano de ID1 + $165.485 en el de ID3, dos filas del MISMO contrato.
+--   · NOVEDAD 08 vs 25 (domingo/festivo trabajado): la decide
+--     `pagonomina.recargo_dominical_tasa_completa` (tarifa completa 1+pct →
+--     08 "Hora extra recargo dominical o festivo"; solo el pct → 25 "Recargo
+--     dominical o festivo") — YA NO `pago_domingo` (el pago del día de
+--     descanso de quien NO trabajó, sin relación con la tarifa aplicada: todo
+--     domingo/festivo TRABAJADO caía siempre en 25, incluso a tarifa
+--     completa). Caso real: ROBERTO ENRIQUE HOYOS VIDEZ (ID2), domingo
+--     30-ago-2026, 7 días seguidos sin descanso → tarifa completa
+--     (58.363,50 × 1,9 = 110.890,65, verificado) y el plano lo mandaba en 25.
 --   · ANTICIPO DE NÓMINA (Gestión de Solicitudes › Anticipo): rama propia al
 --     final que lee `solicitudes_trabajadores` DIRECTO (mismo patrón que
 --     bonos_nomina — cédula como llave natural, no el nombre frágil de
@@ -130,6 +139,7 @@ create view public.archivoplano as
             COALESCE(p.bonif_no_prestacional, (0)::numeric) AS bonif_no_prestacional,
             p.pago_domingo,
             p.recargodominical,
+            p.recargo_dominical_tasa_completa,
             p.hed,
             p.hedf,
             p.hen,
@@ -548,7 +558,15 @@ UNION ALL
     NULL::text AS fechafin,
     0 AS diasnohabiles
    FROM base_datos
-  WHERE ((EXTRACT(dow FROM base_datos.fecha) = (0)::numeric) AND ((base_datos.recargodominical > (0)::numeric) OR (base_datos.toneladas > (0)::numeric) OR (base_datos.especialidad = true)) AND (COALESCE(base_datos.pago_domingo, (0)::numeric) > (0)::numeric))
+  -- 08 = tarifa COMPLETA (1 + pct, ej. 1,90): festivo trabajado siempre, o
+  -- domingo trabajado SIN descanso previo ni compensatorio posterior. YA NO
+  -- se decide con `pago_domingo` (el pago del día de descanso de quien NO
+  -- trabajó — sin relación con la tarifa aplicada): cualquier domingo/festivo
+  -- TRABAJADO caía siempre en la rama 25, incluso a tarifa completa. Caso
+  -- real: ROBERTO ENRIQUE HOYOS VIDEZ (ID2), domingo 30-ago-2026, 7 días
+  -- seguidos sin descanso → tarifa completa (verificado: 58.363,50 × 1,9 =
+  -- 110.890,65) y el plano lo mandaba en 25.
+  WHERE ((EXTRACT(dow FROM base_datos.fecha) = (0)::numeric) AND ((base_datos.recargodominical > (0)::numeric) OR (base_datos.toneladas > (0)::numeric) OR (base_datos.especialidad = true)) AND (base_datos.recargo_dominical_tasa_completa = true))
   GROUP BY to_char((base_datos.fecha_efectiva_turno)::timestamp with time zone, 'MM'::text),
         CASE
             WHEN (EXTRACT(day FROM base_datos.fecha_efectiva_turno) <= (15)::numeric) THEN 1
@@ -575,7 +593,10 @@ UNION ALL
     NULL::text AS fechafin,
     0 AS diasnohabiles
    FROM base_datos
-  WHERE ((EXTRACT(dow FROM base_datos.fecha) = (0)::numeric) AND ((base_datos.recargodominical > (0)::numeric) OR (base_datos.toneladas > (0)::numeric) OR (base_datos.especialidad = true)) AND (COALESCE(base_datos.pago_domingo, (0)::numeric) = (0)::numeric))
+  -- 25 = SOLO el recargo (pct, ej. 0,90): domingo trabajado CON descanso
+  -- previo o compensatorio posterior — mismo criterio que decide la tarifa
+  -- dentro de `recargodominical`, ver comentario de la rama 08.
+  WHERE ((EXTRACT(dow FROM base_datos.fecha) = (0)::numeric) AND ((base_datos.recargodominical > (0)::numeric) OR (base_datos.toneladas > (0)::numeric) OR (base_datos.especialidad = true)) AND (COALESCE(base_datos.recargo_dominical_tasa_completa, false) = false))
   GROUP BY to_char((base_datos.fecha_efectiva_turno)::timestamp with time zone, 'MM'::text),
         CASE
             WHEN (EXTRACT(day FROM base_datos.fecha_efectiva_turno) <= (15)::numeric) THEN 1
