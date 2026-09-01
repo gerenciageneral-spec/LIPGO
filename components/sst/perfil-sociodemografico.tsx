@@ -12,11 +12,12 @@ import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { SST_TOKENS } from "@/components/sst/sst-utils"
 import { Kpi } from "@/components/sst/sst-form-ui"
 import {
   listPerfilSociodemografico, savePerfilSociodemografico, getPerfilPorDocumento,
-  resolverRevisionPerfil,
+  resolverRevisionPerfil, eliminarPerfil,
 } from "@/lib/sst-perfil-actions"
 import { buscarColaboradorMedevac } from "@/lib/sst-medevac-actions"
 import { getCoberturaSST, type CoberturaSST, type FilaCobertura } from "@/lib/sst-cobertura-actions"
@@ -31,7 +32,7 @@ import {
   TURNO_OPCIONES, CENTRO_POR_EMPRESA, edadDesdeFechaISO,
 } from "@/lib/sst-datos-catalogos"
 import type { PerfilSociodemograficoRow } from "@/lib/sst-evidencia-types"
-import { Users, Loader2, Search, Pencil, X, UserPlus, AlertTriangle, Check } from "lucide-react"
+import { Users, Loader2, Search, Pencil, X, UserPlus, AlertTriangle, Check, Trash2 } from "lucide-react"
 import {
   ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
 } from "recharts"
@@ -180,6 +181,10 @@ export function PerfilSociodemografico({ selectedEmpresaId: propEmpresaId }: { s
   const empresaId = propEmpresaId ?? ctxEmpresaId ?? null
   const [rows, setRows] = useState<PerfilSociodemograficoRow[]>([])
   const [cobertura, setCobertura] = useState<CoberturaSST | null>(null)
+  // Borrar un perfil es DEFINITIVO y no hay papelera, asi que se confirma
+  // mostrando de quien es. Un "¿seguro?" generico no deja ver que se va.
+  const [porEliminar, setPorEliminar] = useState<PerfilSociodemograficoRow | null>(null)
+  const [eliminando, setEliminando] = useState(false)
   const [loading, setLoading] = useState(true)
   const [estado, setEstado] = useState<"activo" | "retirado" | "todos">("activo")
   const [tab, setTab] = useState("analisis")
@@ -298,6 +303,25 @@ export function PerfilSociodemografico({ selectedEmpresaId: propEmpresaId }: { s
   // arriba no deberia esconder un dato pendiente de corregir. Si alguien esta
   // retirado y su perfil quedo mal, sigue siendo un dato malo en el censo.
   const pendientes = useMemo(() => rows.filter((r: any) => r.requiere_revision), [rows])
+
+  async function confirmarEliminar() {
+    if (!porEliminar?.id) return
+    setEliminando(true)
+    const r = await eliminarPerfil(porEliminar.id)
+    setEliminando(false)
+    if (r.success) {
+      toast({
+        title: "Perfil eliminado",
+        description: r.persona
+          ? `Se eliminó el perfil de ${r.persona}. Vuelve a aparecer como pendiente en Cobertura.`
+          : undefined,
+      })
+      setPorEliminar(null)
+      cargar()
+    } else {
+      toast({ title: "No se pudo eliminar", description: r.message })
+    }
+  }
 
   async function marcarRevisado(id?: number) {
     if (!id) return
@@ -497,6 +521,52 @@ export function PerfilSociodemografico({ selectedEmpresaId: propEmpresaId }: { s
         <Kpi t="Actividad física" v={`${kpis.activoPct}%`} c={SST_TOKENS.ok} />
         <Kpi t="Fumadores" v={`${kpis.fumaPct}%`} c={kpis.fumaPct > 20 ? SST_TOKENS.warn : SST_TOKENS.ok} />
       </div>
+
+      {/* Confirmacion de borrado. Se dice QUE se pierde y QUE no: la persona
+          sigue en el head count y su ficha MEDEVAC no se toca; lo que se borra
+          es su caracterizacion sociodemografica, que alguien diligencio una
+          sola vez. */}
+      <Dialog open={!!porEliminar} onOpenChange={(o) => !o && setPorEliminar(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base" style={{ color: SST_TOKENS.bad }}>
+              Eliminar este perfil
+            </DialogTitle>
+          </DialogHeader>
+          {porEliminar && (
+            <div className="space-y-3">
+              <div className="rounded-md border p-3">
+                <div className="text-sm font-semibold">
+                  {[porEliminar.apellidos, porEliminar.nombres].filter(Boolean).join(" ") || "Sin nombre"}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {porEliminar.documento || "sin documento"}
+                  {porEliminar.cargo ? ` · ${porEliminar.cargo}` : ""}
+                  {porEliminar.centro_trabajo ? ` · ${porEliminar.centro_trabajo}` : ""}
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Se borra <b>su perfil sociodemográfico</b> y no se puede deshacer. La persona sigue en
+                el head count y su ficha MEDEVAC no se toca; volverá a aparecer como pendiente en
+                Cobertura y tendrá que diligenciarlo de nuevo desde el portal.
+              </p>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" size="sm" onClick={() => setPorEliminar(null)} disabled={eliminando}>
+                  Cancelar
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={confirmarEliminar}
+                  disabled={eliminando}
+                  style={{ background: SST_TOKENS.bad, color: "white" }}
+                >
+                  {eliminando ? "Eliminando…" : "Sí, eliminar"}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
@@ -918,7 +988,7 @@ export function PerfilSociodemografico({ selectedEmpresaId: propEmpresaId }: { s
                     className="sticky right-0 top-0 z-30 whitespace-nowrap px-2 pt-2 pb-1 text-center"
                     style={{ background: SST_TOKENS.navy, color: "white", height: ALTO_ENCABEZADO }}
                   >
-                    Editar
+                    Acciones
                   </th>
                 </tr>
                 <tr>
@@ -987,6 +1057,15 @@ export function PerfilSociodemografico({ selectedEmpresaId: propEmpresaId }: { s
                         onClick={() => cargarEnFormulario(r)}
                       >
                         <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-muted-foreground hover:text-destructive"
+                        title="Eliminar este perfil"
+                        onClick={() => setPorEliminar(r)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     </td>
                   </tr>

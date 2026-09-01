@@ -204,6 +204,40 @@ export async function savePerfilSociodemografico(
 }
 
 /**
+ * Elimina un perfil del censo.
+ *
+ * Es DEFINITIVO: no hay papelera. Antes de borrar se devuelve a quién
+ * pertenecía, para que la pantalla pueda decirlo en la confirmación y en el
+ * aviso posterior — un "registro eliminado" a secas no deja rastro de qué se
+ * fue, y este dato lo diligenció una persona una sola vez.
+ *
+ * La persona NO desaparece del sistema: su vínculo vive en el head count y su
+ * ficha de emergencia en MEDEVAC. Lo que se borra es su caracterización
+ * sociodemográfica, y con ella vuelve a aparecer como pendiente en Cobertura.
+ */
+export async function eliminarPerfil(id: number): Promise<{ success: boolean; message?: string; persona?: string }> {
+  if (!id) return { success: false, message: "No se indicó qué perfil eliminar." }
+  const supabase: any = await getSupabaseAdmin()
+
+  const { data: antes } = await supabase
+    .from("sst_perfil_sociodemografico")
+    .select("documento, nombres, apellidos")
+    .eq("id", id)
+    .maybeSingle()
+
+  const { error } = await supabase.from("sst_perfil_sociodemografico").delete().eq("id", id)
+  if (error) {
+    console.error("[v0] eliminarPerfil:", error.message, error.code, error.details, error.hint)
+    return { success: false, message: error.message }
+  }
+
+  const persona = antes
+    ? `${String(antes.apellidos ?? "").trim()} ${String(antes.nombres ?? "").trim()}`.trim() || String(antes.documento ?? "")
+    : undefined
+  return { success: true, persona }
+}
+
+/**
  * Quita la marca de "requiere revisión" de un perfil. Se usa cuando SST ya
  * revisó a mano lo que la carga masiva no pudo resolver y confirma que el dato
  * está bien como está.
