@@ -2301,6 +2301,60 @@ export async function getPanelInventarioLIP(
       if (fromIdx > 60000) break // tope de seguridad
     }
 
+    // Anclas físicas reales (fisico_snapshot) — se traen ANTES del segundo
+    // fetch de invtrans porque el saldo real (más abajo) necesita saber desde
+    // qué mes acotar sin perder ninguna ancla. Movido más arriba desde donde
+    // estaba (justo antes de usarlo) por esta misma razón.
+    const anclasPorEmpresaProductoGlobal: Record<number, Record<string, Array<{ mes: string; valor: number }>>> = {}
+    let anclaMesMin: string | null = null
+    try {
+      const { data: cierresGlobal } = await supabase
+        .from("sig_inventario_cierre_mes")
+        .select("proyecto_id, mes, fisico_snapshot")
+        .in("proyecto_id", clientes)
+        .not("fisico_snapshot", "is", null)
+      for (const c of cierresGlobal ?? []) {
+        const porEmp = (anclasPorEmpresaProductoGlobal[c.proyecto_id] ||= {})
+        for (const [cod, valor] of Object.entries(c.fisico_snapshot || {})) {
+          if (valor === undefined || valor === null) continue
+          ;(porEmp[cod] ||= []).push({ mes: c.mes, valor: Number(valor) })
+        }
+        if (!anclaMesMin || c.mes < anclaMesMin) anclaMesMin = c.mes
+      }
+    } catch { /* tabla aún no creada o sin cierres con físico */ }
+
+    // Movimientos PARA EL CÁLCULO DE SALDO REAL — fetch APARTE de `inv`
+    // (arriba, acotado al mes elegido por el usuario). `calcularSaldoReal`
+    // necesita, para cada producto, ver los movimientos desde su última
+    // ancla física real hasta HOY (no solo los del mes que se está viendo) —
+    // igual que getKardexInventario/getMovimientosProducto, que por eso NUNCA
+    // acotan por año/mes para este cálculo (ver su comentario). Si `inv` se
+    // usara aquí (como quedó en el primer intento del fix de rendimiento),
+    // el saldo se "resetea" a ciegas al valor crudo de `saldoinvdetalle`
+    // cada vez que la ancla queda fuera de la ventana filtrada — verificado
+    // con datos reales: hasta 5.405 unidades de diferencia en un proyecto.
+    // Se acota SOLO por la ancla más antigua encontrada (no por `rangoDesde`
+    // del filtro de pantalla) y SIN límite superior (hasta hoy) — sigue
+    // siendo mucho menos que el histórico completo.
+    const invParaSaldo: any[] = []
+    {
+      const saldoDesde = anclaMesMin ? new Date(Date.UTC(Number(anclaMesMin.slice(0, 4)), Number(anclaMesMin.slice(5, 7)) - 1, 1)).toISOString() : null
+      let fIdx = 0
+      while (true) {
+        let q = supabase
+          .from("invtrans")
+          .select("idempresa,tipomov,status,cantidad,creado,codproducto,cod_movimiento")
+          .in("idempresa", clientes)
+        if (saldoDesde) q = q.gte("creado", saldoDesde)
+        const { data, error } = await q.order("id", { ascending: true }).range(fIdx, fIdx + 999)
+        if (error) return { success: false, error: error.message }
+        invParaSaldo.push(...(data ?? []))
+        if (!data || data.length < 1000) break
+        fIdx += 1000
+        if (fIdx > 60000) break
+      }
+    }
+
     // Reprocesos (daños en proceso).
     const { data: repro } = await supabase
       .from("reprocesos")
@@ -2327,25 +2381,11 @@ export async function getPanelInventarioLIP(
     // (`calcularSaldoReal`, la misma fuente que ya usan Kardex y el detalle
     // por producto) — no la suma cruda de `saldoinvdetalle` — para que el
     // total del Panel esté siempre alineado con esas dos pantallas (pedido
-    // explícito del usuario).
-    const anclasPorEmpresaProductoGlobal: Record<number, Record<string, Array<{ mes: string; valor: number }>>> = {}
-    try {
-      const { data: cierresGlobal } = await supabase
-        .from("sig_inventario_cierre_mes")
-        .select("proyecto_id, mes, fisico_snapshot")
-        .in("proyecto_id", clientes)
-        .not("fisico_snapshot", "is", null)
-      for (const c of cierresGlobal ?? []) {
-        const porEmp = (anclasPorEmpresaProductoGlobal[c.proyecto_id] ||= {})
-        for (const [cod, valor] of Object.entries(c.fisico_snapshot || {})) {
-          if (valor === undefined || valor === null) continue
-          ;(porEmp[cod] ||= []).push({ mes: c.mes, valor: Number(valor) })
-        }
-      }
-    } catch { /* tabla aún no creada o sin cierres con físico */ }
+    // explícito del usuario). Usa `invParaSaldo` (desde la ancla más
+    // antigua, sin acotar por el mes elegido en pantalla) — ver más arriba.
     const filasPorProductoGlobal: Record<string, any[]> = {}
     const idempresaPorProductoGlobal: Record<string, number> = {}
-    for (const r of inv) {
+    for (const r of invParaSaldo) {
       const cod = r.codproducto || "(sin código)"
       ;(filasPorProductoGlobal[cod] ||= []).push(r)
       if (idempresaPorProductoGlobal[cod] === undefined) idempresaPorProductoGlobal[cod] = r.idempresa
