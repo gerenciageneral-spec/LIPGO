@@ -438,7 +438,7 @@ export function CuadreInventario() {
               </span>
             )}
             {(sel.estado === "contado") && (
-              <Button size="sm" variant="outline" onClick={generar}>
+              <Button size="sm" onClick={generar} style={{ background: SST_TOKENS.navy, color: "white" }}>
                 <FileCheck2 className="mr-1 h-4 w-4" /> Generar correcciones
               </Button>
             )}
