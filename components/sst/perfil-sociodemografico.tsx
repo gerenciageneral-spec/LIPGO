@@ -68,17 +68,36 @@ const antiguedadAnios = (r: PerfilSociodemograficoRow): number | null => {
 }
 
 // Columnas de la tabla detallada (todo el contexto) + exportación CSV.
-const COLS: { k: keyof PerfilSociodemograficoRow | "_nombre"; l: string }[] = [
-  { k: "documento", l: "Documento" }, { k: "_nombre", l: "Nombre" }, { k: "edad", l: "Edad" }, { k: "sexo", l: "Sexo" },
-  { k: "centro_trabajo", l: "Centro" }, { k: "cargo", l: "Cargo" }, { k: "turno", l: "Turno" }, { k: "fecha_ingreso", l: "Ingreso" },
+// Todas las columnas del formato. "_nombre" y "_antiguedad" son DERIVADAS: la
+// primera junta apellidos y nombres, la segunda se calcula desde la fecha de
+// ingreso. La antiguedad no se guarda a proposito -- el archivo original la
+// traia ya calculada y quedaba desactualizada al dia siguiente.
+const COLS: { k: keyof PerfilSociodemograficoRow | "_nombre" | "_antiguedad"; l: string }[] = [
+  { k: "documento", l: "Documento" }, { k: "documento_tipo", l: "Tipo doc." },
+  { k: "_nombre", l: "Nombre" },
+  { k: "fecha_nacimiento", l: "Nacimiento" }, { k: "edad", l: "Edad" }, { k: "sexo", l: "Sexo" },
+  { k: "centro_trabajo", l: "Centro" }, { k: "cargo", l: "Cargo" }, { k: "turno", l: "Turno" },
+  { k: "fecha_ingreso", l: "Ingreso" }, { k: "_antiguedad", l: "Antigüedad" },
   { k: "eps", l: "EPS" }, { k: "afp", l: "AFP" }, { k: "arl", l: "ARL" },
   { k: "nivel_escolaridad", l: "Escolaridad" }, { k: "estado_civil", l: "Estado civil" }, { k: "grupo_etnico", l: "Grupo étnico" },
   { k: "cabeza_familia", l: "Cabeza fam." }, { k: "num_hijos", l: "Hijos" }, { k: "personas_hogar", l: "Personas hogar" }, { k: "ingresos_familiares", l: "Ingresos" },
-  { k: "tipo_vivienda", l: "Vivienda" }, { k: "zona", l: "Zona" }, { k: "estrato", l: "Estrato" }, { k: "transporte", l: "Transporte" },
-  { k: "municipio_residencia", l: "Municipio" }, { k: "depto_nacimiento", l: "Depto nac." },
+  { k: "tipo_vivienda", l: "Vivienda" }, { k: "caracteristicas_vivienda", l: "Tenencia" },
+  { k: "zona", l: "Zona" }, { k: "estrato", l: "Estrato" }, { k: "transporte", l: "Transporte" },
+  { k: "municipio_residencia", l: "Municipio" }, { k: "direccion", l: "Dirección" },
+  { k: "pais_nacimiento", l: "País nac." }, { k: "depto_nacimiento", l: "Depto nac." },
   { k: "consume_alcohol", l: "Alcohol" }, { k: "actividad_fisica", l: "Act. física" }, { k: "fumador", l: "Fumador" }, { k: "estado", l: "Estado" },
 ]
-const celda = (r: PerfilSociodemograficoRow, k: string) => (k === "_nombre" ? `${T(r.nombres)} ${T(r.apellidos)}`.trim() : T((r as any)[k]))
+const celda = (r: PerfilSociodemograficoRow, k: string): string => {
+  if (k === "_nombre") return `${T(r.apellidos)} ${T(r.nombres)}`.trim()
+  // La antiguedad se DERIVA de la fecha de ingreso. El archivo original la
+  // traia ya calculada en tres columnas (Dia/Mes/Ano) y por eso quedaba
+  // desactualizada al dia siguiente de exportarlo.
+  if (k === "_antiguedad") {
+    const a = antiguedad(T(r.fecha_ingreso))
+    return a ? `${a.anios}a ${a.meses}m ${a.dias}d` : ""
+  }
+  return T((r as any)[k])
+}
 
 // Filtros: uno por cada COLUMNA (su texto genera las opciones). Arriba solo Mes/Año.
 // Un filtro es dropdown si tiene pocos valores; si son muchos (nombre/documento…),
@@ -87,12 +106,26 @@ const MESES = [
   ["01", "Enero"], ["02", "Febrero"], ["03", "Marzo"], ["04", "Abril"], ["05", "Mayo"], ["06", "Junio"],
   ["07", "Julio"], ["08", "Agosto"], ["09", "Septiembre"], ["10", "Octubre"], ["11", "Noviembre"], ["12", "Diciembre"],
 ]
-// Fecha de ingreso: se asume D/M/A (formato Colombia).
+/**
+ * Año y mes de la fecha de ingreso, para los filtros de arriba.
+ *
+ * Acepta LAS DOS formas en que puede venir: `AAAA-MM-DD`, que es como la deja
+ * la carga masiva y como la guarda el formulario, y `D/M/AAAA`, que es como
+ * quedaron los registros viejos escritos a mano.
+ *
+ * Antes solo entendia D/M/A: con una fecha ISO tomaba el DIA como año, asi que
+ * "2025-05-03" se filtraba bajo el año 2003. Se distingue por la posicion de
+ * las cuatro cifras, no por el separador -- los dos formatos usan guion o
+ * barra indistintamente.
+ */
 const ingParts = (r: PerfilSociodemograficoRow) => {
   const p = T(r.fecha_ingreso).split(/[/\-.]/).map((x) => x.trim()).filter(Boolean)
   if (p.length < 3) return { anio: "", mes: "" }
-  let y = p[2]; if (y.length === 2) y = "20" + y
-  const mNum = Number(p[1])
+
+  const isoPrimero = /^\d{4}$/.test(p[0])
+  let y = isoPrimero ? p[0] : p[2]
+  const mNum = Number(p[1])          // el mes va en medio en los dos formatos
+  if (y.length === 2) y = "20" + y
   return { anio: /^\d{4}$/.test(y) ? y : "", mes: mNum >= 1 && mNum <= 12 ? String(mNum).padStart(2, "0") : "" }
 }
 
