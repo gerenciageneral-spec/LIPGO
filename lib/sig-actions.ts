@@ -2230,14 +2230,68 @@ export async function getPanelInventarioLIP(
     const supabase: any = await getSupabaseAdmin()
     const clientes: number[] = proyectoId ? [proyectoId] : SIG_CLIENTES_LIP
 
-    // Traer movimientos (paginado; solo columnas necesarias).
+    // AÑOS DISPONIBLES — consulta aparte, LIVIANA (2 filas: la más vieja y la
+    // más nueva), independiente del rango acotado de abajo. Antes salía de
+    // recorrer TODO `inv` ya cargado — con el acote por año/mes de más abajo,
+    // `inv` ya no trae otros años para poder armar la lista. No asume que
+    // cada año tenga movimiento (falla hacia mostrar el rango completo, no
+    // hacia ocultar años).
+    let aniosDisponibles: string[] = []
+    try {
+      // `.not("creado", "is", null)` + `nullsFirst` explícito en los dos: en
+      // Postgres los NULL van PRIMERO en orden DESCENDENTE por defecto — sin
+      // esto, si existe una sola fila con `creado` vacío, la consulta "más
+      // reciente" la agarra a ELLA en vez de la fecha real más nueva
+      // (encontrado al verificar: devolvía `null` en vez de la fecha de hoy).
+      const [{ data: masVieja }, { data: masNueva }] = await Promise.all([
+        supabase.from("invtrans").select("creado").in("idempresa", clientes).not("creado", "is", null).order("creado", { ascending: true, nullsFirst: false }).limit(1),
+        supabase.from("invtrans").select("creado").in("idempresa", clientes).not("creado", "is", null).order("creado", { ascending: false, nullsFirst: false }).limit(1),
+      ])
+      const anioMin = masVieja?.[0]?.creado ? Number(fechaColombiaDe(masVieja[0].creado).slice(0, 4)) : null
+      const anioMax = masNueva?.[0]?.creado ? Number(fechaColombiaDe(masNueva[0].creado).slice(0, 4)) : null
+      if (anioMin && anioMax) {
+        for (let y = anioMax; y >= anioMin; y--) aniosDisponibles.push(String(y))
+      }
+    } catch { /* sin datos todavía, o error puntual — el fallback de abajo (años vistos en `inv`) sigue cubriendo */ }
+
+    // Traer movimientos (paginado; solo columnas necesarias). ACOTADO por
+    // año/mes cuando vienen dados (el caso normal ahora — el componente ya
+    // no arranca en "todo el año"): antes traía SIEMPRE el histórico
+    // COMPLETO de invtrans de hasta 4 proyectos (hasta 60.000 filas / 60
+    // idas y vueltas) y descartaba en el navegador lo que no era del
+    // periodo elegido — eso es lo que hacía lento el panel, sobre todo
+    // según crece el histórico. El acote usa un margen de 1 día a cada
+    // lado (zona horaria: `creado` es UTC, Colombia es UTC-5) y el filtro
+    // EXACTO por Colombia sigue siendo el mismo de siempre en JS más abajo
+    // (`yr(r.creado)`/`mo(r.creado)`) — el acote solo reduce cuánto se trae,
+    // no cambia qué cuenta como parte del periodo.
+    let rangoDesde: string | null = null
+    let rangoHasta: string | null = null
+    if (anio) {
+      const y = Number(anio)
+      if (mes) {
+        const m = Number(mes)
+        const desde = new Date(Date.UTC(y, m - 1, 1))
+        desde.setUTCDate(desde.getUTCDate() - 1)
+        const hasta = new Date(Date.UTC(y, m, 1))
+        hasta.setUTCDate(hasta.getUTCDate() + 1)
+        rangoDesde = desde.toISOString()
+        rangoHasta = hasta.toISOString()
+      } else {
+        rangoDesde = new Date(Date.UTC(y - 1, 11, 31)).toISOString()
+        rangoHasta = new Date(Date.UTC(y + 1, 0, 2)).toISOString()
+      }
+    }
     const inv: any[] = []
     let fromIdx = 0
     while (true) {
-      const { data, error } = await supabase
+      let q = supabase
         .from("invtrans")
         .select("idempresa,tipomov,origen,status,cantidad,creado,codproducto,nombreproducto,cod_movimiento")
         .in("idempresa", clientes)
+      if (rangoDesde) q = q.gte("creado", rangoDesde)
+      if (rangoHasta) q = q.lt("creado", rangoHasta)
+      const { data, error } = await q
         .order("id", { ascending: true }) // paginación determinista: sin ORDER BY, .range() salta/duplica filas
         .range(fromIdx, fromIdx + 999)
       if (error) return { success: false, error: error.message }
@@ -2307,10 +2361,14 @@ export async function getPanelInventarioLIP(
     const yr = (s: any) => (s ? fechaColombiaDe(s).slice(0, 4) : null)
     const mo = (s: any) => (s ? fechaColombiaDe(s).slice(5, 7) : null)
     const has = (v: any, t: string) => String(v || "").toLowerCase().includes(t)
-    // Años disponibles.
-    const aniosSet = new Set<string>()
-    for (const r of inv) if (yr(r.creado)) aniosSet.add(yr(r.creado)!)
-    const anios = Array.from(aniosSet).sort().reverse()
+    // Años disponibles — de la consulta liviana MIN/MAX de arriba
+    // (`aniosDisponibles`), no de `inv` (que ahora viene acotado al
+    // periodo elegido y ya no trae otros años). Fallback a los años vistos
+    // en `inv` si esa consulta no encontró nada (proyecto nuevo sin
+    // histórico, o algún error puntual).
+    const aniosSetFallback = new Set<string>()
+    for (const r of inv) if (yr(r.creado)) aniosSetFallback.add(yr(r.creado)!)
+    const anios = aniosDisponibles.length ? aniosDisponibles : Array.from(aniosSetFallback).sort().reverse()
     const anioSel = anio || anios[0] || String(new Date().getFullYear())
 
     // ---- Clasificación por TIPO DE MOVIMIENTO (nomenclatura LIPgo) ----

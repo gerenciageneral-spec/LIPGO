@@ -44,8 +44,13 @@ export function PanelInventarioLIP() {
   const actor = (profile as any)?.nombre || (profile as any)?.usuario || user?.email || "usuario LIPgo"
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
-  const [anio, setAnio] = useState<string>("")
-  const [mes, setMes] = useState<string>("")
+  // Año/mes en curso por defecto (no "todo el año"): así la primera carga
+  // del panel ya filtra en la consulta SQL en vez de traer el histórico
+  // completo de invtrans y descartarlo en el navegador — ver
+  // getPanelInventarioLIP, que ahora acota la consulta por estas fechas.
+  const hoyDefault = new Date()
+  const [anio, setAnio] = useState<string>(String(hoyDefault.getFullYear()))
+  const [mes, setMes] = useState<string>(String(hoyDefault.getMonth() + 1).padStart(2, "0"))
   const [kardex, setKardex] = useState<any[]>([])
   const [loadingKardex, setLoadingKardex] = useState(false)
   const [filtroProd, setFiltroProd] = useState<string>("")
