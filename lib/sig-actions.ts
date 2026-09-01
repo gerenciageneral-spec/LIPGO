@@ -3425,7 +3425,14 @@ export async function eliminarCuadre(cuadreId: number): Promise<{ success: boole
 export async function generarAjustesCuadre(cuadreId: number): Promise<{ success: boolean; creados?: number; error?: string }> {
   try {
     const supabase: any = await getSupabaseAdmin()
-    const { data: cab } = await supabase.from("sig_inventario_cuadre").select("proyecto_id,fecha,responsable").eq("id", cuadreId).single()
+    const { data: cab } = await supabase.from("sig_inventario_cuadre").select("proyecto_id,fecha,responsable,estado").eq("id", cuadreId).single()
+    // Idempotente: si ya no esta en "contado" (ya se generaron ajustes antes,
+    // dejandolo en "cerrado"), no repetir -- un doble clic o una carrera de red
+    // (el boton solo deberia desaparecer DESPUES de que este mismo await
+    // resuelva) creaba un segundo lote identico de ajustes, que se aprobaban
+    // los DOS al cerrar el mes, duplicando el movimiento real de inventario.
+    // Encontrado con datos reales 2026-09-01: 13 correcciones se volvieron 26.
+    if ((cab as any)?.estado !== "contado") return { success: true, creados: 0 }
     const { data: det } = await supabase.from("sig_inventario_cuadre_detalle").select("*").eq("cuadre_id", cuadreId)
     const conDif = (det ?? []).filter((d: any) => Number(d.diferencia) !== 0)
     if (conDif.length === 0) return { success: true, creados: 0 }
