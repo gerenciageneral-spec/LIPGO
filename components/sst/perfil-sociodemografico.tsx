@@ -17,6 +17,7 @@ import {
   resolverRevisionPerfil,
 } from "@/lib/sst-perfil-actions"
 import { buscarColaboradorMedevac } from "@/lib/sst-medevac-actions"
+import { getCoberturaSST, type CoberturaSST, type FilaCobertura } from "@/lib/sst-cobertura-actions"
 import { Input } from "@/components/ui/input"
 import { useToast } from "@/hooks/use-toast"
 import { Sec, Row3, Field, Sel } from "@/components/sst/sst-form-ui"
@@ -37,6 +38,10 @@ import {
 // debajo con este mismo valor: al alto natural habria que adivinarlo y la fila
 // quedaria montada sobre el encabezado o despegada de el.
 const ALTO_ENCABEZADO = 30
+
+// Radix Select no admite un item con valor vacio: el "sin filtro" usa este
+// centinela en vez de "".
+const TODOS_COB = "__todos"
 
 const COLORS = ["#0D3B6E", "#00B4CC", "#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6", "#14B8A6", "#F97316", "#64748B"]
 const T = (v: any) => String(v ?? "").trim()
@@ -165,6 +170,7 @@ export function PerfilSociodemografico({ selectedEmpresaId: propEmpresaId }: { s
   const { selectedEmpresaId: ctxEmpresaId } = useAuth()
   const empresaId = propEmpresaId ?? ctxEmpresaId ?? null
   const [rows, setRows] = useState<PerfilSociodemograficoRow[]>([])
+  const [cobertura, setCobertura] = useState<CoberturaSST | null>(null)
   const [loading, setLoading] = useState(true)
   const [estado, setEstado] = useState<"activo" | "retirado" | "todos">("activo")
   const [tab, setTab] = useState("analisis")
@@ -180,7 +186,9 @@ export function PerfilSociodemografico({ selectedEmpresaId: propEmpresaId }: { s
 
   async function cargar() {
     setLoading(true)
-    setRows(await listPerfilSociodemografico(empresaId))
+    const [lista, cob] = await Promise.all([listPerfilSociodemografico(empresaId), getCoberturaSST()])
+    setRows(lista)
+    setCobertura(cob)
     setLoading(false)
   }
   useEffect(() => {
@@ -291,6 +299,50 @@ export function PerfilSociodemografico({ selectedEmpresaId: propEmpresaId }: { s
     } else {
       toast({ title: "No se pudo marcar", description: r.message })
     }
+  }
+
+  // --- Cobertura del censo contra el head count ----------------------------
+  // Filtros propios: aqui el universo son las personas ACTIVAS del head count,
+  // tengan perfil o no, que es un conjunto distinto del listado de arriba
+  // (los perfiles que existen). Compartir los filtros confundiria.
+  const [cobQ, setCobQ] = useState("")
+  const [cobCentro, setCobCentro] = useState(TODOS_COB)
+  const [cobCargo, setCobCargo] = useState(TODOS_COB)
+  const [cobEstado, setCobEstado] = useState("pendientes")
+
+  const filasCobertura = cobertura?.filas ?? []
+
+  const cobOpciones = useMemo(() => {
+    const uniq = (f: (x: FilaCobertura) => string | null) =>
+      [...new Set(filasCobertura.map((x) => T(f(x))).filter(Boolean))].sort((a, b) => a.localeCompare(b, "es"))
+    return { centros: uniq((x) => x.centroTrabajo), cargos: uniq((x) => x.cargo) }
+  }, [filasCobertura])
+
+  const cobFiltrada = useMemo(() => {
+    const t = T(cobQ).toLowerCase()
+    return filasCobertura.filter((x) => {
+      if (cobCentro !== TODOS_COB && T(x.centroTrabajo) !== cobCentro) return false
+      if (cobCargo !== TODOS_COB && T(x.cargo) !== cobCargo) return false
+      // Solo el Perfil: la ficha MEDEVAC tiene su propia cobertura en su modulo.
+      if (cobEstado === "pendientes" && x.perfilCompleto) return false
+      if (cobEstado === "completos" && !x.perfilCompleto) return false
+      if (t && !`${x.nombre} ${x.identificacion}`.toLowerCase().includes(t)) return false
+      return true
+    })
+  }, [filasCobertura, cobQ, cobCentro, cobCargo, cobEstado])
+
+  // Los indicadores se calculan sobre lo FILTRADO: filtrar por un centro y que
+  // los numeros siguieran mostrando el total de la empresa haria que no
+  // cuadraran con la tabla que se ve justo debajo.
+  const cobKpis = useMemo(() => ({
+    n: cobFiltrada.length,
+    conPerfil: cobFiltrada.filter((x) => x.tienePerfil).length,
+    perfilCompleto: cobFiltrada.filter((x) => x.perfilCompleto).length,
+  }), [cobFiltrada])
+
+  const hayFiltroCob = T(cobQ) !== "" || cobCentro !== TODOS_COB || cobCargo !== TODOS_COB || cobEstado !== "pendientes"
+  function limpiarFiltrosCobertura() {
+    setCobQ(""); setCobCentro(TODOS_COB); setCobCargo(TODOS_COB); setCobEstado("pendientes")
   }
 
   const base = useMemo(() => rows.filter((r) => estado === "todos" || (r.estado ?? "activo") === estado), [rows, estado])
@@ -406,6 +458,7 @@ export function PerfilSociodemografico({ selectedEmpresaId: propEmpresaId }: { s
         <TabsList>
           <TabsTrigger value="analisis">Análisis (dashboards)</TabsTrigger>
           <TabsTrigger value="listado">Tabla / Análisis detallado</TabsTrigger>
+          <TabsTrigger value="cobertura">Cobertura</TabsTrigger>
           <TabsTrigger value="pendientes">
             Por corregir
             {pendientes.length > 0 && (
@@ -423,6 +476,131 @@ export function PerfilSociodemografico({ selectedEmpresaId: propEmpresaId }: { s
         {/* Captura manual. El modulo era de solo lectura: el censo dependia por
             completo de que el trabajador lo diligenciara en el portal o de una
             carga masiva. Aqui SST puede crear y corregir registros uno a uno. */}
+        {/* Cobertura del censo contra el head count: la pregunta de auditoría
+            es "¿toda la plantilla tiene su perfil sociodemográfico?", y se
+            responde aquí. Parte del personal ACTIVO, tenga perfil o no, así que
+            puede listar gente que en la tabla de arriba todavía no existe. */}
+        <TabsContent value="cobertura" className="pt-3">
+          {!cobertura ? (
+            <Card className="p-6 text-center text-muted-foreground">Cargando cobertura…</Card>
+          ) : !cobertura.disponible ? (
+            <Card className="p-6 text-sm text-muted-foreground">
+              No se pudo calcular la cobertura. Verifica que la vista <code>vw_sst_datos_colaborador</code>{" "}
+              exista (script <code>scripts/sig/44_medevac_perfil_enlace_y_carga.sql</code>).
+            </Card>
+          ) : (
+            <div className="space-y-3">
+              <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
+                <Kpi t={hayFiltroCob ? "Activos (filtrados)" : "Activos en head count"} v={cobKpis.n} />
+                <Kpi t="Con perfil creado" v={cobKpis.conPerfil} />
+                <Kpi
+                  t="Perfil completo"
+                  v={cobKpis.perfilCompleto}
+                  c={cobKpis.n > 0 && cobKpis.perfilCompleto === cobKpis.n ? SST_TOKENS.ok : SST_TOKENS.warn}
+                />
+                <Kpi
+                  t="Sin perfil completo"
+                  v={cobKpis.n - cobKpis.perfilCompleto}
+                  c={cobKpis.perfilCompleto === cobKpis.n ? SST_TOKENS.ok : SST_TOKENS.bad}
+                />
+              </div>
+
+              <Card className="p-3">
+                <div className="flex flex-wrap items-end gap-2">
+                  <div className="min-w-[14rem] flex-1">
+                    <label className="text-xs" style={{ color: SST_TOKENS.ink }}>Colaborador</label>
+                    <div className="relative">
+                      <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                      <Input value={cobQ} onChange={(e) => setCobQ(e.target.value)} placeholder="Nombre o cédula…" className="pl-8" />
+                    </div>
+                  </div>
+                  <div className="w-48">
+                    <label className="text-xs" style={{ color: SST_TOKENS.ink }}>Centro de trabajo</label>
+                    <Sel v={cobCentro} on={setCobCentro} o={[[TODOS_COB, "Todos los centros"], ...cobOpciones.centros.map((c) => [c, c] as [string, string])]} />
+                  </div>
+                  <div className="w-48">
+                    <label className="text-xs" style={{ color: SST_TOKENS.ink }}>Cargo</label>
+                    <Sel v={cobCargo} on={setCobCargo} o={[[TODOS_COB, "Todos los cargos"], ...cobOpciones.cargos.map((c) => [c, c] as [string, string])]} />
+                  </div>
+                  <div className="w-52">
+                    <label className="text-xs" style={{ color: SST_TOKENS.ink }}>Estado del perfil</label>
+                    <Sel
+                      v={cobEstado}
+                      on={setCobEstado}
+                      o={[
+                        ["pendientes", "Sin perfil completo"],
+                        ["completos", "Con perfil completo"],
+                        ["todos", "Todos"],
+                      ]}
+                    />
+                  </div>
+                  {hayFiltroCob && (
+                    <Button variant="ghost" size="sm" onClick={limpiarFiltrosCobertura} title="Volver al estado inicial">
+                      <X className="mr-1 h-4 w-4" /> Limpiar
+                    </Button>
+                  )}
+                </div>
+                <div className="mt-2 text-xs text-muted-foreground">
+                  <Users className="mr-1 inline h-3.5 w-3.5" />
+                  Personal <b>activo</b> en el head count. El portal del trabajador le exige completar
+                  su perfil cuando entra a pedir un anticipo, un permiso o un certificado. La ficha
+                  MEDEVAC tiene su propia cobertura en su módulo.
+                  {" "}Mostrando <b>{cobFiltrada.length}</b> de {filasCobertura.length}.
+                </div>
+              </Card>
+
+              <Card className="p-0 overflow-x-auto">
+                <div className="max-h-[60vh] overflow-y-auto">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0">
+                      <tr style={{ background: SST_TOKENS.navy, color: "white" }}>
+                        <th className="p-2 text-left">Colaborador</th>
+                        <th className="p-2 text-left">Documento</th>
+                        <th className="p-2 text-left">Centro de trabajo</th>
+                        <th className="p-2 text-left">Cargo</th>
+                        <th className="p-2 text-center">Perfil Sociodemográfico</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cobFiltrada.map((f, i) => (
+                        <tr key={f.identificacion + i} style={{ background: i % 2 ? "#f7fafc" : "white" }}>
+                          <td className="p-2">{f.nombre}</td>
+                          <td className="p-2 text-xs text-muted-foreground">{f.identificacion}</td>
+                          <td className="p-2 text-xs">{f.centroTrabajo || <span className="text-muted-foreground">—</span>}</td>
+                          <td className="p-2 text-xs">{f.cargo || <span className="text-muted-foreground">—</span>}</td>
+                          <td className="p-2 text-center">
+                            {/* Tres estados, no dos: "Falta" es que no hay
+                                registro y hay que crearlo entero; "Incompleto"
+                                es que ya existe y solo le falta un dato. No se
+                                resuelven igual. */}
+                            <Badge
+                              style={{
+                                background: f.perfilCompleto ? SST_TOKENS.ok : f.tienePerfil ? SST_TOKENS.warn : SST_TOKENS.bad,
+                                color: "white",
+                              }}
+                            >
+                              {f.perfilCompleto ? "Completo" : f.tienePerfil ? "Incompleto" : "Falta"}
+                            </Badge>
+                          </td>
+                        </tr>
+                      ))}
+                      {cobFiltrada.length === 0 && (
+                        <tr>
+                          <td colSpan={5} className="p-6 text-center" style={{ color: hayFiltroCob ? undefined : SST_TOKENS.ok }}>
+                            {hayFiltroCob
+                              ? "Nadie coincide con los filtros."
+                              : "Toda la plantilla activa tiene su perfil completo."}
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            </div>
+          )}
+        </TabsContent>
+
         {/* Perfiles que la carga masiva no pudo resolver sola. Mismo
             comportamiento que la pestana equivalente de MEDEVAC: al corregir y
             guardar, o al marcarlos como revisados, salen de esta lista. */}

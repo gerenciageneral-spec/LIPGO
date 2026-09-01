@@ -3,7 +3,6 @@
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getCurrentEmpresaIdForInsert } from "@/lib/user-context"
 import type { MedevacRow } from "@/lib/sst-evidencia-types"
-import { CENTRO_POR_EMPRESA } from "@/lib/sst-datos-catalogos"
 
 // Nota: se usa el cliente admin (service role) en el servidor porque la tabla
 // sst_medevac tiene RLS activo; el acceso al módulo ya lo controla PermissionGuard
@@ -202,63 +201,4 @@ export async function buscarColaboradorMedevac(
       estado: p.estado ?? "",
     },
   }
-}
-
-export interface FilaCobertura {
-  identificacion: string
-  nombre: string
-  cargo: string | null
-  centroTrabajo: string | null
-  tieneMedevac: boolean
-  medevacCompleto: boolean
-  tienePerfil: boolean
-  perfilCompleto: boolean
-}
-
-export interface CoberturaMedevac {
-  /** false cuando la vista todavia no existe: sirve para distinguir "no hay
-   *  nadie" de "falta correr el script", que en pantalla se ven igual. */
-  disponible: boolean
-  filas: FilaCobertura[]
-}
-
-/**
- * Cobertura del MEDEVAC contra el head count: de la gente ACTIVA, quien tiene
- * su tarjeta de emergencia y su perfil, y quien no. Es la respuesta a la
- * pregunta de auditoria "todos los trabajadores tienen plan de emergencia?".
- *
- * Devuelve las filas SIN sumar. Los indicadores los calcula el componente
- * sobre lo que quede filtrado: si se sumaran aqui, al filtrar por un centro de
- * trabajo los indicadores seguirian mostrando el total de la empresa y el
- * numero no coincidiria con la tabla que se esta viendo.
- *
- * Lee la vista vw_sst_datos_colaborador (scripts/sig/44_...).
- */
-export async function getCoberturaMedevac(): Promise<CoberturaMedevac> {
-  const supabase: any = await getSupabaseAdmin()
-  const { data, error } = await supabase
-    .from("vw_sst_datos_colaborador")
-    .select("identificacion, nombre, cargo_headcount, idempresa, centro_trabajo, estado, tiene_medevac, tiene_perfil, medevac_completo, perfil_completo")
-  if (error) {
-    console.error("[v0] getCoberturaMedevac:", error.message, error.code, error.details, error.hint)
-    return { disponible: false, filas: [] }
-  }
-
-  const filas: FilaCobertura[] = (data ?? [])
-    .filter((r: any) => String(r.estado ?? "").trim().toLowerCase() === "activo")
-    .map((r: any) => ({
-      identificacion: r.identificacion ?? "",
-      nombre: r.nombre ?? "",
-      cargo: r.cargo_headcount ?? null,
-      // El centro sale de la ficha MEDEVAC; quien no la tiene se ubica por el
-      // proyecto al que esta asignado en el head count.
-      centroTrabajo: r.centro_trabajo ?? CENTRO_POR_EMPRESA[Number(r.idempresa)] ?? null,
-      tieneMedevac: !!r.tiene_medevac,
-      medevacCompleto: !!r.medevac_completo,
-      tienePerfil: !!r.tiene_perfil,
-      perfilCompleto: !!r.perfil_completo,
-    }))
-    .sort((a: FilaCobertura, b: FilaCobertura) => a.nombre.localeCompare(b.nombre, "es"))
-
-  return { disponible: true, filas }
 }

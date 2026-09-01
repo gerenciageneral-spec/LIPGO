@@ -22,9 +22,9 @@ import { SST_TOKENS } from "@/components/sst/sst-utils"
 import { Kpi, Sec, Row3, Field, Sel } from "@/components/sst/sst-form-ui"
 import {
   listMedevac, saveMedevac, deleteMedevac, buscarColaboradorMedevac,
-  resolverRevisionMedevac, getCoberturaMedevac,
-  type CoberturaMedevac, type FilaCobertura,
+  resolverRevisionMedevac,
 } from "@/lib/sst-medevac-actions"
+import { getCoberturaSST, type CoberturaSST, type FilaCobertura } from "@/lib/sst-cobertura-actions"
 import type { MedevacRow } from "@/lib/sst-evidencia-types"
 import { getPerfilPorDocumento, savePerfilSociodemografico } from "@/lib/sst-perfil-actions"
 import type { PerfilSociodemograficoRow } from "@/lib/sst-evidencia-types"
@@ -177,7 +177,7 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
   const { toast } = useToast()
   const [tab, setTab] = useState("directorio")
   const [rows, setRows] = useState<MedevacRow[]>([])
-  const [cobertura, setCobertura] = useState<CoberturaMedevac | null>(null)
+  const [cobertura, setCobertura] = useState<CoberturaSST | null>(null)
   // Un filtro por columna. Vive en un solo objeto -y no en una variable por
   // campo- para que agregar una columna a COLUMNAS no obligue a tocar el estado.
   const [filtros, setFiltros] = useState<Record<string, string>>({})
@@ -231,7 +231,7 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
   }
 
   async function cargar() {
-    const [lista, cob] = await Promise.all([listMedevac(empresaId), getCoberturaMedevac()])
+    const [lista, cob] = await Promise.all([listMedevac(empresaId), getCoberturaSST()])
     setRows(lista)
     setCobertura(cob)
   }
@@ -492,10 +492,10 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
     return filasCobertura.filter((x) => {
       if (cobCentro !== TODOS && String(x.centroTrabajo ?? "").trim() !== cobCentro) return false
       if (cobCargo !== TODOS && String(x.cargo ?? "").trim() !== cobCargo) return false
-      if (cobEstado === "pendientes" && x.medevacCompleto && x.perfilCompleto) return false
-      if (cobEstado === "sin_medevac" && x.medevacCompleto) return false
-      if (cobEstado === "sin_perfil" && x.perfilCompleto) return false
-      if (cobEstado === "completos" && !(x.medevacCompleto && x.perfilCompleto)) return false
+      // Solo MEDEVAC: el Perfil Sociodemografico tiene su propia cobertura en
+      // su propio modulo.
+      if (cobEstado === "pendientes" && x.medevacCompleto) return false
+      if (cobEstado === "completos" && !x.medevacCompleto) return false
       if (t && !comparable(`${x.nombre} ${x.identificacion}`).includes(t)) return false
       return true
     })
@@ -510,8 +510,6 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
       n,
       conMedevac: cobFiltrada.filter((x) => x.tieneMedevac).length,
       medevacCompleto: cobFiltrada.filter((x) => x.medevacCompleto).length,
-      conPerfil: cobFiltrada.filter((x) => x.tienePerfil).length,
-      perfilCompleto: cobFiltrada.filter((x) => x.perfilCompleto).length,
     }
   }, [cobFiltrada])
 
@@ -749,7 +747,10 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
             </Card>
           ) : (
             <div className="space-y-3">
-              <div className="grid gap-3 grid-cols-2 md:grid-cols-5">
+              {/* Solo MEDEVAC. El estado del Perfil Sociodemografico se ve en
+                  SU propio modulo: mezclarlos hacia que esta pantalla contara
+                  como pendiente algo que no se resuelve desde aqui. */}
+              <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
                 <Kpi t={hayFiltroCob ? "Activos (filtrados)" : "Activos en head count"} v={cobKpis.n} />
                 <Kpi t="Con ficha MEDEVAC" v={cobKpis.conMedevac} />
                 <Kpi
@@ -757,11 +758,10 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
                   v={cobKpis.medevacCompleto}
                   c={cobKpis.n > 0 && cobKpis.medevacCompleto === cobKpis.n ? SST_TOKENS.ok : SST_TOKENS.warn}
                 />
-                <Kpi t="Con Perfil Sociodem." v={cobKpis.conPerfil} />
                 <Kpi
-                  t="Perfil completo"
-                  v={cobKpis.perfilCompleto}
-                  c={cobKpis.n > 0 && cobKpis.perfilCompleto === cobKpis.n ? SST_TOKENS.ok : SST_TOKENS.warn}
+                  t="Sin MEDEVAC completo"
+                  v={cobKpis.n - cobKpis.medevacCompleto}
+                  c={cobKpis.medevacCompleto === cobKpis.n ? SST_TOKENS.ok : SST_TOKENS.bad}
                 />
               </div>
 
@@ -788,10 +788,8 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
                       v={cobEstado}
                       on={setCobEstado}
                       o={[
-                        ["pendientes", "Con algo pendiente"],
-                        ["sin_medevac", "Sin MEDEVAC completo"],
-                        ["sin_perfil", "Sin Perfil completo"],
-                        ["completos", "Solo los completos"],
+                        ["pendientes", "Sin MEDEVAC completo"],
+                        ["completos", "Con MEDEVAC completo"],
                         ["todos", "Todos"],
                       ]}
                     />
@@ -804,8 +802,10 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
                 </div>
                 <div className="mt-2 text-xs text-muted-foreground">
                   <Users className="mr-1 inline h-3.5 w-3.5" />
-                  Personal <b>activo</b> en el head count. El portal del trabajador le exige completar
-                  sus datos cuando entra a pedir un anticipo, un permiso o un certificado.
+                  Personal <b>activo</b> en el head count y el estado de su ficha de emergencia. El
+                  portal del trabajador le exige completarla cuando entra a pedir un anticipo, un
+                  permiso o un certificado. El Perfil Sociodemográfico tiene su propia cobertura en
+                  su módulo.
                   {" "}Mostrando <b>{cobFiltrada.length}</b> de {filasCobertura.length}.
                 </div>
               </Card>
@@ -819,7 +819,6 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
                       <th className="p-2 text-left">Centro de trabajo</th>
                       <th className="p-2 text-left">Cargo</th>
                       <th className="p-2 text-center">MEDEVAC</th>
-                      <th className="p-2 text-center">Perfil Sociodemográfico</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -830,15 +829,14 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
                         <td className="p-2 text-xs">{f.centroTrabajo || <span className="text-muted-foreground">—</span>}</td>
                         <td className="p-2 text-xs">{f.cargo || <span className="text-muted-foreground">—</span>}</td>
                         <td className="p-2 text-center"><SemaforoDatos completo={f.medevacCompleto} existe={f.tieneMedevac} /></td>
-                        <td className="p-2 text-center"><SemaforoDatos completo={f.perfilCompleto} existe={f.tienePerfil} /></td>
                       </tr>
                     ))}
                     {cobFiltrada.length === 0 && (
                       <tr>
-                        <td colSpan={6} className="p-6 text-center" style={{ color: hayFiltroCob ? undefined : SST_TOKENS.ok }}>
+                        <td colSpan={5} className="p-6 text-center" style={{ color: hayFiltroCob ? undefined : SST_TOKENS.ok }}>
                           {hayFiltroCob
                             ? "Nadie coincide con los filtros."
-                            : "Toda la plantilla activa tiene su MEDEVAC y su Perfil completos."}
+                            : "Toda la plantilla activa tiene su ficha MEDEVAC completa."}
                         </td>
                       </tr>
                     )}
