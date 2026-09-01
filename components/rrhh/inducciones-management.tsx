@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -26,6 +26,9 @@ import {
   ExternalLink,
   Copy,
   Download,
+  X,
+  UserMinus,
+  AlertTriangle,
 } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -36,14 +39,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
 import {
   Dialog,
   DialogContent,
@@ -66,6 +61,7 @@ import {
   type InduccionAdmin,
   type PreguntaAdmin,
   type TrabajadorOpcion,
+  type EstadoInduccion,
 } from "@/lib/inducciones-actions"
 import { getAccessibleEmpresesFromPermisos } from "@/lib/orders-actions"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -103,6 +99,82 @@ const MESES = [
 const AHORA = new Date()
 // Rango de anios seleccionables: anio anterior hasta dos anios adelante.
 const ANIOS = Array.from({ length: 4 }, (_, i) => AHORA.getFullYear() - 1 + i)
+
+// Etiqueta "Mes Anio" a partir de la fecha programada 'YYYY-MM-DD'.
+// Vive fuera del componente porque tambien la usan el filtro de columna y el
+// armado de sus opciones, que se calculan antes de renderizar.
+function labelProgramada(fecha: string | null): string {
+  if (!fecha) return "Sin programar"
+  const [y, m] = fecha.split("-")
+  const mi = parseInt(m, 10) - 1
+  if (mi < 0 || mi > 11) return "Sin programar"
+  return `${MESES[mi]} ${y}`
+}
+
+const ETIQUETA_ESTADO: Record<EstadoInduccion, string> = {
+  sin_programar: "Sin programar",
+  programada: "Programada",
+  ejecutada: "Ejecutada",
+}
+
+const ORDEN_ESTADO: EstadoInduccion[] = ["sin_programar", "programada", "ejecutada"]
+
+/** Texto comparable: sin mayusculas y sin tildes, para que buscar "induccion"
+ *  tambien encuentre "Inducción". */
+const comparable = (v: unknown) =>
+  String(v ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+
+/** Valor del desplegable "Todos". No puede ser "" porque Radix Select no
+ *  acepta un SelectItem con valor vacio. */
+const TODOS = "__todos__"
+
+/** Alto de la fila de encabezado. La fila de filtros se ancla justo debajo con
+ *  este mismo numero; si cambia el padding del th, hay que ajustarlo aqui. */
+const ALTO_ENCABEZADO = 34
+
+type ColumnaLista = {
+  k: string
+  l: string
+  min: string
+  tipo: "texto" | "lista"
+  centrado?: boolean
+  ph?: string
+}
+
+// Una entrada por columna visible de la tabla. De aqui salen el encabezado, la
+// fila de filtros y el filtrado, para que no puedan desalinearse entre si.
+const COLUMNAS_LISTA: ColumnaLista[] = [
+  { k: "codigo", l: "Código", min: "8rem", tipo: "texto", ph: "Código…" },
+  { k: "tema", l: "Tema", min: "20rem", tipo: "texto", ph: "Tema…" },
+  { k: "programada", l: "Programada", min: "10rem", tipo: "lista" },
+  { k: "preguntas", l: "Preguntas", min: "6.5rem", tipo: "texto", centrado: true, ph: "N.º" },
+  { k: "aprueba", l: "Aprueba con", min: "7.5rem", tipo: "texto", centrado: true, ph: "N.º" },
+  { k: "estado", l: "Estado", min: "11rem", tipo: "lista", centrado: true },
+]
+
+/** Texto por el que se filtra cada columna. Es el MISMO que se ve en pantalla:
+ *  si difirieran, filtrar por lo que uno lee no traeria la fila. */
+function valorCelda(ind: InduccionAdmin, k: string): string {
+  switch (k) {
+    case "codigo":
+      return ind.codigo_sig || ""
+    case "tema":
+      return ind.tema || ""
+    case "programada":
+      return labelProgramada(ind.fecha)
+    case "preguntas":
+      return String(ind.total_preguntas)
+    case "aprueba":
+      return `${ind.puntaje_aprobacion}/${ind.total_preguntas}`
+    case "estado":
+      return ETIQUETA_ESTADO[ind.estado] ?? ""
+    default:
+      return ""
+  }
+}
 
 const EMPTY_FORM: FormState = {
   id: null,
@@ -162,6 +234,12 @@ export default function InduccionesManagement() {
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
   const [preguntas, setPreguntas] = useState<PreguntaAdmin[]>([])
   const [uploadingMaterial, setUploadingMaterial] = useState(false)
+  // Un valor por columna. Vacio (o TODOS en los desplegables) = sin filtrar.
+  const [filtros, setFiltros] = useState<Record<string, string>>({})
+  // La induccion abierta en el dialogo de edicion. Se guarda aparte del
+  // formulario porque `form` no lleva los trabajadores programados y el bloque
+  // de "personas programadas" los necesita.
+  const [editando, setEditando] = useState<InduccionAdmin | null>(null)
   const { toast } = useToast()
   const { selectedEmpresaId } = useAuth()
 
@@ -177,7 +255,57 @@ export default function InduccionesManagement() {
     setLoading(false)
   }
 
+  const setFiltro = (k: string, v: string) => setFiltros((prev) => ({ ...prev, [k]: v }))
+  const limpiarFiltros = () => setFiltros({})
+
+  // Las opciones de cada desplegable se arman con lo que REALMENTE hay en los
+  // datos, no con una lista fija: asi ningun filtro puede devolver cero filas.
+  const opcionesPorColumna = useMemo(() => {
+    const m: Record<string, string[]> = {}
+
+    // Los meses van en orden cronologico, no alfabetico: un desplegable que
+    // empieza en "Abril 2026" y sigue en "Agosto 2025" no le sirve a nadie.
+    const porFecha = new Map<string, string>()
+    for (const ind of inducciones) {
+      const etiqueta = labelProgramada(ind.fecha)
+      // "9999" empuja "Sin programar" al final de la lista.
+      if (!porFecha.has(etiqueta)) porFecha.set(etiqueta, ind.fecha || "9999-99-99")
+    }
+    m.programada = [...porFecha.entries()]
+      .sort((a, b) => a[1].localeCompare(b[1]))
+      .map(([etiqueta]) => etiqueta)
+
+    const estadosPresentes = new Set(inducciones.map((i) => i.estado))
+    m.estado = ORDEN_ESTADO.filter((e) => estadosPresentes.has(e)).map((e) => ETIQUETA_ESTADO[e])
+
+    return m
+  }, [inducciones])
+
+  const filtrosActivos = COLUMNAS_LISTA.filter((c) => {
+    const v = filtros[c.k] ?? ""
+    return c.tipo === "lista" ? Boolean(v) && v !== TODOS : v.trim() !== ""
+  })
+  const hayFiltro = filtrosActivos.length > 0
+  const resumenFiltros = filtrosActivos.map((c) => `${c.l}: ${filtros[c.k]}`).join(" · ")
+
+  const induccionesFiltradas = useMemo(() => {
+    const activos = COLUMNAS_LISTA.map((c) => ({ c, v: filtros[c.k] ?? "" })).filter(({ c, v }) =>
+      c.tipo === "lista" ? Boolean(v) && v !== TODOS : v.trim() !== "",
+    )
+    if (activos.length === 0) return inducciones
+    return inducciones.filter((ind) =>
+      activos.every(({ c, v }) =>
+        // Los desplegables exigen coincidencia exacta; los de texto buscan por
+        // fragmento, para poder escribir "segur" y encontrar "Seguridad".
+        c.tipo === "lista"
+          ? valorCelda(ind, c.k) === v
+          : comparable(valorCelda(ind, c.k)).includes(comparable(v)),
+      ),
+    )
+  }, [inducciones, filtros])
+
   const openNew = () => {
+    setEditando(null)
     setForm(EMPTY_FORM)
     setPreguntas([nuevaPregunta(1)])
     setOpen(true)
@@ -212,6 +340,7 @@ export default function InduccionesManagement() {
       puntaje_aprobacion: String(res.induccion.puntaje_aprobacion || 1),
     })
     setPreguntas(res.preguntas.length > 0 ? res.preguntas : [nuevaPregunta(1)])
+    setEditando(ind)
     setOpen(true)
   }
 
@@ -305,8 +434,9 @@ export default function InduccionesManagement() {
     setBuscarTrab("")
     setLoadingTrab(true)
     // Si la induccion es administrativa, se listan todos los administrativos
-    // sin filtrar por empresa.
-    const res = await listTrabajadoresEmpresa(selectedEmpresaId, ind.admin)
+    // sin filtrar por empresa. Se pasan ademas los ya programados para que el
+    // que se haya retirado siga apareciendo y se pueda quitar de la lista.
+    const res = await listTrabajadoresEmpresa(selectedEmpresaId, ind.admin, ind.trabajadores)
     setLoadingTrab(false)
     if (res.success) setTrabajadores(res.data)
     else toast({ title: "Error", description: res.error, variant: "destructive" })
@@ -347,14 +477,24 @@ export default function InduccionesManagement() {
     )
   })
 
-  // Etiqueta "Mes Año" a partir de la fecha programada 'YYYY-MM-DD'.
-  const labelProgramada = (fecha: string | null): string => {
-    if (!fecha) return "Sin programar"
-    const [y, m] = fecha.split("-")
-    const mi = parseInt(m, 10) - 1
-    if (mi < 0 || mi > 11) return "Sin programar"
-    return `${MESES[mi]} ${y}`
+  // Programados que ya no salen en el listado normal: se retiraron o pasaron a
+  // otro proyecto. Van de primeros porque son los que hay que decidir; el resto
+  // de la lista ya esta como debe estar.
+  const asignadosFuera = trabajadoresFiltrados.filter((t) => !t.disponible)
+  const seleccionables = trabajadoresFiltrados.filter((t) => t.disponible)
+  const listaProgramar = [...asignadosFuera, ...seleccionables]
+
+  const quitarAsignadosFuera = () => {
+    setSeleccion((prev) => {
+      const next = new Set(prev)
+      // Se recorre `trabajadores` y no la lista filtrada: si hay una busqueda
+      // escrita, el boton igual tiene que quitarlos a todos.
+      trabajadores.filter((t) => !t.disponible).forEach((t) => next.delete(t.id))
+      return next
+    })
   }
+
+  const totalFuera = trabajadores.filter((t) => !t.disponible && seleccion.has(t.id)).length
 
   const updatePregunta = (idx: number, patch: Partial<PreguntaAdmin>) => {
     setPreguntas((prev) => prev.map((p, i) => (i === idx ? { ...p, ...patch } : p)))
@@ -472,118 +612,232 @@ export default function InduccionesManagement() {
               </EmptyHeader>
             </Empty>
           ) : (
-            <div className="border rounded-lg overflow-hidden">
-              <Table>
-                <TableHeader>
-                  <TableRow className="bg-muted/50">
-                    <TableHead>Código</TableHead>
-                    <TableHead>Tema</TableHead>
-                    <TableHead>Programada</TableHead>
-                    <TableHead className="text-center">Preguntas</TableHead>
-                    <TableHead className="text-center">Aprueba con</TableHead>
-                    <TableHead className="text-center">Estado</TableHead>
-                    <TableHead className="text-right">Acciones</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {inducciones.map((ind) => (
-                    <TableRow key={ind.id}>
-                      <TableCell className="font-mono text-sm">{ind.codigo_sig || "—"}</TableCell>
-                      <TableCell className="font-medium">
-                        <div className="flex items-center gap-2">
-                          <span>{ind.tema}</span>
-                          {ind.admin && (
-                            <Badge variant="secondary" className="text-[10px]">
-                              Administrativa
-                            </Badge>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm whitespace-nowrap">
-                        {ind.fecha ? (
-                          labelProgramada(ind.fecha)
-                        ) : (
-                          <span className="text-muted-foreground">Sin programar</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-center">{ind.total_preguntas}</TableCell>
-                      <TableCell className="text-center">
-                        {ind.puntaje_aprobacion}/{ind.total_preguntas}
-                      </TableCell>
-                      <TableCell className="text-center">
-                        {ind.estado === "ejecutada" ? (
-                          <Badge className="bg-green-100 text-green-800 border-green-300 hover:bg-green-100 gap-1">
-                            <CheckCircle2 className="h-3 w-3" />
-                            Ejecutada
-                          </Badge>
-                        ) : ind.estado === "programada" ? (
-                          <Badge className="bg-amber-100 text-amber-800 border-amber-300 hover:bg-amber-100 gap-1">
-                            <CalendarClock className="h-3 w-3" />
-                            Programada {ind.completados}/{ind.trabajadores.length}
-                          </Badge>
-                        ) : (
-                          <Badge variant="secondary" className="gap-1">
-                            <CircleDashed className="h-3 w-3" />
-                            Sin programar
-                          </Badge>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right space-x-2">
-                        <Button
-                          size="sm"
-                          variant={ind.estado === "sin_programar" ? "default" : "outline"}
-                          onClick={() => abrirProgramar(ind)}
-                          className="gap-1"
-                          title="Programar trabajadores"
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                <span>
+                  {induccionesFiltradas.length === inducciones.length
+                    ? `${inducciones.length} inducción(es)`
+                    : `${induccionesFiltradas.length} de ${inducciones.length} inducción(es)`}
+                  {resumenFiltros ? ` · ${resumenFiltros}` : ""}
+                </span>
+                {hayFiltro && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 gap-1 px-2 text-xs"
+                    onClick={limpiarFiltros}
+                  >
+                    <X className="h-3 w-3" />
+                    Limpiar filtros
+                  </Button>
+                )}
+              </div>
+
+              {/* La tabla vive dentro de un contenedor con alto maximo: crece
+                  hasta ahi y de ahi en adelante se desplaza por dentro, en vez
+                  de estirar la pagina. El encabezado y la fila de filtros
+                  quedan fijos arriba; Codigo y Acciones, fijos a los lados. */}
+              <div className="relative max-h-[62vh] overflow-auto rounded-lg border">
+                <table className="w-max min-w-full border-separate border-spacing-0 text-sm">
+                  <thead>
+                    <tr>
+                      {COLUMNAS_LISTA.map((c, idx) => (
+                        <th
+                          key={c.k}
+                          className={`sticky top-0 whitespace-nowrap border-b bg-muted p-2 text-xs font-semibold ${
+                            c.centrado ? "text-center" : "text-left"
+                          } ${idx === 0 ? "left-0 z-30" : "z-20"}`}
+                          style={{ minWidth: c.min, height: ALTO_ENCABEZADO }}
                         >
-                          <Users className="w-4 h-4" />
-                          Programar
-                        </Button>
-                        {ind.material_url && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            asChild
-                            className="gap-1"
-                            title="Descargar el material (PPT / PDF / HTML / URL)"
-                          >
-                            <a
-                              href={materialDownloadUrl(ind.material_url)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              download
+                          {c.l}
+                        </th>
+                      ))}
+                      <th
+                        className="sticky right-0 top-0 z-30 whitespace-nowrap border-b bg-muted p-2 text-right text-xs font-semibold"
+                        style={{ minWidth: "23rem", height: ALTO_ENCABEZADO }}
+                      >
+                        Acciones
+                      </th>
+                    </tr>
+                    {/* Un filtro por columna, justo debajo de su encabezado: se
+                        ve de inmediato por que campo se esta filtrando. */}
+                    <tr>
+                      {COLUMNAS_LISTA.map((c, idx) => (
+                        <th
+                          key={c.k}
+                          className={`sticky border-b bg-card p-1 ${idx === 0 ? "left-0 z-30" : "z-20"}`}
+                          style={{ minWidth: c.min, top: ALTO_ENCABEZADO }}
+                        >
+                          {c.tipo === "lista" ? (
+                            <Select
+                              value={filtros[c.k] ?? TODOS}
+                              onValueChange={(v) => setFiltro(c.k, v)}
                             >
-                              <Download className="w-4 h-4" />
-                              Material
-                            </a>
-                          </Button>
-                        )}
-                        <Button size="sm" variant="outline" onClick={() => openEdit(ind)} className="gap-1">
-                          <Edit2 className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => abrirDuplicar(ind)}
-                          className="gap-1"
-                          title="Duplicar en otros proyectos"
+                              <SelectTrigger className="h-8 text-xs">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value={TODOS}>Todos</SelectItem>
+                                {(opcionesPorColumna[c.k] ?? []).map((o) => (
+                                  <SelectItem key={o} value={o}>
+                                    {o}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <Input
+                              className="h-8 text-xs"
+                              value={filtros[c.k] ?? ""}
+                              onChange={(e) => setFiltro(c.k, e.target.value)}
+                              placeholder={c.ph ?? "Buscar…"}
+                            />
+                          )}
+                        </th>
+                      ))}
+                      <th
+                        className="sticky right-0 z-30 border-b bg-card p-1"
+                        style={{ top: ALTO_ENCABEZADO }}
+                      />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {induccionesFiltradas.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={COLUMNAS_LISTA.length + 1}
+                          className="bg-card p-10 text-center text-sm text-muted-foreground"
                         >
-                          <Copy className="w-4 h-4" />
-                          Duplicar
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          onClick={() => handleDelete(ind.id)}
-                          className="gap-1"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                          Ninguna inducción coincide con los filtros.
+                        </td>
+                      </tr>
+                    ) : (
+                      induccionesFiltradas.map((ind) => (
+                        <tr key={ind.id} className="group">
+                          <td
+                            className="sticky left-0 z-10 border-b bg-card p-2 font-mono text-xs group-hover:bg-muted"
+                            style={{ minWidth: COLUMNAS_LISTA[0].min }}
+                          >
+                            {ind.codigo_sig || "—"}
+                          </td>
+                          <td
+                            className="border-b bg-card p-2 font-medium group-hover:bg-muted"
+                            style={{ minWidth: COLUMNAS_LISTA[1].min }}
+                          >
+                            <div className="flex items-center gap-2">
+                              <span>{ind.tema}</span>
+                              {ind.admin && (
+                                <Badge variant="secondary" className="text-[10px]">
+                                  Administrativa
+                                </Badge>
+                              )}
+                            </div>
+                          </td>
+                          <td
+                            className="whitespace-nowrap border-b bg-card p-2 text-sm group-hover:bg-muted"
+                            style={{ minWidth: COLUMNAS_LISTA[2].min }}
+                          >
+                            {ind.fecha ? (
+                              labelProgramada(ind.fecha)
+                            ) : (
+                              <span className="text-muted-foreground">Sin programar</span>
+                            )}
+                          </td>
+                          <td
+                            className="border-b bg-card p-2 text-center group-hover:bg-muted"
+                            style={{ minWidth: COLUMNAS_LISTA[3].min }}
+                          >
+                            {ind.total_preguntas}
+                          </td>
+                          <td
+                            className="border-b bg-card p-2 text-center group-hover:bg-muted"
+                            style={{ minWidth: COLUMNAS_LISTA[4].min }}
+                          >
+                            {ind.puntaje_aprobacion}/{ind.total_preguntas}
+                          </td>
+                          <td
+                            className="border-b bg-card p-2 text-center group-hover:bg-muted"
+                            style={{ minWidth: COLUMNAS_LISTA[5].min }}
+                          >
+                            {ind.estado === "ejecutada" ? (
+                              <Badge className="bg-green-100 text-green-800 border-green-300 hover:bg-green-100 gap-1">
+                                <CheckCircle2 className="h-3 w-3" />
+                                Ejecutada
+                              </Badge>
+                            ) : ind.estado === "programada" ? (
+                              <Badge
+                                className="bg-amber-100 text-amber-800 border-amber-300 hover:bg-amber-100 gap-1 cursor-pointer"
+                                onClick={() => abrirProgramar(ind)}
+                                title="Diligenciados / programados — clic para ajustar la lista"
+                              >
+                                <CalendarClock className="h-3 w-3" />
+                                Programada {ind.completados}/{ind.trabajadores.length}
+                              </Badge>
+                            ) : (
+                              <Badge variant="secondary" className="gap-1">
+                                <CircleDashed className="h-3 w-3" />
+                                Sin programar
+                              </Badge>
+                            )}
+                          </td>
+                          <td className="sticky right-0 z-10 space-x-2 whitespace-nowrap border-b bg-card p-2 text-right group-hover:bg-muted">
+                            <Button
+                              size="sm"
+                              variant={ind.estado === "sin_programar" ? "default" : "outline"}
+                              onClick={() => abrirProgramar(ind)}
+                              className="gap-1"
+                              title="Programar trabajadores"
+                            >
+                              <Users className="w-4 h-4" />
+                              Programar
+                            </Button>
+                            {ind.material_url && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                asChild
+                                className="gap-1"
+                                title="Descargar el material (PPT / PDF / HTML / URL)"
+                              >
+                                <a
+                                  href={materialDownloadUrl(ind.material_url)}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  download
+                                >
+                                  <Download className="w-4 h-4" />
+                                  Material
+                                </a>
+                              </Button>
+                            )}
+                            <Button size="sm" variant="outline" onClick={() => openEdit(ind)} className="gap-1">
+                              <Edit2 className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => abrirDuplicar(ind)}
+                              className="gap-1"
+                              title="Duplicar en otros proyectos"
+                            >
+                              <Copy className="w-4 h-4" />
+                              Duplicar
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => handleDelete(ind.id)}
+                              className="gap-1"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </TabsContent>
@@ -762,6 +1016,40 @@ export default function InduccionesManagement() {
                   sin importar el proyecto)
                 </Label>
               </div>
+              {editando && (
+                <div className="md:col-span-2 rounded-lg border bg-muted/40 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm">
+                      <span className="font-medium">
+                        Personas programadas: {editando.trabajadores.length}
+                      </span>
+                      <span className="text-muted-foreground">
+                        {" "}
+                        · diligenciaron {editando.completados}
+                      </span>
+                    </p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="gap-1.5"
+                      onClick={() => {
+                        const ind = editando
+                        setOpen(false)
+                        abrirProgramar(ind)
+                      }}
+                    >
+                      <Users className="h-3.5 w-3.5" />
+                      Ajustar programados
+                    </Button>
+                  </div>
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    La cantidad se cambia quitando o agregando personas, no escribiendo un número:
+                    cada programado tiene la inducción pendiente en su portal, así que bajar de 16 a
+                    15 es decidir a quién se le quita. Ahí aparecen también los que ya se retiraron.
+                  </p>
+                </div>
+              )}
               <p className="md:col-span-2 text-xs text-muted-foreground">
                 La inducción se programa para el mes y año indicados. Usa{" "}
                 <strong>Programar</strong> para asignar los trabajadores a los que se les impartió;
@@ -926,24 +1214,54 @@ export default function InduccionesManagement() {
               />
             </div>
 
+            {totalFuera > 0 && (
+              <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+                <p className="flex items-start gap-2 font-medium">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  {totalFuera} programado(s) ya no están activos en el head count
+                </p>
+                <p className="mt-1.5 pl-[1.375rem]">
+                  Siguen contando en el total, así que la inducción no llega al 100%. Quítalos para
+                  que la cantidad programada baje —de 16 a 15, por ejemplo— y pueda pasar a
+                  ejecutada.
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={quitarAsignadosFuera}
+                  className="mt-2 h-7 gap-1.5 border-amber-400 bg-white px-2 text-[11px] text-amber-900 hover:bg-amber-100"
+                >
+                  <UserMinus className="h-3.5 w-3.5" />
+                  Quitar a los {totalFuera} que ya no están
+                </Button>
+              </div>
+            )}
+
             <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>{seleccion.size} seleccionado(s)</span>
-              {trabajadoresFiltrados.length > 0 && (
+              <span>
+                <span className="font-medium text-foreground">
+                  {seleccion.size} programado(s)
+                </span>
+                {programando && seleccion.size !== programando.trabajadores.length && (
+                  <span> · antes {programando.trabajadores.length}</span>
+                )}
+              </span>
+              {seleccionables.length > 0 && (
                 <button
                   type="button"
                   className="text-primary hover:underline"
                   onClick={() => {
-                    const allSelected = trabajadoresFiltrados.every((t) => seleccion.has(t.id))
+                    const todosMarcados = seleccionables.every((t) => seleccion.has(t.id))
                     setSeleccion((prev) => {
                       const next = new Set(prev)
-                      trabajadoresFiltrados.forEach((t) =>
-                        allSelected ? next.delete(t.id) : next.add(t.id),
+                      seleccionables.forEach((t) =>
+                        todosMarcados ? next.delete(t.id) : next.add(t.id),
                       )
                       return next
                     })
                   }}
                 >
-                  {trabajadoresFiltrados.every((t) => seleccion.has(t.id))
+                  {seleccionables.every((t) => seleccion.has(t.id))
                     ? "Quitar todos"
                     : "Seleccionar todos"}
                 </button>
@@ -961,15 +1279,25 @@ export default function InduccionesManagement() {
                 </p>
               ) : (
                 <ul className="divide-y">
-                  {trabajadoresFiltrados.map((t) => (
-                    <li key={t.id}>
+                  {listaProgramar.map((t) => (
+                    <li key={t.id} className={t.disponible ? "" : "bg-amber-50"}>
                       <label className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-muted/50">
                         <Checkbox
                           checked={seleccion.has(t.id)}
                           onCheckedChange={() => toggleSeleccion(t.id)}
                         />
                         <div className="min-w-0">
-                          <p className="text-sm font-medium truncate">{t.nombre}</p>
+                          <p className="flex items-center gap-1.5 text-sm font-medium truncate">
+                            {t.nombre}
+                            {!t.disponible && (
+                              <Badge
+                                variant="outline"
+                                className="shrink-0 border-amber-400 text-[10px] font-normal text-amber-800"
+                              >
+                                {t.estado ? t.estado : "Fuera del listado"}
+                              </Badge>
+                            )}
+                          </p>
                           <p className="text-xs text-muted-foreground truncate">
                             {t.identificacion || "—"}
                             {t.cargo ? ` · ${t.cargo}` : ""}

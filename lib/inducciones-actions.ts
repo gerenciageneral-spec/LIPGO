@@ -754,23 +754,42 @@ export interface TrabajadorOpcion {
   nombre: string
   identificacion: string | null
   cargo: string | null
+  /** Estado en el head count tal cual esta guardado: "Activo", "Inactivo"... */
+  estado: string | null
+  /**
+   * false cuando el trabajador YA NO sale en el listado normal --se retiro, o
+   * quedo en otro proyecto-- y aparece unicamente porque sigue asignado a esta
+   * induccion.
+   *
+   * Es la unica forma de poder quitarlo. Mientras no se listara, el que se iba
+   * de la empresa quedaba asignado para siempre: el denominador de "15/16" no
+   * bajaba nunca y la induccion no alcanzaba el 100% ni pasaba a ejecutada.
+   */
+  disponible: boolean
 }
 
 /**
  * Lista los trabajadores (headcount) para seleccionarlos al programar una
  * induccion. Si `admin` es true se devuelven TODOS los administrativos sin
  * filtrar por empresa; de lo contrario, los de la empresa indicada.
+ *
+ * `asignados` son los IDs que la induccion ya tiene programados. Los que no
+ * aparezcan en el listado normal se agregan igual, marcados `disponible: false`.
+ * Sin eso no habia manera de reducir la cantidad de programados: al retirarse
+ * una persona desaparecia del selector pero seguia contando en el denominador,
+ * y "Programada 15/16" se quedaba asi indefinidamente.
  */
 export async function listTrabajadoresEmpresa(
   idempresa?: number | null,
   admin?: boolean,
+  asignados?: number[],
 ): Promise<{ success: boolean; data: TrabajadorOpcion[]; error?: string }> {
   try {
     const supabase = await createClient()
     // Solo se listan trabajadores activos para marcar el listado de asistencia.
     let query = supabase
       .from("headcount")
-      .select("id, nombre, identificacion, cargo")
+      .select("id, nombre, identificacion, cargo, estado")
       .eq("estado", "Activo")
       .order("nombre", { ascending: true })
     if (admin) {
@@ -784,15 +803,58 @@ export async function listTrabajadoresEmpresa(
       console.error("[v0] listTrabajadoresEmpresa error:", error)
       return { success: false, data: [], error: error.message }
     }
-    return {
-      success: true,
-      data: (data || []).map((r: any) => ({
-        id: Number(r.id),
-        nombre: r.nombre || "(sin nombre)",
-        identificacion: r.identificacion ?? null,
-        cargo: r.cargo ?? null,
-      })),
+
+    const mapear = (r: any, disponible: boolean): TrabajadorOpcion => ({
+      id: Number(r.id),
+      nombre: r.nombre || "(sin nombre)",
+      identificacion: r.identificacion ?? null,
+      cargo: r.cargo ?? null,
+      estado: r.estado ?? null,
+      disponible,
+    })
+
+    const filas: TrabajadorOpcion[] = (data || []).map((r: any) => mapear(r, true))
+
+    // Los que siguen asignados pero ya no salieron arriba. Se consultan SIN los
+    // filtros de estado y de empresa a proposito: son justamente los que se
+    // salieron de ese filtro, y hay que poder verlos para desmarcarlos.
+    const presentes = new Set(filas.map((t) => t.id))
+    const faltantes = Array.from(
+      new Set(
+        (asignados || [])
+          .map((n) => Number(n))
+          .filter((n) => Number.isFinite(n) && !presentes.has(n)),
+      ),
+    )
+
+    if (faltantes.length > 0) {
+      const { data: extra, error: errExtra } = await supabase
+        .from("headcount")
+        .select("id, nombre, identificacion, cargo, estado")
+        .in("id", faltantes)
+        .order("nombre", { ascending: true })
+      if (errExtra) {
+        console.error("[v0] listTrabajadoresEmpresa asignados fuera de listado:", errExtra)
+      }
+      for (const r of extra || []) filas.push(mapear(r, false))
+
+      // Un ID asignado que ya ni existe en headcount. Se muestra igual, con el
+      // numero por nombre: si se omitiera quedaria imposible de quitar.
+      const hallados = new Set((extra || []).map((r: any) => Number(r.id)))
+      for (const id of faltantes) {
+        if (hallados.has(id)) continue
+        filas.push({
+          id,
+          nombre: `Trabajador #${id}`,
+          identificacion: null,
+          cargo: null,
+          estado: null,
+          disponible: false,
+        })
+      }
     }
+
+    return { success: true, data: filas }
   } catch (err: any) {
     console.error("[v0] listTrabajadoresEmpresa exception:", err)
     return { success: false, data: [], error: err?.message || "Error desconocido" }
