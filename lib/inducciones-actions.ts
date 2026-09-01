@@ -1043,6 +1043,23 @@ export interface InduccionResumen {
   codigo_sig: string | null
   tema: string
   descripcion: string | null
+  /**
+   * Estado de ESTE trabajador en ESTA induccion, resuelto en el servidor.
+   *
+   * Va aqui y no se calcula en el portal a proposito. El portal lo cruzaba por
+   * `codigo_sig`, que es opcional --y unico global, asi que la mayoria de las
+   * inducciones se crean sin el-- y cuando venia vacio la tarjeta se quedaba
+   * en "Pendiente" por mas veces que el trabajador aprobara. Aca el cruce va
+   * por las llaves foraneas: capacitacion -> evaluacion -> intento, que es el
+   * mismo camino por el que se guardo el intento y por lo tanto no puede
+   * quedar desalineado.
+   */
+  intentos: number
+  aprobada: boolean
+  /** Del intento aprobado; si aun no aprueba, del de mejor nota. */
+  mejor_puntaje: number | null
+  mejor_total: number | null
+  ultimo_intento: string | null
 }
 
 export interface ResultadoIntento {
@@ -1086,19 +1103,118 @@ export async function listInduccionesObligatorias(headcountId?: number): Promise
       return parseTrabajadores(r.trabajadores).includes(headcountId)
     })
 
+    const estadoPorCapacitacion = await estadoDeInduccionesPorTrabajador(
+      supabase,
+      filtradas.map((r: any) => r.id),
+      headcountId,
+    )
+
     return {
       success: true,
-      data: filtradas.map((r: any) => ({
-        id: r.id,
-        codigo_sig: r.codigo_sig ?? null,
-        tema: r.tema || "(sin tema)",
-        descripcion: r.descripcion ?? null,
-      })),
+      data: filtradas.map((r: any) => {
+        const e = estadoPorCapacitacion.get(r.id)
+        return {
+          id: r.id,
+          codigo_sig: r.codigo_sig ?? null,
+          tema: r.tema || "(sin tema)",
+          descripcion: r.descripcion ?? null,
+          intentos: e?.intentos ?? 0,
+          aprobada: e?.aprobada ?? false,
+          mejor_puntaje: e?.puntaje ?? null,
+          mejor_total: e?.total ?? null,
+          ultimo_intento: e?.fecha ?? null,
+        }
+      }),
     }
   } catch (err: any) {
     console.error("[v0] listInduccionesObligatorias exception:", err)
     return { success: false, data: [], error: err?.message || "Error desconocido" }
   }
+}
+
+interface EstadoIntentos {
+  intentos: number
+  aprobada: boolean
+  puntaje: number | null
+  total: number | null
+  fecha: string | null
+}
+
+/**
+ * Para cada capacitacion, como le fue a este trabajador.
+ *
+ * El recorrido es capacitacion -> capacitaciones_evaluaciones -> intentos, por
+ * llave foranea. Es el mismo camino que usa `registrarIntentoEvaluacion` para
+ * guardar, asi que lo que se lee aqui no puede discrepar de lo que se escribio.
+ *
+ * `evaluacion_id` es obligatorio en el intento; `capacitacion_id` se copia al
+ * insertarlo y por eso se deja solo como respaldo, para registros viejos.
+ */
+async function estadoDeInduccionesPorTrabajador(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  capacitacionIds: string[],
+  headcountId?: number,
+): Promise<Map<string, EstadoIntentos>> {
+  const estado = new Map<string, EstadoIntentos>()
+  if (headcountId == null || capacitacionIds.length === 0) return estado
+
+  const { data: evals, error: evErr } = await supabase
+    .from("capacitaciones_evaluaciones")
+    .select("id, capacitacion_id")
+    .in("capacitacion_id", capacitacionIds)
+  if (evErr) {
+    console.error("[v0] estadoDeInduccionesPorTrabajador evaluaciones:", evErr)
+    return estado
+  }
+
+  const capacitacionPorEvaluacion = new Map<string, string>()
+  for (const e of evals || []) {
+    if (e?.id && e?.capacitacion_id) capacitacionPorEvaluacion.set(e.id, e.capacitacion_id)
+  }
+
+  // Se traen TODOS los intentos del trabajador y no solo los de estas
+  // evaluaciones: si a una induccion le reemplazaron la evaluacion, el intento
+  // viejo todavia se puede reconocer por su `capacitacion_id`.
+  const { data: intentos, error: iErr } = await supabase
+    .from("capacitaciones_evaluacion_intentos")
+    .select("evaluacion_id, capacitacion_id, puntaje, total, aprobado, fecha")
+    .eq("headcount_id", headcountId)
+    .order("fecha", { ascending: false })
+  if (iErr) {
+    console.error("[v0] estadoDeInduccionesPorTrabajador intentos:", iErr)
+    return estado
+  }
+
+  for (const it of intentos || []) {
+    const capId = capacitacionPorEvaluacion.get(it.evaluacion_id) ?? it.capacitacion_id ?? null
+    if (!capId) continue
+
+    const actual =
+      estado.get(capId) ??
+      ({ intentos: 0, aprobada: false, puntaje: null, total: null, fecha: null } as EstadoIntentos)
+
+    actual.intentos += 1
+    const aprobado = Boolean(it.aprobado)
+    const puntaje = Number(it.puntaje) || 0
+
+    // Se muestra el intento aprobado; mientras no haya, el de mejor nota. Los
+    // intentos llegan del mas reciente al mas antiguo, asi que entre dos
+    // aprobados se conserva el ultimo.
+    const reemplaza =
+      actual.puntaje == null ||
+      (aprobado && !actual.aprobada) ||
+      (!actual.aprobada && puntaje > actual.puntaje)
+    if (reemplaza) {
+      actual.puntaje = puntaje
+      actual.total = Number(it.total) || 0
+      actual.fecha = it.fecha ?? null
+    }
+    if (aprobado) actual.aprobada = true
+
+    estado.set(capId, actual)
+  }
+
+  return estado
 }
 
 /**

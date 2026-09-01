@@ -6,45 +6,49 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
-import { GraduationCap, Loader2, CheckCircle2, Clock, ChevronRight } from "lucide-react"
+import { GraduationCap, Loader2, CheckCircle2, Clock, ChevronRight, XCircle } from "lucide-react"
 import { usePortal } from "@/components/portal/portal-provider"
-import {
-  listInduccionesObligatorias,
-  getResultadosPorHeadcount,
-  type InduccionResumen,
-  type ResultadoIntento,
-} from "@/lib/inducciones-actions"
+import { listInduccionesObligatorias, type InduccionResumen } from "@/lib/inducciones-actions"
+
+/** Fecha corta del intento. `fecha` es un timestamp del servidor, pero se
+ *  contempla que llegue como 'YYYY-MM-DD' suelto: pasar ese formato por Date
+ *  lo interpreta en UTC y en Colombia se veria un dia antes. */
+function fechaCorta(valor: string | null): string {
+  if (!valor) return ""
+  const soloFecha = /^(\d{4})-(\d{2})-(\d{2})$/.exec(valor)
+  if (soloFecha) return `${soloFecha[3]}/${soloFecha[2]}/${soloFecha[1]}`
+  const d = new Date(valor)
+  if (Number.isNaN(d.getTime())) return ""
+  return d.toLocaleDateString("es-CO", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "America/Bogota",
+  })
+}
 
 /**
  * Pagina de Inducciones del Portal del Trabajador.
- * Lista las inducciones obligatorias/activas y marca cada una como
- * "Aprobada" o "Pendiente" segun los intentos del trabajador
- * (getResultadosPorHeadcount con su colaborador_id = headcount_id).
+ * Lista las inducciones asignadas y marca cada una como "Aprobada",
+ * "No aprobada" o "Pendiente". El estado viene resuelto desde
+ * listInduccionesObligatorias, que lo cruza por llave foranea; aca no se
+ * vuelve a calcular para no tener dos fuentes de verdad del mismo dato.
  */
 export default function PortalInduccionesPage() {
   const { colaborador } = usePortal()
   const [loading, setLoading] = useState(true)
   const [inducciones, setInducciones] = useState<InduccionResumen[]>([])
-  const [resultados, setResultados] = useState<ResultadoIntento[]>([])
 
   useEffect(() => {
     const load = async () => {
       if (!colaborador?.colaborador_id) return
       setLoading(true)
-      const [indRes, resRes] = await Promise.all([
-        listInduccionesObligatorias(colaborador.colaborador_id),
-        getResultadosPorHeadcount(colaborador.colaborador_id),
-      ])
+      const indRes = await listInduccionesObligatorias(colaborador.colaborador_id)
       if (indRes.success) setInducciones(indRes.data)
-      if (resRes.success) setResultados(resRes.data)
       setLoading(false)
     }
     load()
   }, [colaborador?.colaborador_id])
-
-  // Una induccion esta aprobada si existe algun intento aprobado con su codigo.
-  const aprobadaPorCodigo = (codigo: string | null) =>
-    !!codigo && resultados.some((r) => r.codigo_sig === codigo && r.aprobado)
 
   return (
     <div className="space-y-6">
@@ -82,7 +86,10 @@ export default function PortalInduccionesPage() {
       ) : (
         <div className="grid gap-3">
           {inducciones.map((ind) => {
-            const aprobada = aprobadaPorCodigo(ind.codigo_sig)
+            // Presentarla y no pasarla no es lo mismo que no haberla hecho:
+            // antes las dos se veian igual y el trabajador no sabia si su
+            // evaluacion habia quedado registrada.
+            const noAprobada = !ind.aprobada && ind.intentos > 0
             return (
               <Card key={ind.id} className="overflow-hidden transition-colors hover:border-primary/40">
                 <CardContent className="flex items-center justify-between gap-4 p-4">
@@ -91,16 +98,30 @@ export default function PortalInduccionesPage() {
                       {ind.codigo_sig && (
                         <span className="font-mono text-xs text-muted-foreground">{ind.codigo_sig}</span>
                       )}
-                      {aprobada ? (
+                      {ind.aprobada ? (
                         <Badge className="bg-green-100 text-green-800 border-green-300 hover:bg-green-100">
                           <CheckCircle2 className="h-3 w-3 mr-1" />
                           Aprobada
+                        </Badge>
+                      ) : noAprobada ? (
+                        <Badge className="bg-red-100 text-red-800 border-red-300 hover:bg-red-100">
+                          <XCircle className="h-3 w-3 mr-1" />
+                          No aprobada
                         </Badge>
                       ) : (
                         <Badge className="bg-amber-100 text-amber-800 border-amber-300 hover:bg-amber-100">
                           <Clock className="h-3 w-3 mr-1" />
                           Pendiente
                         </Badge>
+                      )}
+                      {ind.intentos > 0 && (
+                        <span className="text-xs text-muted-foreground">
+                          {ind.mejor_puntaje}/{ind.mejor_total} correctas
+                          {fechaCorta(ind.ultimo_intento)
+                            ? ` · ${fechaCorta(ind.ultimo_intento)}`
+                            : ""}
+                          {ind.intentos > 1 ? ` · ${ind.intentos} intentos` : ""}
+                        </span>
                       )}
                     </div>
                     <h3 className="mt-1 font-semibold text-balance">{ind.tema}</h3>
@@ -110,9 +131,14 @@ export default function PortalInduccionesPage() {
                       </p>
                     )}
                   </div>
-                  <Button asChild variant={aprobada ? "outline" : "default"} size="sm" className="gap-1 shrink-0">
+                  <Button
+                    asChild
+                    variant={ind.aprobada ? "outline" : "default"}
+                    size="sm"
+                    className="gap-1 shrink-0"
+                  >
                     <Link href={`/portal/inducciones/${encodeURIComponent(ind.id)}`}>
-                      {aprobada ? "Repasar" : "Realizar"}
+                      {ind.aprobada ? "Repasar" : noAprobada ? "Reintentar" : "Realizar"}
                       <ChevronRight className="h-4 w-4" />
                     </Link>
                   </Button>

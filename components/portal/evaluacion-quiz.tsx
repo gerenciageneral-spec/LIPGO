@@ -1,12 +1,13 @@
 "use client"
 
 import { useMemo, useRef, useState } from "react"
+import Link from "next/link"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
-import { Loader2, CheckCircle2, XCircle, RotateCcw, Trophy, PenLine } from "lucide-react"
+import { Loader2, CheckCircle2, XCircle, RotateCcw, Trophy, PenLine, ArrowLeft } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { usePortal } from "@/components/portal/portal-provider"
 import { SignaturePad, type SignaturePadHandle } from "@/components/rrhh/signature-pad"
@@ -139,12 +140,20 @@ export function EvaluacionQuiz({ induccion }: { induccion: InduccionPortal }) {
               Repasa el material y vuelve a intentarlo cuando estés listo.
             </p>
           )}
-          {!aprobado && (
-            <Button onClick={reintentar} className="gap-2 mt-2">
-              <RotateCcw className="h-4 w-4" />
-              Reintentar evaluación
+          <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+            {!aprobado && (
+              <Button onClick={reintentar} className="gap-2">
+                <RotateCcw className="h-4 w-4" />
+                Reintentar evaluación
+              </Button>
+            )}
+            <Button asChild variant={aprobado ? "default" : "outline"} className="gap-2">
+              <Link href="/portal/inducciones">
+                <ArrowLeft className="h-4 w-4" />
+                Volver a mis inducciones
+              </Link>
             </Button>
-          )}
+          </div>
         </CardContent>
       </Card>
     )
