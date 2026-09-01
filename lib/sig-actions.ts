@@ -3120,23 +3120,42 @@ export async function crearCuadre(
     if (!proyectoId) return { success: false, error: "Selecciona un cliente/sitio" }
     const supabase: any = await getSupabaseAdmin()
 
-    // Cargar saldos del sistema (paginado).
-    const saldos: any[] = []
-    let from = 0
-    while (true) {
-      let q = supabase
-        .from("saldoinvdetalle")
-        .select("codproducto,nombreproducto,lote,location,stock_actual")
-        .eq("idempresa", proyectoId)
-      if (payload.codproductoUnico) q = q.eq("codproducto", payload.codproductoUnico)
-      const { data, error } = await q.order("codproducto").order("lote").order("location").range(from, from + 999)
-      if (error) return { success: false, error: error.message }
-      saldos.push(...(data ?? []))
-      if (!data || data.length < 1000) break
-      from += 1000
-      if (from > 60000) break
+    // Conteo TOTAL (cierre de mes, sin producto único): el "sistema" contra
+    // el que se cuenta debe ser el inventario CONGELADO del día anterior
+    // (sin movimientos del día en curso mezclados) — no el stock vivo del
+    // momento exacto en que se crea el conteo. Mismo mecanismo (y mismo
+    // helper) que ya usa Acta de Cruce para su corte de apertura de mes.
+    // El conteo CÍCLICO (verificación puntual de un producto) sigue usando
+    // stock vivo — es otro caso de uso, confirmado explícitamente por el
+    // usuario (2026-09-01): "entiendo tu lógica para el cíclico que es otra
+    // cosa y es con el inventario en vivo".
+    const esConteoTotalCompleto = (payload.tipo ?? "total") === "total" && !payload.codproductoUnico
+    let lineasBase: Array<{ codproducto: string; nombreproducto: string | null; lote: string | null; location: string | null; stock_actual: number }>
+    if (esConteoTotalCompleto) {
+      const corte = payload.fecha || fechaColombiaDe(new Date().toISOString())
+      const { porLote } = await calcularStockAlCorte(supabase, proyectoId, corte)
+      lineasBase = Object.values(porLote)
+        .filter((r) => r.valor !== 0)
+        .map((r) => ({ codproducto: r.codproducto, nombreproducto: r.producto || null, lote: r.lote || null, location: r.location || null, stock_actual: r.valor }))
+    } else {
+      // Cargar saldos VIVOS del sistema (paginado) — cíclico o producto único.
+      const saldos: any[] = []
+      let from = 0
+      while (true) {
+        let q = supabase
+          .from("saldoinvdetalle")
+          .select("codproducto,nombreproducto,lote,location,stock_actual")
+          .eq("idempresa", proyectoId)
+        if (payload.codproductoUnico) q = q.eq("codproducto", payload.codproductoUnico)
+        const { data, error } = await q.order("codproducto").order("lote").order("location").range(from, from + 999)
+        if (error) return { success: false, error: error.message }
+        saldos.push(...(data ?? []))
+        if (!data || data.length < 1000) break
+        from += 1000
+        if (from > 60000) break
+      }
+      lineasBase = payload.codproductoUnico ? saldos : saldos.filter((r) => (Number(r.stock_actual) || 0) !== 0)
     }
-    const lineasBase = payload.codproductoUnico ? saldos : saldos.filter((r) => (Number(r.stock_actual) || 0) !== 0)
     const totalSistema = lineasBase.reduce((s, r) => s + (Number(r.stock_actual) || 0), 0)
 
     const { data: cab, error: errCab } = await supabase
@@ -5093,6 +5112,101 @@ function fechaColombiaDe(iso: string): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso))
 }
 
+// ---------------------------------------------------------------------------
+// Stock por (producto, lote, ubicación) retrocedido hasta un CORTE dado
+// ('YYYY-MM-DD', hora Colombia) — misma lógica exacta que ya usaba
+// getOrCrearActaCruce (extraída aquí para reutilizarla también en
+// crearCuadre: un "Conteo total" de cierre de mes necesita el mismo
+// congelado del día anterior, no el stock vivo del momento en que se crea
+// — si ya se movió algo del día en curso antes de crear el conteo, ese
+// movimiento no debe mezclarse con lo que se va a comparar contra el
+// físico. El conteo cíclico SÍ sigue usando stock vivo — es otro caso de
+// uso (verificación puntual, no cierre de mes) — ver crearCuadre.
+// ---------------------------------------------------------------------------
+async function calcularStockAlCorte(
+  supabase: any,
+  proyectoId: number,
+  corte: string, // 'YYYY-MM-DD' — primer día SIN incluir (el corte retrocede hasta el final del día anterior)
+): Promise<{
+  porLote: Record<string, { codproducto: string; producto: string; lote: string; location: string; valor: number }>
+  nombrePorCod: Record<string, string>
+}> {
+  // Stock vivo de HOY, por (producto, lote, ubicación).
+  // PAGINACIÓN CON ORDEN EXPLÍCITO: sin ORDER BY, las páginas de .range()
+  // pueden duplicar/saltar filas entre corridas (no determinista) —
+  // detectado con datos reales 2026-08-08.
+  const stockHoy: Record<string, { codproducto: string; producto: string; lote: string; location: string; valor: number }> = {}
+  const nombrePorCod: Record<string, string> = {}
+  let from = 0
+  while (true) {
+    const { data } = await supabase
+      .from("saldoinvdetalle")
+      .select("codproducto,nombreproducto,lote,location,stock_actual")
+      .eq("idempresa", proyectoId)
+      .order("codproducto", { ascending: true })
+      .order("lote", { ascending: true })
+      .order("location", { ascending: true })
+      .range(from, from + 999)
+    for (const r of data ?? []) {
+      const lote = r.lote ?? ""
+      const location = r.location ?? ""
+      const key = `${r.codproducto}||${lote}||${location}`
+      if (!stockHoy[key]) stockHoy[key] = { codproducto: r.codproducto, producto: r.nombreproducto ?? "", lote, location, valor: 0 }
+      stockHoy[key].valor += Number(r.stock_actual) || 0
+      if (r.nombreproducto && !nombrePorCod[r.codproducto]) nombrePorCod[r.codproducto] = r.nombreproducto
+    }
+    if (!data || data.length < 1000) break
+    from += 1000
+    if (from > 60000) break
+  }
+
+  // Movimientos APROBADOS desde el corte (a retroceder). El día del corte es
+  // el propio inventario físico ("a primera hora"): una ENTRADA fechada ese
+  // mismo día (HORA COLOMBIA) es el registro en sistema de algo que ya
+  // existía al corte — se trata como apertura, no se retrocede. Una SALIDA
+  // siempre es movimiento real. Se trae con 1 día de margen (UTC) por huso
+  // horario y se filtra la fecha real en JS con fechaColombiaDe.
+  const corteConsulta = new Date(`${corte}T00:00:00Z`)
+  corteConsulta.setUTCDate(corteConsulta.getUTCDate() - 1)
+  const deltaCorte: Record<string, number> = {}
+  let from2 = 0
+  while (true) {
+    const { data } = await supabase
+      .from("invtrans")
+      .select("id,codproducto,lote,location,tipomov,cantidad,status,creado")
+      .eq("idempresa", proyectoId)
+      .gte("creado", corteConsulta.toISOString())
+      .order("id", { ascending: true }) // paginación determinista
+      .range(from2, from2 + 999)
+    for (const r of data ?? []) {
+      if (!String(r.status || "").toLowerCase().startsWith("aprob")) continue
+      const fechaLocal = fechaColombiaDe(r.creado)
+      if (fechaLocal < corte) continue // cayó en el margen de 1 día, es anterior al corte real
+      const esEntradaDelDiaDelCorte = r.tipomov === "Entrada" && fechaLocal === corte
+      if (esEntradaDelDiaDelCorte) continue
+      const key = `${r.codproducto}||${r.lote ?? ""}||${r.location ?? ""}`
+      const c = Math.abs(Number(r.cantidad) || 0)
+      deltaCorte[key] = (deltaCorte[key] || 0) + (r.tipomov === "Entrada" ? c : -c)
+    }
+    if (!data || data.length < 1000) break
+    from2 += 1000
+    if (from2 > 60000) break
+  }
+
+  // Valor real por lote: stock vivo de hoy retrocedido por lo movido desde
+  // el corte. SIN inventar — nada de repartir/escalar un total a los lotes.
+  // Se pisa en 0 si da negativo (el físico no puede ser negativo).
+  const keys = new Set([...Object.keys(stockHoy), ...Object.keys(deltaCorte)])
+  const porLote: Record<string, { codproducto: string; producto: string; lote: string; location: string; valor: number }> = {}
+  for (const key of keys) {
+    const [cod, lote, location] = key.split("||")
+    const base = stockHoy[key]?.valor ?? 0
+    const valor = Math.max(0, Math.round((base - (deltaCorte[key] || 0)) * 100) / 100)
+    porLote[key] = { codproducto: stockHoy[key]?.codproducto ?? cod, producto: stockHoy[key]?.producto || nombrePorCod[cod] || "", lote, location, valor }
+  }
+  return { porLote, nombrePorCod }
+}
+
 /** Trae el acta de cruce del mes; si no existe, la crea (por lote/ubicación) desde el físico congelado del mes anterior. */
 export async function getOrCrearActaCruce(
   proyectoId: number,
@@ -5137,87 +5251,9 @@ export async function getOrCrearActaCruce(
     const origen = !/sin archivo/i.test(cerradoPorTxt) && /archivo/i.test(cerradoPorTxt) ? "archivo_fisico" : "calculado"
     const corte = `${mes}-01`
 
-    // Stock vivo de HOY, por (producto, lote, ubicación) — el nivel que
-    // realmente importa para poder corregir/ajustar.
-    // PAGINACIÓN CON ORDEN EXPLÍCITO: sin ORDER BY, las páginas de .range()
-    // pueden duplicar/saltar filas entre corridas (no determinista) —
-    // detectado con datos reales 2026-08-08: dos corridas del mismo cálculo
-    // daban totales distintos. Toda paginación que ALIMENTE un dato
-    // persistido debe llevar orden estable.
-    const stockHoy: Record<string, { codproducto: string; producto: string; lote: string; location: string; valor: number }> = {}
-    const nombrePorCod: Record<string, string> = {}
-    let from = 0
-    while (true) {
-      const { data } = await supabase
-        .from("saldoinvdetalle")
-        .select("codproducto,nombreproducto,lote,location,stock_actual")
-        .eq("idempresa", proyectoId)
-        .order("codproducto", { ascending: true })
-        .order("lote", { ascending: true })
-        .order("location", { ascending: true })
-        .range(from, from + 999)
-      for (const r of data ?? []) {
-        const lote = r.lote ?? ""
-        const location = r.location ?? ""
-        const key = `${r.codproducto}||${lote}||${location}`
-        if (!stockHoy[key]) stockHoy[key] = { codproducto: r.codproducto, producto: r.nombreproducto ?? "", lote, location, valor: 0 }
-        stockHoy[key].valor += Number(r.stock_actual) || 0
-        if (r.nombreproducto && !nombrePorCod[r.codproducto]) nombrePorCod[r.codproducto] = r.nombreproducto
-      }
-      if (!data || data.length < 1000) break
-      from += 1000
-      if (from > 60000) break
-    }
-
-    // Movimientos APROBADOS desde el corte (a retroceder), misma granularidad.
-    // El día del corte es el propio inventario físico ("a primera hora"): una
-    // ENTRADA fechada ese mismo día (HORA COLOMBIA — invtrans.creado está en
-    // UTC, 5h adelante; una transacción de las 8pm del 31-jul queda como
-    // "2026-08-01" en UTC y se clasificaba mal como "del corte") es el
-    // registro en sistema de algo que ya existía al corte — se trata como
-    // apertura, no se retrocede. Una SALIDA siempre es movimiento real (un
-    // despacho es un despacho, sin importar el día). Se trae con 1 día de
-    // margen en la consulta (UTC) para no perder filas por el corrimiento de
-    // huso horario, y se filtra la fecha real en JS con fechaColombiaDe.
-    const corteConsulta = new Date(`${corte}T00:00:00Z`)
-    corteConsulta.setUTCDate(corteConsulta.getUTCDate() - 1)
-    const deltaCorte: Record<string, number> = {}
-    let from2 = 0
-    while (true) {
-      const { data } = await supabase
-        .from("invtrans")
-        .select("id,codproducto,lote,location,tipomov,cantidad,status,creado")
-        .eq("idempresa", proyectoId)
-        .gte("creado", corteConsulta.toISOString())
-        .order("id", { ascending: true }) // paginación determinista (ver nota arriba)
-        .range(from2, from2 + 999)
-      for (const r of data ?? []) {
-        if (!String(r.status || "").toLowerCase().startsWith("aprob")) continue
-        const fechaLocal = fechaColombiaDe(r.creado)
-        if (fechaLocal < corte) continue // cayó en el margen de 1 día, es anterior al corte real
-        const esEntradaDelDiaDelCorte = r.tipomov === "Entrada" && fechaLocal === corte
-        if (esEntradaDelDiaDelCorte) continue
-        const key = `${r.codproducto}||${r.lote ?? ""}||${r.location ?? ""}`
-        const c = Math.abs(Number(r.cantidad) || 0)
-        deltaCorte[key] = (deltaCorte[key] || 0) + (r.tipomov === "Entrada" ? c : -c)
-      }
-      if (!data || data.length < 1000) break
-      from2 += 1000
-      if (from2 > 60000) break
-    }
-
-    // Valor real por lote: stock vivo de hoy retrocedido por lo movido desde
-    // el corte. SIN inventar — nada de repartir/escalar un total a los
-    // lotes: el kardex YA lleva trazabilidad real por lote mes a mes, así
-    // que este cálculo por lote es la fuente directa (mismo criterio que
-    // getMovimientosProducto). Se pisa en 0 si da negativo (el físico no
-    // puede ser negativo — igual que el resto de la conciliación).
-    const keys = new Set([...Object.keys(stockHoy), ...Object.keys(deltaCorte)])
-    const valorPorLote: Record<string, number> = {}
-    for (const key of keys) {
-      const base = stockHoy[key]?.valor ?? 0
-      valorPorLote[key] = Math.max(0, Math.round((base - (deltaCorte[key] || 0)) * 100) / 100)
-    }
+    // Stock retrocedido al corte, por (producto, lote, ubicación) — mismo
+    // helper que usa crearCuadre para el "Conteo total" de cierre de mes.
+    const { porLote, nombrePorCod } = await calcularStockAlCorte(supabase, proyectoId, corte)
 
     const { data: nueva, error: errIns } = await supabase
       .from("sig_inventario_acta_cruce")
@@ -5226,19 +5262,17 @@ export async function getOrCrearActaCruce(
       .single()
     if (errIns) return { success: false, error: errIns.message }
 
-    const filas = Array.from(keys)
-      .map((key) => {
-        const info = stockHoy[key]
+    const filas = Object.entries(porLote)
+      .map(([key, info]) => {
         const [cod, lote, location] = key.split("||")
-        const v = valorPorLote[key] ?? 0
         return {
           acta_id: nueva.id,
-          codproducto: info?.codproducto ?? cod,
-          producto: info?.producto || nombrePorCod[cod] || null,
+          codproducto: info.codproducto ?? cod,
+          producto: info.producto || nombrePorCod[cod] || null,
           lote: lote || "",
           location: location || "",
-          sistema_original: v,
-          fisico_actual: v,
+          sistema_original: info.valor,
+          fisico_actual: info.valor,
           diferencia: 0,
         }
       })
