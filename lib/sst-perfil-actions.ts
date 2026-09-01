@@ -155,3 +155,33 @@ export async function savePerfilSociodemografico(
   console.error("[v0] savePerfilSociodemografico:", error.message, error.code, error.details, error.hint)
   return { success: false, message: error.message }
 }
+
+/**
+ * Quita la marca de "requiere revisión" de un perfil. Se usa cuando SST ya
+ * revisó a mano lo que la carga masiva no pudo resolver y confirma que el dato
+ * está bien como está.
+ *
+ * Si la tabla todavía no tiene esas columnas —las agrega
+ * scripts/sig/45_perfil_sociodemografico_carga.sql— no se rompe: se avisa en el
+ * log y se responde que no hay nada que marcar, que es la verdad.
+ */
+export async function resolverRevisionPerfil(id: number): Promise<{ success: boolean; message?: string }> {
+  const supabase: any = await getSupabaseAdmin()
+  const { error } = await supabase
+    .from("sst_perfil_sociodemografico")
+    .update({ requiere_revision: false, revision_nota: null, actualizado_en: new Date().toISOString() })
+    .eq("id", id)
+
+  if (!error) return { success: true }
+
+  const columnaFaltante =
+    error.code === "PGRST204" || error.code === "42703" ||
+    /requiere_revision|revision_nota/.test(String(error.message ?? ""))
+  if (columnaFaltante) {
+    console.warn("[v0] resolverRevisionPerfil: la tabla aún no tiene requiere_revision. " +
+      "Corre scripts/sig/45_perfil_sociodemografico_carga.sql")
+    return { success: true, message: "No hay marcas de revisión en esta base todavía." }
+  }
+  console.error("[v0] resolverRevisionPerfil:", error.message, error.code)
+  return { success: false, message: error.message }
+}

@@ -14,6 +14,7 @@ import { SST_TOKENS } from "@/components/sst/sst-utils"
 import { Kpi } from "@/components/sst/sst-form-ui"
 import {
   listPerfilSociodemografico, savePerfilSociodemografico, getPerfilPorDocumento,
+  resolverRevisionPerfil,
 } from "@/lib/sst-perfil-actions"
 import { buscarColaboradorMedevac } from "@/lib/sst-medevac-actions"
 import { Input } from "@/components/ui/input"
@@ -27,10 +28,15 @@ import {
   TURNO_OPCIONES, CENTRO_POR_EMPRESA, edadDesdeFechaISO,
 } from "@/lib/sst-datos-catalogos"
 import type { PerfilSociodemograficoRow } from "@/lib/sst-evidencia-types"
-import { Users, Loader2, Search, Pencil, X, UserPlus } from "lucide-react"
+import { Users, Loader2, Search, Pencil, X, UserPlus, AlertTriangle, Check } from "lucide-react"
 import {
   ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
 } from "recharts"
+
+// Alto exacto del encabezado, en pixeles. La fila de filtros se ancla justo
+// debajo con este mismo valor: al alto natural habria que adivinarlo y la fila
+// quedaria montada sobre el encabezado o despegada de el.
+const ALTO_ENCABEZADO = 30
 
 const COLORS = ["#0D3B6E", "#00B4CC", "#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6", "#14B8A6", "#F97316", "#64748B"]
 const T = (v: any) => String(v ?? "").trim()
@@ -234,6 +240,26 @@ export function PerfilSociodemografico({ selectedEmpresaId: propEmpresaId }: { s
     }
   }
 
+  // Perfiles que entraron por carga masiva con algo que corregir a mano: una
+  // EPS mal escrita, un municipio que quedo con el texto de ayuda del
+  // formulario, un documento que no cuadra con su ficha MEDEVAC.
+  //
+  // Se calcula sobre `rows` y no sobre `base`: el filtro de activo/retirado de
+  // arriba no deberia esconder un dato pendiente de corregir. Si alguien esta
+  // retirado y su perfil quedo mal, sigue siendo un dato malo en el censo.
+  const pendientes = useMemo(() => rows.filter((r: any) => r.requiere_revision), [rows])
+
+  async function marcarRevisado(id?: number) {
+    if (!id) return
+    const r = await resolverRevisionPerfil(id)
+    if (r.success) {
+      toast({ title: "Marcado como corregido", description: r.message })
+      cargar()
+    } else {
+      toast({ title: "No se pudo marcar", description: r.message })
+    }
+  }
+
   const base = useMemo(() => rows.filter((r) => estado === "todos" || (r.estado ?? "activo") === estado), [rows, estado])
   // Opciones (valores presentes) por CADA columna.
   const opciones = useMemo(() => {
@@ -347,12 +373,88 @@ export function PerfilSociodemografico({ selectedEmpresaId: propEmpresaId }: { s
         <TabsList>
           <TabsTrigger value="analisis">Análisis (dashboards)</TabsTrigger>
           <TabsTrigger value="listado">Tabla / Análisis detallado</TabsTrigger>
+          <TabsTrigger value="pendientes">
+            Por corregir
+            {pendientes.length > 0 && (
+              <span
+                className="ml-1.5 rounded-full px-1.5 text-[10px] font-bold"
+                style={{ background: SST_TOKENS.warn, color: "white" }}
+              >
+                {pendientes.length}
+              </span>
+            )}
+          </TabsTrigger>
           <TabsTrigger value="registrar">{editando ? "Editar registro" : "Crear registro"}</TabsTrigger>
         </TabsList>
 
         {/* Captura manual. El modulo era de solo lectura: el censo dependia por
             completo de que el trabajador lo diligenciara en el portal o de una
             carga masiva. Aqui SST puede crear y corregir registros uno a uno. */}
+        {/* Perfiles que la carga masiva no pudo resolver sola. Mismo
+            comportamiento que la pestana equivalente de MEDEVAC: al corregir y
+            guardar, o al marcarlos como revisados, salen de esta lista. */}
+        <TabsContent value="pendientes" className="pt-3">
+          <Card className="p-0 overflow-x-auto">
+            <div className="border-b p-3 text-xs text-muted-foreground">
+              Perfiles que entraron con algún dato por corregir a mano. Al editarlos y guardar, o al
+              marcarlos como corregidos, salen de esta lista.
+            </div>
+            <table className="w-full text-sm">
+              <thead>
+                <tr style={{ background: SST_TOKENS.warn, color: "white" }}>
+                  <th className="p-2 text-left">Colaborador</th>
+                  <th className="p-2 text-left">Documento</th>
+                  <th className="p-2 text-left">Qué hay que corregir</th>
+                  <th className="p-2 text-center">Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pendientes.map((r: any, i: number) => (
+                  <tr key={r.id ?? i} style={{ background: i % 2 ? "#fffaf0" : "white" }}>
+                    <td className="p-2">
+                      <div className="flex items-center gap-1 font-medium">
+                        <AlertTriangle className="h-3.5 w-3.5 shrink-0" style={{ color: SST_TOKENS.warn }} />
+                        {[r.apellidos, r.nombres].filter(Boolean).join(" ") || "Sin nombre"}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {[r.cargo, r.centro_trabajo].filter(Boolean).join(" · ") || "—"}
+                      </div>
+                    </td>
+                    <td className="p-2 font-mono text-xs">{r.documento || "—"}</td>
+                    <td className="p-2 text-xs">{r.revision_nota || "Sin motivo registrado"}</td>
+                    <td className="p-2 text-center whitespace-nowrap">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-[11px]"
+                        onClick={() => cargarEnFormulario(r)}
+                      >
+                        <Pencil className="mr-1 h-3 w-3" /> Corregir
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2"
+                        title="Ya está bien así"
+                        onClick={() => marcarRevisado(r.id)}
+                      >
+                        <Check className="h-3.5 w-3.5" />
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+                {pendientes.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="p-6 text-center" style={{ color: SST_TOKENS.ok }}>
+                      No hay perfiles pendientes por corregir.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </Card>
+        </TabsContent>
+
         <TabsContent value="registrar" className="pt-3">
           <Card className="space-y-6 p-4">
             {editando && (
@@ -543,18 +645,36 @@ export function PerfilSociodemografico({ selectedEmpresaId: propEmpresaId }: { s
             <Button size="sm" variant="outline" onClick={exportarCSV} disabled={filtradas.length === 0}>Exportar CSV</Button>
           </div>
 
-          <Card className="overflow-x-auto p-0">
-            <table className="w-full text-xs">
-              <thead className="sticky top-0">
-                <tr style={{ background: SST_TOKENS.navy, color: "white" }}>
-                  {COLS.map((c) => (<th key={c.k as string} className="whitespace-nowrap px-2 pt-2 text-left">{c.l}</th>))}
-                  <th className="whitespace-nowrap px-2 pt-2 text-center">Editar</th>
+          <Card className="p-0">
+            <div className="relative max-h-[70vh] overflow-auto">
+              <table className="w-max min-w-full border-separate border-spacing-0 text-xs">
+              <thead>
+                <tr>
+                  {COLS.map((c, i) => (
+                    <th
+                      key={c.k as string}
+                      className={`sticky top-0 whitespace-nowrap px-2 pt-2 pb-1 text-left ${i === 0 ? "left-0 z-30" : "z-20"}`}
+                      style={{ background: SST_TOKENS.navy, color: "white", height: ALTO_ENCABEZADO }}
+                    >
+                      {c.l}
+                    </th>
+                  ))}
+                  <th
+                    className="sticky right-0 top-0 z-30 whitespace-nowrap px-2 pt-2 pb-1 text-center"
+                    style={{ background: SST_TOKENS.navy, color: "white", height: ALTO_ENCABEZADO }}
+                  >
+                    Editar
+                  </th>
                 </tr>
-                <tr style={{ background: SST_TOKENS.navy }}>
-                  {COLS.map((c) => {
+                <tr>
+                  {COLS.map((c, i) => {
                     const k = String(c.k)
                     return (
-                      <th key={k} className="px-2 pb-2 align-top font-normal">
+                      <th
+                        key={k}
+                        className={`sticky px-2 pb-2 align-top font-normal ${i === 0 ? "left-0 z-30" : "z-20"}`}
+                        style={{ background: SST_TOKENS.navy, top: ALTO_ENCABEZADO }}
+                      >
                         {esSelect(k) ? (
                           <select
                             value={filtros[k] ?? ""}
@@ -576,7 +696,7 @@ export function PerfilSociodemografico({ selectedEmpresaId: propEmpresaId }: { s
                       </th>
                     )
                   })}
-                  <th className="px-2 pb-2" />
+                  <th className="sticky right-0 z-30 px-2 pb-2" style={{ background: SST_TOKENS.navy, top: ALTO_ENCABEZADO }} />
                 </tr>
               </thead>
               <tbody>
@@ -584,14 +704,26 @@ export function PerfilSociodemografico({ selectedEmpresaId: propEmpresaId }: { s
                   <tr key={r.id ?? i} style={{ background: i % 2 ? "#f7fafc" : "white" }}>
                     {COLS.map((c) => (
                       <td key={c.k as string} className="whitespace-nowrap p-2">
-                        {c.k === "estado" ? (
+                        {c.k === "documento" && (r as any).requiere_revision ? (
+                          <span className="flex items-center gap-1">
+                            <AlertTriangle
+                              className="h-3 w-3 shrink-0"
+                              style={{ color: SST_TOKENS.warn }}
+                              aria-label="Requiere revisión"
+                            />
+                            {celda(r, "documento")}
+                          </span>
+                        ) : c.k === "estado" ? (
                           <Badge style={{ background: (r.estado ?? "activo") === "retirado" ? SST_TOKENS.grey : SST_TOKENS.ok, color: "white" }}>{r.estado ?? "activo"}</Badge>
                         ) : (
                           celda(r, c.k as string)
                         )}
                       </td>
                     ))}
-                    <td className="whitespace-nowrap p-2 text-center">
+                    <td
+                      className="sticky right-0 z-10 whitespace-nowrap border-b p-2 text-center"
+                      style={{ background: i % 2 ? "#f7fafc" : "#ffffff" }}
+                    >
                       <Button
                         variant="ghost"
                         size="sm"
@@ -608,7 +740,8 @@ export function PerfilSociodemografico({ selectedEmpresaId: propEmpresaId }: { s
                   <tr><td colSpan={COLS.length + 1} className="p-6 text-center text-muted-foreground">Sin colaboradores para estos filtros.</td></tr>
                 )}
               </tbody>
-            </table>
+              </table>
+            </div>
           </Card>
         </TabsContent>
       </Tabs>
