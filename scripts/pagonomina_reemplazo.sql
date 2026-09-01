@@ -103,6 +103,26 @@
 --     la PILA, el costo de nómina del P&L y las prestaciones de retiro, y el
 --     bono es NO prestacional. Llega al trabajador por el ARCHIVO PLANO, con su
 --     propia novedad (43/50/66). Requiere scripts/create_bonos_nomina.sql.
+--   - APOYO EN CARGUE PAGA ADICIONAL, NO NETEADO (2026-08-31, corregido): antes,
+--     el tonelaje de un turno (especialidad=true) se restaba contra la base
+--     COMPLETA de turno del día (misma fórmula del destajo normal), y como el
+--     apoyo puntual casi nunca supera un día entero de turno, el resultado
+--     siempre daba negativo y el módulo nunca pagaba nada real — el bono de
+--     apoyo quedaba en $0 sistemáticamente. Confirmado explícitamente por el
+--     usuario: el apoyo es ADICIONAL a su turno (lo hacen fuera de él, no en vez
+--     de él — o bien vía el módulo manual "Asignación de apoyo en cargue" para
+--     ajustar un mal procedimiento, o porque ya salieron de su turno y se les
+--     ofrece cargar un vehículo extra para ganar más), así que ahora paga el
+--     valor COMPLETO del tonelaje, sin restarle la base. También se quitó el
+--     requisito de una fila en `apoyo_cargue_asignaciones`: esa tabla solo
+--     registra el camino MANUAL, pero el roster automático de Pago Global
+--     (`computarRosterPagoGlobal`) le da toneladas al MISMO tipo de caso (Auxiliar
+--     Mixto que ya terminó turno) sin pasar por ese módulo — exigir la fila dejaba
+--     fuera ese segundo camino, igual de legítimo. El único requisito real es
+--     especialidad=true (turno) + toneladas>0. Caso real: LUIS ANTONIO DE LEON
+--     GARCIA (ID2), 12 días de apoyo en la quincena 16-31 ago 2026, neto
+--     −$130.071 con la fórmula vieja (nunca cobraba nada); ahora paga su valor
+--     real. Ver `excedente_bruto_destajo` y `bonif_prestacional` más abajo.
 --   - BLINDAJE MULTI-TURNO (registroasistencia.turno): `datos_asistencia` colapsa por
 --     (fecha,persona) ANTES de calculo_turnos — necesario porque Auxiliar Mixto puede
 --     tener 2 filas el mismo día (Turno 1 + Turno 2, ver scripts/add_turno_registroasistencia.sql).
@@ -614,8 +634,37 @@ create or replace view public.pagonomina as
                         WHEN ((calculo_nomina_base.toneladas > (0)::numeric) AND ((calculo_nomina_base.especialidad IS NOT TRUE) OR EXISTS (SELECT 1 FROM apoyo_cargue_asignaciones ap WHERE ((ap.fecha = calculo_nomina_base.fecha) AND (upper(TRIM(BOTH FROM ap.persona)) = upper(TRIM(BOTH FROM calculo_nomina_base.persona))))))) THEN calculo_nomina_base.pago_produccion
                         ELSE (0)::numeric
                     END
-                    -- Misma excepción de "apoyo en cargue" que arriba.
-                    WHEN ((calculo_nomina_base.toneladas > (0)::numeric) AND ((calculo_nomina_base.especialidad IS NOT TRUE) OR EXISTS (SELECT 1 FROM apoyo_cargue_asignaciones ap WHERE ((ap.fecha = calculo_nomina_base.fecha) AND (upper(TRIM(BOTH FROM ap.persona)) = upper(TRIM(BOTH FROM calculo_nomina_base.persona))))))) THEN (calculo_nomina_base.pago_produccion - calculo_nomina_base.valor_diario_ley)
+                    -- DESTAJO NORMAL (especialidad NOT true): el excedente es producción
+                    -- MENOS la base del día — la base ya es un piso garantizado, así que
+                    -- solo lo que pasa de ahí es bono.
+                    WHEN ((calculo_nomina_base.toneladas > (0)::numeric) AND (calculo_nomina_base.especialidad IS NOT TRUE)) THEN (calculo_nomina_base.pago_produccion - calculo_nomina_base.valor_diario_ley)
+                    -- APOYO EN CARGUE (especialidad=true, 2026-08-31, corregido): el apoyo
+                    -- es ADICIONAL a su turno, no un reemplazo de él — lo hace normalmente
+                    -- FUERA de su turno. Restarle la base de turno (como al destajo normal)
+                    -- neteaba su tonelaje contra un salario de un trabajo distinto, y como
+                    -- el apoyo puntual casi nunca supera un día completo de turno, el "bono"
+                    -- daba siempre negativo y nunca se veía reflejado — el módulo pagaba $0
+                    -- real pase lo que pase. Caso real: LUIS ANTONIO DE LEON GARCIA (ID2),
+                    -- 12 días de apoyo en la quincena 16-31 ago, neto de la quincena
+                    -- −$130.071 (piso $0, nunca cobró nada por esas 12 jornadas). Ahora el
+                    -- apoyo paga su valor COMPLETO, sin restarle nada — confirmado
+                    -- explícitamente por el usuario.
+                    --
+                    -- SIN el EXISTS de `apoyo_cargue_asignaciones` (quitado el mismo día):
+                    -- esa tabla solo registra el camino MANUAL (módulo "Asignación de apoyo
+                    -- en cargue", para ajustar un mal procedimiento o incluir/excluir
+                    -- personal directo en `cabeceraoc.auxiliares` sin tocar la base de
+                    -- datos). Pero hay un SEGUNDO camino igual de legítimo: el roster
+                    -- automático de Pago Global (`computarRosterPagoGlobal`, lib/picking-
+                    -- actions.ts) YA incluye a "Auxiliar Mixto" que terminó su turno y ayuda
+                    -- a cargar un vehículo para ganar más — el MISMO caso de negocio, sin
+                    -- pasar por el módulo manual. Exigir la fila de apoyo_cargue_asignaciones
+                    -- dejaba fuera este segundo camino (verificado: 9 de 17 casos de agosto
+                    -- no tenían esa fila y aun así son apoyo real fuera de turno). El único
+                    -- requisito real es especialidad=true (turno) + toneladas>0 — ambos
+                    -- caminos solo pueden darle toneladas a alguien de turno si en efecto
+                    -- cargó algo, vía cualquiera de los dos mecanismos.
+                    WHEN ((calculo_nomina_base.toneladas > (0)::numeric) AND (calculo_nomina_base.especialidad = true)) THEN calculo_nomina_base.pago_produccion
                     ELSE (0)::numeric
                 END AS excedente_bruto_destajo,
                 CASE
@@ -776,9 +825,20 @@ create or replace view public.pagonomina as
         CASE
             WHEN ((fecha >= DATE '2026-07-16')
               AND (toneladas > (0)::numeric)
-              -- EXCEPCIÓN "apoyo en cargue" (ver excedente_bruto_destajo arriba):
-              -- misma condición, para que este valor con piso de vigencia coincida.
-              AND ((especialidad IS NOT TRUE) OR EXISTS (SELECT 1 FROM apoyo_cargue_asignaciones ap WHERE ((ap.fecha = fecha) AND (upper(TRIM(BOTH FROM ap.persona)) = upper(TRIM(BOTH FROM persona))))))) THEN (pago_produccion - valor_base_final)
+              AND (especialidad IS NOT TRUE)) THEN (pago_produccion - valor_base_final)
+            -- APOYO EN CARGUE (especialidad=true, 2026-08-31, corregido — ver
+            -- excedente_bruto_destajo arriba, mismo caso real de LUIS ANTONIO DE LEON
+            -- GARCIA, y mismo motivo para quitar el EXISTS de
+            -- apoyo_cargue_asignaciones: ese registro solo cubre el camino MANUAL, no
+            -- el roster automático de Pago Global que también le da toneladas reales
+            -- a un turno que ya salió de su turno): paga el valor COMPLETO de su
+            -- tonelaje, SIN restarle la base de turno — el apoyo es adicional a su
+            -- turno (lo hace fuera de él), no un reemplazo. Restarle esa base (como al
+            -- destajo normal) neteaba casi siempre a negativo y el módulo nunca pagaba
+            -- nada real por el apoyo.
+            WHEN ((fecha >= DATE '2026-07-16')
+              AND (toneladas > (0)::numeric)
+              AND (especialidad = true)) THEN pago_produccion
             ELSE excedente_bruto_destajo
         END AS bonif_prestacional,
         -- Bono NO prestacional del módulo "Bonos" (Compensación): suma de los
