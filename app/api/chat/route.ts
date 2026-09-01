@@ -101,7 +101,7 @@ const TABLA_PERMISOS: Record<Tabla, string[]> = {
   pedidosdetalle: ["entrada_pedidos", "gestionar_pedidos", "gestion_integral_pedidos", "dashboardpedidos"],
   cabeceraoc: ["generar_ordenes_cargue", "generar_ordenes_descargue", "distribucion", "gestion_ordenes", "dashboardrecepcion"],
   detalleoc: ["generar_ordenes_cargue", "generar_ordenes_descargue", "distribucion", "gestion_ordenes", "dashboardrecepcion"],
-  saldoinvdetalle: ["saldos_inventario", "saldos_producto", "transacciones_inventario", "gestion_transacciones", "auditoria_inventario"],
+  saldoinvdetalle: ["saldos_inventario", "saldos_producto", "transacciones_inventario", "gestion_transacciones", "auditoria_inventario", "cuadre_inventario"],
   registroasistencia: ["novedades_personal", "asignacion_horas_extra", "attendance_registration", "attendance_table", "aprobacionturnos"],
   headcount: ["headcount"],
   parametros_legales_anio: ["tarifas", "parafiscales"],

@@ -23,7 +23,8 @@ interface UseConteoCiclicoAlertsResult {
 /**
  * Hook que expone el conteo y detalle de alertas de conteo cíclico de
  * inventario (vencido o con diferencia sin resolver) para la empresa activa.
- * Solo habilita la alerta si el usuario tiene permiso `auditoria_inventario`.
+ * Solo habilita la alerta si el usuario tiene permiso `cuadre_inventario`
+ * (el conteo cíclico vive en Cuadre de Inventario, no en Auditoría).
  */
 export function useConteoCiclicoAlerts(
   empresaId: number | null,
@@ -44,7 +45,7 @@ export function useConteoCiclicoAlerts(
       try {
         const permissions = await getUserPermissions(userId)
 
-        if (!permissions || !(permissions as any).auditoria_inventario) {
+        if (!permissions || !(permissions as any).cuadre_inventario) {
           setHasPermission(false)
           setLoading(false)
           return

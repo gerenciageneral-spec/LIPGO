@@ -74,6 +74,7 @@ export interface UserPermissions {
   packing: boolean
   ver_picking: boolean
   auditoria_inventario: boolean
+  cuadre_inventario: boolean
   // Permiso del modulo "Centro de Evidencia ISO 9001" (Auditoría).
   // Coincide con el nombre de la columna en `permisos_usuarios`
   // (sin separador, todo en minuscula).
@@ -432,7 +433,11 @@ export const MODULE_PERMISSION_MAP: Record<string, keyof UserPermissions> = {
   // operativo `auditoria_inventario`, no por sig_matriz. Viven en Almacenamiento
   // y a la vez sirven de evidencia al SIG (8.5.1 / cierre mensual).
   "Panel LIP Inventario": "auditoria_inventario",
-  "Cuadre de Inventario": "auditoria_inventario",
+  // Permiso propio (2026-09-01): antes compartia `auditoria_inventario` con
+  // Panel LIP Inventario y Auditoría de Inventario (ambos de solo lectura) --
+  // Cuadre es el UNICO que ajusta stock real al cerrar el mes, y compartir la
+  // llave impedia otorgarlo por separado. Ver scripts/add_cuadre_inventario_permission.sql.
+  "Cuadre de Inventario": "cuadre_inventario",
   "Panel LIP Gestión Humana": "sig_matriz",
   // ISO 14001 (Ambiental)
   "Aspectos e Impactos ISO 14001": "sig_iso14001",
