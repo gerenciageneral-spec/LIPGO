@@ -121,6 +121,13 @@ export interface PerfilSociodemograficoRow {
   // corregir a mano.
   requiere_revision?: boolean | null
   revision_nota?: string | null
+  // NO son columnas de sst_perfil_sociodemografico: los resuelve
+  // `listPerfilSociodemografico` cruzando el documento contra `headcount`.
+  // La columna `estado` de esta tabla la escribe la carga y queda en "activo"
+  // para todos, asi que no sirve para saber quien sigue trabajando aqui.
+  //   "Activo" | "Inactivo" | "Sin head count"
+  estado_headcount?: string | null
+  cargo_headcount?: string | null
 }
 
 export interface IpevrRow {

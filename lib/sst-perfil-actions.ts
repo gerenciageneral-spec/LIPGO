@@ -53,21 +53,68 @@ function saneado(row: Partial<PerfilSociodemograficoRow>): Record<string, any> {
   return out
 }
 
+// Misma regla de "activo" que usan el portal (lib/portal-actions.ts) y el
+// listado de MEDEVAC: un solo criterio en toda la app.
+function esHeadcountActivo(estado: unknown): boolean {
+  return String(estado ?? "").trim().toUpperCase() === "ACTIVO"
+}
+
+/**
+ * El censo sociodemográfico, cruzado contra el head count por documento.
+ *
+ * El cruce importa: la columna `estado` de `sst_perfil_sociodemografico` la
+ * escribe la carga masiva y queda en "activo" para todos, así que no dice nada
+ * sobre quién sigue trabajando aquí. El estado REAL vive en el head count, y
+ * sin cruzarlo el censo cuenta como plantilla actual a gente que ya se retiró
+ * — que es justo lo que un análisis sociodemográfico no debe hacer.
+ *
+ * Cada fila sale con `estado_headcount`: "Activo", "Inactivo" o "Sin head
+ * count" (el documento no aparece allí; suele ser una cédula escrita distinto,
+ * y eso lo corrige Gestión Humana).
+ *
+ * Si la consulta del head count falla, los perfiles se devuelven igual con el
+ * estado en null: quedarse sin censo por no poder resolver un estado sería
+ * peor que mostrarlo sin esa marca.
+ */
 export async function listPerfilSociodemografico(
   empresaIdFromClient?: number | null,
 ): Promise<PerfilSociodemograficoRow[]> {
   const supabase: any = await getSupabaseAdmin()
   const empresaId = await resolveEmpresaId(empresaIdFromClient)
-  const q = supabase.from("sst_perfil_sociodemografico").select("*").order("apellidos", { ascending: true })
   // SST transversal (LIP): se lista TODO el perfil sociodemográfico sin filtrar
   // por el ID del cliente; la info de SST es la misma para todos los proyectos.
   void empresaId
-  const { data, error } = await q
-  if (error) {
-    console.error("[v0] listPerfilSociodemografico:", error.message, error.code, error.details, error.hint)
+
+  const [perf, hc] = await Promise.all([
+    supabase.from("sst_perfil_sociodemografico").select("*").order("apellidos", { ascending: true }),
+    supabase.from("headcount").select("identificacion, estado, cargo"),
+  ])
+
+  if (perf.error) {
+    console.error("[v0] listPerfilSociodemografico:", perf.error.message, perf.error.code, perf.error.details, perf.error.hint)
     return []
   }
-  return (data ?? []) as PerfilSociodemograficoRow[]
+  const filas = (perf.data ?? []) as PerfilSociodemograficoRow[]
+
+  if (hc.error) {
+    console.error("[v0] listPerfilSociodemografico headcount:", hc.error.message, hc.error.code)
+    return filas.map((r) => ({ ...r, estado_headcount: null, cargo_headcount: null }))
+  }
+
+  const porDocumento = new Map<string, { estado: string; cargo: string | null }>()
+  for (const h of hc.data ?? []) {
+    const k = normalizarDocumentoPerfil(h.identificacion)
+    if (k) porDocumento.set(k, { estado: h.estado ?? "", cargo: h.cargo ?? null })
+  }
+
+  return filas.map((r) => {
+    const h = porDocumento.get(normalizarDocumentoPerfil(r.documento))
+    return {
+      ...r,
+      estado_headcount: !h ? "Sin head count" : esHeadcountActivo(h.estado) ? "Activo" : "Inactivo",
+      cargo_headcount: h?.cargo ?? null,
+    }
+  })
 }
 
 /**

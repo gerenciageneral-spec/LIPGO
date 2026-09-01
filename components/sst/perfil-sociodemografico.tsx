@@ -1,7 +1,9 @@
 "use client"
 
 // Perfil Sociodemográfico (SST-FOR-32). Censo + análisis SG-SST / ISO 45001 / 0312.
-// Filtra por el selector global (proyecto) y por estado (activos/retirados).
+// Filtra por el selector global (proyecto) y por el estado REAL de la persona
+// en el head count (activos/retirados), no por la columna `estado` de esta
+// tabla, que la carga masiva deja en "activo" para todos.
 // Lee sst_perfil_sociodemografico.
 
 import { useEffect, useMemo, useState } from "react"
@@ -42,6 +44,13 @@ const ALTO_ENCABEZADO = 30
 // Radix Select no admite un item con valor vacio: el "sin filtro" usa este
 // centinela en vez de "".
 const TODOS_COB = "__todos"
+
+// Un perfil de alguien que ya no trabaja aqui no se borra -- sigue siendo parte
+// del historico del censo -- pero tampoco puede leerse como plantilla actual.
+const estaInactivo = (r: PerfilSociodemograficoRow) => (r as any).estado_headcount === "Inactivo"
+const FONDO_INACTIVO = "#e9edf2"
+const fondoFila = (r: PerfilSociodemograficoRow, i: number) =>
+  estaInactivo(r) ? FONDO_INACTIVO : i % 2 ? "#f7fafc" : "#ffffff"
 
 const COLORS = ["#0D3B6E", "#00B4CC", "#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6", "#14B8A6", "#F97316", "#64748B"]
 const T = (v: any) => String(v ?? "").trim()
@@ -90,7 +99,7 @@ const COLS: { k: keyof PerfilSociodemograficoRow | "_nombre" | "_antiguedad"; l:
   { k: "zona", l: "Zona" }, { k: "estrato", l: "Estrato" }, { k: "transporte", l: "Transporte" },
   { k: "municipio_residencia", l: "Municipio" }, { k: "direccion", l: "Dirección" },
   { k: "pais_nacimiento", l: "País nac." }, { k: "depto_nacimiento", l: "Depto nac." },
-  { k: "consume_alcohol", l: "Alcohol" }, { k: "actividad_fisica", l: "Act. física" }, { k: "fumador", l: "Fumador" }, { k: "estado", l: "Estado" },
+  { k: "consume_alcohol", l: "Alcohol" }, { k: "actividad_fisica", l: "Act. física" }, { k: "fumador", l: "Fumador" }, { k: "estado_headcount", l: "Estado" },
 ]
 const celda = (r: PerfilSociodemograficoRow, k: string): string => {
   if (k === "_nombre") return `${T(r.apellidos)} ${T(r.nombres)}`.trim()
@@ -345,7 +354,26 @@ export function PerfilSociodemografico({ selectedEmpresaId: propEmpresaId }: { s
     setCobQ(""); setCobCentro(TODOS_COB); setCobCargo(TODOS_COB); setCobEstado("pendientes")
   }
 
-  const base = useMemo(() => rows.filter((r) => estado === "todos" || (r.estado ?? "activo") === estado), [rows, estado])
+  // El filtro usa el estado del HEAD COUNT, no la columna `estado` de la tabla
+  // de perfiles: esa la escribe la carga masiva y queda en "activo" para todos,
+  // asi que filtrar por ella no descartaba a nadie. Quien no aparece en el head
+  // count cuenta como retirado para el analisis: no es plantilla actual.
+  // Cuantos hay de cada lado, para mostrarlo en los botones: sin esto no se
+  // nota que hay perfiles de gente que ya se fue hasta que alguien los busca.
+  const conteoEstado = useMemo(() => {
+    const activo = rows.filter((r) => (r as any).estado_headcount === "Activo").length
+    return { activo, retirado: rows.length - activo }
+  }, [rows])
+
+  const base = useMemo(
+    () =>
+      rows.filter((r) => {
+        if (estado === "todos") return true
+        const activo = (r as any).estado_headcount === "Activo"
+        return estado === "activo" ? activo : !activo
+      }),
+    [rows, estado],
+  )
   // Opciones (valores presentes) por CADA columna.
   const opciones = useMemo(() => {
     const m: Record<string, Set<string>> = {}
@@ -436,11 +464,27 @@ export function PerfilSociodemografico({ selectedEmpresaId: propEmpresaId }: { s
       <div className="flex flex-wrap items-center gap-2">
         {(["activo", "retirado", "todos"] as const).map((e) => (
           <Button key={e} size="sm" variant={estado === e ? "default" : "outline"} onClick={() => setEstado(e)}
-            style={estado === e ? { background: SST_TOKENS.navy, color: "white" } : undefined}>
-            {e === "activo" ? "Activos" : e === "retirado" ? "Retirados" : "Todos"}
+            style={estado === e ? { background: SST_TOKENS.navy, color: "white" } : undefined}
+            title={
+              e === "activo"
+                ? "Personal ACTIVO en el head count"
+                : e === "retirado"
+                  ? "Ya no está activo en el head count, o su documento no aparece allí"
+                  : "Todo el censo, activos y no activos"
+            }>
+            {e === "activo" ? "Activos" : e === "retirado" ? "No activos" : "Todos"}
+            <span className="ml-1.5 text-[10px] tabular-nums opacity-70">
+              {e === "todos" ? rows.length : conteoEstado[e]}
+            </span>
           </Button>
         ))}
         {loading && <Loader2 className="h-4 w-4 animate-spin" style={{ color: SST_TOKENS.teal }} />}
+        {conteoEstado.retirado > 0 && (
+          <span className="text-[11px] text-muted-foreground">
+            {conteoEstado.retirado} perfil(es) de personal que ya no está activo — el estado sale del
+            <b> head count</b>, cruzado por documento.
+          </span>
+        )}
       </div>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-8">
@@ -924,8 +968,8 @@ export function PerfilSociodemografico({ selectedEmpresaId: propEmpresaId }: { s
                             />
                             {celda(r, "documento")}
                           </span>
-                        ) : c.k === "estado" ? (
-                          <Badge style={{ background: (r.estado ?? "activo") === "retirado" ? SST_TOKENS.grey : SST_TOKENS.ok, color: "white" }}>{r.estado ?? "activo"}</Badge>
+                        ) : c.k === "estado_headcount" ? (
+                          <EtiquetaEstado v={(r as any).estado_headcount} />
                         ) : (
                           celda(r, c.k as string)
                         )}
@@ -933,7 +977,7 @@ export function PerfilSociodemografico({ selectedEmpresaId: propEmpresaId }: { s
                     ))}
                     <td
                       className="sticky right-0 z-10 whitespace-nowrap border-b p-2 text-center"
-                      style={{ background: i % 2 ? "#f7fafc" : "#ffffff" }}
+                      style={{ background: fondoFila(r, i) }}
                     >
                       <Button
                         variant="ghost"
@@ -958,6 +1002,16 @@ export function PerfilSociodemografico({ selectedEmpresaId: propEmpresaId }: { s
       </Tabs>
     </div>
   )
+}
+
+/** Estado de la persona en el head count. "Sin head count" no es lo mismo que
+ *  inactivo: significa que el documento no aparece alli -- normalmente porque
+ *  esta escrito distinto -- y eso lo corrige Gestion Humana, no SST. */
+function EtiquetaEstado({ v }: { v?: string | null }) {
+  if (!v) return <span className="text-muted-foreground">—</span>
+  if (v === "Activo") return <Badge style={{ background: SST_TOKENS.ok, color: "white" }}>Activo</Badge>
+  if (v === "Inactivo") return <Badge style={{ background: "#64748b", color: "white" }}>Inactivo</Badge>
+  return <Badge variant="outline" className="font-normal">Sin head count</Badge>
 }
 
 function TarjetaTexto({ t, v }: { t: string; v: string }) {
