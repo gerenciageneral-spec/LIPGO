@@ -86,6 +86,16 @@ export async function getAvailableLoadOrders(selectedEmpresaId?: number | null):
       // orden madre (que ya tiene sus lotes) y solo se tramitan en Packing y se ven
       // en el dashboard del día. Sin esto aparecían aquí por nacer con horalote null.
       .neq("tipooperacion", "Distribucion")
+      // Cualquier orden con `ordenorigen` (clon de descargue CEDI generado por
+      // autoGenerarDescarguesCedi cuando la madre YA tiene lote, o descargue de
+      // traslado entre bodegas generado por transfer-actions) trae su lote de
+      // otro lado — de la madre (historicolotes) o del propio traslado
+      // (despachotraslados) — nunca se asigna aquí. Sin este filtro, si el
+      // `horalote` propio del clon queda en null por cualquier motivo (visto en
+      // producción: la orden MED202608087747 nació con horalote heredado de su
+      // madre pero quedó en null después), el clon reaparece aquí indefinidamente
+      // aunque su mercancía ya esté aprobada en el sistema.
+      .is("ordenorigen", null)
       .order("id", { ascending: false })
 
     if (error) {
