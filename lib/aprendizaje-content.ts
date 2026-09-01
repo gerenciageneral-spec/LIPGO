@@ -337,17 +337,24 @@ export const CATALOGO_APRENDIZAJE: ContenidoAprendizaje[] = [
       "Ver, por producto, la cantidad contada por lote y el total sumado, y quien conto cada linea.",
       "Generar las correcciones a partir de un conteo en estado contado.",
       "Cerrar el mes (ajusta el stock) y firmar el acta con firma digital dibujada, como evidencia de auditoria.",
+      "Corregir manualmente un lote o ubicacion equivocado desde la pestana Correcciones, sin depender del conteo.",
       "Consultar el historico de conteos y de correcciones.",
     ],
     noPuedes: [
       "Editar un conteo que ya esta cerrado o aprobado: solo es editable en borrador o contado.",
-      "Ajustar stock saltandose el flujo: el ajuste ocurre unicamente al cerrar el mes.",
+      "Ajustar stock saltandose el flujo: el ajuste ocurre unicamente al cerrar el mes, o al aprobar una correccion manual.",
+      "Editar/renombrar un lote o ubicacion existente directamente: toda correccion es un movimiento real (entrada o salida), nunca una reescritura.",
     ],
     funcionalidades: [
       {
         nombre: "Conteo por linea (varias personas a la vez)",
         descripcion:
           "Cada cantidad contada se guarda al momento, por producto + lote + ubicacion, sin borrar lo que otra persona ya conto. La tabla agrupa por producto: arriba el subtotal (sistema, conteo, diferencia) y, debajo, el detalle por lote/ubicacion con quien lo conto y a que hora.",
+      },
+      {
+        nombre: "Conteo total (cierre de mes) vs conteo ciclico",
+        descripcion:
+          "El conteo TOTAL (el que cierra el mes) compara contra el inventario CONGELADO del dia anterior: excluye automaticamente lo que ya se movio hoy (cargue/descargue/produccion), aunque se cree a media manana. Aun asi, lo ideal es crearlo antes de que arranque la operacion del dia. El conteo CICLICO (verificacion puntual de un producto, boton \"Un producto\" al crear) compara contra el stock EN VIVO en el momento de crearlo — es otro caso de uso, no sirve para el cierre mensual.",
       },
       {
         nombre: "Estados del conteo",
@@ -357,7 +364,12 @@ export const CATALOGO_APRENDIZAJE: ContenidoAprendizaje[] = [
       {
         nombre: "Generar correcciones",
         descripcion:
-          "Disponible cuando el conteo esta en estado contado. Toma las diferencias entre lo contado y el sistema y arma las correcciones propuestas.",
+          "Disponible cuando el conteo esta en estado contado. Toma las diferencias entre lo contado y el sistema (mismo lote/ubicacion) y arma las correcciones propuestas automaticamente.",
+      },
+      {
+        nombre: "Correcciones (pestana aparte, manual)",
+        descripcion:
+          "Para corregir un lote/ubicacion equivocado, o registrar stock fisico encontrado en un lote que el sistema tenia en cero (por eso no aparecia en la lista del conteo). No reescribe nada: cada correccion registrada es un MOVIMIENTO REAL que solo se aplica al APROBARLA (boton check). Para mover cantidad de un lote mal a uno bien hacen falta DOS correcciones — una salida en el lote incorrecto y una entrada en el correcto — no una sola.",
       },
       {
         nombre: "Cerrar mes (ajusta stock)",
@@ -373,6 +385,7 @@ export const CATALOGO_APRENDIZAJE: ContenidoAprendizaje[] = [
     consejos: [
       "Cerrar el mes ajusta el stock real. Confirme el conteo fisico antes de ejecutarlo, porque el ajuste queda registrado contra el inventario.",
       "Si varias personas cuentan el mismo documento, cada quien puede trabajar su parte del listado al tiempo: el guardado es por linea, no reemplaza lo que ya conto el companero.",
+      "Una correccion registrada no mueve stock por si sola: hay que aprobarla (boton check) para que se postee el movimiento real y se actualice el saldo.",
     ],
   },
   {
