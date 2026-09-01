@@ -3429,19 +3429,31 @@ export async function generarAjustesCuadre(cuadreId: number): Promise<{ success:
     const { data: det } = await supabase.from("sig_inventario_cuadre_detalle").select("*").eq("cuadre_id", cuadreId)
     const conDif = (det ?? []).filter((d: any) => Number(d.diferencia) !== 0)
     if (conDif.length === 0) return { success: true, creados: 0 }
-    const filas = conDif.map((d: any) => ({
-      proyecto_id: (cab as any)?.proyecto_id ?? null,
-      cuadre_id: cuadreId,
-      fecha: (cab as any)?.fecha ?? null,
-      codproducto: d.codproducto,
-      producto: d.producto,
-      lote: d.lote,
-      cantidad: d.diferencia,
-      tipo: Number(d.diferencia) < 0 ? "faltante" : "sobrante",
-      motivo: "Ajuste por conteo físico (cuadre)",
-      responsable: (cab as any)?.responsable ?? null,
-      estado: "registrado",
-    }))
+    // direccion/cod_movimiento faltaban aqui (solo se ponian en el alta MANUAL
+    // de "Registrar correccion") -- sin direccion, postCorreccionInvtrans lee
+    // `ajuste.direccion === "salida"` como false para CUALQUIER ajuste sin
+    // direccion, y postea TODO como Entrada: un faltante habria sumado stock
+    // en vez de restarlo. Encontrado y corregido antes de que existiera ni un
+    // solo ajuste real generado por este camino (verificado 2026-09-01).
+    const filas = conDif.map((d: any) => {
+      const esFaltante = Number(d.diferencia) < 0
+      return {
+        proyecto_id: (cab as any)?.proyecto_id ?? null,
+        cuadre_id: cuadreId,
+        fecha: (cab as any)?.fecha ?? null,
+        codproducto: d.codproducto,
+        producto: d.producto,
+        lote: d.lote,
+        location: d.location ?? null,
+        direccion: esFaltante ? "salida" : "ingreso",
+        cod_movimiento: esFaltante ? "702" : "701",
+        cantidad: d.diferencia,
+        tipo: esFaltante ? "faltante" : "sobrante",
+        motivo: "Ajuste por conteo físico (cuadre)",
+        responsable: (cab as any)?.responsable ?? null,
+        estado: "registrado",
+      }
+    })
     const { error } = await supabase.from("sig_inventario_ajuste").insert(filas)
     if (error) return { success: false, error: error.message }
     await supabase.from("sig_inventario_cuadre").update({ estado: "cerrado", updated_at: new Date().toISOString() }).eq("id", cuadreId)
