@@ -224,6 +224,11 @@ export interface IncidenteRow {
   cie10_diagnostico: string | null
   estado: string
   fecha_cierre: string | null
+  // Cierre del expediente por parte de la ARL. Es un momento distinto del
+  // cierre de la investigacion interna (`fecha_cierre`): la investigacion de
+  // LIP puede estar cerrada y el expediente de la ARL seguir abierto.
+  cierre_arl?: boolean | null
+  fecha_cierre_arl?: string | null
   ausentismo_id?: string | null
   ishikawa?: any
   causa_actos_inseguros?: string | null

@@ -90,6 +90,98 @@ export async function updateIncidente(
   return error ? { success: false, message: error.message } : { success: true }
 }
 
+/**
+ * Actualiza una investigacion existente y REEMPLAZA su plan de accion y sus
+ * testigos por los que vengan.
+ *
+ * El reemplazo es deliberado: el formulario de edicion muestra la lista
+ * completa en pantalla, asi que lo que quede alli es lo que debe quedar
+ * guardado. Si en vez de reemplazar se insertara --como hace `saveIncidente`,
+ * que siempre crea-- cada edicion duplicaria el plan de accion.
+ */
+export async function actualizarIncidenteCompleto(
+  id: number,
+  row: Partial<IncidenteRow>,
+  acciones: Partial<IncidenteAccionRow>[] = [],
+  testigos: Partial<IncidenteTestigoRow>[] = [],
+  empresaIdFromClient?: number | null,
+): Promise<{ success: boolean; message?: string }> {
+  if (!id) return { success: false, message: "No se indico que investigacion actualizar." }
+  const supabase: any = await createClient()
+  const empresaId = await resolveEmpresaId(empresaIdFromClient)
+
+  // Ni `id` ni `idempresa` se tocan: sigue siendo el mismo registro y del mismo
+  // proyecto. Van fuera del update para que un formulario mal armado no pueda
+  // moverlo de proyecto sin querer.
+  const { id: _sinId, idempresa: _sinEmpresa, ...campos } = row as any
+  const { error } = await supabase.from("sst_incidentes").update(campos).eq("id", id)
+  if (error) {
+    console.error("[v0] actualizarIncidenteCompleto:", error.message)
+    return { success: false, message: error.message }
+  }
+
+  const { error: eBorrarAcc } = await supabase
+    .from("sst_incidente_acciones")
+    .delete()
+    .eq("incidente_id", id)
+  if (eBorrarAcc) {
+    console.error("[v0] actualizarIncidenteCompleto acciones (borrado):", eBorrarAcc.message)
+    return { success: false, message: eBorrarAcc.message }
+  }
+  const accValidas = acciones.filter((a) => a.plan && String(a.plan).trim())
+  if (accValidas.length) {
+    // Los campos se listan uno por uno y no con spread: las filas que vienen de
+    // `listAcciones` traen su propio `id`, y reinsertarlo chocaria con el que
+    // ya existio.
+    const payload = accValidas.map((a) => ({
+      plan: a.plan ?? null,
+      tipo_control: a.tipo_control ?? null,
+      fecha_implementacion: a.fecha_implementacion || null,
+      responsable_ejecucion: a.responsable_ejecucion || null,
+      fecha_verificacion: a.fecha_verificacion || null,
+      responsable_verificacion: a.responsable_verificacion || null,
+      observacion: a.observacion || null,
+      estado: a.estado ?? "pendiente",
+      incidente_id: id,
+      idempresa: empresaId,
+    }))
+    const { error: e2 } = await supabase.from("sst_incidente_acciones").insert(payload)
+    if (e2) {
+      console.error("[v0] actualizarIncidenteCompleto acciones:", e2.message)
+      return { success: false, message: e2.message }
+    }
+  }
+
+  const { error: eBorrarTes } = await supabase
+    .from("sst_incidente_testigos")
+    .delete()
+    .eq("incidente_id", id)
+  if (eBorrarTes) {
+    console.error("[v0] actualizarIncidenteCompleto testigos (borrado):", eBorrarTes.message)
+    return { success: false, message: eBorrarTes.message }
+  }
+  const tesValidos = testigos.filter(
+    (t) => (t.nombre && String(t.nombre).trim()) || (t.documento && String(t.documento).trim()),
+  )
+  if (tesValidos.length) {
+    const payloadT = tesValidos.map((t) => ({
+      nombre: t.nombre ?? null,
+      documento: t.documento ?? null,
+      version: t.version ?? null,
+      cargo: t.cargo ?? null,
+      incidente_id: id,
+      idempresa: empresaId,
+    }))
+    const { error: e3 } = await supabase.from("sst_incidente_testigos").insert(payloadT)
+    if (e3) {
+      console.error("[v0] actualizarIncidenteCompleto testigos:", e3.message)
+      return { success: false, message: e3.message }
+    }
+  }
+
+  return { success: true }
+}
+
 export async function listAcciones(incidenteId: number): Promise<IncidenteAccionRow[]> {
   const supabase = await createClient()
   const { data, error } = await supabase

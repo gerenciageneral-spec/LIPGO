@@ -20,9 +20,24 @@ import { SST_TOKENS } from "@/components/sst/sst-utils"
 import { SoportesDocumentales } from "@/components/sst/soportes-documentales"
 import { EspinaPescado, CuadrosCausas } from "@/components/sst/espina-pescado"
 import type { IshikawaData, CuadrosCausasData } from "@/components/sst/espina-pescado"
-import { listIncidentes, saveIncidente, updateIncidente, listAcciones, listTestigos } from "@/lib/sst-incidentes-actions"
+import {
+  listIncidentes,
+  saveIncidente,
+  updateIncidente,
+  actualizarIncidenteCompleto,
+  listAcciones,
+  listTestigos,
+} from "@/lib/sst-incidentes-actions"
 import type { IncidenteRow, IncidenteAccionRow, IncidenteTestigoRow } from "@/lib/sst-evidencia-types"
-import { FileText, Eye, Loader2 } from "lucide-react"
+import { FileText, Eye, Loader2, Pencil, X, ShieldCheck } from "lucide-react"
+import { Checkbox } from "@/components/ui/checkbox"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 
 // ---- Datos FIJOS del empleador LIP (encabezado del formato, no se digitan) ----
 const EMPLEADOR_LIP = {
@@ -295,6 +310,256 @@ const vacio = (empresaId?: number | null) => {
 
 const labelOf = (o: [string, string][], v: any) => o.find(([k]) => k === String(v))?.[1] ?? (v ?? "")
 
+/**
+ * Pasa una fila de la base al formulario, para poder editarla.
+ *
+ * Los si/no viajan en el formulario como TEXTO ("true"/"false") porque los
+ * pinta un <Select>, pero en la base son boolean: hay que devolverlos a texto
+ * o el selector sale vacio y al guardar se perderia la respuesta. Lo mismo con
+ * los null, que en un <Input> controlado lo dejan sin controlar.
+ */
+function desdeFila(r: IncidenteRow): Record<string, any> {
+  const f: Record<string, any> = { ...vacio(null), ...(r as any) }
+  BOOL_KEYS.forEach((k) => {
+    const v = (r as any)[k]
+    f[k] = v === true ? "true" : v === false ? "false" : ""
+  })
+  for (const k of Object.keys(f)) if (f[k] === null || f[k] === undefined) f[k] = ""
+  f.ishikawa = (r as any).ishikawa || ishikawaLIP()
+  f.firmas = (r as any).firmas || firmasVacias()
+  // `cierre_arl` es NOT NULL en la base. La normalizacion de arriba dejaria ""
+  // si la columna aun no existe, y al guardar se enviaria null y el update
+  // fallaria; aqui se fuerza a boolean.
+  f.cierre_arl = (r as any).cierre_arl === true
+  return f
+}
+
+const desdeAccion = (a: IncidenteAccionRow) => ({
+  plan: a.plan ?? "",
+  tipo_control: a.tipo_control ?? "fuente",
+  fecha_implementacion: a.fecha_implementacion ?? "",
+  responsable_ejecucion: a.responsable_ejecucion ?? "",
+  fecha_verificacion: a.fecha_verificacion ?? "",
+  responsable_verificacion: a.responsable_verificacion ?? "",
+  observacion: a.observacion ?? "",
+  estado: a.estado ?? "pendiente",
+})
+
+const desdeTestigo = (t: IncidenteTestigoRow) => ({
+  nombre: t.nombre ?? "",
+  documento: t.documento ?? "",
+  version: t.version ?? "",
+  cargo: (t as any).cargo ?? "",
+})
+
+/** "SÍ" / "NO" para los campos si-no, que en el formulario viajan como texto
+ *  ("true"/"false") y en la base como boolean. */
+const siNo = (v: any) => (v === true || v === "true" ? "SÍ" : v === false || v === "false" ? "NO" : (v ?? ""))
+
+const ROLES_FIRMA: [string, string][] = [
+  ["jefe_inmediato", "Jefe inmediato / Coord. operación"],
+  ["coordinador_sst", "Coordinador SST"],
+  ["integrante_copasst", "Integrante COPASST"],
+  ["responsable_sgsst", "Responsable SG-SST"],
+  ["reviso", "Revisó"],
+  ["cerro", "Cerró"],
+  ["representante_legal", "Representante legal"],
+]
+
+export interface SeccionInforme {
+  k: string
+  titulo: string
+  filas: [string, string][]
+}
+
+/**
+ * Las seis secciones del SST-FOR-21, en el orden del formato.
+ *
+ * Se definen UNA sola vez porque las usan dos cosas: el PDF que se descarga y
+ * la ventana de detalle del historial. Si cada una armara su propia lista, con
+ * el tiempo el papel y la pantalla terminarian diciendo cosas distintas del
+ * mismo evento, que en una investigacion de accidente es justo lo que no puede
+ * pasar.
+ */
+function seccionesInforme(data: Record<string, any>): SeccionInforme[] {
+  const ish = (data.ishikawa as IshikawaData) || null
+  return [
+    {
+      k: "empleador",
+      titulo: "1. IDENTIFICACIÓN DEL EMPLEADOR / CONTRATANTE",
+      filas: [
+        ["Razón social", EMPLEADOR_LIP.razon_social],
+        ["Tipo id / NIT", `${EMPLEADOR_LIP.tipo_id} · ${EMPLEADOR_LIP.nit}`],
+        ["Dirección", `${EMPLEADOR_LIP.direccion} · ${EMPLEADOR_LIP.municipio} (${EMPLEADOR_LIP.departamento})`],
+        ["Correo", EMPLEADOR_LIP.email],
+        ["Actividad económica", EMPLEADOR_LIP.actividad],
+        ["Centro de trabajo", `${data.centro_trabajo ?? ""} · ${data.centro_direccion ?? ""} · ${data.centro_municipio ?? ""}`],
+        ["Clasificación / Severidad", `${labelOf(TIPOS, data.tipo)} · ${labelOf(GRAVEDAD, data.gravedad)}`],
+        ["Fecha de reporte", data.fecha_reporte ?? ""],
+      ],
+    },
+    {
+      k: "persona",
+      titulo: "2. INFORMACIÓN DE LA PERSONA",
+      filas: [
+        ["Nombres y apellidos", data.trabajador ?? ""],
+        ["Documento", `${data.documento_tipo ?? ""} ${data.documento_numero ?? ""}`],
+        ["Fecha nacimiento / Sexo", `${data.fecha_nacimiento ?? ""} · ${labelOf(SEXO, data.sexo)}`],
+        ["EPS / ARL / AFP", `${data.eps ?? ""} · ${data.arl ?? ""} · ${data.afp ?? ""}`],
+        ["Cargo / Ocupación", `${data.cargo ?? ""} · ${data.ocupacion_habitual ?? ""} (cód ${data.codigo_ocupacion ?? ""})`],
+        ["Vinculación", labelOf(VINCULACION, data.tipo_vinculacion)],
+        ["Ingreso / Antigüedad", `${data.fecha_ingreso ?? ""} · ${data.antiguedad_dias ?? 0} días`],
+        ["Salario / Jornada habitual", `$${(Number(data.salario) || 0).toLocaleString("es-CO")} · ${labelOf(JORNADA_HAB, data.jornada_habitual)}`],
+        ["Funciones asignadas", data.funciones_asignadas ?? ""],
+        ["EPP y dotación", data.epp_portado ?? ""],
+      ],
+    },
+    {
+      k: "evento",
+      titulo: "3. INFORMACIÓN SOBRE EL ACCIDENTE / INCIDENTE",
+      filas: [
+        ["Fecha / Día / Hora", `${data.fecha_evento ?? ""} · ${labelOf(DIA_SEMANA, data.dia_semana)} · ${data.hora_evento ?? ""}`],
+        ["Jornada / T. laborado previo", `${labelOf(JORNADA, data.jornada_evento)} · ${data.tiempo_laborado_previo ?? ""}`],
+        ["¿Labor habitual? / Tipo", `${siNo(data.labor_habitual)} · ${labelOf(TIPO_ACC, data.tipo_accidente)}`],
+        ["Ocurrió", `${labelOf(DENTRO_FUERA, data.dentro_fuera_empresa)} · ${data.departamento_evento ?? ""} ${data.municipio_evento ?? ""} (${labelOf(ZONA, data.zona_evento)})`],
+        ["Área / Lugar", `${data.area_ocurrencia ?? ""} · ${data.lugar_ocurrencia ?? ""}`],
+        ["Tipo de lesión", data.tipo_lesion ?? ""],
+        ["Parte del cuerpo", data.parte_cuerpo ?? ""],
+        ["Agente", data.agente_accidente ?? ""],
+        ["Mecanismo / forma", data.mecanismo ?? ""],
+        ["Descripción", data.descripcion ?? ""],
+      ],
+    },
+    {
+      k: "manejo",
+      titulo: "4. MANEJO Y AUSENTISMO",
+      filas: [
+        ["¿Causó muerte?", siNo(data.causo_muerte)],
+        ["Primeros auxilios / Remitido", `${siNo(data.primeros_auxilios)} · ${siNo(data.remitido_centro_salud)} ${data.centro_salud ? "(" + data.centro_salud + ")" : ""}`],
+        ["Hospitalizado / Transporte", `${siNo(data.hospitalizado)} · ${siNo(data.requirio_transporte)}`],
+        ["Ausentismo", `${labelOf(AUS_TIPO, data.ausentismo_tipo)} · ${data.ausentismo_fecha_inicial ?? ""} → ${data.ausentismo_fecha_final ?? ""}`],
+        ["Días inicial / prórroga / total", `${data.dias_incapacidad_inicial ?? 0} · ${data.dias_prorroga ?? 0} · ${data.dias_incapacidad ?? 0}`],
+        ["CIE-10", `${data.cie10_codigo ?? ""} ${data.cie10_diagnostico ?? ""}`],
+        ["Reporte legal", `ARL: ${siNo(data.reportado_arl)} (${data.fecha_reporte_arl ?? ""}) · FURAT: ${data.furat_radicado ?? ""} · MinTrabajo: ${siNo(data.reportado_mintrabajo)}`],
+        // El cierre del expediente ARL es distinto del cierre de la
+        // investigacion interna, por eso va aparte y no junto a `fecha_cierre`.
+        ["Cierre expediente ARL", `${siNo(data.cierre_arl)}${data.fecha_cierre_arl ? " · " + data.fecha_cierre_arl : ""}`],
+      ],
+    },
+    {
+      k: "causas",
+      titulo: "5. ANÁLISIS DE CAUSAS (Ishikawa · causalidad)",
+      filas: [
+        ["Efecto analizado", ish?.efecto ?? ""],
+        ["Causas inmediatas – Actos inseguros", data.causa_actos_inseguros ?? ""],
+        ["Causas inmediatas – Condiciones inseguras", data.causa_condiciones_inseguras ?? ""],
+        ["Causas básicas – Factores personales", data.causa_factores_personales ?? ""],
+        ["Causas básicas – Factores del trabajo", data.causa_factores_trabajo ?? ""],
+        ["Observaciones investigadores", data.observaciones_investigadores ?? ""],
+        ["Equipo investigador / Fecha", `${data.equipo_investigador ?? ""} · ${data.fecha_investigacion ?? ""}`],
+      ],
+    },
+    {
+      k: "retro",
+      titulo: "6. RETROALIMENTACIÓN Y LECCIÓN APRENDIDA",
+      filas: [
+        ["Divulgación / lección aprendida", data.divulgacion_leccion ?? ""],
+        ["Charla de seguridad", data.charla_seguridad ?? ""],
+        ["Retroalimentación", data.retroalimentacion ?? ""],
+        ["Estado del caso / Cierre", `${labelOf(ESTADOS, data.estado)} · ${data.fecha_cierre ?? ""}`],
+      ],
+    },
+  ]
+}
+
+/** Texto comparable: sin mayusculas y sin tildes, para que buscar "zuniga"
+ *  encuentre "Zúñiga". */
+const comparable = (v: unknown) =>
+  String(v ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+
+/** Valor del desplegable "Todos": Radix no admite un SelectItem vacio. */
+const TODOS = "__todos__"
+
+/** Alto de la fila de encabezado; la de filtros se ancla justo debajo. */
+const ALTO_ENCABEZADO = 34
+
+type ColHistorial = {
+  k: string
+  l: string
+  min: string
+  filtro: "texto" | "lista" | "ninguno"
+  centrado?: boolean
+  ph?: string
+}
+
+// Una entrada por columna del historial. De aqui salen el encabezado, la fila
+// de filtros y el filtrado, para que no puedan desalinearse entre si.
+const COLUMNAS_HISTORIAL: ColHistorial[] = [
+  { k: "fecha", l: "Fecha", min: "7.5rem", filtro: "texto", ph: "AAAA-MM-DD" },
+  { k: "tipo", l: "Tipo", min: "10rem", filtro: "lista" },
+  { k: "trabajador", l: "Trabajador", min: "15rem", filtro: "texto", ph: "Nombre…" },
+  { k: "gravedad", l: "Gravedad", min: "7.5rem", filtro: "lista", centrado: true },
+  { k: "dias", l: "Días", min: "5.5rem", filtro: "texto", centrado: true, ph: "N.º" },
+  { k: "investigacion", l: "Investigación", min: "12rem", filtro: "lista" },
+  { k: "estado", l: "Estado", min: "11rem", filtro: "lista" },
+  { k: "pdf", l: "PDF", min: "8.5rem", filtro: "ninguno", centrado: true },
+  { k: "soportes", l: "Soportes", min: "17rem", filtro: "ninguno" },
+  { k: "cierre_arl", l: "Cierre ARL", min: "9rem", filtro: "lista", centrado: true },
+]
+
+/** Dias entre el evento y la investigacion. null = todavia sin investigar. */
+function diasInvestigacion(r: IncidenteRow): number | null {
+  if (!r.fecha_investigacion) return null
+  return Math.round(
+    (new Date(r.fecha_investigacion).getTime() - new Date(r.fecha_evento).getTime()) / 86400000,
+  )
+}
+
+/** La Res. 1401/2007 da 15 dias para investigar. */
+function estadoInvestigacion(r: IncidenteRow): "Pendiente" | "En plazo" | "Fuera de plazo" {
+  const d = diasInvestigacion(r)
+  if (d === null) return "Pendiente"
+  return d <= 15 ? "En plazo" : "Fuera de plazo"
+}
+
+/** Texto por el que se filtra cada columna. Es el MISMO que se ve en pantalla:
+ *  si difirieran, filtrar por lo que uno lee no traeria la fila. */
+function valorHistorial(r: IncidenteRow, k: string): string {
+  switch (k) {
+    case "fecha":
+      return r.fecha_evento ?? ""
+    case "tipo":
+      return labelOf(TIPOS, r.tipo)
+    case "trabajador":
+      return r.trabajador ?? r.cargo ?? ""
+    case "gravedad":
+      return r.gravedad ?? ""
+    case "dias":
+      return String(r.dias_incapacidad ?? 0)
+    case "investigacion":
+      return estadoInvestigacion(r)
+    case "estado":
+      return labelOf(ESTADOS, r.estado)
+    case "cierre_arl":
+      return r.cierre_arl ? "Cerrado" : "Abierto"
+    default:
+      return ""
+  }
+}
+
+/** Orden con el que se muestran las opciones de los desplegables que tienen un
+ *  orden natural. Alfabetico dejaria "Fuera de plazo" antes que "Pendiente". */
+const ORDEN_OPCIONES: Record<string, string[]> = {
+  tipo: TIPOS.map(([, l]) => l),
+  gravedad: GRAVEDAD.map(([v]) => v),
+  investigacion: ["Pendiente", "En plazo", "Fuera de plazo"],
+  estado: ESTADOS.map(([, l]) => l),
+  cierre_arl: ["Abierto", "Cerrado"],
+}
+
 async function loadLogo(): Promise<string | null> {
   try {
     const r = await fetch("/lip-logo.png")
@@ -321,6 +586,17 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
   const [rows, setRows] = useState<IncidenteRow[]>([])
   const [saving, setSaving] = useState(false)
   const [pdfId, setPdfId] = useState<number | "form" | null>(null)
+  // Historial: un valor de filtro por columna (vacio o TODOS = sin filtrar).
+  const [filtros, setFiltros] = useState<Record<string, string>>({})
+  // Id de la investigacion que se esta editando. null = se esta creando una.
+  const [editandoId, setEditandoId] = useState<number | null>(null)
+  // Detalle (el ojo): la fila abierta con su plan de accion y sus testigos.
+  const [detalle, setDetalle] = useState<IncidenteRow | null>(null)
+  const [detalleAcciones, setDetalleAcciones] = useState<IncidenteAccionRow[]>([])
+  const [detalleTestigos, setDetalleTestigos] = useState<IncidenteTestigoRow[]>([])
+  const [cargandoDetalle, setCargandoDetalle] = useState(false)
+  const [abriendoEdicion, setAbriendoEdicion] = useState<number | null>(null)
+  const [cierreId, setCierreId] = useState<number | null>(null)
   const set = (k: string, v: any) => setForm((f) => ({ ...f, [k]: v }))
   const setAcc = (i: number, k: string, v: any) => setAcciones((a) => a.map((x, j) => (j === i ? { ...x, [k]: v } : x)))
   const setTes = (i: number, k: string, v: any) => setTestigos((a) => a.map((x, j) => (j === i ? { ...x, [k]: v } : x)))
@@ -329,6 +605,111 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
 
   async function cargar() {
     setRows(await listIncidentes(empresaId))
+  }
+
+  const setFiltro = (k: string, v: string) => setFiltros((prev) => ({ ...prev, [k]: v }))
+  const limpiarFiltros = () => setFiltros({})
+
+  // Las opciones de cada desplegable se arman con lo que REALMENTE hay en los
+  // datos, no con una lista fija: asi ninguna opcion devuelve cero filas.
+  const opcionesPorColumna = useMemo(() => {
+    const m: Record<string, string[]> = {}
+    for (const c of COLUMNAS_HISTORIAL) {
+      if (c.filtro !== "lista") continue
+      const presentes = [...new Set(rows.map((r) => valorHistorial(r, c.k)).filter(Boolean))]
+      const orden = ORDEN_OPCIONES[c.k]
+      m[c.k] = orden
+        ? orden.filter((o) => presentes.includes(o))
+        : presentes.sort((a, b) => a.localeCompare(b, "es"))
+    }
+    return m
+  }, [rows])
+
+  const filtrosActivos = COLUMNAS_HISTORIAL.filter((c) => {
+    const v = filtros[c.k] ?? ""
+    if (c.filtro === "ninguno") return false
+    return c.filtro === "lista" ? Boolean(v) && v !== TODOS : v.trim() !== ""
+  })
+  const hayFiltro = filtrosActivos.length > 0
+  const resumenFiltros = filtrosActivos.map((c) => `${c.l}: ${filtros[c.k]}`).join(" · ")
+
+  const filas = useMemo(() => {
+    const activos = COLUMNAS_HISTORIAL.map((c) => ({ c, v: filtros[c.k] ?? "" })).filter(({ c, v }) =>
+      c.filtro === "ninguno" ? false : c.filtro === "lista" ? Boolean(v) && v !== TODOS : v.trim() !== "",
+    )
+    if (activos.length === 0) return rows
+    return rows.filter((r) =>
+      activos.every(({ c, v }) =>
+        // Los desplegables exigen coincidencia exacta; los de texto buscan por
+        // fragmento, para poder escribir "sando" y encontrar "Sandoval".
+        c.filtro === "lista"
+          ? valorHistorial(r, c.k) === v
+          : comparable(valorHistorial(r, c.k)).includes(comparable(v)),
+      ),
+    )
+  }, [rows, filtros])
+
+  // ---- El ojo: ver la investigacion completa sin abrir el formulario ----
+  async function abrirDetalle(r: IncidenteRow) {
+    setDetalle(r)
+    setDetalleAcciones([])
+    setDetalleTestigos([])
+    setCargandoDetalle(true)
+    try {
+      const [accs, tess] = await Promise.all([listAcciones(r.id!), listTestigos(r.id!)])
+      setDetalleAcciones(accs)
+      setDetalleTestigos(tess)
+    } finally {
+      setCargandoDetalle(false)
+    }
+  }
+
+  // ---- Editar: trae la investigacion al formulario de Registrar ----
+  async function editar(r: IncidenteRow) {
+    if (!r.id) return
+    setAbriendoEdicion(r.id)
+    try {
+      const [accs, tess] = await Promise.all([listAcciones(r.id), listTestigos(r.id)])
+      setForm(desdeFila(r))
+      setAcciones(accs.length ? accs.map(desdeAccion) : [vacioAccion()])
+      setTestigos(tess.length ? tess.map(desdeTestigo) : [vacioTestigo()])
+      setEditandoId(r.id)
+      setDetalle(null)
+      setTab("registrar")
+      window.scrollTo({ top: 0, behavior: "smooth" })
+    } catch (e: any) {
+      toast({ title: "No se pudo abrir para editar", description: e?.message })
+    } finally {
+      setAbriendoEdicion(null)
+    }
+  }
+
+  function cancelarEdicion() {
+    setForm(vacio(empresaId))
+    setAcciones([vacioAccion()])
+    setTestigos([vacioTestigo()])
+    setEditandoId(null)
+  }
+
+  // ---- Cierre del expediente ARL ----
+  async function marcarCierreArl(r: IncidenteRow, valor: boolean) {
+    if (!r.id) return
+    setCierreId(r.id)
+    // La fecha se pone sola al marcar y se limpia al desmarcar. Pedirla aparte
+    // solo lograria que quedara vacia, y es justo el dato que acredita ante una
+    // auditoria cuando se cerro el expediente.
+    const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" })
+    const res = await updateIncidente(r.id, {
+      cierre_arl: valor,
+      fecha_cierre_arl: valor ? hoy : null,
+    })
+    setCierreId(null)
+    if (!res.success) {
+      toast({ title: "No se pudo actualizar el cierre ARL", description: res.message })
+      return
+    }
+    toast({ title: valor ? "Expediente ARL marcado como cerrado" : "Cierre ARL desmarcado" })
+    await cargar()
   }
   useEffect(() => {
     cargar()
@@ -358,18 +739,34 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
       return c
     })
     const tess = testigos.filter((t) => (t.nombre || "").trim() || (t.documento || "").trim())
-    const res = await saveIncidente(
-      payload as Partial<IncidenteRow>,
-      accs as Partial<IncidenteAccionRow>[],
-      empresaId,
-      tess as Partial<IncidenteTestigoRow>[],
-    )
+    // Editando se actualiza el registro que ya existe; si no, se crea uno
+    // nuevo. Sin esta bifurcacion, corregir una investigacion creaba un
+    // duplicado y el historial terminaba con el mismo accidente dos veces.
+    const res = editandoId
+      ? await actualizarIncidenteCompleto(
+          editandoId,
+          payload as Partial<IncidenteRow>,
+          accs as Partial<IncidenteAccionRow>[],
+          tess as Partial<IncidenteTestigoRow>[],
+          empresaId,
+        )
+      : await saveIncidente(
+          payload as Partial<IncidenteRow>,
+          accs as Partial<IncidenteAccionRow>[],
+          empresaId,
+          tess as Partial<IncidenteTestigoRow>[],
+        )
     setSaving(false)
     if (res.success) {
-      toast({ title: "Investigación guardada (SST-FOR-21)" })
+      toast({
+        title: editandoId
+          ? "Investigación actualizada (SST-FOR-21)"
+          : "Investigación guardada (SST-FOR-21)",
+      })
       setForm(vacio(empresaId))
       setAcciones([vacioAccion()])
       setTestigos([vacioTestigo()])
+      setEditandoId(null)
       await cargar()
       setTab("historial")
     } else {
@@ -384,7 +781,6 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
     const doc = new jsPDF({ unit: "pt", format: "letter" })
     const MW = doc.internal.pageSize.getWidth()
     const navy: [number, number, number] = [13, 59, 110]
-    const b = (v: any) => (v === true || v === "true" ? "SÍ" : v === false || v === "false" ? "NO" : v ?? "")
     const logo = await loadLogo()
     if (logo) { try { doc.addImage(logo, "PNG", 40, 28, 96, 30) } catch {} }
     doc.setFontSize(11).setFont("helvetica", "bold").setTextColor(...navy)
@@ -404,49 +800,20 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
         columnStyles: { 0: { fontStyle: "bold", cellWidth: 150 } },
       })
 
-    sec("1. IDENTIFICACIÓN DEL EMPLEADOR / CONTRATANTE", [
-      ["Razón social", EMPLEADOR_LIP.razon_social],
-      ["Tipo id / NIT", `${EMPLEADOR_LIP.tipo_id} · ${EMPLEADOR_LIP.nit}`],
-      ["Dirección", `${EMPLEADOR_LIP.direccion} · ${EMPLEADOR_LIP.municipio} (${EMPLEADOR_LIP.departamento})`],
-      ["Correo", EMPLEADOR_LIP.email],
-      ["Actividad económica", EMPLEADOR_LIP.actividad],
-      ["Centro de trabajo", `${data.centro_trabajo ?? ""} · ${data.centro_direccion ?? ""} · ${data.centro_municipio ?? ""}`],
-      ["Clasificación / Severidad", `${labelOf(TIPOS, data.tipo)} · ${labelOf(GRAVEDAD, data.gravedad)}`],
-      ["Fecha de reporte", data.fecha_reporte ?? ""],
-    ])
-    sec("2. INFORMACIÓN DE LA PERSONA", [
-      ["Nombres y apellidos", data.trabajador ?? ""],
-      ["Documento", `${data.documento_tipo ?? ""} ${data.documento_numero ?? ""}`],
-      ["Fecha nacimiento / Sexo", `${data.fecha_nacimiento ?? ""} · ${labelOf(SEXO, data.sexo)}`],
-      ["EPS / ARL / AFP", `${data.eps ?? ""} · ${data.arl ?? ""} · ${data.afp ?? ""}`],
-      ["Cargo / Ocupación", `${data.cargo ?? ""} · ${data.ocupacion_habitual ?? ""} (cód ${data.codigo_ocupacion ?? ""})`],
-      ["Vinculación", labelOf(VINCULACION, data.tipo_vinculacion)],
-      ["Ingreso / Antigüedad", `${data.fecha_ingreso ?? ""} · ${data.antiguedad_dias ?? 0} días`],
-      ["Salario / Jornada habitual", `$${(Number(data.salario) || 0).toLocaleString("es-CO")} · ${labelOf(JORNADA_HAB, data.jornada_habitual)}`],
-      ["Funciones asignadas", data.funciones_asignadas ?? ""],
-      ["EPP y dotación", data.epp_portado ?? ""],
-    ])
-    sec("3. INFORMACIÓN SOBRE EL ACCIDENTE / INCIDENTE", [
-      ["Fecha / Día / Hora", `${data.fecha_evento ?? ""} · ${labelOf(DIA_SEMANA, data.dia_semana)} · ${data.hora_evento ?? ""}`],
-      ["Jornada / T. laborado previo", `${labelOf(JORNADA, data.jornada_evento)} · ${data.tiempo_laborado_previo ?? ""}`],
-      ["¿Labor habitual? / Tipo", `${b(data.labor_habitual)} · ${labelOf(TIPO_ACC, data.tipo_accidente)}`],
-      ["Ocurrió", `${labelOf(DENTRO_FUERA, data.dentro_fuera_empresa)} · ${data.departamento_evento ?? ""} ${data.municipio_evento ?? ""} (${labelOf(ZONA, data.zona_evento)})`],
-      ["Área / Lugar", `${data.area_ocurrencia ?? ""} · ${data.lugar_ocurrencia ?? ""}`],
-      ["Tipo de lesión", data.tipo_lesion ?? ""],
-      ["Parte del cuerpo", data.parte_cuerpo ?? ""],
-      ["Agente", data.agente_accidente ?? ""],
-      ["Mecanismo / forma", data.mecanismo ?? ""],
-      ["Descripción", data.descripcion ?? ""],
-    ])
-    sec("4. MANEJO Y AUSENTISMO", [
-      ["¿Causó muerte?", b(data.causo_muerte)],
-      ["Primeros auxilios / Remitido", `${b(data.primeros_auxilios)} · ${b(data.remitido_centro_salud)} ${data.centro_salud ? "(" + data.centro_salud + ")" : ""}`],
-      ["Hospitalizado / Transporte", `${b(data.hospitalizado)} · ${b(data.requirio_transporte)}`],
-      ["Ausentismo", `${labelOf(AUS_TIPO, data.ausentismo_tipo)} · ${data.ausentismo_fecha_inicial ?? ""} → ${data.ausentismo_fecha_final ?? ""}`],
-      ["Días inicial / prórroga / total", `${data.dias_incapacidad_inicial ?? 0} · ${data.dias_prorroga ?? 0} · ${data.dias_incapacidad ?? 0}`],
-      ["CIE-10", `${data.cie10_codigo ?? ""} ${data.cie10_diagnostico ?? ""}`],
-      ["Reporte legal", `ARL: ${b(data.reportado_arl)} (${data.fecha_reporte_arl ?? ""}) · FURAT: ${data.furat_radicado ?? ""} · MinTrabajo: ${b(data.reportado_mintrabajo)}`],
-    ])
+    // Las secciones salen de `seccionesInforme`, la misma definicion que usa la
+    // ventana de detalle del historial. Aqui solo se decide en que orden se
+    // intercalan con las tablas de testigos, plan de accion y firmas.
+    const secciones = seccionesInforme(data)
+    const pintar = (k: string) => {
+      const s = secciones.find((x) => x.k === k)
+      if (s) sec(s.titulo, s.filas)
+    }
+
+    pintar("empleador")
+    pintar("persona")
+    pintar("evento")
+    pintar("manejo")
+
     if (tess.length) {
       autoTable(doc, {
         startY: (doc as any).lastAutoTable.finalY + 8,
@@ -457,16 +824,9 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
         headStyles: { fillColor: navy, textColor: 255, fontSize: 8 },
       })
     }
-    const ish = (data.ishikawa as IshikawaData) || null
-    sec("5. ANÁLISIS DE CAUSAS (Ishikawa · causalidad)", [
-      ["Efecto analizado", ish?.efecto ?? ""],
-      ["Causas inmediatas – Actos inseguros", data.causa_actos_inseguros ?? ""],
-      ["Causas inmediatas – Condiciones inseguras", data.causa_condiciones_inseguras ?? ""],
-      ["Causas básicas – Factores personales", data.causa_factores_personales ?? ""],
-      ["Causas básicas – Factores del trabajo", data.causa_factores_trabajo ?? ""],
-      ["Observaciones investigadores", data.observaciones_investigadores ?? ""],
-      ["Equipo investigador / Fecha", `${data.equipo_investigador ?? ""} · ${data.fecha_investigacion ?? ""}`],
-    ])
+
+    pintar("causas")
+
     if (accs.length) {
       autoTable(doc, {
         startY: (doc as any).lastAutoTable.finalY + 8,
@@ -480,25 +840,14 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
         headStyles: { fillColor: navy, textColor: 255, fontSize: 7.5 },
       })
     }
-    sec("6. RETROALIMENTACIÓN Y LECCIÓN APRENDIDA", [
-      ["Divulgación / lección aprendida", data.divulgacion_leccion ?? ""],
-      ["Charla de seguridad", data.charla_seguridad ?? ""],
-      ["Retroalimentación", data.retroalimentacion ?? ""],
-    ])
+
+    pintar("retro")
+
     const fr = data.firmas || {}
-    const rolLab: [string, string][] = [
-      ["jefe_inmediato", "Jefe inmediato / Coord. operación"],
-      ["coordinador_sst", "Coordinador SST"],
-      ["integrante_copasst", "Integrante COPASST"],
-      ["responsable_sgsst", "Responsable SG-SST"],
-      ["reviso", "Revisó"],
-      ["cerro", "Cerró"],
-      ["representante_legal", "Representante legal"],
-    ]
     autoTable(doc, {
       startY: (doc as any).lastAutoTable.finalY + 8,
       head: [["ROL", "NOMBRE", "CARGO", "C.C."]],
-      body: rolLab.map(([k, l]) => [l, fr[k]?.nombre ?? "", fr[k]?.cargo ?? "", fr[k]?.cc ?? ""]),
+      body: ROLES_FIRMA.map(([k, l]) => [l, fr[k]?.nombre ?? "", fr[k]?.cargo ?? "", fr[k]?.cc ?? ""]),
       theme: "grid",
       styles: { fontSize: 7.5, cellPadding: 2 },
       headStyles: { fillColor: navy, textColor: 255, fontSize: 8 },
@@ -564,6 +913,24 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
 
         <TabsContent value="registrar">
           <Card className="p-4 space-y-6">
+            {/* Sin este aviso no habria como saber que lo que se ve en pantalla
+                es un registro existente y no uno nuevo: el formulario es el
+                mismo y guardar sobrescribiria sin advertencia. */}
+            {editandoId !== null && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3">
+                <p className="text-sm text-amber-900">
+                  <span className="font-semibold">Estás editando una investigación ya registrada</span>
+                  {form.trabajador ? ` · ${form.trabajador}` : ""}
+                  {form.fecha_evento ? ` · ${form.fecha_evento}` : ""}. Al guardar se reemplazan sus
+                  datos, su plan de acción y sus testigos.
+                </p>
+                <Button variant="outline" size="sm" className="gap-1.5" onClick={cancelarEdicion}>
+                  <X className="h-3.5 w-3.5" />
+                  Cancelar edición
+                </Button>
+              </div>
+            )}
+
             {/* Encabezado fijo LIP */}
             <div className="rounded-lg border p-3" style={{ background: SST_TOKENS.light }}>
               <div className="flex items-center gap-3">
@@ -776,8 +1143,17 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
 
             <div className="flex flex-wrap gap-2">
               <Button onClick={guardar} disabled={saving} style={{ background: SST_TOKENS.navy, color: "white" }}>
-                {saving ? "Guardando…" : "Guardar investigación"}
+                {saving
+                  ? "Guardando…"
+                  : editandoId !== null
+                    ? "Actualizar investigación"
+                    : "Guardar investigación"}
               </Button>
+              {editandoId !== null && (
+                <Button variant="ghost" onClick={cancelarEdicion} disabled={saving}>
+                  Cancelar edición
+                </Button>
+              )}
               <Button variant="outline" onClick={() => generarPDF(form, acciones, testigos)}>
                 <FileText className="mr-1 h-4 w-4" /> Vista previa PDF (SST-FOR-21)
               </Button>
@@ -785,83 +1161,478 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
           </Card>
         </TabsContent>
 
-        <TabsContent value="historial">
-          <Card className="p-0 overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr style={{ background: SST_TOKENS.navy, color: "white" }}>
-                  <th className="p-2 text-left">Fecha</th>
-                  <th className="p-2 text-left">Tipo</th>
-                  <th className="p-2 text-left">Trabajador</th>
-                  <th className="p-2 text-left">Gravedad</th>
-                  <th className="p-2 text-center">Días</th>
-                  <th className="p-2 text-left">Investigación</th>
-                  <th className="p-2 text-left">Estado</th>
-                  <th className="p-2 text-center">PDF</th>
-                  <th className="p-2 text-left w-64">Soportes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r, i) => {
-                  const dias = r.fecha_investigacion
-                    ? Math.round((new Date(r.fecha_investigacion).getTime() - new Date(r.fecha_evento).getTime()) / 86400000)
-                    : null
-                  const ok = dias !== null && dias <= 15
-                  return (
-                    <tr key={r.id} style={{ background: i % 2 ? "#f7fafc" : "white" }}>
-                      <td className="p-2">{r.fecha_evento}</td>
-                      <td className="p-2 capitalize">{String(r.tipo).replace("_", " ")}</td>
-                      <td className="p-2">{r.trabajador ?? r.cargo}</td>
-                      <td className="p-2">
-                        <Badge style={{ background: r.gravedad === "mortal" ? SST_TOKENS.bad : r.gravedad === "grave" ? SST_TOKENS.warn : SST_TOKENS.ok, color: "white" }}>
-                          {r.gravedad}
-                        </Badge>
-                      </td>
-                      <td className="p-2 text-center">{r.dias_incapacidad ?? 0}</td>
-                      <td className="p-2">
-                        {dias === null ? (
-                          <span className="text-muted-foreground">pendiente</span>
-                        ) : (
-                          <Badge style={{ background: ok ? SST_TOKENS.ok : SST_TOKENS.bad, color: "white" }}>{dias} días</Badge>
-                        )}
-                      </td>
-                      <td className="p-2">
-                        <S v={r.estado} small on={async (v) => { await updateIncidente(r.id!, { estado: v }); cargar() }} o={ESTADOS} />
-                      </td>
-                      <td className="p-2 text-center whitespace-nowrap">
-                        <Button variant="outline" size="sm" className="h-7 gap-1 text-[11px]" title="Ver documento (PDF no editable)" disabled={pdfId === r.id} onClick={() => pdfDesdeHistorial(r)}>
-                          {pdfId === r.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />} PDF
-                        </Button>
-                        {r.documento_editable_url && (
-                          <a href={r.documento_editable_url} target="_blank" rel="noreferrer" title="Descargar original editable (Excel)" className="ml-1 inline-flex items-center text-[11px] text-muted-foreground hover:underline">
-                            <FileText className="h-3.5 w-3.5" /> Excel
-                          </a>
-                        )}
-                      </td>
-                      <td className="p-2 align-top">
-                        <SoportesDocumentales
-                          norma="SST 0312"
-                          modulo="Investigación AT"
-                          referenciaTipo="incidente"
-                          referenciaId={r.id!}
-                          referenciaDesc={`${String(r.tipo)} - ${r.trabajador ?? r.cargo ?? ""}`}
-                          empresaId={empresaId}
-                        />
+        <TabsContent value="historial" className="space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+            <span>
+              {filas.length === rows.length
+                ? `${rows.length} registro(s)`
+                : `${filas.length} de ${rows.length} registro(s)`}
+              {resumenFiltros ? ` · ${resumenFiltros}` : ""}
+            </span>
+            {hayFiltro && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1 px-2 text-xs"
+                onClick={limpiarFiltros}
+              >
+                <X className="h-3 w-3" />
+                Limpiar filtros
+              </Button>
+            )}
+          </div>
+
+          {/* La tabla se desplaza por dentro en los dos ejes en vez de estirar
+              la pagina: el encabezado y la fila de filtros quedan fijos arriba,
+              y Fecha y Acciones fijas a los lados, para no perder de vista de
+              quien es cada fila ni los botones al correrse a la derecha. */}
+          <Card className="p-0">
+            <div className="relative max-h-[62vh] overflow-auto rounded-lg">
+              <table className="w-max min-w-full border-separate border-spacing-0 text-sm">
+                <thead>
+                  <tr>
+                    {COLUMNAS_HISTORIAL.map((c, idx) => (
+                      <th
+                        key={c.k}
+                        className={`sticky top-0 whitespace-nowrap p-2 text-xs font-semibold ${
+                          c.centrado ? "text-center" : "text-left"
+                        } ${idx === 0 ? "left-0 z-30" : "z-20"}`}
+                        style={{
+                          background: SST_TOKENS.navy,
+                          color: "white",
+                          minWidth: c.min,
+                          height: ALTO_ENCABEZADO,
+                        }}
+                      >
+                        {c.l}
+                      </th>
+                    ))}
+                    <th
+                      className="sticky right-0 top-0 z-30 whitespace-nowrap p-2 text-center text-xs font-semibold"
+                      style={{
+                        background: SST_TOKENS.navy,
+                        color: "white",
+                        minWidth: "7.5rem",
+                        height: ALTO_ENCABEZADO,
+                      }}
+                    >
+                      Acciones
+                    </th>
+                  </tr>
+                  {/* Un filtro por columna, justo debajo de su encabezado: se ve
+                      de inmediato por que campo se esta filtrando. */}
+                  <tr>
+                    {COLUMNAS_HISTORIAL.map((c, idx) => (
+                      <th
+                        key={c.k}
+                        className={`sticky border-b p-1 ${idx === 0 ? "left-0 z-30" : "z-20"}`}
+                        style={{ background: "#eef2f7", minWidth: c.min, top: ALTO_ENCABEZADO }}
+                      >
+                        {c.filtro === "lista" ? (
+                          <Select
+                            value={filtros[c.k] ?? TODOS}
+                            onValueChange={(v) => setFiltro(c.k, v)}
+                          >
+                            <SelectTrigger className="h-8 bg-white text-xs">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value={TODOS}>Todos</SelectItem>
+                              {(opcionesPorColumna[c.k] ?? []).map((o) => (
+                                <SelectItem key={o} value={o}>
+                                  {o}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : c.filtro === "texto" ? (
+                          <Input
+                            className="h-8 bg-white text-xs"
+                            value={filtros[c.k] ?? ""}
+                            onChange={(e) => setFiltro(c.k, e.target.value)}
+                            placeholder={c.ph ?? "Buscar…"}
+                          />
+                        ) : null}
+                      </th>
+                    ))}
+                    <th
+                      className="sticky right-0 z-30 border-b p-1"
+                      style={{ background: "#eef2f7", top: ALTO_ENCABEZADO }}
+                    />
+                  </tr>
+                </thead>
+                <tbody>
+                  {filas.map((r, i) => {
+                    const dias = diasInvestigacion(r)
+                    const plazo = estadoInvestigacion(r)
+                    // El fondo se repite en las celdas fijas: sin esto se verian
+                    // transparentes y el contenido pasaria por debajo.
+                    const bg = i % 2 ? "#f7fafc" : "#ffffff"
+                    return (
+                      <tr key={r.id}>
+                        <td
+                          className="sticky left-0 z-10 whitespace-nowrap border-b p-2"
+                          style={{ background: bg, minWidth: COLUMNAS_HISTORIAL[0].min }}
+                        >
+                          {r.fecha_evento}
+                        </td>
+                        <td className="border-b p-2" style={{ background: bg }}>
+                          {labelOf(TIPOS, r.tipo)}
+                        </td>
+                        <td className="border-b p-2" style={{ background: bg }}>
+                          {r.trabajador ?? r.cargo}
+                        </td>
+                        <td className="border-b p-2 text-center" style={{ background: bg }}>
+                          <Badge
+                            style={{
+                              background:
+                                r.gravedad === "mortal"
+                                  ? SST_TOKENS.bad
+                                  : r.gravedad === "grave"
+                                    ? SST_TOKENS.warn
+                                    : SST_TOKENS.ok,
+                              color: "white",
+                            }}
+                          >
+                            {r.gravedad}
+                          </Badge>
+                        </td>
+                        <td className="border-b p-2 text-center" style={{ background: bg }}>
+                          {r.dias_incapacidad ?? 0}
+                        </td>
+                        <td className="whitespace-nowrap border-b p-2" style={{ background: bg }}>
+                          {dias === null ? (
+                            <span className="text-muted-foreground">Pendiente</span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5">
+                              <Badge
+                                style={{
+                                  background: plazo === "En plazo" ? SST_TOKENS.ok : SST_TOKENS.bad,
+                                  color: "white",
+                                }}
+                              >
+                                {dias} d
+                              </Badge>
+                              <span className="text-xs text-muted-foreground">{plazo}</span>
+                            </span>
+                          )}
+                        </td>
+                        <td className="border-b p-2" style={{ background: bg }}>
+                          <S
+                            v={r.estado}
+                            small
+                            on={async (v) => {
+                              await updateIncidente(r.id!, { estado: v })
+                              cargar()
+                            }}
+                            o={ESTADOS}
+                          />
+                        </td>
+                        <td
+                          className="whitespace-nowrap border-b p-2 text-center"
+                          style={{ background: bg }}
+                        >
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 gap-1 text-[11px]"
+                            title="Descargar el documento (PDF no editable)"
+                            disabled={pdfId === r.id}
+                            onClick={() => pdfDesdeHistorial(r)}
+                          >
+                            {pdfId === r.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <FileText className="h-3.5 w-3.5" />
+                            )}{" "}
+                            PDF
+                          </Button>
+                          {r.documento_editable_url && (
+                            <a
+                              href={r.documento_editable_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              title="Descargar original editable (Excel)"
+                              className="ml-1 inline-flex items-center text-[11px] text-muted-foreground hover:underline"
+                            >
+                              <FileText className="h-3.5 w-3.5" /> Excel
+                            </a>
+                          )}
+                        </td>
+                        <td className="border-b p-2 align-top" style={{ background: bg }}>
+                          <SoportesDocumentales
+                            norma="SST 0312"
+                            modulo="Investigación AT"
+                            referenciaTipo="incidente"
+                            referenciaId={r.id!}
+                            referenciaDesc={`${String(r.tipo)} - ${r.trabajador ?? r.cargo ?? ""}`}
+                            empresaId={empresaId}
+                          />
+                        </td>
+                        <td className="border-b p-2 text-center" style={{ background: bg }}>
+                          {/* El check marca que la ARL ya cerro el expediente.
+                              No es lo mismo que el estado del caso: la
+                              investigacion interna puede estar cerrada y el
+                              expediente de la ARL seguir abierto. */}
+                          <div className="flex flex-col items-center gap-1">
+                            {cierreId === r.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                            ) : (
+                              <Checkbox
+                                checked={!!r.cierre_arl}
+                                onCheckedChange={(v) => marcarCierreArl(r, v === true)}
+                                aria-label="Cierre del expediente ARL"
+                                title={
+                                  r.cierre_arl
+                                    ? "Expediente cerrado por la ARL"
+                                    : "Marcar cuando la ARL cierre el expediente"
+                                }
+                              />
+                            )}
+                            <span className="text-[10px] text-muted-foreground">
+                              {r.cierre_arl ? (r.fecha_cierre_arl ?? "Cerrado") : "Abierto"}
+                            </span>
+                          </div>
+                        </td>
+                        <td
+                          className="sticky right-0 z-10 whitespace-nowrap border-b p-2 text-center"
+                          style={{ background: bg }}
+                        >
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 w-7 p-0"
+                            title="Ver los datos de la investigación"
+                            onClick={() => abrirDetalle(r)}
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="ml-1 h-7 w-7 p-0"
+                            title="Editar la investigación"
+                            disabled={abriendoEdicion === r.id}
+                            onClick={() => editar(r)}
+                          >
+                            {abriendoEdicion === r.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Pencil className="h-3.5 w-3.5" />
+                            )}
+                          </Button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                  {filas.length === 0 && (
+                    <tr>
+                      <td
+                        colSpan={COLUMNAS_HISTORIAL.length + 1}
+                        className="bg-white p-6 text-center text-muted-foreground"
+                      >
+                        {rows.length === 0
+                          ? "Sin registros aún."
+                          : "Ningún registro coincide con los filtros."}
                       </td>
                     </tr>
-                  )
-                })}
-                {rows.length === 0 && (
-                  <tr>
-                    <td colSpan={9} className="p-6 text-center text-muted-foreground">Sin registros aún.</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* El ojo: la investigación completa sin entrar al formulario, para
+          consultarla sin riesgo de modificarla sin querer. */}
+      <Dialog open={!!detalle} onOpenChange={(o) => !o && setDetalle(null)}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Eye className="h-5 w-5" style={{ color: SST_TOKENS.navy }} />
+              {detalle?.trabajador || detalle?.cargo || "Investigación"}
+            </DialogTitle>
+            <DialogDescription>
+              {detalle
+                ? `${labelOf(TIPOS, detalle.tipo)} · ${detalle.fecha_evento} · ${labelOf(ESTADOS, detalle.estado)}`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+
+          {detalle && (
+            <div className="space-y-3">
+              <Badge
+                className="gap-1"
+                style={{
+                  background: detalle.cierre_arl ? SST_TOKENS.ok : SST_TOKENS.warn,
+                  color: "white",
+                }}
+              >
+                <ShieldCheck className="h-3 w-3" />
+                Expediente ARL{" "}
+                {detalle.cierre_arl
+                  ? `cerrado${detalle.fecha_cierre_arl ? " · " + detalle.fecha_cierre_arl : ""}`
+                  : "abierto"}
+              </Badge>
+
+              {seccionesInforme(detalle as any).map((s) => (
+                <section key={s.k} className="rounded-lg border">
+                  <h4
+                    className="px-3 py-2 text-xs font-semibold"
+                    style={{ background: SST_TOKENS.light, color: SST_TOKENS.navy }}
+                  >
+                    {s.titulo}
+                  </h4>
+                  <dl className="divide-y">
+                    {s.filas.map(([l, v]) => (
+                      <div key={l} className="grid gap-0.5 px-3 py-1.5 sm:grid-cols-3">
+                        <dt className="text-xs font-medium text-muted-foreground">{l}</dt>
+                        <dd className="whitespace-pre-wrap break-words text-xs sm:col-span-2">
+                          {String(v ?? "").trim() || "—"}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                </section>
+              ))}
+
+              {cargandoDetalle ? (
+                <div className="flex items-center justify-center py-4">
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                </div>
+              ) : (
+                <>
+                  <TablaDetalle
+                    titulo="TESTIGOS"
+                    cabeceras={["Testigo", "Cédula", "Versión"]}
+                    filas={detalleTestigos.map((t) => [
+                      t.nombre ?? "",
+                      t.documento ?? "",
+                      t.version ?? "",
+                    ])}
+                    vacio="Sin testigos registrados."
+                  />
+                  <TablaDetalle
+                    titulo="PLAN DE ACCIÓN"
+                    cabeceras={[
+                      "Medida de intervención",
+                      "Control",
+                      "Resp. ejecución",
+                      "F. impl.",
+                      "Verifica",
+                      "Estado",
+                    ]}
+                    filas={detalleAcciones.map((a) => [
+                      a.plan ?? "",
+                      labelOf(CONTROL, a.tipo_control),
+                      a.responsable_ejecucion ?? "",
+                      a.fecha_implementacion ?? "",
+                      a.responsable_verificacion ?? "",
+                      a.estado ?? "",
+                    ])}
+                    vacio="Sin plan de acción registrado."
+                  />
+                </>
+              )}
+
+              <TablaDetalle
+                titulo="FIRMAS"
+                cabeceras={["Rol", "Nombre", "Cargo", "C.C."]}
+                filas={ROLES_FIRMA.map(([k, l]) => [
+                  l,
+                  (detalle.firmas as any)?.[k]?.nombre ?? "",
+                  (detalle.firmas as any)?.[k]?.cargo ?? "",
+                  (detalle.firmas as any)?.[k]?.cc ?? "",
+                ])}
+                vacio="Sin firmas registradas."
+              />
+
+              <div className="flex flex-wrap justify-end gap-2 border-t pt-3">
+                <Button
+                  variant="outline"
+                  className="gap-1.5"
+                  disabled={pdfId === detalle.id}
+                  onClick={() => pdfDesdeHistorial(detalle)}
+                >
+                  {pdfId === detalle.id ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <FileText className="h-4 w-4" />
+                  )}
+                  Descargar PDF
+                </Button>
+                <Button
+                  className="gap-1.5"
+                  style={{ background: SST_TOKENS.navy, color: "white" }}
+                  disabled={abriendoEdicion === detalle.id}
+                  onClick={() => editar(detalle)}
+                >
+                  {abriendoEdicion === detalle.id ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Pencil className="h-4 w-4" />
+                  )}
+                  Editar
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
+  )
+}
+
+/** Tabla chica para las listas del detalle (testigos, plan de accion, firmas). */
+function TablaDetalle({
+  titulo,
+  cabeceras,
+  filas,
+  vacio,
+}: {
+  titulo: string
+  cabeceras: string[]
+  filas: string[][]
+  vacio: string
+}) {
+  return (
+    <section className="rounded-lg border">
+      <h4
+        className="px-3 py-2 text-xs font-semibold"
+        style={{ background: SST_TOKENS.light, color: SST_TOKENS.navy }}
+      >
+        {titulo}
+      </h4>
+      {filas.length === 0 ? (
+        <p className="px-3 py-3 text-xs text-muted-foreground">{vacio}</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b bg-muted/40">
+                {cabeceras.map((c) => (
+                  <th key={c} className="p-2 text-left font-medium">
+                    {c}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filas.map((f, i) => (
+                <tr key={i} className="border-b last:border-0">
+                  {f.map((v, j) => (
+                    <td key={j} className="p-2 align-top">
+                      {String(v ?? "").trim() || "—"}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   )
 }
 
