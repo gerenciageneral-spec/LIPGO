@@ -3436,6 +3436,19 @@ export async function generarAjustesCuadre(cuadreId: number): Promise<{ success:
     const { data: det } = await supabase.from("sig_inventario_cuadre_detalle").select("*").eq("cuadre_id", cuadreId)
     const conDif = (det ?? []).filter((d: any) => Number(d.diferencia) !== 0)
     if (conDif.length === 0) return { success: true, creados: 0 }
+    // La correccion pertenece al MES QUE SE ESTA CERRANDO, no al dia del
+    // conteo (`cab.fecha` es el corte -- el primer dia del periodo nuevo,
+    // igual que en calcularStockAlCorte). Un conteo total con fecha
+    // "2026-09-01" cierra agosto, asi que sus correcciones deben fecharse
+    // "2026-08-31" -- si no, Conciliacion Mensual (que agrupa por la fecha
+    // real de creado cuando no hay orden de cargue) las cuenta en el mes
+    // siguiente. Encontrado con datos reales 2026-09-01, ID3, cuadre #8.
+    let fechaCorreccion: string | null = (cab as any)?.fecha ?? null
+    if (fechaCorreccion) {
+      const d = new Date(`${fechaCorreccion}T00:00:00Z`)
+      d.setUTCDate(d.getUTCDate() - 1)
+      fechaCorreccion = d.toISOString().slice(0, 10)
+    }
     // direccion/cod_movimiento faltaban aqui (solo se ponian en el alta MANUAL
     // de "Registrar correccion") -- sin direccion, postCorreccionInvtrans lee
     // `ajuste.direccion === "salida"` como false para CUALQUIER ajuste sin
@@ -3447,7 +3460,7 @@ export async function generarAjustesCuadre(cuadreId: number): Promise<{ success:
       return {
         proyecto_id: (cab as any)?.proyecto_id ?? null,
         cuadre_id: cuadreId,
-        fecha: (cab as any)?.fecha ?? null,
+        fecha: fechaCorreccion,
         codproducto: d.codproducto,
         producto: d.producto,
         lote: d.lote,
@@ -3618,7 +3631,15 @@ async function postCorreccionInvtrans(
       observaciones: `Corrección de inventario${ajuste.cuadre_id ? ` · cuadre #${ajuste.cuadre_id}` : ""} · ${ajuste.tipo}${ajuste.motivo ? " · " + ajuste.motivo : ""} ${marker}`,
       cod_movimiento: ajuste.cod_movimiento ?? null,
       creadopor: actor,
-      creado: colombiaNowISO(),
+      // Si el ajuste trae `fecha` (del conteo que lo genero, o del formulario
+      // manual), la correccion pertenece a ESE dia -- no al momento real en
+      // que se aprueba/postea. Sin esto, cerrar hoy un conteo que cierra
+      // AGOSTO mandaba la correccion a septiembre en Conciliacion Mensual
+      // (que agrupa por la fecha real de creado cuando no hay orden de
+      // cargue) -- encontrado con datos reales 2026-09-01, ID3, cuadre #8:
+      // las 13 averias/faltantes/sobrantes del cierre de agosto aparecian en
+      // cero en la fila de agosto, todas contadas en septiembre por error.
+      creado: ajuste.fecha ? new Date(`${ajuste.fecha}T15:00:00Z`).toISOString() : colombiaNowISO(),
     }
     const { error } = await supabase.from("invtrans").insert([insert])
     if (error) return { id: null, error: error.message }
