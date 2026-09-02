@@ -5163,7 +5163,7 @@ function fechaColombiaDe(iso: string): string {
 // físico. El conteo cíclico SÍ sigue usando stock vivo — es otro caso de
 // uso (verificación puntual, no cierre de mes) — ver crearCuadre.
 // ---------------------------------------------------------------------------
-async function calcularStockAlCorte(
+export async function calcularStockAlCorte(
   supabase: any,
   proyectoId: number,
   corte: string, // 'YYYY-MM-DD' — primer día SIN incluir (el corte retrocede hasta el final del día anterior)
