@@ -239,6 +239,9 @@ const vacio = (empresaId?: number | null) => {
     centro_trabajo: c.nombre,
     centro_direccion: c.direccion,
     centro_municipio: c.municipio,
+    centro_departamento: "",
+    centro_telefono: "",
+    centro_zona: "urbana",
     codigo_actividad: "",
     // persona
     trabajador: "",
@@ -247,14 +250,22 @@ const vacio = (empresaId?: number | null) => {
     fecha_nacimiento: "",
     sexo: "M",
     eps: "",
+    eps_codigo: "",
     arl: "",
+    arl_codigo: "",
     afp: "",
+    afp_codigo: "",
+    telefono: "",
+    fax: "",
+    direccion_trabajador: "",
     cargo: "",
     ocupacion_habitual: "",
     codigo_ocupacion: "",
     tipo_vinculacion: "planta",
     fecha_ingreso: "",
     antiguedad_dias: 0,
+    antiguedad_meses: 0,
+    antiguedad_anios: 0,
     salario: 0,
     jornada_habitual: "diurno",
     funciones_asignadas: "",
@@ -273,10 +284,14 @@ const vacio = (empresaId?: number | null) => {
     zona_evento: "urbana",
     area_ocurrencia: "",
     lugar_ocurrencia: LUGAR[1][0],
+    lugar_otro: "",
     tipo_lesion: LESION[7][0],
+    tipo_lesion_otro: "",
     parte_cuerpo: PARTE[0][0],
     agente_accidente: AGENTE[6][0],
+    agente_otro: "",
     mecanismo: MECANISMO[3][0],
+    mecanismo_otro: "",
     descripcion: "",
     // manejo
     causo_muerte: "false",
@@ -321,6 +336,25 @@ const vacio = (empresaId?: number | null) => {
 }
 
 const labelOf = (o: [string, string][], v: any) => o.find(([k]) => k === String(v))?.[1] ?? (v ?? "")
+
+/** Opcion + su detalle cuando es "Otro": "10. Otro (especificar) — se resbaló". */
+const conOtro = (valor: any, otro: any) => {
+  const v = String(valor ?? "")
+  const o = String(otro ?? "").trim()
+  return o ? `${v} — ${o}` : v
+}
+
+/**
+ * ¿La opcion elegida es una de "Otro / especificar"?
+ *
+ * El formato pone una linea en blanco al lado de esas opciones. Aqui se usa
+ * para mostrar el campo de texto SOLO cuando hace falta: pedirlo siempre seria
+ * ruido en las otras quince opciones de cada lista.
+ */
+const esOtro = (v: any) => {
+  const t = String(v ?? "").toLowerCase()
+  return t.includes("otro") || t.includes("no clasificado")
+}
 
 /**
  * Pasa una fila de la base al formulario, para poder editarla.
@@ -405,7 +439,15 @@ function seccionesInforme(data: Record<string, any>): SeccionInforme[] {
         ["Dirección", `${EMPLEADOR_LIP.direccion} · ${EMPLEADOR_LIP.municipio} (${EMPLEADOR_LIP.departamento})`],
         ["Correo", EMPLEADOR_LIP.email],
         ["Actividad económica", EMPLEADOR_LIP.actividad],
-        ["Centro de trabajo", `${data.centro_trabajo ?? ""} · ${data.centro_direccion ?? ""} · ${data.centro_municipio ?? ""}`],
+        ["Centro de trabajo", data.centro_trabajo ?? ""],
+        [
+          "Dirección / Municipio / Depto. del centro",
+          `${data.centro_direccion ?? ""} · ${data.centro_municipio ?? ""} · ${data.centro_departamento ?? ""}`,
+        ],
+        [
+          "Teléfono / Zona del centro",
+          `${data.centro_telefono ?? ""} · ${labelOf(ZONA, data.centro_zona)}`,
+        ],
         ["Clasificación / Severidad", `${labelOf(TIPOS, data.tipo)} · ${labelOf(GRAVEDAD, data.gravedad)}`],
         ["Fecha de reporte", data.fecha_reporte ?? ""],
       ],
@@ -417,10 +459,20 @@ function seccionesInforme(data: Record<string, any>): SeccionInforme[] {
         ["Nombres y apellidos", data.trabajador ?? ""],
         ["Documento", `${data.documento_tipo ?? ""} ${data.documento_numero ?? ""}`],
         ["Fecha nacimiento / Sexo", `${data.fecha_nacimiento ?? ""} · ${labelOf(SEXO, data.sexo)}`],
-        ["EPS / ARL / AFP", `${data.eps ?? ""} · ${data.arl ?? ""} · ${data.afp ?? ""}`],
+        [
+          "Teléfono / Fax / Dirección",
+          `${data.telefono ?? ""} · ${data.fax ?? ""} · ${data.direccion_trabajador ?? ""}`,
+        ],
+        [
+          "EPS / ARL / AFP",
+          `${data.eps ?? ""} (cód ${data.eps_codigo ?? ""}) · ${data.arl ?? ""} (cód ${data.arl_codigo ?? ""}) · ${data.afp ?? ""} (cód ${data.afp_codigo ?? ""})`,
+        ],
         ["Cargo / Ocupación", `${data.cargo ?? ""} · ${data.ocupacion_habitual ?? ""} (cód ${data.codigo_ocupacion ?? ""})`],
         ["Vinculación", labelOf(VINCULACION, data.tipo_vinculacion)],
-        ["Ingreso / Antigüedad", `${data.fecha_ingreso ?? ""} · ${data.antiguedad_dias ?? 0} días`],
+        [
+          "Ingreso / Antigüedad en el cargo",
+          `${data.fecha_ingreso ?? ""} · ${data.antiguedad_dias ?? 0} días, ${data.antiguedad_meses ?? 0} meses, ${data.antiguedad_anios ?? 0} años`,
+        ],
         ["Salario / Jornada habitual", `$${(Number(data.salario) || 0).toLocaleString("es-CO")} · ${labelOf(JORNADA_HAB, data.jornada_habitual)}`],
         ["Funciones asignadas", data.funciones_asignadas ?? ""],
         ["EPP y dotación", data.epp_portado ?? ""],
@@ -434,11 +486,11 @@ function seccionesInforme(data: Record<string, any>): SeccionInforme[] {
         ["Jornada / T. laborado previo", `${labelOf(JORNADA, data.jornada_evento)} · ${data.tiempo_laborado_previo ?? ""}`],
         ["¿Labor habitual? / Tipo", `${siNo(data.labor_habitual)} · ${labelOf(TIPO_ACC, data.tipo_accidente)}`],
         ["Ocurrió", `${labelOf(DENTRO_FUERA, data.dentro_fuera_empresa)} · ${data.departamento_evento ?? ""} ${data.municipio_evento ?? ""} (${labelOf(ZONA, data.zona_evento)})`],
-        ["Área / Lugar", `${data.area_ocurrencia ?? ""} · ${data.lugar_ocurrencia ?? ""}`],
-        ["Tipo de lesión", data.tipo_lesion ?? ""],
+        ["Área / Lugar", `${data.area_ocurrencia ?? ""} · ${conOtro(data.lugar_ocurrencia, data.lugar_otro)}`],
+        ["Tipo de lesión", conOtro(data.tipo_lesion, data.tipo_lesion_otro)],
         ["Parte del cuerpo", data.parte_cuerpo ?? ""],
-        ["Agente", data.agente_accidente ?? ""],
-        ["Mecanismo / forma", data.mecanismo ?? ""],
+        ["Agente", conOtro(data.agente_accidente, data.agente_otro)],
+        ["Mecanismo / forma", conOtro(data.mecanismo, data.mecanismo_otro)],
         ["Descripción", data.descripcion ?? ""],
       ],
     },
@@ -991,7 +1043,10 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
                 <F l="Fecha de reporte"><Input type="date" value={form.fecha_reporte} onChange={(e) => set("fecha_reporte", e.target.value)} /></F>
                 <F l="Centro de trabajo"><Input value={form.centro_trabajo} onChange={(e) => set("centro_trabajo", e.target.value)} /></F>
                 <F l="Dirección centro"><Input value={form.centro_direccion} onChange={(e) => set("centro_direccion", e.target.value)} /></F>
+                <F l="Departamento centro"><Input value={form.centro_departamento} onChange={(e) => set("centro_departamento", e.target.value)} /></F>
                 <F l="Municipio centro"><Input value={form.centro_municipio} onChange={(e) => set("centro_municipio", e.target.value)} /></F>
+                <F l="Teléfono centro"><Input value={form.centro_telefono} onChange={(e) => set("centro_telefono", e.target.value)} /></F>
+                <F l="Zona del centro"><S v={form.centro_zona} on={(v) => set("centro_zona", v)} o={ZONA} /></F>
               </G3>
             </Sec>
 
@@ -1002,15 +1057,23 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
                 <F l="N° de documento"><Input value={form.documento_numero} onChange={(e) => set("documento_numero", e.target.value)} /></F>
                 <F l="Fecha de nacimiento"><Input type="date" value={form.fecha_nacimiento} onChange={(e) => set("fecha_nacimiento", e.target.value)} /></F>
                 <F l="Sexo"><S v={form.sexo} on={(v) => set("sexo", v)} o={SEXO} /></F>
+                <F l="Teléfono"><Input value={form.telefono} onChange={(e) => set("telefono", e.target.value)} /></F>
+                <F l="Fax"><Input value={form.fax} onChange={(e) => set("fax", e.target.value)} /></F>
+                <F l="Dirección de residencia"><Input value={form.direccion_trabajador} onChange={(e) => set("direccion_trabajador", e.target.value)} /></F>
                 <F l="EPS"><Input value={form.eps} onChange={(e) => set("eps", e.target.value)} /></F>
+                <F l="Código EPS"><Input value={form.eps_codigo} onChange={(e) => set("eps_codigo", e.target.value)} /></F>
                 <F l="ARL"><Input value={form.arl} onChange={(e) => set("arl", e.target.value)} /></F>
+                <F l="Código ARL"><Input value={form.arl_codigo} onChange={(e) => set("arl_codigo", e.target.value)} /></F>
                 <F l="AFP"><Input value={form.afp} onChange={(e) => set("afp", e.target.value)} /></F>
+                <F l="Código AFP"><Input value={form.afp_codigo} onChange={(e) => set("afp_codigo", e.target.value)} /></F>
                 <F l="Cargo"><Input value={form.cargo} onChange={(e) => set("cargo", e.target.value)} /></F>
                 <F l="Ocupación habitual"><Input value={form.ocupacion_habitual} onChange={(e) => set("ocupacion_habitual", e.target.value)} /></F>
                 <F l="Código ocupación"><Input value={form.codigo_ocupacion} onChange={(e) => set("codigo_ocupacion", e.target.value)} /></F>
                 <F l="Tipo de vinculación"><S v={form.tipo_vinculacion} on={(v) => set("tipo_vinculacion", v)} o={VINCULACION} /></F>
                 <F l="Fecha de ingreso"><Input type="date" value={form.fecha_ingreso} onChange={(e) => set("fecha_ingreso", e.target.value)} /></F>
-                <F l="Antigüedad (días)"><Input type="number" value={form.antiguedad_dias} onChange={(e) => set("antiguedad_dias", Number(e.target.value))} /></F>
+                <F l="Antigüedad — días"><Input type="number" value={form.antiguedad_dias} onChange={(e) => set("antiguedad_dias", Number(e.target.value))} /></F>
+                <F l="Antigüedad — meses"><Input type="number" value={form.antiguedad_meses} onChange={(e) => set("antiguedad_meses", Number(e.target.value))} /></F>
+                <F l="Antigüedad — años"><Input type="number" value={form.antiguedad_anios} onChange={(e) => set("antiguedad_anios", Number(e.target.value))} /></F>
                 <F l="Salario / honorarios (mes)"><Input type="number" value={form.salario} onChange={(e) => set("salario", Number(e.target.value))} /></F>
                 <F l="Jornada de trabajo habitual"><S v={form.jornada_habitual} on={(v) => set("jornada_habitual", v)} o={JORNADA_HAB} /></F>
               </G3>
@@ -1033,12 +1096,24 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
                 <F l="Zona"><S v={form.zona_evento} on={(v) => set("zona_evento", v)} o={ZONA} /></F>
                 <F l="Área donde ocurrió"><Input value={form.area_ocurrencia} onChange={(e) => set("area_ocurrencia", e.target.value)} /></F>
                 <F l="Lugar donde ocurrió"><S v={form.lugar_ocurrencia} on={(v) => set("lugar_ocurrencia", v)} o={LUGAR} /></F>
+                {esOtro(form.lugar_ocurrencia) && (
+                  <F l="¿Cuál lugar?"><Input value={form.lugar_otro} onChange={(e) => set("lugar_otro", e.target.value)} placeholder="Especifique" /></F>
+                )}
               </G3>
               <G2>
                 <F l="Tipo de lesión"><S v={form.tipo_lesion} on={(v) => set("tipo_lesion", v)} o={LESION} /></F>
+                {esOtro(form.tipo_lesion) && (
+                  <F l="¿Cuál lesión?"><Input value={form.tipo_lesion_otro} onChange={(e) => set("tipo_lesion_otro", e.target.value)} placeholder="Especifique" /></F>
+                )}
                 <F l="Parte del cuerpo afectada"><S v={form.parte_cuerpo} on={(v) => set("parte_cuerpo", v)} o={PARTE} /></F>
                 <F l="Agente del accidente"><S v={form.agente_accidente} on={(v) => set("agente_accidente", v)} o={AGENTE} /></F>
+                {esOtro(form.agente_accidente) && (
+                  <F l="¿Cuál agente?"><Input value={form.agente_otro} onChange={(e) => set("agente_otro", e.target.value)} placeholder="Especifique" /></F>
+                )}
                 <F l="Mecanismo o forma del accidente"><S v={form.mecanismo} on={(v) => set("mecanismo", v)} o={MECANISMO} /></F>
+                {esOtro(form.mecanismo) && (
+                  <F l="¿Cuál mecanismo?"><Input value={form.mecanismo_otro} onChange={(e) => set("mecanismo_otro", e.target.value)} placeholder="Especifique" /></F>
+                )}
               </G2>
               <F l="Descripción del accidente / incidente"><Textarea rows={4} value={form.descripcion} onChange={(e) => set("descripcion", e.target.value)} /></F>
             </Sec>

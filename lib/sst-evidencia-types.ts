@@ -236,6 +236,29 @@ export interface IncidenteRow {
   causa_factores_personales?: string | null
   causa_factores_trabajo?: string | null
   // --- SST-FOR-21 (formato original LIP) ---
+  // Centro de trabajo. Departamento, telefono y zona son del CENTRO, no del
+  // lugar del accidente (departamento_evento / zona_evento): el evento pudo
+  // ocurrir fuera del centro.
+  centro_departamento?: string | null
+  centro_telefono?: string | null
+  centro_zona?: string | null
+  // Datos de contacto de la persona.
+  telefono?: string | null
+  fax?: string | null
+  direccion_trabajador?: string | null
+  // Codigos de afiliacion que pide el formato al lado de cada entidad.
+  eps_codigo?: string | null
+  arl_codigo?: string | null
+  afp_codigo?: string | null
+  // Antiguedad en el cargo: el formato la pide en tres casillas separadas.
+  antiguedad_meses?: number | null
+  antiguedad_anios?: number | null
+  // Texto de las opciones "Otro (especificar)" de las cuatro listas que lo
+  // permiten. Sin esto, escoger "Otro" no dice nada.
+  lugar_otro?: string | null
+  tipo_lesion_otro?: string | null
+  agente_otro?: string | null
+  mecanismo_otro?: string | null
   documento_tipo?: string | null
   documento_numero?: string | null
   fecha_nacimiento?: string | null

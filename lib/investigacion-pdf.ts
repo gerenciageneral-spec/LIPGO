@@ -58,6 +58,13 @@ export async function generarPdfInvestigacion(data: any, accs: any[] = [], tess:
   doc.text("Seguridad y Salud en el Trabajo · Código: SST-FOR-21 · Res. 1401/2007", MW / 2, 54, { align: "center" })
   doc.text(EMPLEADOR_LIP.razon_social + " · NIT " + EMPLEADOR_LIP.nit, MW - 40, 34, { align: "right" })
 
+  // Opcion + su detalle cuando es "Otro": el formato deja una linea para
+  // escribirlo, y sin el la fila diria "10. Otro (especificar)" a secas.
+  const conOtro = (valor: any, otro: any) => {
+    const o = String(otro ?? "").trim()
+    return o ? `${String(valor ?? "")} — ${o}` : String(valor ?? "")
+  }
+
   const sec = (title: string, body: any[][]) =>
     autoTable(doc, {
       startY: (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY + 8 : 68,
@@ -75,7 +82,12 @@ export async function generarPdfInvestigacion(data: any, accs: any[] = [], tess:
     ["Dirección", `${EMPLEADOR_LIP.direccion} · ${EMPLEADOR_LIP.municipio} (${EMPLEADOR_LIP.departamento})`],
     ["Correo", EMPLEADOR_LIP.email],
     ["Actividad económica", EMPLEADOR_LIP.actividad],
-    ["Centro de trabajo", `${data.centro_trabajo ?? data.sede ?? ""} · ${data.centro_direccion ?? ""} · ${data.centro_municipio ?? ""}`],
+    ["Centro de trabajo", data.centro_trabajo ?? data.sede ?? ""],
+    [
+      "Dirección / Municipio / Depto. del centro",
+      `${data.centro_direccion ?? ""} · ${data.centro_municipio ?? ""} · ${data.centro_departamento ?? ""}`,
+    ],
+    ["Teléfono / Zona del centro", `${data.centro_telefono ?? ""} · ${data.centro_zona ?? ""}`],
     ["Clasificación / Severidad", `${labelOf(TIPOS, data.tipo)} · ${labelOf(GRAVEDAD, data.gravedad)}`],
     ["Fecha de reporte", data.fecha_reporte ?? ""],
   ])
@@ -83,10 +95,20 @@ export async function generarPdfInvestigacion(data: any, accs: any[] = [], tess:
     ["Nombres y apellidos", data.trabajador ?? ""],
     ["Documento", `${data.documento_tipo ?? ""} ${data.documento_numero ?? ""}`],
     ["Fecha nacimiento / Sexo", `${data.fecha_nacimiento ?? ""} · ${labelOf(SEXO, data.sexo)}`],
-    ["EPS / ARL / AFP", `${data.eps ?? ""} · ${data.arl ?? ""} · ${data.afp ?? ""}`],
+    [
+      "Teléfono / Fax / Dirección",
+      `${data.telefono ?? ""} · ${data.fax ?? ""} · ${data.direccion_trabajador ?? ""}`,
+    ],
+    [
+      "EPS / ARL / AFP",
+      `${data.eps ?? ""} (cód ${data.eps_codigo ?? ""}) · ${data.arl ?? ""} (cód ${data.arl_codigo ?? ""}) · ${data.afp ?? ""} (cód ${data.afp_codigo ?? ""})`,
+    ],
     ["Cargo / Ocupación", `${data.cargo ?? ""} · ${data.ocupacion_habitual ?? ""} (cód ${data.codigo_ocupacion ?? ""})`],
     ["Vinculación", labelOf(VINCULACION, data.tipo_vinculacion)],
-    ["Ingreso / Antigüedad", `${data.fecha_ingreso ?? ""} · ${data.antiguedad_dias ?? 0} días`],
+    [
+      "Ingreso / Antigüedad en el cargo",
+      `${data.fecha_ingreso ?? ""} · ${data.antiguedad_dias ?? 0} días, ${data.antiguedad_meses ?? 0} meses, ${data.antiguedad_anios ?? 0} años`,
+    ],
     ["Salario / Jornada habitual", `$${(Number(data.salario) || 0).toLocaleString("es-CO")} · ${labelOf(JORNADA_HAB, data.jornada_habitual)}`],
     ["Funciones asignadas", data.funciones_asignadas ?? ""],
     ["EPP y dotación", data.epp_portado ?? ""],
@@ -96,11 +118,11 @@ export async function generarPdfInvestigacion(data: any, accs: any[] = [], tess:
     ["Jornada / T. laborado previo", `${labelOf(JORNADA, data.jornada_evento)} · ${data.tiempo_laborado_previo ?? ""}`],
     ["¿Labor habitual? / Tipo", `${b(data.labor_habitual)} · ${labelOf(TIPO_ACC, data.tipo_accidente)}`],
     ["Ocurrió", `${labelOf(DENTRO_FUERA, data.dentro_fuera_empresa)} · ${data.departamento_evento ?? ""} ${data.municipio_evento ?? ""} (${labelOf(ZONA, data.zona_evento)})`],
-    ["Área / Lugar", `${data.area_ocurrencia ?? ""} · ${data.lugar_ocurrencia ?? ""}`],
-    ["Tipo de lesión", data.tipo_lesion ?? ""],
+    ["Área / Lugar", `${data.area_ocurrencia ?? ""} · ${conOtro(data.lugar_ocurrencia, data.lugar_otro)}`],
+    ["Tipo de lesión", conOtro(data.tipo_lesion, data.tipo_lesion_otro)],
     ["Parte del cuerpo", data.parte_cuerpo ?? ""],
-    ["Agente", data.agente_accidente ?? ""],
-    ["Mecanismo / forma", data.mecanismo ?? ""],
+    ["Agente", conOtro(data.agente_accidente, data.agente_otro)],
+    ["Mecanismo / forma", conOtro(data.mecanismo, data.mecanismo_otro)],
     ["Descripción", data.descripcion ?? ""],
   ])
   sec("4. MANEJO Y AUSENTISMO", [
