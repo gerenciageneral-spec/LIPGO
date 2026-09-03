@@ -13,8 +13,17 @@
 
 import { useEffect, useState } from "react"
 import { useToast } from "@/hooks/use-toast"
-import { Loader2, Upload, ExternalLink, FileText } from "lucide-react"
-import { listSoportes, subirYRegistrarSoporte } from "@/lib/soportes-actions"
+import { Loader2, Upload, ExternalLink, FileText, Trash2 } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { listSoportes, subirYRegistrarSoporte, eliminarSoporte } from "@/lib/soportes-actions"
 import type { SoporteRow } from "@/lib/soportes-types"
 
 const T = { navy: "#0D3B6E", teal: "#00B4CC", ok: "#1E8449", grey: "#8896a5" }
@@ -40,6 +49,10 @@ export function SoportesDocumentales({
   const refId = String(referenciaId)
   const [rows, setRows] = useState<SoporteRow[]>([])
   const [subiendo, setSubiendo] = useState(false)
+  // Soporte que se esta quitando, con el motivo que hay que escribir.
+  const [porQuitar, setPorQuitar] = useState<SoporteRow | null>(null)
+  const [motivo, setMotivo] = useState("")
+  const [quitando, setQuitando] = useState(false)
 
   async function cargar() {
     setRows(await listSoportes(referenciaTipo, refId, empresaId ?? null))
@@ -85,6 +98,33 @@ export function SoportesDocumentales({
     }
   }
 
+  async function confirmarQuitar() {
+    if (!porQuitar) return
+    setQuitando(true)
+    try {
+      const res = await eliminarSoporte(porQuitar.id, motivo)
+      if (res.success) {
+        toast({
+          title: "Soporte retirado",
+          description: "Deja de aparecer como evidencia. El archivo se conserva y se puede revertir.",
+        })
+        setPorQuitar(null)
+        setMotivo("")
+        cargar()
+        // Se avisa hacia arriba con cadena vacia: el modulo que muestre el
+        // ultimo soporte en una columna tiene que enterarse de que ya no esta.
+        onUploaded?.("")
+      } else {
+        toast({ title: "No se pudo quitar", description: res.message })
+      }
+    } catch (e: any) {
+      console.error("[soportes] confirmarQuitar:", e?.message ?? e)
+      toast({ title: "No se pudo quitar", description: "Inténtalo de nuevo." })
+    } finally {
+      setQuitando(false)
+    }
+  }
+
   return (
     <div className="space-y-1.5">
       <label
@@ -126,12 +166,82 @@ export function SoportesDocumentales({
               >
                 {r.vigente ? "vigente" : "histórico"}
               </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setPorQuitar(r)
+                  setMotivo("")
+                }}
+                title="Quitar este soporte del repositorio"
+                aria-label={`Quitar ${r.archivo_nombre ?? "soporte"}`}
+                className="ml-auto shrink-0 rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+              >
+                <Trash2 className="h-3 w-3" />
+              </button>
             </li>
           ))}
         </ul>
       ) : (
         <p className="text-[11px] text-muted-foreground">Sin soportes aún.</p>
       )}
+
+      {/* Quitar un soporte pide confirmacion Y motivo. Esto es evidencia de un
+          SG-SST que se audita: un archivo que desaparece sin explicacion es
+          peor que uno retirado con su razon escrita. */}
+      <Dialog open={!!porQuitar} onOpenChange={(o) => !o && setPorQuitar(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Trash2 className="h-5 w-5 text-destructive" />
+              Quitar soporte
+            </DialogTitle>
+            <DialogDescription>
+              {porQuitar?.archivo_nombre ?? "Este archivo"} dejará de aparecer como evidencia.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 text-sm">
+            <p className="text-muted-foreground">
+              El archivo <strong>no se borra</strong>: se conserva y la eliminación se puede
+              revertir. Deja de mostrarse aquí, en el Repositorio de Soportes y en el Repositorio
+              Universal.
+            </p>
+            {porQuitar?.vigente && rows.filter((r) => r.id !== porQuitar.id).length > 0 && (
+              <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+                Es el soporte vigente. Al quitarlo, el anterior vuelve a quedar como vigente.
+              </p>
+            )}
+            <div className="space-y-1">
+              <label className="text-xs font-medium">Motivo *</label>
+              <Input
+                autoFocus
+                value={motivo}
+                onChange={(e) => setMotivo(e.target.value)}
+                placeholder="Ej. Se subió al estándar equivocado"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Queda guardado con la fecha. Dentro de un año es lo único que explica por qué no
+                está.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 border-t pt-3">
+            <Button variant="outline" onClick={() => setPorQuitar(null)} disabled={quitando}>
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={confirmarQuitar}
+              disabled={quitando || !motivo.trim()}
+              className="gap-1.5"
+            >
+              {quitando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              Quitar soporte
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

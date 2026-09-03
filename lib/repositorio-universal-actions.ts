@@ -71,11 +71,16 @@ export async function getRepositorioUniversal(selectedEmpresaId?: number | null)
   try {
     const { data } = await sb
       .from("soportes_documentales")
-      .select("id,norma,modulo,referencia_tipo,referencia_desc,archivo_url,archivo_nombre,tipo_archivo,vigente,created_at")
+      .select("id,norma,modulo,referencia_tipo,referencia_desc,archivo_url,archivo_nombre,tipo_archivo,vigente,eliminado,created_at")
       .eq("idempresa", empresaId)
       .order("created_at", { ascending: false })
     for (const r of data ?? []) {
       if (!tieneUrl(r.archivo_url)) continue
+      // Retirados del repositorio (subidos por error). Se filtran en memoria y
+      // no en el select: si la columna aun no existe --falta el script 55--, un
+      // filtro en la consulta la haria fallar entera y el repositorio quedaria
+      // vacio en vez de mostrar de mas.
+      if ((r as any).eliminado === true) continue
       push({
         id: `sop:${r.id}`,
         modulo: r.modulo || "SIG",
