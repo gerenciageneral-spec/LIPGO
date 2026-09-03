@@ -268,9 +268,12 @@ export default function AttendanceRegistration() {
 
   // Registra la SALIDA del dia actual: golpea el endpoint que actualiza
   // `registroasistencia.horasalida` para la identificacion + fecha de hoy.
-  // No usa `/api/attendance/check` porque la salida solo tiene sentido
-  // cuando ya hubo ingreso (el endpoint mismo devuelve 404 si no existe
-  // registro de hoy).
+  //
+  // SIN ENTRADA NO HAY SALIDA. La comprobacion de verdad la hace el endpoint
+  // --es la frontera real y nadie la puede saltar--, pero aqui se consulta
+  // ANTES de encender la camara: si el documento no tiene entrada de hoy no
+  // tiene sentido tomarle la foto para despues rechazarlo, y el operador ve el
+  // motivo de una vez.
   const handleRegisterDeparture = async () => {
     if (!identificacion.trim()) {
       setMessage({ type: "error", text: "Por favor ingrese un documento de identificación" })
@@ -287,6 +290,23 @@ export default function AttendanceRegistration() {
     setMessage(null)
 
     try {
+      const estado = await fetch("/api/attendance/departure-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          identificacion: identificacion.trim(),
+          idempresa: selectedEmpresaId,
+        }),
+      })
+      const estadoData = await estado.json()
+      if (!estadoData.puedeSalir) {
+        setMessage({
+          type: "error",
+          text: estadoData.message || "Este documento no puede registrar salida.",
+        })
+        return
+      }
+
       // Misma regla que en la entrada: sin foto valida no se registra salida.
       const foto = await capturarFoto()
       if (!foto.ok) {
@@ -321,7 +341,7 @@ export default function AttendanceRegistration() {
     } finally {
       setLoading(false)
       setAction(null)
-      setTimeout(() => setMessage(null), 4000)
+      setTimeout(() => setMessage(null), 6000)
     }
   }
 

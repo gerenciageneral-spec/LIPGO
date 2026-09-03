@@ -19,6 +19,12 @@ function hasValue(v: string | null | undefined): boolean {
  * Reglas:
  *  - Si no hay registro del dia para esa identificacion -> 404 con mensaje
  *    explicito (la persona debe haber entrado primero).
+ *  - Si hay registro del dia pero SIN `horaingreso` -> 409. Que exista la fila
+ *    no significa que la persona haya llegado: "Programacion de turnos"
+ *    precrea las filas del dia con `horaingreso` en null (ver
+ *    lib/programacion-turnos-actions.ts). Sin esta regla, a un programado que
+ *    nunca marco entrada se le podia registrar salida, y quedaba una fila con
+ *    salida y sin ingreso que rompe el calculo de horas y de horas extra.
  *  - Si ya tenia `horasalida` registrada, igual la sobrescribimos: la nueva
  *    salida es la mas reciente (politica simple y predecible para el
  *    operador).
@@ -66,19 +72,27 @@ export async function POST(request: Request) {
       hour12: false,
     }).format(now)
 
-    // Pre-check: traemos el registro de hoy para esta identificacion.
-    // Tres ramas posibles:
-    //   1) No existe -> 404 ("primero debe registrar entrada").
-    //   2) Existe y ya tiene `horasalida` -> 409 (idempotencia diaria:
-    //      una sola salida por persona por dia).
-    //   3) Existe sin `horasalida` -> seguimos al UPDATE.
-    const { data: existing, error: lookupError } = await supabase
+    // Pre-check: traemos los registros de hoy para esta identificacion.
+    // Cuatro ramas posibles:
+    //   1) No existe fila -> 404 ("primero debe registrar entrada").
+    //   2) Existe pero NINGUNA tiene `horaingreso` -> 409 (esta programado,
+    //      pero no ha llegado).
+    //   3) Existe con ingreso y ya tiene `horasalida` -> 409 (idempotencia
+    //      diaria: una sola salida por persona por dia).
+    //   4) Existe con ingreso y sin `horasalida` -> seguimos al UPDATE.
+    //
+    // Se traen TODAS las filas del dia y no `.limit(1)`: un puesto de doble
+    // jornada tiene dos filas el mismo dia (columna `turno` 1 y 2, ver
+    // lib/programacion-turnos-actions.ts) y sin ORDER BY cual llegaba primero
+    // era arbitrario. Con una sola fila se podia estar mirando la del turno que
+    // no marco y rechazar una salida legitima.
+    const { data: registrosHoy, error: lookupError } = await supabase
       .from("registroasistencia")
-      .select("id, horasalida, asistencia")
+      .select("id, horaingreso, horasalida, asistencia, turno")
       .eq("idempresa", idempresa)
       .eq("identificacion", identificacion.trim())
       .eq("fecha", fecha)
-      .limit(1)
+      .order("turno", { ascending: true, nullsFirst: true })
 
     if (lookupError) {
       console.error("[v0] Error looking up registroasistencia:", lookupError)
@@ -88,7 +102,7 @@ export async function POST(request: Request) {
       )
     }
 
-    if (!existing || existing.length === 0) {
+    if (!registrosHoy || registrosHoy.length === 0) {
       return NextResponse.json(
         {
           success: false,
@@ -99,23 +113,43 @@ export async function POST(request: Request) {
       )
     }
 
-    // Novedad registrada hoy (p.ej. asignada DESPUES del ingreso): no se
-    // permite registrar salida de asistencia normal el mismo dia.
-    if (hasValue(existing[0].asistencia)) {
+    // SIN ENTRADA NO HAY SALIDA. Que exista la fila no basta: la de un turno
+    // programado nace vacia y solo se llena cuando la persona marca ingreso.
+    const conIngreso = registrosHoy.filter((r) => hasValue(r.horaingreso as string | null))
+
+    if (conIngreso.length === 0) {
       return NextResponse.json(
         {
           success: false,
-          message: `Este documento tiene una novedad registrada hoy ("${existing[0].asistencia}") y no puede marcar salida`,
+          message:
+            "Este documento no tiene entrada registrada hoy. Debe marcar la entrada antes de poder marcar la salida.",
         },
         { status: 409 },
       )
     }
 
-    if (existing[0].horasalida) {
+    // De aqui en adelante se trabaja sobre la fila que SI tiene ingreso: la
+    // primera sin salida, y si todas ya salieron, la ultima, para que el
+    // mensaje de "ya registro salida" muestre una hora real.
+    const existing = conIngreso.find((r) => !r.horasalida) ?? conIngreso[conIngreso.length - 1]
+
+    // Novedad registrada hoy (p.ej. asignada DESPUES del ingreso): no se
+    // permite registrar salida de asistencia normal el mismo dia.
+    if (hasValue(existing.asistencia)) {
       return NextResponse.json(
         {
           success: false,
-          message: `Ya se registró la salida de este documento hoy a las ${existing[0].horasalida}`,
+          message: `Este documento tiene una novedad registrada hoy ("${existing.asistencia}") y no puede marcar salida`,
+        },
+        { status: 409 },
+      )
+    }
+
+    if (existing.horasalida) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: `Ya se registró la salida de este documento hoy a las ${existing.horasalida}`,
         },
         { status: 409 },
       )
@@ -127,7 +161,7 @@ export async function POST(request: Request) {
     const { data, error } = await supabase
       .from("registroasistencia")
       .update({ horasalida })
-      .eq("id", existing[0].id)
+      .eq("id", existing.id)
       .select("id, identificacion, nombre, horaingreso, horasalida")
 
     if (error) {
@@ -143,7 +177,7 @@ export async function POST(request: Request) {
     try {
       const fotoSalidaUrl = await subirFotoAsistencia(foto, identificacion, "salida")
       if (fotoSalidaUrl) {
-        await supabase.from("registroasistencia").update({ foto_salida: fotoSalidaUrl }).eq("id", existing[0].id)
+        await supabase.from("registroasistencia").update({ foto_salida: fotoSalidaUrl }).eq("id", existing.id)
       }
     } catch (fe) {
       console.error("[v0] Error guardando foto_salida:", fe)
