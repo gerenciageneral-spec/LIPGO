@@ -525,6 +525,7 @@ type ColHistorial = {
 // Una entrada por columna del historial. De aqui salen el encabezado, la fila
 // de filtros y el filtrado, para que no puedan desalinearse entre si.
 const COLUMNAS_HISTORIAL: ColHistorial[] = [
+  { k: "anio", l: "Año", min: "6rem", filtro: "lista", centrado: true },
   { k: "fecha", l: "Fecha", min: "7.5rem", filtro: "texto", ph: "AAAA-MM-DD" },
   { k: "tipo", l: "Tipo", min: "10rem", filtro: "lista" },
   { k: "trabajador", l: "Trabajador", min: "15rem", filtro: "texto", ph: "Nombre…" },
@@ -557,6 +558,11 @@ function estadoInvestigacion(r: IncidenteRow): "Pendiente" | "En plazo" | "Fuera
  *  si difirieran, filtrar por lo que uno lee no traeria la fila. */
 function valorHistorial(r: IncidenteRow, k: string): string {
   switch (k) {
+    case "anio":
+      // Se corta la cadena en vez de pasarla por Date: 'YYYY-MM-DD' se
+      // interpreta en UTC y en Colombia un 1 de enero se leeria como 31 de
+      // diciembre del anio anterior.
+      return String(r.fecha_evento ?? "").slice(0, 4)
     case "fecha":
       return r.fecha_evento ?? ""
     case "tipo":
@@ -646,9 +652,15 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
       if (c.filtro !== "lista") continue
       const presentes = [...new Set(rows.map((r) => valorHistorial(r, c.k)).filter(Boolean))]
       const orden = ORDEN_OPCIONES[c.k]
-      m[c.k] = orden
-        ? orden.filter((o) => presentes.includes(o))
-        : presentes.sort((a, b) => a.localeCompare(b, "es"))
+      if (orden) {
+        m[c.k] = orden.filter((o) => presentes.includes(o))
+      } else if (c.k === "anio") {
+        // Del mas reciente al mas antiguo: lo que se consulta casi siempre es
+        // el anio en curso, y asi queda de primero.
+        m[c.k] = presentes.sort((a, b) => b.localeCompare(a))
+      } else {
+        m[c.k] = presentes.sort((a, b) => a.localeCompare(b, "es"))
+      }
     }
     return m
   }, [rows])
@@ -1299,8 +1311,14 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
                     return (
                       <tr key={r.id}>
                         <td
-                          className="sticky left-0 z-10 whitespace-nowrap border-b p-2"
+                          className="sticky left-0 z-10 whitespace-nowrap border-b p-2 text-center"
                           style={{ background: bg, minWidth: COLUMNAS_HISTORIAL[0].min }}
+                        >
+                          {valorHistorial(r, "anio") || "—"}
+                        </td>
+                        <td
+                          className="whitespace-nowrap border-b p-2"
+                          style={{ background: bg, minWidth: COLUMNAS_HISTORIAL[1].min }}
                         >
                           {r.fecha_evento}
                         </td>
