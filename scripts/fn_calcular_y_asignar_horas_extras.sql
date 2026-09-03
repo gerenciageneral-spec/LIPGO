@@ -1,4 +1,24 @@
 -- ============================================================================
+-- ⚠️  ESTE ARCHIVO YA NO ES LA VERSIÓN VIGENTE
+--
+-- Los umbrales dejaron de estar quemados aquí: ahora se configuran por puesto y
+-- por día desde la pestaña "Políticas de horas extra" de Tabla Asistencia, y la
+-- función los lee de la tabla `politica_horas_extra`.
+--
+--   La versión vigente está en:  scripts/sig/57_politica_horas_extra.sql
+--
+-- Este archivo se conserva como REGISTRO HISTÓRICO de la lógica anterior --la
+-- que estuvo vigente hasta septiembre de 2026-- porque es la referencia para
+-- entender los recálculos retroactivos que ya se corrieron
+-- (recalcular_horas_extra_retroactivo_16jul.sql,
+-- fix_horas_extra_sabado_distribucion_turno.sql, arreglar_horas_extra_17ago2026.sql)
+-- y para poder revertir si hiciera falta.
+--
+-- NO CORRER este archivo sobre la base: reemplazaría la función nueva por la
+-- vieja y las políticas configuradas dejarían de tener efecto en silencio.
+-- ============================================================================
+
+-- ============================================================================
 -- Función trigger: calcular_y_asignar_horas_extras
 -- ----------------------------------------------------------------------------
 -- Calcula y asigna las HORAS EXTRAS (hed / hedf) del personal de ESPECIALIDAD

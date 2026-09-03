@@ -182,6 +182,20 @@ export async function PATCH(request: Request) {
     if (hn !== undefined) updateData.hn = hn
     if (aprobado !== undefined) updateData.aprobado = aprobado
 
+    // Marca que estas horas las fijo una persona a mano.
+    //
+    // SIN ESTO EL AJUSTE MANUAL NO FUNCIONA. El trigger de registroasistencia es
+    // BEFORE UPDATE FOR EACH ROW: se dispara con este mismo update, recalcula
+    // desde los cuatro tiempos --que no cambiaron-- y sobrescribe el valor
+    // recien escrito antes de guardarlo. Con la bandera, el trigger sale sin
+    // tocar nada. Se limpia sola si mas adelante cambia la marcacion.
+    //
+    // Solo se marca cuando se tocan las HORAS: aprobar o rechazar no es un
+    // ajuste manual del calculo.
+    const tocaHoras =
+      hed !== undefined || hedf !== undefined || hen !== undefined || hef !== undefined || hn !== undefined
+    if (tocaHoras) updateData.extras_manual = true
+
     const { error } = await supabase.from("registroasistencia").update(updateData).eq("id", id)
 
     if (error) {

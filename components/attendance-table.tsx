@@ -16,6 +16,8 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { useToast } from "@/hooks/use-toast"
 import { reasignarPuestoDelDia } from "@/lib/reasignacion-puesto-actions"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { PoliticasHorasExtra } from "@/components/attendance/politicas-horas-extra"
 
 interface AttendanceRecord {
   identificacion: string
@@ -147,7 +149,38 @@ const ESPECIALIDADES_OPTIONS = [
   "Operador PT (Carrusel)",
 ]
 
+/**
+ * Las dos pestañas del módulo.
+ *
+ * `defaultValue` y no un valor controlado a proposito: asi cambiar de pestaña
+ * no remonta la tabla de asistencia ni vuelve a pedir los datos del dia.
+ */
 export default function AttendanceTable() {
+  return (
+    <Tabs defaultValue="asistencia" className="p-6 space-y-4">
+      <TabsList>
+        <TabsTrigger value="asistencia" className="gap-1.5">
+          <Users className="h-4 w-4" />
+          Asistencia del día
+        </TabsTrigger>
+        <TabsTrigger value="politicas" className="gap-1.5">
+          <Clock className="h-4 w-4" />
+          Políticas de horas extra
+        </TabsTrigger>
+      </TabsList>
+
+      <TabsContent value="asistencia">
+        <TablaAsistenciaDiaria />
+      </TabsContent>
+
+      <TabsContent value="politicas">
+        <PoliticasHorasExtra />
+      </TabsContent>
+    </Tabs>
+  )
+}
+
+function TablaAsistenciaDiaria() {
   const { selectedEmpresaId } = useAuth()
   const { toast } = useToast()
   const [loading, setLoading] = useState(true)
