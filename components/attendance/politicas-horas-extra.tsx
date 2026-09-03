@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Switch } from "@/components/ui/switch"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Textarea } from "@/components/ui/textarea"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -40,6 +41,8 @@ import {
   FlaskConical,
   RotateCcw,
   Download,
+  Copy,
+  Check,
 } from "lucide-react"
 import {
   DIAS_SEMANA,
@@ -58,6 +61,7 @@ import {
   ejecutarRecalculoExtras,
   getEjemploAsistencia,
   getPoliticasHorasExtra,
+  guardarPoliticaEnPuestos,
   guardarPoliticaHorasExtra,
   previsualizarRecalculoExtras,
   type PreviewRecalculo,
@@ -87,6 +91,8 @@ export function PoliticasHorasExtra() {
   const [editando, setEditando] = useState<PoliticaHorasExtra | null>(null)
   const [guardando, setGuardando] = useState(false)
   const [porEliminar, setPorEliminar] = useState<PoliticaHorasExtra | null>(null)
+  // Aplicar la política que se está viendo a varios puestos de una vez.
+  const [aplicarVarios, setAplicarVarios] = useState<PoliticaHorasExtra | null>(null)
 
   const cargar = useCallback(async () => {
     setCargando(true)
@@ -284,9 +290,15 @@ export function PoliticasHorasExtra() {
               l="Redondeo"
               v={base.redondeoModo === "bloque" ? `bloques de ${base.redondeoBloqueMin} min` : base.redondeoModo}
             />
-            <Button size="sm" variant="outline" className="ml-auto" onClick={() => setEditando({ ...base })}>
-              Editar
-            </Button>
+            <div className="ml-auto flex gap-2">
+              <Button size="sm" variant="outline" onClick={() => setAplicarVarios({ ...base })} className="gap-1.5">
+                <Copy className="h-3.5 w-3.5" />
+                Aplicar a varios puestos
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setEditando({ ...base })}>
+                Editar
+              </Button>
+            </div>
           </CardContent>
         )}
       </Card>
@@ -338,6 +350,16 @@ export function PoliticasHorasExtra() {
                           <Button
                             size="sm"
                             variant="ghost"
+                            onClick={() => setAplicarVarios({ ...exc })}
+                            title="Aplicar esta misma excepción a otros puestos"
+                          >
+                            <Copy className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                        {exc && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
                             className="text-destructive"
                             onClick={() => setPorEliminar(exc)}
                             title="Quitar la excepción: el día vuelve a usar la base"
@@ -354,6 +376,13 @@ export function PoliticasHorasExtra() {
           </CardContent>
         </Card>
       )}
+
+      <AplicarAVariosPuestos
+        plantilla={aplicarVarios}
+        puestos={puestos}
+        onCerrar={() => setAplicarVarios(null)}
+        onGuardado={cargar}
+      />
 
       <Simulador politicas={politicas} puestos={puestos} empresaId={selectedEmpresaId ?? null} />
 
@@ -533,6 +562,211 @@ export function PoliticasHorasExtra() {
         </DialogContent>
       </Dialog>
     </div>
+  )
+}
+
+/* ------------------------------------------------- Aplicar a varios puestos */
+
+/**
+ * Copia una politica ya configurada a varios puestos de una vez.
+ *
+ * Con veinte y pico de puestos, repetir la misma regla uno a uno es tedioso y
+ * es la forma segura de que terminen desalineados sin que nadie lo note.
+ *
+ * Se avisa cuales de los puestos elegidos YA tienen politica para esa misma
+ * fecha y dia, porque a esos se les va a sobrescribir. Es la unica parte
+ * destructiva de esta pantalla y tiene que verse ANTES de guardar, no despues.
+ */
+function AplicarAVariosPuestos({
+  plantilla,
+  puestos,
+  onCerrar,
+  onGuardado,
+}: {
+  plantilla: PoliticaHorasExtra | null
+  puestos: string[]
+  onCerrar: () => void
+  onGuardado: () => void
+}) {
+  const { toast } = useToast()
+  const [seleccion, setSeleccion] = useState<Set<string>>(new Set())
+  const [buscar, setBuscar] = useState("")
+  const [guardando, setGuardando] = useState(false)
+  const [conPolitica, setConPolitica] = useState<Set<string>>(new Set())
+
+  // Al abrir se parte de cero y se averigua a quienes se les sobrescribiria.
+  useEffect(() => {
+    if (!plantilla) return
+    setSeleccion(new Set())
+    setBuscar("")
+    getPoliticasHorasExtra().then((res) => {
+      if (!res.success || !res.data) return
+      setConPolitica(
+        new Set(
+          res.data
+            .filter(
+              (p) =>
+                p.fechaDesde === plantilla.fechaDesde &&
+                p.diaSemana === plantilla.diaSemana &&
+                p.puesto !== plantilla.puesto,
+            )
+            .map((p) => p.puesto),
+        ),
+      )
+    })
+  }, [plantilla])
+
+  // El puesto de origen no se ofrece: ya tiene esta politica, es de donde sale.
+  const disponibles = useMemo(
+    () =>
+      puestos
+        .filter((p) => p !== plantilla?.puesto)
+        .filter((p) => p.toLowerCase().includes(buscar.trim().toLowerCase())),
+    [puestos, plantilla, buscar],
+  )
+
+  const alternar = (p: string) =>
+    setSeleccion((prev) => {
+      const s = new Set(prev)
+      if (s.has(p)) s.delete(p)
+      else s.add(p)
+      return s
+    })
+
+  const todosMarcados = disponibles.length > 0 && disponibles.every((p) => seleccion.has(p))
+  const alternarTodos = () =>
+    setSeleccion((prev) => {
+      const s = new Set(prev)
+      for (const p of disponibles) {
+        if (todosMarcados) s.delete(p)
+        else s.add(p)
+      }
+      return s
+    })
+
+  const aSobrescribir = [...seleccion].filter((p) => conPolitica.has(p))
+
+  const aplicar = async () => {
+    if (!plantilla) return
+    setGuardando(true)
+    const res = await guardarPoliticaEnPuestos(plantilla, [...seleccion])
+    setGuardando(false)
+
+    if (!res.success || !res.data) {
+      toast({ title: "No se pudo aplicar", description: res.message, variant: "destructive" })
+      return
+    }
+
+    const { guardados, fallidos } = res.data
+    toast({
+      title: `Politica aplicada a ${guardados.length} puesto(s)`,
+      description:
+        fallidos.length > 0
+          ? `No se pudo en: ${fallidos.map((f) => f.puesto).join(", ")}`
+          : "Aplica a las asistencias que se registren o modifiquen de ahora en adelante.",
+      variant: fallidos.length > 0 ? "destructive" : undefined,
+    })
+    onCerrar()
+    onGuardado()
+  }
+
+  const etiquetaDia =
+    plantilla?.diaSemana == null
+      ? "todos los dias"
+      : (DIAS_SEMANA.find((d) => d.valor === plantilla?.diaSemana)?.nombre.toLowerCase() ?? "")
+
+  return (
+    <Dialog open={!!plantilla} onOpenChange={(o) => !o && onCerrar()}>
+      <DialogContent className="flex max-h-[90vh] max-w-lg flex-col overflow-hidden">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Copy className="h-5 w-5" />
+            Aplicar a varios puestos
+          </DialogTitle>
+          <DialogDescription>
+            Se copiara la politica de{" "}
+            <strong>
+              {plantilla?.puesto === PUESTO_TODOS ? "todos los puestos" : plantilla?.puesto}
+            </strong>{" "}
+            &middot; {etiquetaDia} &middot; desde {plantilla?.fechaDesde}
+          </DialogDescription>
+        </DialogHeader>
+
+        {plantilla && (
+          <div className="flex flex-col gap-3 overflow-hidden">
+            <div className="flex flex-wrap gap-1.5 rounded-md border bg-muted/40 p-2">
+              <Resumen l="Umbral" v={`${plantilla.umbralHoras} h`} />
+              <Resumen l="Descanso" v={`${plantilla.horasDescanso} h`} />
+              {plantilla.descansoDesdeHoras != null && (
+                <Resumen l="Solo si pasa de" v={`${plantilla.descansoDesdeHoras} h`} />
+              )}
+              <Resumen l="Tolerancia" v={`${plantilla.toleranciaSalidaMin} min`} />
+            </div>
+
+            <Input
+              placeholder="Buscar puesto..."
+              value={buscar}
+              onChange={(e) => setBuscar(e.target.value)}
+            />
+
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>
+                <strong className="text-foreground">{seleccion.size}</strong> seleccionado(s)
+              </span>
+              {disponibles.length > 0 && (
+                <button type="button" className="text-primary hover:underline" onClick={alternarTodos}>
+                  {todosMarcados ? "Quitar todos" : "Seleccionar todos"}
+                </button>
+              )}
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-auto rounded-md border">
+              {disponibles.length === 0 ? (
+                <p className="p-6 text-center text-sm text-muted-foreground">
+                  No hay puestos que coincidan.
+                </p>
+              ) : (
+                <ul className="divide-y">
+                  {disponibles.map((p) => (
+                    <li key={p}>
+                      <label className="flex cursor-pointer items-center gap-3 px-3 py-2 hover:bg-muted/50">
+                        <Checkbox checked={seleccion.has(p)} onCheckedChange={() => alternar(p)} />
+                        <span className="min-w-0 flex-1 truncate text-sm">{p}</span>
+                        {conPolitica.has(p) && (
+                          <Badge variant="outline" className="shrink-0 text-[10px] font-normal">
+                            ya tiene
+                          </Badge>
+                        )}
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            {aSobrescribir.length > 0 && (
+              <Alert variant="destructive">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertDescription className="text-xs">
+                  {aSobrescribir.length} de los puestos elegidos ya tienen una politica para esa
+                  fecha y ese dia: <strong>se les va a reemplazar</strong> por esta.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            <div className="flex justify-end gap-2 border-t pt-3">
+              <Button variant="outline" onClick={onCerrar} disabled={guardando}>
+                Cancelar
+              </Button>
+              <Button onClick={aplicar} disabled={seleccion.size === 0 || guardando} className="gap-1.5">
+                {guardando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                Aplicar a {seleccion.size} puesto(s)
+              </Button>
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   )
 }
 

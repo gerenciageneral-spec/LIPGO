@@ -159,6 +159,43 @@ export async function guardarPoliticaHorasExtra(
 }
 
 /**
+ * Aplica la MISMA política a varios puestos de una vez.
+ *
+ * Con veinte y pico de puestos, configurarlos uno a uno no solo es tedioso: es
+ * la forma segura de que terminen desalineados sin que nadie lo note. Aquí se
+ * guarda la misma regla en todos, y se informa qué pasó con cada uno.
+ *
+ * NO se detiene en el primer error: si un puesto falla, sigue con los demás y
+ * lo reporta al final. Frenar a la mitad dejaría unos puestos configurados y
+ * otros no, que es justo el estado inconsistente que esto viene a evitar.
+ */
+export async function guardarPoliticaEnPuestos(
+  plantilla: PoliticaHorasExtra,
+  puestos: string[],
+): Promise<Resultado<{ guardados: string[]; fallidos: Array<{ puesto: string; motivo: string }> }>> {
+  const lista = [...new Set((puestos ?? []).map((p) => String(p ?? "").trim()).filter(Boolean))]
+  if (lista.length === 0) return { success: false, message: "Selecciona al menos un puesto." }
+
+  const guardados: string[] = []
+  const fallidos: Array<{ puesto: string; motivo: string }> = []
+
+  for (const puesto of lista) {
+    const res = await guardarPoliticaHorasExtra({ ...plantilla, id: undefined, puesto })
+    if (res.success) guardados.push(puesto)
+    else fallidos.push({ puesto, motivo: res.message ?? "Error desconocido" })
+  }
+
+  if (guardados.length === 0) {
+    return {
+      success: false,
+      message: fallidos[0]?.motivo ?? "No se pudo guardar la política en ningún puesto.",
+    }
+  }
+
+  return { success: true, data: { guardados, fallidos } }
+}
+
+/**
  * Elimina una política.
  *
  * La fila general ('*' con día base) no se puede borrar: es el punto de retorno
