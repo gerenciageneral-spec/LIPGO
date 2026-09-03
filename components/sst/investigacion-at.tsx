@@ -18,6 +18,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast"
 import { SST_TOKENS } from "@/components/sst/sst-utils"
 import { SoportesDocumentales } from "@/components/sst/soportes-documentales"
+import { listSoportes, subirYRegistrarSoporte, eliminarSoporte } from "@/lib/soportes-actions"
+import type { SoporteRow } from "@/lib/soportes-types"
 import { EspinaPescado, CuadrosCausas } from "@/components/sst/espina-pescado"
 import type { IshikawaData, CuadrosCausasData } from "@/components/sst/espina-pescado"
 import {
@@ -29,7 +31,17 @@ import {
   listTestigos,
 } from "@/lib/sst-incidentes-actions"
 import type { IncidenteRow, IncidenteAccionRow, IncidenteTestigoRow } from "@/lib/sst-evidencia-types"
-import { FileText, Eye, Loader2, Pencil, X, ShieldCheck } from "lucide-react"
+import {
+  FileText,
+  Eye,
+  Loader2,
+  Pencil,
+  X,
+  ShieldCheck,
+  Upload,
+  ExternalLink,
+  Trash2,
+} from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
@@ -486,6 +498,21 @@ const TODOS = "__todos__"
 /** Alto de la fila de encabezado; la de filtros se ancla justo debajo. */
 const ALTO_ENCABEZADO = 34
 
+/**
+ * Tipo de referencia con el que se guarda el archivo de cierre de la ARL.
+ *
+ * Va al MISMO repositorio central que los demas soportes
+ * (`soportes_documentales`, bucket "archivos") y no a un almacen aparte: asi el
+ * documento sale en el repositorio de evidencias y en las auditorias sin que
+ * haya que acordarse de un segundo lugar donde buscarlo.
+ *
+ * Pero con su propio `referencia_tipo`, distinto del "incidente" que usa la
+ * columna Soportes. Si compartieran tipo, subir un soporte cualquiera dejaria
+ * el cierre de la ARL marcado como historico, y al reves: son dos cosas
+ * distintas y cada una lleva su propia version vigente.
+ */
+const REF_CIERRE_ARL = "incidente_cierre_arl"
+
 type ColHistorial = {
   k: string
   l: string
@@ -508,6 +535,7 @@ const COLUMNAS_HISTORIAL: ColHistorial[] = [
   { k: "pdf", l: "PDF", min: "8.5rem", filtro: "ninguno", centrado: true },
   { k: "soportes", l: "Soportes", min: "17rem", filtro: "ninguno" },
   { k: "cierre_arl", l: "Cierre ARL", min: "9rem", filtro: "lista", centrado: true },
+  { k: "archivo_cierre", l: "Archivo de cierre ARL", min: "16rem", filtro: "ninguno" },
 ]
 
 /** Dias entre el evento y la investigacion. null = todavia sin investigar. */
@@ -1394,6 +1422,14 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
                             </span>
                           </div>
                         </td>
+                        <td className="border-b p-2 align-top" style={{ background: bg }}>
+                          <CierreArlArchivo
+                            incidente={r}
+                            empresaId={empresaId}
+                            compacto
+                            onCambio={cargar}
+                          />
+                        </td>
                         <td
                           className="sticky right-0 z-10 whitespace-nowrap border-b p-2 text-center"
                           style={{ background: bg }}
@@ -1462,19 +1498,29 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
 
           {detalle && (
             <div className="space-y-3">
-              <Badge
-                className="gap-1"
-                style={{
-                  background: detalle.cierre_arl ? SST_TOKENS.ok : SST_TOKENS.warn,
-                  color: "white",
-                }}
-              >
-                <ShieldCheck className="h-3 w-3" />
-                Expediente ARL{" "}
-                {detalle.cierre_arl
-                  ? `cerrado${detalle.fecha_cierre_arl ? " · " + detalle.fecha_cierre_arl : ""}`
-                  : "abierto"}
-              </Badge>
+              <section className="rounded-lg border p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <Badge
+                    className="gap-1"
+                    style={{
+                      background: detalle.cierre_arl ? SST_TOKENS.ok : SST_TOKENS.warn,
+                      color: "white",
+                    }}
+                  >
+                    <ShieldCheck className="h-3 w-3" />
+                    Expediente ARL{" "}
+                    {detalle.cierre_arl
+                      ? `cerrado${detalle.fecha_cierre_arl ? " · " + detalle.fecha_cierre_arl : ""}`
+                      : "abierto"}
+                  </Badge>
+                  <span className="text-[11px] text-muted-foreground">
+                    Documento de cierre enviado por la ARL
+                  </span>
+                </div>
+                <div className="mt-2">
+                  <CierreArlArchivo incidente={detalle} empresaId={empresaId} onCambio={cargar} />
+                </div>
+              </section>
 
               {seccionesInforme(detalle as any).map((s) => (
                 <section key={s.k} className="rounded-lg border">
@@ -1580,6 +1626,286 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
           )}
         </DialogContent>
       </Dialog>
+    </div>
+  )
+}
+
+/**
+ * Subir y consultar el archivo con el que la ARL cierra el expediente.
+ *
+ * Guarda en el repositorio central de soportes con `referencia_tipo`
+ * REF_CIERRE_ARL, asi que conserva historial: si la ARL manda una version
+ * corregida, la anterior queda como "historico" y no se pierde. Para un
+ * expediente que puede tener que mostrarse anios despues, poder decir que hubo
+ * un reemplazo y cual fue el anterior vale mas que ahorrarse una fila.
+ *
+ * `onCambio` avisa hacia arriba para refrescar el detalle sin recargar todo.
+ */
+function CierreArlArchivo({
+  incidente,
+  empresaId,
+  compacto = false,
+  onCambio,
+}: {
+  incidente: IncidenteRow
+  empresaId?: number | null
+  compacto?: boolean
+  onCambio?: () => void
+}) {
+  const { toast } = useToast()
+  const [rows, setRows] = useState<SoporteRow[]>([])
+  const [subiendo, setSubiendo] = useState(false)
+  const [porQuitar, setPorQuitar] = useState<SoporteRow | null>(null)
+  const [motivo, setMotivo] = useState("")
+  const [quitando, setQuitando] = useState(false)
+  const refId = String(incidente.id ?? "")
+
+  async function cargar() {
+    if (!refId) return
+    setRows(await listSoportes(REF_CIERRE_ARL, refId, empresaId ?? null))
+  }
+  useEffect(() => {
+    cargar()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refId, empresaId])
+
+  async function onFile(file: File) {
+    // Aviso antes de subir: el Server Action corta en 50 MB y esperar el viaje
+    // completo para avisarlo es tiempo perdido con un escaneo grande.
+    if (file.size > 50 * 1024 * 1024) {
+      toast({
+        title: "Archivo muy grande",
+        description: "El máximo son 50 MB. Comprime el documento o súbelo por partes.",
+      })
+      return
+    }
+    setSubiendo(true)
+    try {
+      const res = await subirYRegistrarSoporte(
+        file,
+        {
+          norma: "SST 0312",
+          modulo: "Investigación AT",
+          referenciaTipo: REF_CIERRE_ARL,
+          referenciaId: refId,
+          referenciaDesc: `Cierre ARL · ${incidente.trabajador ?? incidente.cargo ?? ""} · ${incidente.fecha_evento ?? ""}`,
+          observacion: "Documento de cierre del expediente enviado por la ARL",
+        },
+        empresaId ?? null,
+      )
+      if (res.success && res.url) {
+        toast({
+          title: "Cierre de expediente cargado",
+          description: incidente.cierre_arl
+            ? "Quedó como documento vigente; el anterior se conserva como histórico."
+            : "Recuerda marcar el check de Cierre ARL para que el expediente deje de figurar como abierto.",
+        })
+        await cargar()
+        onCambio?.()
+      } else {
+        toast({ title: "Error al subir", description: res.message || "No se pudo subir el archivo." })
+      }
+    } catch (e: any) {
+      // Falla-segura: sin esto un error del Server Action deja el boton en
+      // "Subiendo..." para siempre y el operador no sabe si quedo o no.
+      console.error("[v0] cierre ARL subir:", e?.message ?? e)
+      toast({
+        title: "Error al subir",
+        description: "No se pudo subir el archivo (revisa el tamaño y la conexión).",
+      })
+    } finally {
+      setSubiendo(false)
+    }
+  }
+
+  async function confirmarQuitar() {
+    if (!porQuitar) return
+    setQuitando(true)
+    try {
+      const res = await eliminarSoporte(porQuitar.id, motivo)
+      if (res.success) {
+        toast({
+          title: "Documento retirado",
+          description: "El archivo se conserva y la eliminación se puede revertir.",
+        })
+        setPorQuitar(null)
+        setMotivo("")
+        await cargar()
+        onCambio?.()
+      } else {
+        toast({ title: "No se pudo quitar", description: res.message })
+      }
+    } catch (e: any) {
+      console.error("[v0] cierre ARL quitar:", e?.message ?? e)
+      toast({ title: "No se pudo quitar", description: "Inténtalo de nuevo." })
+    } finally {
+      setQuitando(false)
+    }
+  }
+
+  const vigente = rows.find((r) => r.vigente) ?? null
+  const historicos = rows.filter((r) => !r.vigente)
+
+  return (
+    <div className="space-y-1.5">
+      <label
+        className="inline-flex cursor-pointer items-center gap-1 rounded-md border px-2 py-1 text-xs hover:bg-muted"
+        style={{ color: SST_TOKENS.navy }}
+        title="Subir el documento con el que la ARL cierra el expediente"
+      >
+        {subiendo ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <Upload className="h-3.5 w-3.5" />
+        )}
+        {subiendo ? "Subiendo…" : vigente ? "Reemplazar cierre" : "Subir cierre"}
+        <input
+          type="file"
+          className="hidden"
+          disabled={subiendo || !refId}
+          onChange={(e) => {
+            const f = e.target.files?.[0]
+            if (f) onFile(f)
+            e.target.value = ""
+          }}
+        />
+      </label>
+
+      {vigente ? (
+        <div className="space-y-0.5">
+          <div className="flex items-start gap-1">
+            <a
+              href={vigente.archivo_url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-xs underline"
+              style={{ color: SST_TOKENS.teal }}
+            >
+              <FileText className="h-3 w-3 shrink-0" />
+              {vigente.archivo_nombre ?? "documento"}
+              <ExternalLink className="h-3 w-3" />
+            </a>
+            <button
+              type="button"
+              onClick={() => {
+                setPorQuitar(vigente)
+                setMotivo("")
+              }}
+              title="Quitar el documento de cierre"
+              aria-label="Quitar el documento de cierre"
+              className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+            >
+              <Trash2 className="h-3 w-3" />
+            </button>
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            {(vigente.created_at ?? "").slice(0, 10)}
+            {historicos.length > 0 ? ` · ${historicos.length} versión(es) anterior(es)` : ""}
+          </p>
+        </div>
+      ) : (
+        <p className="text-[11px] text-muted-foreground">Sin documento de cierre.</p>
+      )}
+
+      {/* Las versiones anteriores solo se listan en el detalle: en la fila de la
+          tabla ocuparian mas de lo que aportan. */}
+      {porQuitar && (
+        <Dialog open onOpenChange={(o) => !o && setPorQuitar(null)}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Trash2 className="h-5 w-5 text-destructive" />
+                Quitar documento de cierre
+              </DialogTitle>
+              <DialogDescription>
+                {porQuitar.archivo_nombre ?? "Este archivo"} dejará de aparecer como evidencia.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-3 text-sm">
+              <p className="text-muted-foreground">
+                El archivo <strong>no se borra</strong>: se conserva y la eliminación se puede
+                revertir.
+              </p>
+              {porQuitar.vigente && historicos.length > 0 && (
+                <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+                  Es la versión vigente. Al quitarla, la anterior vuelve a quedar como vigente.
+                </p>
+              )}
+              {porQuitar.vigente && historicos.length === 0 && incidente.cierre_arl && (
+                <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+                  Es el único documento de cierre y el expediente figura como cerrado. Revisa si
+                  también hay que desmarcar el check de Cierre ARL.
+                </p>
+              )}
+              <div className="space-y-1">
+                <label className="text-xs font-medium">Motivo *</label>
+                <Input
+                  autoFocus
+                  value={motivo}
+                  onChange={(e) => setMotivo(e.target.value)}
+                  placeholder="Ej. La ARL envió el documento equivocado"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Queda guardado con la fecha. Dentro de un año es lo único que explica por qué no
+                  está.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 border-t pt-3">
+              <Button variant="outline" onClick={() => setPorQuitar(null)} disabled={quitando}>
+                Cancelar
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={confirmarQuitar}
+                disabled={quitando || !motivo.trim()}
+                className="gap-1.5"
+              >
+                {quitando ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Trash2 className="h-4 w-4" />
+                )}
+                Quitar documento
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {!compacto && historicos.length > 0 && (
+        <ul className="space-y-0.5 border-t pt-1">
+          {historicos.map((h) => (
+            <li key={h.id} className="flex flex-wrap items-center gap-2 text-[11px]">
+              <a
+                href={h.archivo_url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-muted-foreground underline"
+              >
+                {h.archivo_nombre ?? "documento"} <ExternalLink className="h-3 w-3" />
+              </a>
+              <span className="text-[10px] text-muted-foreground">
+                {(h.created_at ?? "").slice(0, 10)} · histórico
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setPorQuitar(h)
+                  setMotivo("")
+                }}
+                title="Quitar esta versión"
+                aria-label="Quitar esta versión"
+                className="ml-auto shrink-0 rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+              >
+                <Trash2 className="h-3 w-3" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }
