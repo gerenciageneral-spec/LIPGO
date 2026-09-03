@@ -577,7 +577,6 @@ type ColHistorial = {
 // Una entrada por columna del historial. De aqui salen el encabezado, la fila
 // de filtros y el filtrado, para que no puedan desalinearse entre si.
 const COLUMNAS_HISTORIAL: ColHistorial[] = [
-  { k: "anio", l: "Año", min: "6rem", filtro: "lista", centrado: true },
   { k: "fecha", l: "Fecha", min: "7.5rem", filtro: "texto", ph: "AAAA-MM-DD" },
   { k: "tipo", l: "Tipo", min: "10rem", filtro: "lista" },
   { k: "trabajador", l: "Trabajador", min: "15rem", filtro: "texto", ph: "Nombre…" },
@@ -610,6 +609,8 @@ function estadoInvestigacion(r: IncidenteRow): "Pendiente" | "En plazo" | "Fuera
  *  si difirieran, filtrar por lo que uno lee no traeria la fila. */
 function valorHistorial(r: IncidenteRow, k: string): string {
   switch (k) {
+    // No hay columna "anio" en la tabla: este caso lo usa el filtro global,
+    // que necesita leer el año de cada fila igual que las columnas.
     case "anio":
       // Se corta la cadena en vez de pasarla por Date: 'YYYY-MM-DD' se
       // interpreta en UTC y en Colombia un 1 de enero se leeria como 31 de
@@ -672,6 +673,8 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
   const [rows, setRows] = useState<IncidenteRow[]>([])
   const [saving, setSaving] = useState(false)
   const [pdfId, setPdfId] = useState<number | "form" | null>(null)
+  // Año en curso, para arrancar mostrando lo del periodo vigente.
+  const [anio, setAnio] = useState<string>(TODOS)
   // Historial: un valor de filtro por columna (vacio o TODOS = sin filtrar).
   const [filtros, setFiltros] = useState<Record<string, string>>({})
   // Id de la investigacion que se esta editando. null = se esta creando una.
@@ -696,26 +699,45 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
   const setFiltro = (k: string, v: string) => setFiltros((prev) => ({ ...prev, [k]: v }))
   const limpiarFiltros = () => setFiltros({})
 
+  // Años presentes en los datos, del mas reciente al mas antiguo: lo que se
+  // consulta casi siempre es el año en curso, y asi queda de primero.
+  const aniosDisponibles = useMemo(
+    () =>
+      [...new Set(rows.map((r) => valorHistorial(r, "anio")).filter(Boolean))].sort((a, b) =>
+        b.localeCompare(a),
+      ),
+    [rows],
+  )
+
+  /**
+   * Base de TODO el modulo una vez aplicado el año.
+   *
+   * Las tarjetas y la tabla salen de aqui, no de `rows`. Antes los indicadores
+   * se calculaban sobre el total historico mientras la tabla mostraba otra
+   * cosa: se leia "3 accidentes" con una sola fila a la vista, y los dos
+   * numeros eran correctos por separado pero juntos no se podian explicar.
+   */
+  const filasDelAnio = useMemo(
+    () => (anio === TODOS ? rows : rows.filter((r) => valorHistorial(r, "anio") === anio)),
+    [rows, anio],
+  )
+
   // Las opciones de cada desplegable se arman con lo que REALMENTE hay en los
   // datos, no con una lista fija: asi ninguna opcion devuelve cero filas.
   const opcionesPorColumna = useMemo(() => {
     const m: Record<string, string[]> = {}
     for (const c of COLUMNAS_HISTORIAL) {
       if (c.filtro !== "lista") continue
-      const presentes = [...new Set(rows.map((r) => valorHistorial(r, c.k)).filter(Boolean))]
+      const presentes = [...new Set(filasDelAnio.map((r) => valorHistorial(r, c.k)).filter(Boolean))]
       const orden = ORDEN_OPCIONES[c.k]
       if (orden) {
         m[c.k] = orden.filter((o) => presentes.includes(o))
-      } else if (c.k === "anio") {
-        // Del mas reciente al mas antiguo: lo que se consulta casi siempre es
-        // el anio en curso, y asi queda de primero.
-        m[c.k] = presentes.sort((a, b) => b.localeCompare(a))
       } else {
         m[c.k] = presentes.sort((a, b) => a.localeCompare(b, "es"))
       }
     }
     return m
-  }, [rows])
+  }, [filasDelAnio])
 
   const filtrosActivos = COLUMNAS_HISTORIAL.filter((c) => {
     const v = filtros[c.k] ?? ""
@@ -729,8 +751,8 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
     const activos = COLUMNAS_HISTORIAL.map((c) => ({ c, v: filtros[c.k] ?? "" })).filter(({ c, v }) =>
       c.filtro === "ninguno" ? false : c.filtro === "lista" ? Boolean(v) && v !== TODOS : v.trim() !== "",
     )
-    if (activos.length === 0) return rows
-    return rows.filter((r) =>
+    if (activos.length === 0) return filasDelAnio
+    return filasDelAnio.filter((r) =>
       activos.every(({ c, v }) =>
         // Los desplegables exigen coincidencia exacta; los de texto buscan por
         // fragmento, para poder escribir "sando" y encontrar "Sandoval".
@@ -739,7 +761,7 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
           : comparable(valorHistorial(r, c.k)).includes(comparable(v)),
       ),
     )
-  }, [rows, filtros])
+  }, [filasDelAnio, filtros])
 
   // ---- El ojo: ver la investigacion completa sin abrir el formulario ----
   async function abrirDetalle(r: IncidenteRow) {
@@ -959,9 +981,10 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
     }
   }
 
+  // Los indicadores se calculan sobre el año elegido, no sobre el historico.
   const kpis = useMemo(() => {
-    const c = (f: (r: IncidenteRow) => boolean) => rows.filter(f).length
-    const inv = rows.filter((r) => r.tipo !== "incidente")
+    const c = (f: (r: IncidenteRow) => boolean) => filasDelAnio.filter(f).length
+    const inv = filasDelAnio.filter((r) => r.tipo !== "incidente")
     const enPlazo = inv.filter(
       (r) =>
         r.fecha_investigacion &&
@@ -973,10 +996,10 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
       el: c((r) => r.tipo === "enfermedad_laboral"),
       graves: c((r) => r.gravedad === "grave"),
       mortales: c((r) => r.gravedad === "mortal"),
-      dias: rows.reduce((s, r) => s + (Number(r.dias_incapacidad) || 0), 0),
+      dias: filasDelAnio.reduce((s, r) => s + (Number(r.dias_incapacidad) || 0), 0),
       pct: inv.length ? Math.round((100 * enPlazo) / inv.length) : 0,
     }
-  }, [rows])
+  }, [filasDelAnio])
 
   return (
     <div className="space-y-4">
@@ -985,6 +1008,27 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
           Investigación de Accidentes / Incidentes (SST-FOR-21)
         </h2>
         <Badge variant="outline">Formato original LIP · Res. 1401/2007 · investigación ≤ 15 días</Badge>
+      </div>
+
+      {/* El año va ARRIBA de las tarjetas y no dentro de la tabla: manda sobre
+          todo el modulo, y puesto aqui se lee como el encabezado de lo que
+          muestran los indicadores. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-medium" style={{ color: SST_TOKENS.navy }}>
+          Año:
+        </span>
+        <div className="w-40">
+          <S
+            v={anio}
+            on={setAnio}
+            o={[[TODOS, "Todos los años"], ...aniosDisponibles.map((a) => [a, a] as [string, string])]}
+          />
+        </div>
+        <span className="text-xs text-muted-foreground">
+          {anio === TODOS
+            ? `Indicadores e historial sobre las ${rows.length} investigaciones registradas.`
+            : `Indicadores e historial de ${anio}: ${filasDelAnio.length} de ${rows.length} investigaciones.`}
+        </span>
       </div>
 
       <div className="grid gap-3 grid-cols-2 md:grid-cols-7">
@@ -1279,9 +1323,10 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
         <TabsContent value="historial" className="space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
             <span>
-              {filas.length === rows.length
-                ? `${rows.length} registro(s)`
-                : `${filas.length} de ${rows.length} registro(s)`}
+              {filas.length === filasDelAnio.length
+                ? `${filas.length} registro(s)`
+                : `${filas.length} de ${filasDelAnio.length} registro(s)`}
+              {anio !== TODOS ? ` · Año: ${anio}` : ""}
               {resumenFiltros ? ` · ${resumenFiltros}` : ""}
             </span>
             {hayFiltro && (
@@ -1386,14 +1431,8 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
                     return (
                       <tr key={r.id}>
                         <td
-                          className="sticky left-0 z-10 whitespace-nowrap border-b p-2 text-center"
+                          className="sticky left-0 z-10 whitespace-nowrap border-b p-2"
                           style={{ background: bg, minWidth: COLUMNAS_HISTORIAL[0].min }}
-                        >
-                          {valorHistorial(r, "anio") || "—"}
-                        </td>
-                        <td
-                          className="whitespace-nowrap border-b p-2"
-                          style={{ background: bg, minWidth: COLUMNAS_HISTORIAL[1].min }}
                         >
                           {r.fecha_evento}
                         </td>
@@ -1562,7 +1601,9 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
                       >
                         {rows.length === 0
                           ? "Sin registros aún."
-                          : "Ningún registro coincide con los filtros."}
+                          : filasDelAnio.length === 0
+                            ? `Sin investigaciones registradas en ${anio}.`
+                            : "Ningún registro coincide con los filtros."}
                       </td>
                     </tr>
                   )}
