@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import { useAuth } from "@/components/auth-provider"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { useToast } from "@/hooks/use-toast"
@@ -908,7 +909,7 @@ function CierreAutoevaluacion({
         </div>
         <div>
           <label className="text-xs font-medium text-foreground">Fecha</label>
-          <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
+          <DatePickerField value={fecha} onChange={setFecha} />
         </div>
         <div>
           <label className="text-xs font-medium text-foreground">Firma</label>

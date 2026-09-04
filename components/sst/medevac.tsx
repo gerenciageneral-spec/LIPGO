@@ -12,6 +12,7 @@ import { useEffect, useMemo, useState } from "react"
 import { useAuth } from "@/components/auth-provider"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Switch } from "@/components/ui/switch"
@@ -986,7 +987,7 @@ export function Medevac({ selectedEmpresaId: propEmpresaId }: { selectedEmpresaI
                   <Sec n="Datos personales">
                     <Row3>
                       <Field l="Fecha de nacimiento">
-                        <Input type="date" value={perfil.fecha_nacimiento} onChange={(e) => setP("fecha_nacimiento", e.target.value)} />
+                        <DatePickerField value={perfil.fecha_nacimiento} onChange={(value) => setP("fecha_nacimiento", value)} />
                       </Field>
                       <Field l="Edad">
                         {/* Solo lectura: se deriva de la fecha. Una edad escrita

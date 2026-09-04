@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from "react"
 import { useAuth } from "@/components/auth-provider"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
@@ -145,7 +146,7 @@ export function ActividadesSST({ selectedEmpresaId: propEmpresaId }: { selectedE
                 <Sel v={act.tipo} on={(v) => setA("tipo", v)} o={TIPO_ACT} />
               </Field>
               <Field l="Fecha">
-                <Input type="date" value={act.fecha} onChange={(e) => setA("fecha", e.target.value)} />
+                <DatePickerField value={act.fecha} onChange={(value) => setA("fecha", value)} />
               </Field>
               <Field l="Facilitador">
                 <Input value={act.facilitador} onChange={(e) => setA("facilitador", e.target.value)} />
@@ -218,10 +219,10 @@ export function ActividadesSST({ selectedEmpresaId: propEmpresaId }: { selectedE
                 <Sel v={miem.rol} on={(v) => setMi("rol", v)} o={ROL} />
               </Field>
               <Field l="Periodo inicio">
-                <Input type="date" value={miem.periodo_inicio} onChange={(e) => setMi("periodo_inicio", e.target.value)} />
+                <DatePickerField value={miem.periodo_inicio} onChange={(value) => setMi("periodo_inicio", value)} />
               </Field>
               <Field l="Periodo fin">
-                <Input type="date" value={miem.periodo_fin} onChange={(e) => setMi("periodo_fin", e.target.value)} />
+                <DatePickerField value={miem.periodo_fin} onChange={(value) => setMi("periodo_fin", value)} />
               </Field>
             </Row3>
             <Button onClick={guardarMiem} style={{ background: SST_TOKENS.navy, color: "white" }}>

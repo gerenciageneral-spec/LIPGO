@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from "react"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -235,7 +236,7 @@ export function SatisfaccionPQRSF() {
                     <option value="cliente">Cliente</option>
                     <option value="conductor">Conductor</option>
                   </select>
-                  <Input type="date" value={formEnc.fecha ?? ""} onChange={(e) => setFormEnc({ ...formEnc, fecha: e.target.value })} />
+                  <DatePickerField value={formEnc.fecha ?? ""} onChange={(value) => setFormEnc({ ...formEnc, fecha: value })} />
                 </div>
                 <Input value={formEnc.encuestado ?? ""} onChange={(e) => setFormEnc({ ...formEnc, encuestado: e.target.value })} placeholder="Encuestado (nombre / empresa / placa)" />
                 <div className="flex items-center gap-2">
@@ -280,7 +281,7 @@ export function SatisfaccionPQRSF() {
                   </select>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                  <Input type="date" value={formP.fecha ?? ""} onChange={(e) => setFormP({ ...formP, fecha: e.target.value })} />
+                  <DatePickerField value={formP.fecha ?? ""} onChange={(value) => setFormP({ ...formP, fecha: value })} />
                   <Input value={formP.canal ?? ""} onChange={(e) => setFormP({ ...formP, canal: e.target.value })} placeholder="Canal" />
                 </div>
                 <Textarea value={formP.descripcion ?? ""} onChange={(e) => setFormP({ ...formP, descripcion: e.target.value })} placeholder="Descripción" className="min-h-[60px]" />
@@ -294,7 +295,7 @@ export function SatisfaccionPQRSF() {
                   </select>
                 </div>
                 {(formP.estado === "cerrada" || formP.fecha_cierre) && (
-                  <Input type="date" value={formP.fecha_cierre ?? ""} onChange={(e) => setFormP({ ...formP, fecha_cierre: e.target.value })} placeholder="Fecha de cierre" />
+                  <DatePickerField value={formP.fecha_cierre ?? ""} onChange={(value) => setFormP({ ...formP, fecha_cierre: value })} placeholder="Fecha de cierre" />
                 )}
                 <label className="flex items-center gap-2 text-sm">
                   <input type="checkbox" checked={!!formP.genera_nc} onChange={(e) => setFormP({ ...formP, genera_nc: e.target.checked })} />

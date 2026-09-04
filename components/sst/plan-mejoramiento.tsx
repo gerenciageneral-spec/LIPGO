@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from "react"
 import { useAuth } from "@/components/auth-provider"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
@@ -242,7 +243,7 @@ export function PlanMejoramiento({ selectedEmpresaId: propEmpresaId }: { selecte
                 <Input value={nuevo.responsable} onChange={(e) => setN("responsable", e.target.value)} />
               </Field>
               <Field l="Fecha fin">
-                <Input type="date" value={nuevo.fecha_fin} onChange={(e) => setN("fecha_fin", e.target.value)} />
+                <DatePickerField value={nuevo.fecha_fin} onChange={(value) => setN("fecha_fin", value)} />
               </Field>
             </Row3>
             <Button onClick={crear} style={{ background: SST_TOKENS.navy, color: "white" }}>

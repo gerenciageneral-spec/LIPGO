@@ -22,6 +22,7 @@ import {
 import { buscarColaboradorMedevac } from "@/lib/sst-medevac-actions"
 import { getCoberturaSST, type CoberturaSST, type FilaCobertura } from "@/lib/sst-cobertura-actions"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { useToast } from "@/hooks/use-toast"
 import { Sec, Row3, Field, Sel } from "@/components/sst/sst-form-ui"
 import {
@@ -824,7 +825,7 @@ export function PerfilSociodemografico({ selectedEmpresaId: propEmpresaId }: { s
 
             <Sec n="Datos personales">
               <Row3>
-                <Field l="Fecha de nacimiento"><Input type="date" value={form.fecha_nacimiento} onChange={(e) => setF("fecha_nacimiento", e.target.value)} /></Field>
+                <Field l="Fecha de nacimiento"><DatePickerField value={form.fecha_nacimiento} onChange={(value) => setF("fecha_nacimiento", value)} /></Field>
                 <Field l="Edad">
                   {/* Solo lectura: se deriva de la fecha. Una edad escrita a
                       mano deja de ser cierta al año siguiente. */}
@@ -846,7 +847,7 @@ export function PerfilSociodemografico({ selectedEmpresaId: propEmpresaId }: { s
                   <datalist id="perfil-centros">{CENTROS_TRABAJO.map((v) => <option key={v} value={v} />)}</datalist>
                 </Field>
                 <Field l="Turno de trabajo"><Sel v={form.turno || ""} on={(v) => setF("turno", v)} o={TURNO_OPCIONES} /></Field>
-                <Field l="Fecha de ingreso"><Input type="date" value={form.fecha_ingreso} onChange={(e) => setF("fecha_ingreso", e.target.value)} /></Field>
+                <Field l="Fecha de ingreso"><DatePickerField value={form.fecha_ingreso} onChange={(value) => setF("fecha_ingreso", value)} /></Field>
                 <Field l="Antigüedad">
                   {/* Igual que la edad: se deriva. El formulario original traía
                       Día/Mes/Año ya calculados y quedaban desactualizados. */}

@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from "react"
 import { useAuth } from "@/components/auth-provider"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
@@ -157,7 +158,7 @@ export function EquiposMantenimiento({ selectedEmpresaId: propEmpresaId }: { sel
                 <Input value={eq.serie} onChange={(e) => setE("serie", e.target.value)} />
               </Field>
               <Field l="Fecha de ingreso">
-                <Input type="date" value={eq.fecha_ingreso} onChange={(e) => setE("fecha_ingreso", e.target.value)} />
+                <DatePickerField value={eq.fecha_ingreso} onChange={(value) => setE("fecha_ingreso", value)} />
               </Field>
               <Field l="Horómetro">
                 <Input type="number" value={eq.horometro} onChange={(e) => setE("horometro", e.target.value)} />
@@ -222,10 +223,10 @@ export function EquiposMantenimiento({ selectedEmpresaId: propEmpresaId }: { sel
                 <Sel v={mt.tipo} on={(v) => setM("tipo", v)} o={TIPO_MT} />
               </Field>
               <Field l="Fecha programada">
-                <Input type="date" value={mt.fecha_programada} onChange={(e) => setM("fecha_programada", e.target.value)} />
+                <DatePickerField value={mt.fecha_programada} onChange={(value) => setM("fecha_programada", value)} />
               </Field>
               <Field l="Fecha ejecución">
-                <Input type="date" value={mt.fecha_ejecucion} onChange={(e) => setM("fecha_ejecucion", e.target.value)} />
+                <DatePickerField value={mt.fecha_ejecucion} onChange={(value) => setM("fecha_ejecucion", value)} />
               </Field>
               <Field l="Proveedor">
                 <Input value={mt.proveedor} onChange={(e) => setM("proveedor", e.target.value)} />

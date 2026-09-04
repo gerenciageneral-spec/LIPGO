@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -150,9 +151,9 @@ export default function RepositorioUniversal() {
           </SelectContent>
         </Select>
         <div className="flex items-center gap-1">
-          <Input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className="w-[150px]" title="Desde" />
+          <DatePickerField value={desde} onChange={setDesde} className="w-[150px]" />
           <span className="text-muted-foreground text-xs">a</span>
-          <Input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} className="w-[150px]" title="Hasta" />
+          <DatePickerField value={hasta} onChange={setHasta} className="w-[150px]" />
         </div>
         {hayFiltros && (
           <Button variant="ghost" size="sm" onClick={limpiar}><X className="mr-1 h-4 w-4" /> Limpiar</Button>

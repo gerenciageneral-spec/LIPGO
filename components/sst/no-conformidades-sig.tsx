@@ -12,6 +12,7 @@ import { useAuth } from "@/components/auth-provider"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -519,10 +520,9 @@ export function NoConformidadesSIG({ selectedEmpresaId: propEmpresaId }: Props) 
                     onChange={(e) => setFormNc({ ...formNc, codigo: e.target.value })}
                     placeholder="Código (NC-2026-00X)"
                   />
-                  <Input
-                    type="date"
+                  <DatePickerField
                     value={formNc.fecha ?? ""}
-                    onChange={(e) => setFormNc({ ...formNc, fecha: e.target.value })}
+                    onChange={(value) => setFormNc({ ...formNc, fecha: value })}
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-2">
@@ -617,10 +617,9 @@ export function NoConformidadesSIG({ selectedEmpresaId: propEmpresaId }: Props) 
                     onChange={(e) => setFormNc({ ...formNc, responsable: e.target.value })}
                     placeholder="Responsable"
                   />
-                  <Input
-                    type="date"
+                  <DatePickerField
                     value={formNc.fecha_compromiso ?? ""}
-                    onChange={(e) => setFormNc({ ...formNc, fecha_compromiso: e.target.value })}
+                    onChange={(value) => setFormNc({ ...formNc, fecha_compromiso: value })}
                     placeholder="Fecha compromiso"
                   />
                 </div>
@@ -646,10 +645,9 @@ export function NoConformidadesSIG({ selectedEmpresaId: propEmpresaId }: Props) 
                   </select>
                 </div>
                 {(formNc.estado === "cerrada" || formNc.fecha_cierre) && (
-                  <Input
-                    type="date"
+                  <DatePickerField
                     value={formNc.fecha_cierre ?? ""}
-                    onChange={(e) => setFormNc({ ...formNc, fecha_cierre: e.target.value })}
+                    onChange={(value) => setFormNc({ ...formNc, fecha_cierre: value })}
                     placeholder="Fecha de cierre"
                   />
                 )}

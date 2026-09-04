@@ -6,6 +6,7 @@ import { useEffect, useState } from "react"
 import { useAuth } from "@/components/auth-provider"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
@@ -127,10 +128,9 @@ export function GestionCambio({ selectedEmpresaId: propEmpresaId }: { selectedEm
                 <Sel v={form.estado} on={(v) => set("estado", v)} o={ESTADO} />
               </Field>
               <Field l="Fecha de implementación">
-                <Input
-                  type="date"
+                <DatePickerField
                   value={form.fecha_implementacion}
-                  onChange={(e) => set("fecha_implementacion", e.target.value)}
+                  onChange={(value) => set("fecha_implementacion", value)}
                 />
               </Field>
             </Row3>

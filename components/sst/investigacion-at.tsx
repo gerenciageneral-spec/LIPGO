@@ -10,6 +10,7 @@ import { useEffect, useMemo, useState } from "react"
 import { useAuth } from "@/components/auth-provider"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
@@ -1084,7 +1085,7 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
               <G3>
                 <F l="Tipo (clasificación del evento)"><S v={form.tipo} on={(v) => set("tipo", v)} o={TIPOS} /></F>
                 <F l="Severidad del evento"><S v={form.gravedad} on={(v) => set("gravedad", v)} o={GRAVEDAD} /></F>
-                <F l="Fecha de reporte"><Input type="date" value={form.fecha_reporte} onChange={(e) => set("fecha_reporte", e.target.value)} /></F>
+                <F l="Fecha de reporte"><DatePickerField value={form.fecha_reporte} onChange={(value) => set("fecha_reporte", value)} /></F>
                 <F l="Centro de trabajo"><Input value={form.centro_trabajo} onChange={(e) => set("centro_trabajo", e.target.value)} /></F>
                 <F l="Dirección centro"><Input value={form.centro_direccion} onChange={(e) => set("centro_direccion", e.target.value)} /></F>
                 <F l="Departamento centro"><Input value={form.centro_departamento} onChange={(e) => set("centro_departamento", e.target.value)} /></F>
@@ -1099,7 +1100,7 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
                 <F l="Nombres y apellidos completos"><Input value={form.trabajador} onChange={(e) => set("trabajador", e.target.value)} /></F>
                 <F l="Tipo de documento"><S v={form.documento_tipo} on={(v) => set("documento_tipo", v)} o={DOC_TIPO} /></F>
                 <F l="N° de documento"><Input value={form.documento_numero} onChange={(e) => set("documento_numero", e.target.value)} /></F>
-                <F l="Fecha de nacimiento"><Input type="date" value={form.fecha_nacimiento} onChange={(e) => set("fecha_nacimiento", e.target.value)} /></F>
+                <F l="Fecha de nacimiento"><DatePickerField value={form.fecha_nacimiento} onChange={(value) => set("fecha_nacimiento", value)} /></F>
                 <F l="Sexo"><S v={form.sexo} on={(v) => set("sexo", v)} o={SEXO} /></F>
                 <F l="Teléfono"><Input value={form.telefono} onChange={(e) => set("telefono", e.target.value)} /></F>
                 <F l="Fax"><Input value={form.fax} onChange={(e) => set("fax", e.target.value)} /></F>
@@ -1114,7 +1115,7 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
                 <F l="Ocupación habitual"><Input value={form.ocupacion_habitual} onChange={(e) => set("ocupacion_habitual", e.target.value)} /></F>
                 <F l="Código ocupación"><Input value={form.codigo_ocupacion} onChange={(e) => set("codigo_ocupacion", e.target.value)} /></F>
                 <F l="Tipo de vinculación"><S v={form.tipo_vinculacion} on={(v) => set("tipo_vinculacion", v)} o={VINCULACION} /></F>
-                <F l="Fecha de ingreso"><Input type="date" value={form.fecha_ingreso} onChange={(e) => set("fecha_ingreso", e.target.value)} /></F>
+                <F l="Fecha de ingreso"><DatePickerField value={form.fecha_ingreso} onChange={(value) => set("fecha_ingreso", value)} /></F>
                 <F l="Antigüedad — días"><Input type="number" value={form.antiguedad_dias} onChange={(e) => set("antiguedad_dias", Number(e.target.value))} /></F>
                 <F l="Antigüedad — meses"><Input type="number" value={form.antiguedad_meses} onChange={(e) => set("antiguedad_meses", Number(e.target.value))} /></F>
                 <F l="Antigüedad — años"><Input type="number" value={form.antiguedad_anios} onChange={(e) => set("antiguedad_anios", Number(e.target.value))} /></F>
@@ -1127,7 +1128,7 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
 
             <Sec n="3. Información sobre el accidente / incidente">
               <G3>
-                <F l="Fecha del evento"><Input type="date" value={form.fecha_evento} onChange={(e) => set("fecha_evento", e.target.value)} /></F>
+                <F l="Fecha del evento"><DatePickerField value={form.fecha_evento} onChange={(value) => set("fecha_evento", value)} /></F>
                 <F l="Día de la semana"><S v={form.dia_semana} on={(v) => set("dia_semana", v)} o={DIA_SEMANA} /></F>
                 <F l="Hora (0–23) : minutos"><Input value={form.hora_evento} onChange={(e) => set("hora_evento", e.target.value)} placeholder="HH:MM" /></F>
                 <F l="Tiempo laborado previo"><Input value={form.tiempo_laborado_previo} onChange={(e) => set("tiempo_laborado_previo", e.target.value)} placeholder="HH:MM" /></F>
@@ -1187,8 +1188,8 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
                 <F l="¿Hospitalizado?"><S v={form.hospitalizado} on={(v) => set("hospitalizado", v)} o={SN} /></F>
                 <F l="¿Requirió transporte?"><S v={form.requirio_transporte} on={(v) => set("requirio_transporte", v)} o={SN} /></F>
                 <F l="Tipo de ausentismo"><S v={form.ausentismo_tipo} on={(v) => set("ausentismo_tipo", v)} o={AUS_TIPO} /></F>
-                <F l="Fecha inicial"><Input type="date" value={form.ausentismo_fecha_inicial} onChange={(e) => set("ausentismo_fecha_inicial", e.target.value)} /></F>
-                <F l="Fecha final"><Input type="date" value={form.ausentismo_fecha_final} onChange={(e) => set("ausentismo_fecha_final", e.target.value)} /></F>
+                <F l="Fecha inicial"><DatePickerField value={form.ausentismo_fecha_inicial} onChange={(value) => set("ausentismo_fecha_inicial", value)} /></F>
+                <F l="Fecha final"><DatePickerField value={form.ausentismo_fecha_final} onChange={(value) => set("ausentismo_fecha_final", value)} /></F>
                 <F l="Días incapacidad inicial"><Input type="number" value={form.dias_incapacidad_inicial} onChange={(e) => set("dias_incapacidad_inicial", Number(e.target.value))} /></F>
                 <F l="Días de prórroga"><Input type="number" value={form.dias_prorroga} onChange={(e) => set("dias_prorroga", Number(e.target.value))} /></F>
                 <F l="Días de ausentismo total"><Input type="number" value={form.dias_incapacidad} onChange={(e) => set("dias_incapacidad", Number(e.target.value))} /></F>
@@ -1203,7 +1204,7 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
               </p>
               <G3>
                 <F l="¿Reportado a ARL?"><S v={form.reportado_arl} on={(v) => set("reportado_arl", v)} o={SN} /></F>
-                <F l="Fecha reporte ARL"><Input type="date" value={form.fecha_reporte_arl} onChange={(e) => set("fecha_reporte_arl", e.target.value)} /></F>
+                <F l="Fecha reporte ARL"><DatePickerField value={form.fecha_reporte_arl} onChange={(value) => set("fecha_reporte_arl", value)} /></F>
                 <F l="FURAT radicado"><Input value={form.furat_radicado} onChange={(e) => set("furat_radicado", e.target.value)} /></F>
                 <F l="¿Reportado a MinTrabajo?"><S v={form.reportado_mintrabajo} on={(v) => set("reportado_mintrabajo", v)} o={SN} /></F>
               </G3>
@@ -1235,7 +1236,7 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
                   if (patch.observaciones !== undefined) set("observaciones_investigadores", patch.observaciones)
                 }}
               />
-              <F l="Fecha de investigación"><Input type="date" value={form.fecha_investigacion} onChange={(e) => set("fecha_investigacion", e.target.value)} /></F>
+              <F l="Fecha de investigación"><DatePickerField value={form.fecha_investigacion} onChange={(value) => set("fecha_investigacion", value)} /></F>
             </Sec>
 
             <Sec n="8. Planes de acción (control Fuente / Medio / Individuo)">
@@ -1250,9 +1251,9 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
                   <F l="Medida de intervención necesaria"><Input value={a.plan} onChange={(e) => setAcc(i, "plan", e.target.value)} /></F>
                   <G3>
                     <F l="Tipo de control"><S v={a.tipo_control} on={(v) => setAcc(i, "tipo_control", v)} o={CONTROL} /></F>
-                    <F l="Fecha implementación"><Input type="date" value={a.fecha_implementacion} onChange={(e) => setAcc(i, "fecha_implementacion", e.target.value)} /></F>
+                    <F l="Fecha implementación"><DatePickerField value={a.fecha_implementacion} onChange={(value) => setAcc(i, "fecha_implementacion", value)} /></F>
                     <F l="Responsable ejecución"><Input value={a.responsable_ejecucion} onChange={(e) => setAcc(i, "responsable_ejecucion", e.target.value)} /></F>
-                    <F l="Fecha verificación"><Input type="date" value={a.fecha_verificacion} onChange={(e) => setAcc(i, "fecha_verificacion", e.target.value)} /></F>
+                    <F l="Fecha verificación"><DatePickerField value={a.fecha_verificacion} onChange={(value) => setAcc(i, "fecha_verificacion", value)} /></F>
                     <F l="Responsable verificación"><Input value={a.responsable_verificacion} onChange={(e) => setAcc(i, "responsable_verificacion", e.target.value)} /></F>
                     <F l="Estado">
                       <S v={a.estado} on={(v) => setAcc(i, "estado", v)} o={[["pendiente", "Pendiente"], ["implementado", "Implementado"], ["verificado", "Verificado"]]} />
@@ -1297,7 +1298,7 @@ export function InvestigacionAT({ selectedEmpresaId: propEmpresaId }: { selected
 
             <G2>
               <F l="Estado del caso"><S v={form.estado} on={(v) => set("estado", v)} o={ESTADOS} /></F>
-              <F l="Fecha de cierre"><Input type="date" value={form.fecha_cierre} onChange={(e) => set("fecha_cierre", e.target.value)} /></F>
+              <F l="Fecha de cierre"><DatePickerField value={form.fecha_cierre} onChange={(value) => set("fecha_cierre", value)} /></F>
             </G2>
 
             <div className="flex flex-wrap gap-2">

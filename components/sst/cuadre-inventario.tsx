@@ -8,6 +8,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
@@ -562,7 +563,7 @@ export function CuadreInventario() {
           <div className="grid gap-2 md:grid-cols-3">
             <Input value={firma.firmante} onChange={(e) => setFirma({ ...firma, firmante: e.target.value })} placeholder="Quién firma (cliente)" />
             <Input value={firma.cargo} onChange={(e) => setFirma({ ...firma, cargo: e.target.value })} placeholder="Cargo" />
-            <Input type="date" value={firma.fecha} onChange={(e) => setFirma({ ...firma, fecha: e.target.value })} />
+            <DatePickerField value={firma.fecha} onChange={(value) => setFirma({ ...firma, fecha: value })} />
           </div>
           <Input className="mt-2" value={firma.obs} onChange={(e) => setFirma({ ...firma, obs: e.target.value })} placeholder="Observaciones del acta" />
           <div className="mt-3 flex flex-col gap-2 md:flex-row md:items-start">
@@ -721,7 +722,7 @@ export function CuadreInventario() {
               <DialogHeader><DialogTitle className="text-base">Nuevo conteo físico</DialogTitle></DialogHeader>
               <div className="space-y-2">
                 <p className="text-xs text-muted-foreground">Se cargará el stock actual del sistema (saldoinvdetalle) como base; luego capturas el conteo físico.</p>
-                <Input type="date" value={nuevo.fecha} onChange={(e) => setNuevo({ ...nuevo, fecha: e.target.value })} />
+                <DatePickerField value={nuevo.fecha} onChange={(value) => setNuevo({ ...nuevo, fecha: value })} />
                 <select value={nuevo.tipo} onChange={(e) => setNuevo({ ...nuevo, tipo: e.target.value })} className="h-9 w-full rounded-md border bg-background px-2 text-sm">
                   <option value="total">Conteo total</option>
                   <option value="ciclico">Conteo cíclico</option>
@@ -771,7 +772,7 @@ export function CuadreInventario() {
                 <div className="grid grid-cols-3 gap-2">
                   <div className="col-span-1">
                     <label className="text-[11px] uppercase text-muted-foreground">Fecha</label>
-                    <Input type="date" value={formAjuste.fecha ?? ""} onChange={(e) => setFormAjuste({ ...formAjuste, fecha: e.target.value })} className="h-9" />
+                    <DatePickerField value={formAjuste.fecha ?? ""} onChange={(value) => setFormAjuste({ ...formAjuste, fecha: value })} className="h-9" />
                   </div>
                   <div className="col-span-2">
                     <label className="text-[11px] uppercase text-muted-foreground">Tipo de movimiento</label>
