@@ -14,6 +14,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -227,12 +228,12 @@ function PortalPermisosPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label htmlFor="fecha_inicio">Fecha de inicio</Label>
-                <Input
+                <DatePickerField
                   id="fecha_inicio"
-                  type="date"
                   className="h-11"
-                  min={minFecha}
-                  {...register("fecha_inicio")}
+                  minDate={minFecha}
+                  value={watch("fecha_inicio") || ""}
+                  onChange={(value) => setValue("fecha_inicio", value, { shouldValidate: true })}
                 />
                 {errors.fecha_inicio && (
                   <p className="text-xs text-red-600">{errors.fecha_inicio.message}</p>
@@ -240,12 +241,12 @@ function PortalPermisosPage() {
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="fecha_fin">Fecha de fin</Label>
-                <Input
+                <DatePickerField
                   id="fecha_fin"
-                  type="date"
                   className="h-11"
-                  min={minFecha}
-                  {...register("fecha_fin")}
+                  minDate={minFecha}
+                  value={watch("fecha_fin") || ""}
+                  onChange={(value) => setValue("fecha_fin", value, { shouldValidate: true })}
                 />
                 {errors.fecha_fin && (
                   <p className="text-xs text-red-600">{errors.fecha_fin.message}</p>

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import {
@@ -136,11 +137,11 @@ export default function BitacoraAuditoria() {
         <CardContent className="grid grid-cols-2 gap-3 p-3 md:grid-cols-3 lg:grid-cols-6">
           <div className="space-y-1">
             <Label className="text-[11px]">Desde</Label>
-            <Input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} />
+            <DatePickerField value={desde} onChange={setDesde} />
           </div>
           <div className="space-y-1">
             <Label className="text-[11px]">Hasta</Label>
-            <Input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} />
+            <DatePickerField value={hasta} onChange={setHasta} />
           </div>
           <div className="space-y-1">
             <Label className="text-[11px]">Usuario</Label>

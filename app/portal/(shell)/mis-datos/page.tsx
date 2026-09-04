@@ -17,6 +17,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -286,7 +287,7 @@ export default function MisDatosPage() {
             <CardContent className="space-y-5">
               <Grupo titulo="Datos personales">
                 <Campo l="Fecha de nacimiento" obligatorio>
-                  <Input type="date" value={perfil.fecha_nacimiento} onChange={(e) => setP("fecha_nacimiento", e.target.value)} />
+                  <DatePickerField value={perfil.fecha_nacimiento} onChange={(value) => setP("fecha_nacimiento", value)} />
                 </Campo>
                 <Campo l="Sexo" obligatorio>
                   <Selector v={perfil.sexo} on={(v) => setP("sexo", v)} o={SEXO_OPCIONES} placeholder="Selecciona" />
