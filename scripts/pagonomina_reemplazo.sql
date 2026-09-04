@@ -2,6 +2,31 @@
 -- DESPLIEGUE — reemplazo de la vista pagonomina
 --   (recargos por persona + dominical % + FILTRO de vínculo laboral)
 -- ----------------------------------------------------------------------------
+-- CAMBIO 2026-09 — EL FESTIVO TRABAJADO SE LIQUIDA COMO EL DOMINGO
+--
+-- Definido por RRHH: "debe tener el mismo efecto que el domingo que se liquida
+-- al 0.9". Hasta ahora el festivo trabajado tenía una rama propia que forzaba
+-- TARIFA COMPLETA (1 + pct = 1,90) sin mirar el descanso semanal, y por eso
+-- viajaba al archivo plano en la novedad 08. Ahora entra por la MISMA regla del
+-- domingo:
+--
+--     · descansó su domingo (o tiene compensatorio)  → 0,90  → novedad 25
+--     · no descansó ni tiene compensatorio           → 1,90  → novedad 08
+--
+-- El pago del DÍA festivo en sí (valor_diario_ley) no cambia: lo que cambia es
+-- solo el recargo por haberlo trabajado.
+--
+-- OJO — ESTO BAJA LO QUE SE PAGA en los festivos de quien ya descansó su
+-- domingo: de 1,90 a 0,90 del valor del día. Con un valor diario de $58.363,50
+-- son $58.363,50 menos por persona y por festivo. Es el efecto buscado, pero
+-- conviene avisarlo antes de la primera quincena con festivo.
+--
+-- Las quincenas YA PAGADAS no se tocan solas --esto es una vista, se recalcula
+-- al consultarla--, así que un festivo anterior que ya se liquidó y reportó a
+-- Siigo al 1,90 pasará a mostrarse al 0,90 en cuanto se corra este script. Si
+-- hay que conservar el histórico, hay que acotar el cambio por fecha igual que
+-- se hizo con el corte del 2026-07-16.
+-- ----------------------------------------------------------------------------
 -- Incluye TODO lo validado:
 --   - recargos/base del turno por persona desde headcount.salario (auxilio fuera
 --     de la base) y parametros_legales_anio; recargo dominical parametrizado.
@@ -687,11 +712,13 @@ create or replace view public.pagonomina as
                     -- CUÁNTO SE PAGA — el FESTIVO y el DOMINGO no siguen la misma regla:
                     --
                     --   · FESTIVO trabajado: SIEMPRE (1 + pct) = 1,90 hoy, descansara o
-                    --     no esa semana. El festivo no pertenece al ciclo de descanso
-                    --     semanal: es un día que la ley da como no laborable, así que
-                    --     trabajarlo se compensa completo y punto. El descanso
-                    --     dominical de esa semana es un derecho aparte, y haberlo tomado
-                    --     no rebaja lo que se debe por el festivo.
+                    --     CAMBIO 2026-09: el festivo trabajado se liquida IGUAL que
+                    --     el domingo -- al pct del recargo (0,90), no a tarifa completa
+                    --     (1,90). Lo definió RRHH: "debe tener el mismo efecto que el
+                    --     domingo que se liquida al 0.9". Antes el festivo forzaba
+                    --     tarifa completa sin mirar el descanso semanal, y por eso
+                    --     viajaba al plano en la novedad 08; ahora viaja en la 25, que
+                    --     es la que corresponde a esa tarifa.
                     --
                     --   · DOMINGO trabajado: depende del descanso. (1 + pct) = 1,90 si
                     --     NO descansó en los 6 días anteriores NI tiene compensatorio en
@@ -720,14 +747,16 @@ create or replace view public.pagonomina as
                         END
                         *
                         CASE
-                            -- FESTIVO: siempre completo, sin mirar el descanso semanal.
-                            WHEN (calculo_nomina_base.es_festivo = 1)
-                                THEN ((1)::numeric + (calculo_nomina_base.pct_recargo_dominical / 100.0))
-                            -- DOMINGO sin descanso ni compensatorio: también completo.
+                            -- Domingo O FESTIVO sin descanso ni compensatorio: completo.
+                            -- El festivo ya NO tiene rama propia: se evalúa con la misma
+                            -- regla del domingo (decisión de RRHH, 2026-09).
                             WHEN ((COALESCE(calculo_nomina_base.descansos_semana_anterior, 0) = 0)
                               AND (COALESCE(calculo_nomina_base.tiene_compensatorio_posterior, 0) = 0))
                                 THEN ((1)::numeric + (calculo_nomina_base.pct_recargo_dominical / 100.0))
-                            -- DOMINGO con descanso: solo el recargo.
+                            -- Con descanso ya tomado o compensatorio pendiente: solo el
+                            -- recargo. Es la rama por la que ahora entra el festivo
+                            -- trabajado de quien descansó su domingo, y la que lo manda
+                            -- a la novedad 25 del archivo plano.
                             ELSE (calculo_nomina_base.pct_recargo_dominical / 100.0)
                         END
                     )
@@ -755,13 +784,15 @@ create or replace view public.pagonomina as
                 -- trabajó los 7 días previos sin descanso → tarifa completa
                 -- (58.363,50 × 1,9 = 110.890,65, verificado) → debía ir en 08, y
                 -- archivoplano lo mandaba en 25.
+                -- Tiene que espejar EXACTAMENTE el CASE del importe de arriba: si
+                -- divergen, el plano manda una novedad cuya tarifa no es la que se
+                -- liquidó. Por eso el festivo tampoco tiene aquí rama propia.
                 CASE
                     WHEN (EXTRACT(day FROM calculo_nomina_base.fecha) = (31)::numeric) THEN false
                     WHEN ((calculo_nomina_base.fecha >= DATE '2026-07-16')
                       AND ((calculo_nomina_base.dia_semana = (0)::numeric) OR (calculo_nomina_base.es_festivo = 1))
                       AND (calculo_nomina_base.trabajo_efectivo = 1)) THEN
-                        (calculo_nomina_base.es_festivo = 1)
-                        OR ((COALESCE(calculo_nomina_base.descansos_semana_anterior, 0) = 0)
+                        ((COALESCE(calculo_nomina_base.descansos_semana_anterior, 0) = 0)
                           AND (COALESCE(calculo_nomina_base.tiene_compensatorio_posterior, 0) = 0))
                     ELSE false
                 END AS recargo_dominical_tasa_completa

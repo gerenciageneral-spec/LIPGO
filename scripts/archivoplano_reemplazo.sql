@@ -568,14 +568,21 @@ UNION ALL
     NULL::text AS fechafin,
     0 AS diasnohabiles
    FROM base_datos
-  -- 08 = tarifa COMPLETA (1 + pct, ej. 1,90): festivo trabajado siempre, o
-  -- domingo trabajado SIN descanso previo ni compensatorio posterior. YA NO
-  -- se decide con `pago_domingo` (el pago del día de descanso de quien NO
-  -- trabajó — sin relación con la tarifa aplicada): cualquier domingo/festivo
-  -- TRABAJADO caía siempre en la rama 25, incluso a tarifa completa. Caso
-  -- real: ROBERTO ENRIQUE HOYOS VIDEZ (ID2), domingo 30-ago-2026, 7 días
-  -- seguidos sin descanso → tarifa completa (verificado: 58.363,50 × 1,9 =
-  -- 110.890,65) y el plano lo mandaba en 25.
+  -- 08 = tarifa COMPLETA (1 + pct, ej. 1,90): domingo O FESTIVO trabajado SIN
+  -- descanso previo ni compensatorio posterior.
+  --
+  -- CAMBIO 2026-09: el festivo YA NO va siempre a tarifa completa. Por decisión
+  -- de RRHH se liquida igual que el domingo, así que el festivo de quien ya
+  -- descansó cae ahora en la rama 25. Esta consulta no cambió: lee
+  -- `recargo_dominical_tasa_completa`, y fue esa bandera la que se ajustó en
+  -- pagonomina_reemplazo.sql.
+  --
+  -- La tarifa YA NO se decide con `pago_domingo` (el pago del día de descanso
+  -- de quien NO trabajó — sin relación con la tarifa aplicada): con aquel
+  -- criterio, cualquier domingo/festivo TRABAJADO caía siempre en la rama 25,
+  -- incluso a tarifa completa. Caso real: ROBERTO ENRIQUE HOYOS VIDEZ (ID2),
+  -- domingo 30-ago-2026, 7 días seguidos sin descanso → tarifa completa
+  -- (verificado: 58.363,50 × 1,9 = 110.890,65) y el plano lo mandaba en 25.
   --
   -- SIN el filtro `dow = 0` (corregido): antes exigía que el día fuera
   -- domingo, así que cualquier FESTIVO ENTRE SEMANA (ej. lunes 17-ago-2026)
@@ -626,9 +633,14 @@ UNION ALL
     NULL::text AS fechafin,
     0 AS diasnohabiles
    FROM base_datos
-  -- 25 = SOLO el recargo (pct, ej. 0,90): domingo trabajado CON descanso
-  -- previo o compensatorio posterior — mismo criterio que decide la tarifa
-  -- dentro de `recargodominical`, ver comentario de la rama 08. MISMO fix:
+  -- 25 = SOLO el recargo (pct, ej. 0,90): domingo O FESTIVO trabajado CON
+  -- descanso previo o compensatorio posterior — mismo criterio que decide la
+  -- tarifa dentro de `recargodominical`, ver comentario de la rama 08.
+  --
+  -- Desde el CAMBIO 2026-09 el festivo entra por aquí igual que el domingo
+  -- (decisión de RRHH: "mismo efecto que el domingo que se liquida al 0.9").
+  -- Antes tenía rama propia a tarifa completa y salía siempre en la 08.
+  -- MISMO fix:
   -- sin el filtro `dow = 0` (un festivo entre semana con descanso ya tomado
   -- también debe viajar aquí, no perderse). Mismo segundo fix que la
   -- rama 08: sin `OR toneladas>0 OR especialidad=true`.
