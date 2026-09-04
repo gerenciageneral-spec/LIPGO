@@ -45,6 +45,7 @@ interface UnloadOrderLine {
 interface UnloadOrderData {
   fechaDescargue: string
   placaVehiculo: string
+  nombreConductor: string
   transporte: Transport | null
   tiquete: string
   numeroOrden: string
@@ -57,6 +58,7 @@ interface VehicleAppointment {
   placa: string
   fechallegada: string
   estatus: string | null
+  nombreconductor: string | null
 }
 
 export function GenerateUnloadOrders() {
@@ -72,6 +74,7 @@ export function GenerateUnloadOrders() {
   const [orderData, setOrderData] = useState<UnloadOrderData>({
     fechaDescargue: new Date().toISOString().split("T")[0],
     placaVehiculo: "",
+    nombreConductor: "",
     transporte: null,
     tiquete: "",
     numeroOrden: "",
@@ -274,6 +277,7 @@ console.log("[v0] selectedEmpresaId:", selectedEmpresaId)
         selectedEmpresaId: selectedEmpresaId ?? undefined,
         fechaDescargue: orderData.fechaDescargue,
         placa: orderData.placaVehiculo,
+        nombreConductor: orderData.nombreConductor || null,
         transporte: orderData.transporte!.nombretransporte,
         tiquete: orderData.tiquete,
         numeroOrden: orderData.numeroOrden,
@@ -316,6 +320,7 @@ console.log("[v0] selectedEmpresaId:", selectedEmpresaId)
         setOrderData({
           fechaDescargue: new Date().toISOString().split("T")[0],
           placaVehiculo: "",
+          nombreConductor: "",
           transporte: null,
           tiquete: "",
           numeroOrden: "",
@@ -375,7 +380,7 @@ console.log("[v0] selectedEmpresaId:", selectedEmpresaId)
                   const selected = vehicleAppointments.find(v => v.id.toString() === value)
                   if (selected) {
                     setSelectedAppointmentId(selected.id)
-                    setOrderData((prev) => ({ ...prev, placaVehiculo: selected.placa }))
+                    setOrderData((prev) => ({ ...prev, placaVehiculo: selected.placa, nombreConductor: selected.nombreconductor || "" }))
                   }
                 }}
               >
@@ -394,6 +399,11 @@ console.log("[v0] selectedEmpresaId:", selectedEmpresaId)
                   )}
                 </SelectContent>
               </Select>
+              {selectedAppointmentId && (
+                <p className="text-xs text-muted-foreground">
+                  Conductor: {orderData.nombreConductor || "Sin nombre registrado en la cita"}
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">

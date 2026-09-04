@@ -2597,6 +2597,7 @@ export async function generateUnloadOrder(orderData: {
   selectedEmpresaId?: number
   fechaDescargue: string
   placa: string
+  nombreConductor?: string | null
   transporte: string
   tiquete: string
   numeroOrden: string
@@ -2717,6 +2718,7 @@ export async function generateUnloadOrder(orderData: {
       ordendecargue: orderData.numeroOrden || orderCode,
       fechaorden: currentDate,
       placa: orderData.placa,
+      conductor: orderData.nombreConductor || null,
       transporte: orderData.transporte,
       tiquetebascula: orderData.tiquete,
       tipooperacion: "Descargue",
