@@ -146,8 +146,12 @@ export function PoliticasHorasExtra() {
       setEditando({ ...existente })
       return
     }
+    // Se parte de los valores de la base, pero SIN su id ni su nota: es una
+    // fila nueva, no una edición de la base. La fecha se hereda tal cual porque
+    // la excepción pertenece a esta misma vigencia.
     const desde = base ?? nuevaPolitica(puestoSel, fechaSel || hoyISO(), null)
-    setEditando({ ...desde, id: undefined, diaSemana: dia, nota: null })
+    const { id: _sinId, ...valores } = desde
+    setEditando({ ...valores, diaSemana: dia, nota: null })
   }
 
   const guardar = async () => {
@@ -164,7 +168,9 @@ export function PoliticasHorasExtra() {
       description: "Aplica a las asistencias que se registren o modifiquen de ahora en adelante.",
     })
     setPuestoSel(editando.puesto)
-    setFechaSel(editando.fechaDesde)
+    // Solo la política base puede estrenar vigencia; una excepción vive dentro
+    // de la que ya está seleccionada.
+    if (editando.diaSemana == null) setFechaSel(editando.fechaDesde)
     setEditando(null)
     cargar()
   }
@@ -399,22 +405,35 @@ export function PoliticasHorasExtra() {
             </DialogTitle>
             <DialogDescription>
               {editando?.puesto === PUESTO_TODOS ? "Todos los puestos" : editando?.puesto}
+              {editando?.diaSemana != null && ` · vigencia desde ${editando.fechaDesde}`}
             </DialogDescription>
           </DialogHeader>
 
           {editando && (
             <div className="space-y-4">
               <div className="grid gap-3 md:grid-cols-2">
-                <Campo
-                  l="Vigente desde"
-                  ayuda="Se compara con el día trabajado, no con la fecha de hoy."
-                >
-                  <Input
-                    type="date"
-                    value={editando.fechaDesde}
-                    onChange={(e) => setEditando({ ...editando, fechaDesde: e.target.value })}
-                  />
-                </Campo>
+                {editando.diaSemana == null ? (
+                  <Campo
+                    l="Vigente desde"
+                    ayuda="Se compara con el día trabajado, no con la fecha de hoy."
+                  >
+                    <Input
+                      type="date"
+                      value={editando.fechaDesde}
+                      onChange={(e) => setEditando({ ...editando, fechaDesde: e.target.value })}
+                    />
+                  </Campo>
+                ) : (
+                  /* La excepción pertenece a esta vigencia y no se puede mover:
+                     cambiarle la fecha la guardaría en otra versión de la
+                     política, y el día seguiría usando la base sin que se note. */
+                  <Campo
+                    l="Vigente desde"
+                    ayuda="Lo hereda de la política base. Para otra vigencia, créala primero y añade allí la excepción."
+                  >
+                    <Input type="date" value={editando.fechaDesde} disabled />
+                  </Campo>
+                )}
                 <Campo l="Umbral (horas)" ayuda="A partir de cuántas horas cuenta la extra.">
                   <Input
                     type="number"

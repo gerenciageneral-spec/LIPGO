@@ -127,9 +127,15 @@ export async function guardarPoliticaHorasExtra(
   try {
     const admin: any = await getSupabaseAdmin()
 
+    // La fila se identifica por las TRES columnas, no por el id que venga del
+    // cliente: asi una excepcion nunca puede terminar pisando la base.
+    //
+    // `dia_semana` se compara con `is null` y no con `eq` porque en Postgres
+    // NULL <> NULL: un `.eq("dia_semana", null)` no encontraria la fila base y
+    // se crearia un duplicado en lugar de actualizarla.
     let existente = admin
       .from("politica_horas_extra")
-      .select("id")
+      .select("id, dia_semana")
       .eq("puesto", puesto)
       .eq("fecha_desde", p.fechaDesde)
     existente = p.diaSemana == null
@@ -140,6 +146,21 @@ export async function guardarPoliticaHorasExtra(
     if (eBuscar) {
       console.error("[v0] guardarPoliticaHorasExtra búsqueda:", eBuscar.message)
       return { success: false, message: faltaMigracion(eBuscar.message) ? MSG_FALTA_MIGRACION : eBuscar.message }
+    }
+
+    // Guarda de ultimo momento. Si la fila encontrada no es del mismo dia que se
+    // esta guardando, algo esta mal en la consulta y escribir ahi pisaria una
+    // politica que no es. Mejor fallar que corromper en silencio.
+    const previaDia = previa ? ((previa as any).dia_semana ?? null) : null
+    if (previa && previaDia !== p.diaSemana) {
+      console.error(
+        "[v0] guardarPoliticaHorasExtra: la fila hallada no coincide en dia_semana",
+        { buscado: p.diaSemana, hallado: previaDia },
+      )
+      return {
+        success: false,
+        message: "No se guardo: la politica encontrada no corresponde al dia indicado.",
+      }
     }
 
     const q = previa?.id
