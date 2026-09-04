@@ -1,7 +1,11 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { snapshotIndicadoresHistorico } from "@/lib/sig-actions"
 
-// GET → lo invoca el CRON de Vercel (día 1 de cada mes): congela el mes ACTUAL.
+// GET → lo invoca el CRON de Vercel (día 1 de cada mes): congela el mes que
+// ACABA DE CERRAR (el mes anterior al día 1 en que corre), no el mes que
+// apenas empieza -- si no, cada snapshot mensual queda con 0-1 día de datos,
+// congelado para siempre (bug real encontrado 2026-09-04: mayo-sep quedaron
+// planos en casi cero en la tendencia de todos los indicadores del BSC).
 // Si hay CRON_SECRET configurado, exige el header Authorization: Bearer <secret>
 // (Vercel lo envía automáticamente). Sin CRON_SECRET, queda abierto.
 export async function GET(request: NextRequest) {
@@ -10,8 +14,10 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ success: false, error: "no autorizado" }, { status: 401 })
   }
   const now = new Date()
-  const r = await snapshotIndicadoresHistorico(now.getFullYear(), now.getMonth() + 1)
-  return NextResponse.json({ success: r.success, periodo: `${now.getFullYear()}-${now.getMonth() + 1}`, count: r.count, error: r.error })
+  const mesAnterior = now.getMonth() === 0 ? 12 : now.getMonth()
+  const anioMesAnterior = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear()
+  const r = await snapshotIndicadoresHistorico(anioMesAnterior, mesAnterior)
+  return NextResponse.json({ success: r.success, periodo: `${anioMesAnterior}-${mesAnterior}`, count: r.count, error: r.error })
 }
 
 // Congela la serie histórica de indicadores del BSC.

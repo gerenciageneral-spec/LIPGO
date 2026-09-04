@@ -55,7 +55,11 @@ export function AreaKpis({
           const def = KPI_DEFS[k]
           if (!def) return null
           const v = valores[k]
-          const sev = v ? kpiSev(def, v.valor) : "none"
+          // sat_cliente/sat_conductor caen a 0% cuando todavía no hay NINGUNA
+          // encuesta real (no es que la satisfacción sea mala) -- mostrar "Sin
+          // datos" en vez de "0%" para no leerse como una falla operativa.
+          const sinDatos = (k === "sat_cliente" || k === "sat_conductor") && v?.base === "0 encuestas"
+          const sev = v && !sinDatos ? kpiSev(def, v.valor) : "none"
           const color = SEV_COLOR[sev]
           return (
             <button
@@ -67,18 +71,18 @@ export function AreaKpis({
               <div className="flex items-center gap-2 text-[11px] font-semibold text-muted-foreground">
                 <span
                   className="h-[7px] w-[7px] flex-none rounded-full"
-                  style={{ background: v ? color : "var(--border)" }}
+                  style={{ background: v && !sinDatos ? color : "var(--border)" }}
                 />
                 <span className="truncate">{def.nombre}</span>
               </div>
               <div
                 className="mt-2 text-2xl font-extrabold tabular-nums tracking-tight"
-                style={{ color: v ? color : "var(--muted-foreground)" }}
+                style={{ color: v && !sinDatos ? color : "var(--muted-foreground)" }}
               >
-                {loading && !v ? "…" : v ? formatKpi(def, v.valor) : "—"}
+                {loading && !v ? "…" : sinDatos ? "Sin datos" : v ? formatKpi(def, v.valor) : "—"}
               </div>
               <div className="mt-1 flex items-center justify-between gap-1 truncate text-[10.5px] text-muted-foreground/80">
-                <span className="truncate">{def.meta != null ? `meta ${formatKpi(def, def.meta)}` : v?.base || " "}</span>
+                <span className="truncate">{sinDatos ? "aún no hay encuestas" : def.meta != null ? `meta ${formatKpi(def, def.meta)}` : v?.base || " "}</span>
                 <span className="shrink-0 text-primary/70">ver 3D →</span>
               </div>
             </button>
