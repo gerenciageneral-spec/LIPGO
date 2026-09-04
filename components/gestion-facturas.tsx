@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -1304,19 +1305,17 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Fecha Cargue Desde</Label>
-                <Input
-                  type="date"
+                <DatePickerField
                   value={filters.fechaCargueDesde}
-                  onChange={(e) => setFilters({ ...filters, fechaCargueDesde: e.target.value })}
+                  onChange={(value) => setFilters({ ...filters, fechaCargueDesde: value })}
                   className="h-8 text-xs"
                 />
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Fecha Cargue Hasta</Label>
-                <Input
-                  type="date"
+                <DatePickerField
                   value={filters.fechaCargueHasta}
-                  onChange={(e) => setFilters({ ...filters, fechaCargueHasta: e.target.value })}
+                  onChange={(value) => setFilters({ ...filters, fechaCargueHasta: value })}
                   className="h-8 text-xs"
                 />
               </div>
@@ -1461,19 +1460,17 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
             </div>
             <div>
               <Label className="text-[11px]">Desde</Label>
-              <Input
-                type="date"
+              <DatePickerField
                 value={rangoDesde}
-                onChange={(e) => setFilters({ ...filters, fechaCargueDesde: e.target.value })}
+                onChange={(value) => setFilters({ ...filters, fechaCargueDesde: value })}
                 className="h-8 w-40 text-xs"
               />
             </div>
             <div>
               <Label className="text-[11px]">Hasta</Label>
-              <Input
-                type="date"
+              <DatePickerField
                 value={rangoHasta}
-                onChange={(e) => setFilters({ ...filters, fechaCargueHasta: e.target.value })}
+                onChange={(value) => setFilters({ ...filters, fechaCargueHasta: value })}
                 className="h-8 w-40 text-xs"
               />
             </div>

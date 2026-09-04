@@ -12,6 +12,7 @@ import { useToast } from "@/hooks/use-toast"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -787,11 +788,11 @@ export function CuadroControlFacturacion() {
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
             <div className="space-y-1">
               <Label className="text-xs">Desde</Label>
-              <Input type="date" value={pending.desde ?? ""} onChange={(e) => setF("desde", e.target.value)} className="h-8 text-xs" />
+              <DatePickerField value={pending.desde ?? ""} onChange={(value) => setF("desde", value)} className="h-8 text-xs" />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Hasta</Label>
-              <Input type="date" value={pending.hasta ?? ""} onChange={(e) => setF("hasta", e.target.value)} className="h-8 text-xs" />
+              <DatePickerField value={pending.hasta ?? ""} onChange={(value) => setF("hasta", value)} className="h-8 text-xs" />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Owner</Label>

@@ -16,6 +16,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -583,14 +584,13 @@ export function CierreFinanciero({
       <div className="flex flex-wrap items-end gap-3">
         <div className="grid gap-1">
           <Label className="text-[11px]">Fecha del cierre</Label>
-          <Input
-            type="date"
+          <DatePickerField
             className="h-8 w-[150px] text-xs"
             value={fecha}
-            max={hoyISO()}
-            onChange={(e) => {
+            maxDate={hoyISO()}
+            onChange={(value) => {
               eleccionManual.current = true
-              setFecha(e.target.value || hoyISO())
+              setFecha(value || hoyISO())
             }}
           />
         </div>

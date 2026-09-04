@@ -19,6 +19,7 @@ import { useAuth } from "@/components/auth-provider"
 import { supabase } from "@/lib/supabase-client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -281,21 +282,13 @@ export default function FormularioRegistroGasto({
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="fecha">Fecha del gasto</Label>
-              <div className="relative">
-                <CalendarIcon
-                  className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-                  aria-hidden="true"
-                />
-                <Input
-                  id="fecha"
-                  type="date"
-                  value={fecha}
-                  max={new Date().toISOString().slice(0, 10)}
-                  onChange={(e) => setFecha(e.target.value)}
-                  className="pl-9"
-                  required
-                />
-              </div>
+              <DatePickerField
+                id="fecha"
+                value={fecha}
+                maxDate={new Date().toISOString().slice(0, 10)}
+                onChange={setFecha}
+                icon={<CalendarIcon className="h-4 w-4 text-muted-foreground" aria-hidden="true" />}
+              />
             </div>
 
             <div className="space-y-2">

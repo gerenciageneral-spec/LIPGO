@@ -1,5 +1,6 @@
 "use client"
 
+import type { ReactNode } from "react"
 import { format, parseISO } from "date-fns"
 import { es } from "date-fns/locale"
 import { Button } from "@/components/ui/button"
@@ -25,6 +26,9 @@ export function DatePickerField({
   className,
   disabled,
   id,
+  maxDate,
+  minDate,
+  icon,
 }: {
   value: string
   onChange: (value: string) => void
@@ -32,6 +36,12 @@ export function DatePickerField({
   className?: string
   disabled?: boolean
   id?: string
+  /** Equivalente a `max` de `<input type="date">` -- string "YYYY-MM-DD". */
+  maxDate?: string
+  /** Equivalente a `min` de `<input type="date">` -- string "YYYY-MM-DD". */
+  minDate?: string
+  /** Ícono opcional al inicio del botón (reemplaza el ícono superpuesto que usaban algunos `<input type="date">`). */
+  icon?: ReactNode
 }) {
   return (
     <Popover>
@@ -41,8 +51,9 @@ export function DatePickerField({
           type="button"
           variant="outline"
           disabled={disabled}
-          className={cn("w-full justify-start text-left font-normal", className)}
+          className={cn("w-full justify-start gap-2 text-left font-normal", className)}
         >
+          {icon}
           {value ? format(parseISO(value), "dd/MM/yyyy") : <span className="text-muted-foreground">{placeholder}</span>}
         </Button>
       </PopoverTrigger>
@@ -51,6 +62,9 @@ export function DatePickerField({
           mode="single"
           selected={value ? parseISO(value) : undefined}
           onSelect={(date) => onChange(date ? format(date, "yyyy-MM-dd") : "")}
+          disabled={[maxDate ? { after: parseISO(maxDate) } : null, minDate ? { before: parseISO(minDate) } : null].filter(
+            (m): m is { after: Date } | { before: Date } => m !== null,
+          )}
           locale={es}
         />
       </PopoverContent>

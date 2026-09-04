@@ -15,6 +15,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -260,11 +261,11 @@ function ConfigMontacargas({ empresas }: { empresas: Array<{ id: number; nombre:
               <div className="grid grid-cols-2 gap-3">
                 <div className="grid gap-1.5">
                   <Label className="text-xs">Vigente desde</Label>
-                  <Input type="date" value={editando.fechainicio} onChange={(e) => setEditando({ ...editando, fechainicio: e.target.value })} />
+                  <DatePickerField value={editando.fechainicio} onChange={(value) => setEditando({ ...editando, fechainicio: value })} />
                 </div>
                 <div className="grid gap-1.5">
                   <Label className="text-xs">Vigente hasta</Label>
-                  <Input type="date" value={editando.fechafin} onChange={(e) => setEditando({ ...editando, fechafin: e.target.value })} />
+                  <DatePickerField value={editando.fechafin} onChange={(value) => setEditando({ ...editando, fechafin: value })} />
                 </div>
               </div>
             </div>
@@ -507,11 +508,11 @@ function ConfigProyecto({ empresas }: { empresas: Array<{ id: number; nombre: st
               <div className="grid grid-cols-2 gap-3">
                 <div className="grid gap-1.5">
                   <Label className="text-xs">Vigente desde</Label>
-                  <Input type="date" value={editando.fechainicio} onChange={(e) => setEditando({ ...editando, fechainicio: e.target.value })} />
+                  <DatePickerField value={editando.fechainicio} onChange={(value) => setEditando({ ...editando, fechainicio: value })} />
                 </div>
                 <div className="grid gap-1.5">
                   <Label className="text-xs">Vigente hasta</Label>
-                  <Input type="date" value={editando.fechafin} onChange={(e) => setEditando({ ...editando, fechafin: e.target.value })} />
+                  <DatePickerField value={editando.fechafin} onChange={(value) => setEditando({ ...editando, fechafin: value })} />
                 </div>
               </div>
             </div>

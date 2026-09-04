@@ -20,6 +20,7 @@ import { useAuth } from "@/components/auth-provider"
 import { supabase } from "@/lib/supabase-client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import {
   Card,
@@ -235,23 +236,21 @@ export default function DashboardGastos({ idEmpresa: idEmpresaProp }: Props) {
           <div className="grid gap-3 md:grid-cols-4">
             <div className="space-y-1.5">
               <Label htmlFor="desde">Desde</Label>
-              <Input
+              <DatePickerField
                 id="desde"
-                type="date"
                 value={desde}
-                max={hasta}
-                onChange={(e) => setDesde(e.target.value)}
+                maxDate={hasta}
+                onChange={setDesde}
               />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="hasta">Hasta</Label>
-              <Input
+              <DatePickerField
                 id="hasta"
-                type="date"
                 value={hasta}
-                min={desde}
-                max={today()}
-                onChange={(e) => setHasta(e.target.value)}
+                minDate={desde}
+                maxDate={today()}
+                onChange={setHasta}
               />
             </div>
             <div className="space-y-1.5">

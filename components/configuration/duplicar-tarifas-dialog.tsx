@@ -9,6 +9,7 @@ import { useEffect, useState } from "react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/components/auth-provider"
@@ -114,11 +115,11 @@ export function DuplicarTarifasDialog({
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="dup-ini">Nueva vigencia desde</Label>
-              <Input id="dup-ini" type="date" value={nuevaIni} onChange={(e) => setNuevaIni(e.target.value)} />
+              <DatePickerField id="dup-ini" value={nuevaIni} onChange={setNuevaIni} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="dup-fin">Nueva vigencia hasta</Label>
-              <Input id="dup-fin" type="date" value={nuevaFin} onChange={(e) => setNuevaFin(e.target.value)} />
+              <DatePickerField id="dup-fin" value={nuevaFin} onChange={setNuevaFin} />
             </div>
           </div>
 

@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -599,11 +600,10 @@ export function FacturacionProyectos() {
               <Label htmlFor="fechaDesde" className="text-xs">
                 Fecha Cargue Desde
               </Label>
-              <Input
+              <DatePickerField
                 id="fechaDesde"
-                type="date"
                 value={pendingFilters.fechaDesde}
-                onChange={(e) => handleFilterChange("fechaDesde", e.target.value)}
+                onChange={(value) => handleFilterChange("fechaDesde", value)}
                 className="h-8 text-xs"
               />
             </div>
@@ -611,11 +611,10 @@ export function FacturacionProyectos() {
               <Label htmlFor="fechaHasta" className="text-xs">
                 Fecha Cargue Hasta
               </Label>
-              <Input
+              <DatePickerField
                 id="fechaHasta"
-                type="date"
                 value={pendingFilters.fechaHasta}
-                onChange={(e) => handleFilterChange("fechaHasta", e.target.value)}
+                onChange={(value) => handleFilterChange("fechaHasta", value)}
                 className="h-8 text-xs"
               />
             </div>
@@ -1009,20 +1008,18 @@ export function FacturacionProyectos() {
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div className="space-y-2">
                   <Label className="text-sm">Fecha Desde</Label>
-                  <Input
-                    type="date"
+                  <DatePickerField
                     value={pendingTurnosFilters.fechaDesde}
-                    onChange={(e) => handleTurnosFilterChange("fechaDesde", e.target.value)}
+                    onChange={(value) => handleTurnosFilterChange("fechaDesde", value)}
                     className="text-sm h-9"
                   />
                 </div>
 
                 <div className="space-y-2">
                   <Label className="text-sm">Fecha Hasta</Label>
-                  <Input
-                    type="date"
+                  <DatePickerField
                     value={pendingTurnosFilters.fechaHasta}
-                    onChange={(e) => handleTurnosFilterChange("fechaHasta", e.target.value)}
+                    onChange={(value) => handleTurnosFilterChange("fechaHasta", value)}
                     className="text-sm h-9"
                   />
                 </div>
