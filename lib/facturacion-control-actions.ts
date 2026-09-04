@@ -640,7 +640,9 @@ async function calcularProduccion(
       valor: Math.round(a.valor),
       // Tarifa EFECTIVA del grupo: si en el período cambió la vigencia,
       // valor/cantidad refleja la mezcla real mejor que una tarifa suelta.
-      tarifa: a.cantidad > 0 ? Math.round(a.valor / a.cantidad) : a.tarifa,
+      // Redondeo a centavos, no a peso entero (ver mismo fix en el resumen
+      // por owner×servicio, más arriba en este archivo).
+      tarifa: a.cantidad > 0 ? Math.round((a.valor / a.cantidad) * 100) / 100 : a.tarifa,
     })
   }
   conceptos.sort((x, y) => x.concepto.localeCompare(y.concepto, "es"))
@@ -901,7 +903,10 @@ export async function getPrefactura(
     let totalValor = 0
     for (const r of map.values()) {
       // Tarifa EFECTIVA del grupo (valor/ton) — refleja tarifas por owner/operación.
-      r.tarifa = r.toneladas > 0 ? Math.round(r.valor / r.toneladas) : r.tarifa
+      // Redondeo a CENTAVOS, no a peso entero -- una tarifa por unidad (Huevos,
+      // $2,95) quedaba en $3 al redondear a entero, aunque todo el grupo
+      // comparta exactamente esa misma tarifa.
+      r.tarifa = r.toneladas > 0 ? Math.round((r.valor / r.toneladas) * 100) / 100 : r.tarifa
       totalValor += r.valor
     }
     const resumen = Array.from(map.values()).sort(
@@ -1302,7 +1307,7 @@ export async function getControlFacturacion(
         }),
         toneladas,
         fuente_peso: fuente,
-        tarifa: a.sinTarifa || toneladas <= 0 || fa.cubiertoPorFijo ? null : Math.round(valor / toneladas),
+        tarifa: a.sinTarifa || toneladas <= 0 || fa.cubiertoPorFijo ? null : Math.round((valor / toneladas) * 100) / 100,
         valor_a_facturar: valor,
         sin_tarifa: a.sinTarifa,
         estadofactura: est?.estado ?? null,

@@ -26,6 +26,12 @@ import PrefacturaProduccion from "@/components/prefactura-produccion"
 const money = (n: number) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO")
 const moneyS = (n: number) =>
   (n < 0 ? "−" : "") + "$" + Math.abs(Math.round(Number(n) || 0)).toLocaleString("es-CO")
+// La tarifa (a diferencia de un total) puede ser fraccionaria de verdad -- ej.
+// Huevo $2,95/unidad -- money()/moneyS() la redondeaban a $3.
+const moneyTarifa = (n: number) => {
+  const v = Number(n) || 0
+  return Number.isInteger(v) ? money(v) : "$" + v.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
 const ton = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { maximumFractionDigits: 3 })
 const kg = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { maximumFractionDigits: 0 })
 
@@ -315,7 +321,7 @@ export default function ConciliacionAvimol() {
                                                 <TableCell className="text-right text-xs font-medium">{ton(p.toneladas)}</TableCell>
                                                 <TableCell className="text-xs">{p.operacion}</TableCell>
                                                 <TableCell className="text-right text-xs">
-                                                  {p.tarifa > 0 ? money(p.tarifa) : <span className="text-rose-500">sin tarifa</span>}
+                                                  {p.tarifa > 0 ? moneyTarifa(p.tarifa) : <span className="text-rose-500">sin tarifa</span>}
                                                 </TableCell>
                                                 <TableCell className="text-right text-xs font-medium">{money(p.cobro)}</TableCell>
                                               </TableRow>
@@ -431,7 +437,7 @@ export default function ConciliacionAvimol() {
                                                   {h.delta === 0 ? "✓" : `${h.delta > 0 ? "+" : ""}${horas(h.delta)}`}
                                                 </TableCell>
                                                 <TableCell className="text-right text-xs">
-                                                  {h.tarifa > 0 ? money(h.tarifa) : <span className="text-rose-500">sin tarifa</span>}
+                                                  {h.tarifa > 0 ? moneyTarifa(h.tarifa) : <span className="text-rose-500">sin tarifa</span>}
                                                 </TableCell>
                                                 <TableCell className="text-right text-xs font-medium">{money(h.cobro)}</TableCell>
                                                 <TableCell className="text-right text-xs text-muted-foreground">{money(h.costo)}</TableCell>
@@ -491,7 +497,7 @@ export default function ConciliacionAvimol() {
                                                 <TableCell className="text-right text-xs">{tr.personas}</TableCell>
                                                 <TableCell className="text-right text-xs">
                                                   {tr.tarifa > 0 ? (
-                                                    money(tr.tarifa)
+                                                    moneyTarifa(tr.tarifa)
                                                   ) : !tr.resuelto ? (
                                                     <span className="text-rose-500">puesto no reconocido</span>
                                                   ) : !tr.cobraTurno ? (

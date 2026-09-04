@@ -193,7 +193,8 @@ async function armarAvimol(desde: string, hasta: string) {
         unidad,
         // Tarifa EFECTIVA del grupo: si en el período hubo cambio de vigencia,
         // total/cantidad refleja la mezcla real mejor que una tarifa suelta.
-        tarifa: g.cantidad > 0 ? Math.round(g.total / g.cantidad) : g.tarifa,
+        // Redondeo a centavos, no a peso entero.
+        tarifa: g.cantidad > 0 ? Math.round((g.total / g.cantidad) * 100) / 100 : g.tarifa,
         total: Math.round(g.total),
         sinTarifa: g.sinTarifa,
       }))
@@ -354,7 +355,7 @@ async function armarIndupan(desde: string, hasta: string) {
       tipo: "produccion" as const,
       cantidad: Number(g.cantidad.toFixed(3)),
       unidad: "t" as const,
-      tarifa: g.cantidad > 0 ? Math.round(g.total / g.cantidad) : g.tarifa,
+      tarifa: g.cantidad > 0 ? Math.round((g.total / g.cantidad) * 100) / 100 : g.tarifa,
       total: Math.round(g.total),
       sinTarifa: g.sinTarifa,
     }))

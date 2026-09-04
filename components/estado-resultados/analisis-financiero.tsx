@@ -58,6 +58,12 @@ import { GESTION_LIPGO_DESDE } from "@/lib/facturacion-constantes"
 const money = (n: number) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO")
 const moneyS = (n: number) =>
   (n < 0 ? "−" : "") + "$" + Math.abs(Math.round(Number(n) || 0)).toLocaleString("es-CO")
+// La tarifa (a diferencia de un total) puede ser fraccionaria de verdad -- ej.
+// Huevo $2,95/unidad -- money() la redondeaba a $3.
+const moneyTarifa = (n: number) => {
+  const v = Number(n) || 0
+  return Number.isInteger(v) ? money(v) : "$" + v.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
 const ton = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { maximumFractionDigits: 1 })
 
 interface Props {
@@ -302,7 +308,7 @@ function ProyectoCard({ p, meses, esHistorico }: { p: ProyectoAnalisis; meses: n
                 return (
                   <TableRow key={a.codigo} className={enDeficit ? "bg-red-50 dark:bg-red-950/20" : ""}>
                     <TableCell className="text-xs font-medium">{a.actividad}</TableCell>
-                    <TableCell className="text-right text-xs tabular-nums">{money(a.tarifa)}</TableCell>
+                    <TableCell className="text-right text-xs tabular-nums">{moneyTarifa(a.tarifa)}</TableCell>
                     <TableCell className="text-right text-xs tabular-nums">{ton(a.volumenAcordado)} t</TableCell>
                     <TableCell className="text-right text-xs tabular-nums">{ton(a.volumenReal)} t</TableCell>
                     <TableCell
@@ -520,7 +526,7 @@ function EditorAcuerdos({ onCambio }: { onCambio: () => void }) {
                     <TableRow key={f.id}>
                       <TableCell className="text-xs">{f.idempresa}</TableCell>
                       <TableCell className="text-xs">{f.actividad}</TableCell>
-                      <TableCell className="text-right text-xs tabular-nums">{f.tarifa !== null ? money(f.tarifa) : "—"}</TableCell>
+                      <TableCell className="text-right text-xs tabular-nums">{f.tarifa !== null ? moneyTarifa(f.tarifa) : "—"}</TableCell>
                       <TableCell className="text-right text-xs tabular-nums">
                         {f.volumen_acordado !== null ? ton(f.volumen_acordado) : "—"}
                       </TableCell>

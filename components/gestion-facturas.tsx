@@ -1205,6 +1205,20 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
     }).format(value)
   }
 
+  // La tarifa (a diferencia del Total) puede ser fraccionaria de verdad -- ej.
+  // Huevo $2,95/unidad -- formatCurrency() la redondeaba a $3 (COP por
+  // defecto no usa decimales sin maximumFractionDigits explícito).
+  const formatCurrencyTarifa = (value: number | null) => {
+    if (value === null || value === undefined) return "-"
+    if (Number.isInteger(value)) return formatCurrency(value)
+    return new Intl.NumberFormat("es-CO", {
+      style: "currency",
+      currency: "COP",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value)
+  }
+
   // Helper para detectar si un comprobante adjunto es PDF.
   // Soporta URLs de Vercel Blob con querystring (?...) u otros sufijos.
   // Declarado aqui (antes de las vistas JSX) porque `registrationView`,
@@ -2199,7 +2213,7 @@ export default function GestionFacturas({ onBack }: GestionFacturasProps) {
                         <TableCell className="text-sm">{detalle.producto}</TableCell>
                         <TableCell className="text-sm">{detalle.subcategoria}</TableCell>
                         <TableCell className="text-sm text-right">{detalle.toneladas?.toLocaleString()}</TableCell>
-                        <TableCell className="text-sm text-right">{formatCurrency(detalle.tarifa)}</TableCell>
+                        <TableCell className="text-sm text-right">{formatCurrencyTarifa(detalle.tarifa)}</TableCell>
                         <TableCell className="text-sm text-right font-medium">{formatCurrency(detalle.valor_a_facturar)}</TableCell>
                       </TableRow>
                     ))}

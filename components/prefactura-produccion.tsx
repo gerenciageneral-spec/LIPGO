@@ -53,6 +53,12 @@ import {
 import { PROYECTOS_PRODUCCION } from "@/lib/prefactura-produccion-constants"
 
 const money = (n: number) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO")
+// La tarifa (a diferencia del Total) puede ser fraccionaria de verdad -- ej.
+// Huevo $2,95/unidad -- money() la redondeaba a $3 y ocultaba el decimal real.
+const moneyTarifa = (n: number) => {
+  const v = Number(n) || 0
+  return Number.isInteger(v) ? money(v) : "$" + v.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
 const cant = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { maximumFractionDigits: 2 })
 
 /** Hoy en Colombia (el servidor puede estar en otra zona). */
@@ -682,7 +688,7 @@ function BloqueLineas({
                 )}
               </TableCell>
               <TableCell className="text-right">{cant(l.cantidad)}</TableCell>
-              <TableCell className="text-right text-muted-foreground">{money(l.tarifa)}</TableCell>
+              <TableCell className="text-right text-muted-foreground">{moneyTarifa(l.tarifa)}</TableCell>
               <TableCell className="text-right font-medium">{money(l.total)}</TableCell>
             </TableRow>
           ))}
@@ -725,7 +731,7 @@ function TablaSoporte({ lineas }: { lineas: SoporteProduccion[] }) {
               <td className="py-1 text-right">
                 {cant(l.cantidad)} {l.unidad}
               </td>
-              <td className="py-1 text-right text-muted-foreground">{money(l.tarifa)}</td>
+              <td className="py-1 text-right text-muted-foreground">{moneyTarifa(l.tarifa)}</td>
               <td className="py-1 pr-2 text-right">{money(l.valor)}</td>
             </tr>
           ))}
