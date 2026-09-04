@@ -26,6 +26,10 @@ import {
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
+import { Calendar as CalendarWidget } from "@/components/ui/calendar"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { format, parseISO } from "date-fns"
+import { es } from "date-fns/locale"
 import {
   Bar,
   BarChart,
@@ -301,14 +305,28 @@ export default function DashboardOperacionDia() {
           {/* Selector de fecha compacto */}
           <div className="flex items-center gap-1.5 shrink-0">
             <Calendar className="h-3.5 w-3.5 text-blue-600" aria-hidden />
-            <Input
-              type="date"
-              value={selectedDate}
-              max={today}
-              onChange={(e) => setSelectedDate(e.target.value || today)}
-              className="h-7 text-[11px] w-[130px] px-2"
-              aria-label="Seleccionar fecha de operación"
-            />
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 w-[130px] justify-start px-2 text-[11px] font-normal"
+                  aria-label="Seleccionar fecha de operación"
+                >
+                  {format(parseISO(selectedDate), "dd/MM/yyyy")}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="start">
+                <CalendarWidget
+                  mode="single"
+                  selected={parseISO(selectedDate)}
+                  onSelect={(date) => date && setSelectedDate(format(date, "yyyy-MM-dd"))}
+                  disabled={{ after: parseISO(today) }}
+                  locale={es}
+                />
+              </PopoverContent>
+            </Popover>
             {!isToday && (
               <Button
                 type="button"
