@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
@@ -306,11 +307,11 @@ export function BasculaHistory() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         <div className="space-y-1">
           <Label htmlFor="desde" className="text-xs">Fecha desde</Label>
-          <Input id="desde" type="date" value={desdeFilter} onChange={(e) => setDesdeFilter(e.target.value)} className="h-9 text-sm" />
+          <DatePickerField id="desde" value={desdeFilter} onChange={setDesdeFilter} className="h-9 text-sm" />
         </div>
         <div className="space-y-1">
           <Label htmlFor="hasta" className="text-xs">Fecha hasta</Label>
-          <Input id="hasta" type="date" value={hastaFilter} onChange={(e) => setHastaFilter(e.target.value)} className="h-9 text-sm" />
+          <DatePickerField id="hasta" value={hastaFilter} onChange={setHastaFilter} className="h-9 text-sm" />
         </div>
         <div className="space-y-1">
           <Label htmlFor="placa" className="text-xs">Placa</Label>

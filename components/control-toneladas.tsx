@@ -14,7 +14,7 @@ import { useAuth } from "@/components/auth-provider"
 import { useToast } from "@/components/ui/use-toast"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -167,11 +167,11 @@ export default function ControlToneladas() {
             <CardContent className="flex flex-wrap items-end gap-3 pt-6">
               <div className="space-y-1">
                 <Label>Desde</Label>
-                <Input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className="h-9 w-[150px] text-sm" />
+                <DatePickerField value={desde} onChange={setDesde} className="h-9 w-[150px] text-sm" />
               </div>
               <div className="space-y-1">
                 <Label>Hasta</Label>
-                <Input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} className="h-9 w-[150px] text-sm" />
+                <DatePickerField value={hasta} onChange={setHasta} className="h-9 w-[150px] text-sm" />
               </div>
               <div className="flex flex-wrap gap-1">
                 <Button variant="outline" size="sm" onClick={() => aplicarPreset("hoy")}>

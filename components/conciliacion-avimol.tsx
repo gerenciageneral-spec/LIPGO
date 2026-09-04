@@ -10,7 +10,7 @@ import { Fragment, useCallback, useEffect, useState } from "react"
 import { useToast } from "@/components/ui/use-toast"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -116,11 +116,11 @@ export default function ConciliacionAvimol() {
         <CardContent className="flex flex-wrap items-end gap-3 pt-6">
           <div className="space-y-1">
             <Label>Desde</Label>
-            <Input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className="w-[160px]" />
+            <DatePickerField value={desde} onChange={setDesde} className="w-[160px]" />
           </div>
           <div className="space-y-1">
             <Label>Hasta</Label>
-            <Input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} className="w-[160px]" />
+            <DatePickerField value={hasta} onChange={setHasta} className="w-[160px]" />
           </div>
           <Button onClick={consultar} disabled={loading} className="min-w-[130px]">
             {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Scale className="mr-2 h-4 w-4" />}
