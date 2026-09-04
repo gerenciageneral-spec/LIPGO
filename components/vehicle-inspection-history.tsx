@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
-import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Spinner } from "@/components/ui/spinner"
@@ -156,12 +156,11 @@ export function VehicleInspectionHistory() {
                 <Label htmlFor="desde" className="text-xs font-medium text-muted-foreground">
                   Desde
                 </Label>
-                <Input
+                <DatePickerField
                   id="desde"
-                  type="date"
                   value={desde}
-                  max={hasta || undefined}
-                  onChange={(e) => setDesde(e.target.value)}
+                  maxDate={hasta || undefined}
+                  onChange={setDesde}
                   className="w-full sm:w-44"
                 />
               </div>
@@ -169,12 +168,11 @@ export function VehicleInspectionHistory() {
                 <Label htmlFor="hasta" className="text-xs font-medium text-muted-foreground">
                   Hasta
                 </Label>
-                <Input
+                <DatePickerField
                   id="hasta"
-                  type="date"
                   value={hasta}
-                  min={desde || undefined}
-                  onChange={(e) => setHasta(e.target.value)}
+                  minDate={desde || undefined}
+                  onChange={setHasta}
                   className="w-full sm:w-44"
                 />
               </div>

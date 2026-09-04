@@ -5,6 +5,7 @@ import { useState, useRef, useEffect, useCallback } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -305,7 +306,7 @@ export function VehicleInspectionForm() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="fecha">Fecha</Label>
-                <Input id="fecha" type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="h-11" />
+                <DatePickerField id="fecha" value={fecha} onChange={setFecha} className="h-11" />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="hora_ingreso">Hora Ingreso</Label>
