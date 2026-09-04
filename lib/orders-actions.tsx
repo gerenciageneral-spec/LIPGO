@@ -10,6 +10,7 @@ import { revalidatePath } from "next/cache"
 import { generateAndUploadLoadOrderPDF } from "./pdf-actions" // Added for generateLoadOrder
 import { esPlacaDistribucion, numeroOrdenDistribucion, getPlacasEmpresa, cargarPlacasDistribucion } from "@/lib/distribucion-placas"
 import { cediDeDestino, PLANTAS_ORIGEN, type CediDestino } from "@/lib/cedis-destino"
+import { esProductoPorUnidad } from "@/lib/facturacion-billed-party"
 
 /**
  * Obtiene los IDs de empresa accesibles para el usuario actual desde perfil_acceso_empresas
@@ -2684,6 +2685,31 @@ export async function generateUnloadOrder(orderData: {
       console.log("[v0] Hora sanitaria recuperada para el descargue:", horaSanitariaDesc.hora)
     }
 
+    // Productos por UNIDAD (ej. Huevo/Avimol, $2,95 c/u) NO se dividen entre
+    // 1000 -- esa división es la conversión kg->toneladas y este producto no
+    // se mide en peso. Se consulta subcategoria fresca desde `productos` (no
+    // se confía en el payload del cliente) para reusar la misma regla que ya
+    // gobierna la facturación (`esProductoPorUnidad`), sin reimplementarla.
+    const lineasValidas = orderData.lineas.filter((line) => line.cantidad > 0 && line.producto)
+    const nombresProductos = Array.from(new Set(lineasValidas.map((l) => l.producto!.nombre)))
+    const subcategoriaPorNombre: Record<string, string | null> = {}
+    if (nombresProductos.length > 0) {
+      const { data: productosData } = await supabase.from("productos").select("nombre,subcategoria").in("nombre", nombresProductos)
+      for (const p of productosData ?? []) subcategoriaPorNombre[p.nombre] = p.subcategoria ?? null
+    }
+    const esLineaPorUnidad = lineasValidas.map((line) => esProductoPorUnidad(subcategoriaPorNombre[line.producto!.nombre]))
+    const toneladasPorLinea = lineasValidas.map((line, idx) =>
+      esLineaPorUnidad[idx] ? line.cantidad : (line.cantidad * line.producto!.peso_unitkg) / 1000,
+    )
+    // Si NINGUNA línea es por unidad, el encabezado se calcula EXACTAMENTE
+    // igual que antes (a partir del total que manda el cliente) -- cero
+    // cambio de comportamiento para el resto de productos. Solo cuando hay
+    // una línea por unidad se recalcula sumando línea por línea (necesario
+    // para no dividir esa línea entre 1000).
+    const pesoOrdenAjustado = esLineaPorUnidad.some(Boolean)
+      ? toneladasPorLinea.reduce((s, t) => s + t, 0)
+      : orderData.pesoTotalOrden / 1000
+
     // Insert into cabeceraoc with tipooperacion = "Descargue"
     const { error: headerInsertError } = await supabase.from("cabeceraoc").insert({
       id: nextId,
@@ -2694,7 +2720,7 @@ export async function generateUnloadOrder(orderData: {
       transporte: orderData.transporte,
       tiquetebascula: orderData.tiquete,
       tipooperacion: "Descargue",
-      pesoorden: orderData.pesoTotalOrden / 1000, // Divide by 1000 as per requirements
+      pesoorden: pesoOrdenAjustado, // Productos por unidad ya vienen sin dividir; el resto conserva /1000
       horaorden: currentTime,
       horalote: currentTime,
       horavehiculo: currentTime,
@@ -2731,18 +2757,16 @@ export async function generateUnloadOrder(orderData: {
     console.log("[v0] Next detail ID will be:", nextDetailId)
 
     // Insert detail lines
-    const detailsToInsert = orderData.lineas
-      .filter((line) => line.cantidad > 0 && line.producto)
-      .map((line) => ({
-        id: nextDetailId++,
-        idorden: nextId,
-        numeroorden: (orderData as any).numeroOrden || orderCode,
-        producto: line.producto!.nombre,
-        cantidad: line.cantidad,
-        toneladas: (line.cantidad * line.producto!.peso_unitkg) / 1000,
-        cliente: "",
-        lote: line.lote || null,
-      }))
+    const detailsToInsert = lineasValidas.map((line, idx) => ({
+      id: nextDetailId++,
+      idorden: nextId,
+      numeroorden: (orderData as any).numeroOrden || orderCode,
+      producto: line.producto!.nombre,
+      cantidad: line.cantidad,
+      toneladas: toneladasPorLinea[idx],
+      cliente: "",
+      lote: line.lote || null,
+    }))
 
     console.log("[v0] Inserting", detailsToInsert.length, "detail records")
 
