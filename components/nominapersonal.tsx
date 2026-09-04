@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, Fragment } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useAuth } from "@/components/auth-provider"
@@ -991,19 +992,17 @@ export default function Nominapersonal() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="space-y-1">
               <Label className="text-xs">Fecha Inicio</Label>
-              <Input
-                type="date"
+              <DatePickerField
                 value={filtroFechaInicio}
-                onChange={(e) => setFiltroFechaInicio(e.target.value)}
+                onChange={setFiltroFechaInicio}
                 className="h-8 text-xs"
               />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Fecha Fin</Label>
-              <Input
-                type="date"
+              <DatePickerField
                 value={filtroFechaFin}
-                onChange={(e) => setFiltroFechaFin(e.target.value)}
+                onChange={setFiltroFechaFin}
                 className="h-8 text-xs"
               />
             </div>
@@ -1130,19 +1129,17 @@ export default function Nominapersonal() {
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-2">
             <div className="space-y-1">
               <Label className="text-xs">Fecha Inicio</Label>
-              <Input
-                type="date"
+              <DatePickerField
                 value={filtroFechaInicioDetalle}
-                onChange={(e) => setFiltroFechaInicioDetalle(e.target.value)}
+                onChange={setFiltroFechaInicioDetalle}
                 className="h-8 text-xs"
               />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Fecha Fin</Label>
-              <Input
-                type="date"
+              <DatePickerField
                 value={filtroFechaFinDetalle}
-                onChange={(e) => setFiltroFechaFinDetalle(e.target.value)}
+                onChange={setFiltroFechaFinDetalle}
                 className="h-8 text-xs"
               />
             </div>
@@ -1318,19 +1315,17 @@ export default function Nominapersonal() {
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
             <div className="space-y-1">
               <Label className="text-xs">Fecha Inicio</Label>
-              <Input
-                type="date"
+              <DatePickerField
                 value={filtroFechaInicioLiq}
-                onChange={(e) => setFiltroFechaInicioLiq(e.target.value)}
+                onChange={setFiltroFechaInicioLiq}
                 className="h-8 text-xs"
               />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Fecha Fin</Label>
-              <Input
-                type="date"
+              <DatePickerField
                 value={filtroFechaFinLiq}
-                onChange={(e) => setFiltroFechaFinLiq(e.target.value)}
+                onChange={setFiltroFechaFinLiq}
                 className="h-8 text-xs"
               />
             </div>

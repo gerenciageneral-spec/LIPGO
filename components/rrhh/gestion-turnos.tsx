@@ -18,6 +18,7 @@ import { useAuth } from "@/components/auth-provider"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { Badge } from "@/components/ui/badge"
@@ -427,20 +428,18 @@ export default function GestionTurnos() {
             {/* Vigencia */}
             <div className="space-y-1.5">
               <Label htmlFor="fechaini">Fecha inicio</Label>
-              <Input
+              <DatePickerField
                 id="fechaini"
-                type="date"
                 value={form.fechaini ?? ""}
-                onChange={(e) => updateForm("fechaini", e.target.value || null)}
+                onChange={(value) => updateForm("fechaini", value || null)}
               />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="fechafin">Fecha fin</Label>
-              <Input
+              <DatePickerField
                 id="fechafin"
-                type="date"
                 value={form.fechafin ?? ""}
-                onChange={(e) => updateForm("fechafin", e.target.value || null)}
+                onChange={(value) => updateForm("fechafin", value || null)}
               />
             </div>
 

@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -761,11 +762,10 @@ export default function HeadcountManagement() {
 
             <div className="space-y-2">
               <Label htmlFor="fechainicio">Fecha de Inicio</Label>
-              <Input
+              <DatePickerField
                 id="fechainicio"
-                type="date"
                 value={formData.fechainicio}
-                onChange={(e) => setFormData({ ...formData, fechainicio: e.target.value })}
+                onChange={(value) => setFormData({ ...formData, fechainicio: value })}
               />
             </div>
 
@@ -784,11 +784,10 @@ export default function HeadcountManagement() {
                 novedad "Retiro"; editable manualmente. Vacío = trabajador activo. */}
             <div className="space-y-2">
               <Label htmlFor="fecha_retiro">Fecha de Retiro</Label>
-              <Input
+              <DatePickerField
                 id="fecha_retiro"
-                type="date"
                 value={formData.fecha_retiro}
-                onChange={(e) => setFormData({ ...formData, fecha_retiro: e.target.value })}
+                onChange={(value) => setFormData({ ...formData, fecha_retiro: value })}
               />
             </div>
           </div>

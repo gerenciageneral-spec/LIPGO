@@ -12,6 +12,7 @@ import { useToast } from "@/components/ui/use-toast"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import {
@@ -477,13 +478,12 @@ export default function Liquidaciones() {
                             <div className="space-y-2 p-3">
                               <div className="flex flex-wrap items-center gap-2 text-sm">
                                 <span className="text-muted-foreground">Pagado hasta:</span>
-                                <Input
-                                  type="date"
+                                <DatePickerField
                                   className="h-8 w-40"
                                   value={p.pagado_hasta || ""}
-                                  max={p.fecha_retiro || undefined}
+                                  maxDate={p.fecha_retiro || undefined}
                                   disabled={busy === p.identificacion}
-                                  onChange={(e) => cambiarPagadoHasta(p, e.target.value)}
+                                  onChange={(value) => cambiarPagadoHasta(p, value)}
                                 />
                                 <span className="text-xs text-muted-foreground">
                                   Novedades <strong>posteriores</strong> a esta fecha (nómina pendiente), hasta el retiro.

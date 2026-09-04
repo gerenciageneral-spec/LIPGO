@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { useAuth } from "@/components/auth-provider"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Loader2, Clock, Users, Save, AlertTriangle, Repeat, Bot, CalendarDays } from "lucide-react"
@@ -416,11 +417,10 @@ function TablaAsistenciaDiaria() {
             <Label className="text-xs flex items-center gap-1">
               <CalendarDays className="h-3.5 w-3.5" /> Fecha
             </Label>
-            <Input
-              type="date"
+            <DatePickerField
               value={fecha}
-              max={getColombiaDateString()}
-              onChange={(e) => e.target.value && setFecha(e.target.value)}
+              maxDate={getColombiaDateString()}
+              onChange={(value) => value && setFecha(value)}
               className="h-9 w-[160px] text-sm"
             />
           </div>

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -159,20 +159,18 @@ export function ApprovalHistory() {
 
               <div className="space-y-2">
                 <Label>Fecha Desde</Label>
-                <Input
-                  type="date"
+                <DatePickerField
                   value={filters.fechaDesde}
-                  onChange={(e) => setFilters({ ...filters, fechaDesde: e.target.value })}
+                  onChange={(value) => setFilters({ ...filters, fechaDesde: value })}
                   className="w-full"
                 />
               </div>
 
               <div className="space-y-2">
                 <Label>Fecha Hasta</Label>
-                <Input
-                  type="date"
+                <DatePickerField
                   value={filters.fechaHasta}
-                  onChange={(e) => setFilters({ ...filters, fechaHasta: e.target.value })}
+                  onChange={(value) => setFilters({ ...filters, fechaHasta: value })}
                   className="w-full"
                 />
               </div>

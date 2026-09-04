@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Loader2, Search, Pencil, LayoutDashboard, CalendarDays, TableProperties, MapPin } from "lucide-react"
@@ -391,20 +392,18 @@ export function AttendanceViewer() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="text-sm font-medium">Fecha Inicio</label>
-              <Input
-                type="date"
+              <DatePickerField
                 value={filterStartDate}
-                onChange={(e) => setFilterStartDate(e.target.value)}
+                onChange={setFilterStartDate}
                 className="mt-1"
               />
             </div>
 
             <div>
               <label className="text-sm font-medium">Fecha Fin</label>
-              <Input
-                type="date"
+              <DatePickerField
                 value={filterEndDate}
-                onChange={(e) => setFilterEndDate(e.target.value)}
+                onChange={setFilterEndDate}
                 className="mt-1"
               />
             </div>

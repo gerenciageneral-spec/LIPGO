@@ -14,6 +14,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Switch } from "@/components/ui/switch"
@@ -417,10 +418,9 @@ export function PoliticasHorasExtra() {
                     l="Vigente desde"
                     ayuda="Se compara con el día trabajado, no con la fecha de hoy."
                   >
-                    <Input
-                      type="date"
+                    <DatePickerField
                       value={editando.fechaDesde}
-                      onChange={(e) => setEditando({ ...editando, fechaDesde: e.target.value })}
+                      onChange={(value) => setEditando({ ...editando, fechaDesde: value })}
                     />
                   </Campo>
                 ) : (
@@ -431,7 +431,7 @@ export function PoliticasHorasExtra() {
                     l="Vigente desde"
                     ayuda="Lo hereda de la política base. Para otra vigencia, créala primero y añade allí la excepción."
                   >
-                    <Input type="date" value={editando.fechaDesde} disabled />
+                    <DatePickerField value={editando.fechaDesde} onChange={() => {}} disabled />
                   </Campo>
                 )}
                 <Campo l="Umbral (horas)" ayuda="A partir de cuántas horas cuenta la extra.">
@@ -883,7 +883,7 @@ function Simulador({
             </Select>
           </Campo>
           <Campo l="Fecha">
-            <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
+            <DatePickerField value={fecha} onChange={setFecha} />
           </Campo>
           <Campo l="Entrada programada">
             <Input type="time" value={entradaProg} onChange={(e) => setEntradaProg(e.target.value)} />
@@ -1029,10 +1029,10 @@ function Recalculo({ empresaId, puestos }: { empresaId: number | null; puestos: 
 
         <div className="grid gap-3 md:grid-cols-4">
           <Campo l="Desde">
-            <Input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} />
+            <DatePickerField value={desde} onChange={setDesde} />
           </Campo>
           <Campo l="Hasta">
-            <Input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} />
+            <DatePickerField value={hasta} onChange={setHasta} />
           </Campo>
           <Campo l="Puesto (opcional)">
             <Select value={puesto || "__todos"} onValueChange={(v) => setPuesto(v === "__todos" ? "" : v)}>

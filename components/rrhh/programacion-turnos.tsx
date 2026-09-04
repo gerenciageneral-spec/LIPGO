@@ -29,6 +29,7 @@ import { useAuth } from "@/components/auth-provider"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -708,11 +709,10 @@ export default function ProgramacionTurnos() {
               <Label htmlFor="fecha" className="text-xs font-semibold">
                 Fecha objetivo
               </Label>
-              <Input
+              <DatePickerField
                 id="fecha"
-                type="date"
                 value={fecha}
-                onChange={(e) => setFecha(e.target.value)}
+                onChange={setFecha}
               />
             </div>
 

@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Loader2, Users, UserCheck, UserX, Clock, RefreshCw, CalendarDays, TrendingUp, TrendingDown, Minus, AlertTriangle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { useAuth } from "@/components/auth-provider"
 import {
   BarChart,
@@ -325,12 +326,11 @@ export function AttendanceDailyDashboard() {
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-2">
             <CalendarDays className="h-4 w-4 text-muted-foreground" />
-            <Input
-              type="date"
+            <DatePickerField
               value={selectedDate}
-              onChange={(e) => handleDateChange(e.target.value)}
+              onChange={handleDateChange}
               className="h-8 w-40 text-xs"
-              max={getTodayColombia()}
+              maxDate={getTodayColombia()}
             />
           </div>
           {!isToday && (

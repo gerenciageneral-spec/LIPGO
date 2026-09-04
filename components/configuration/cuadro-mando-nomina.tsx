@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { useToast } from "@/hooks/use-toast"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Info, Loader2, Save, Plus, Trash2, CalendarClock, RefreshCw } from "lucide-react"
@@ -208,12 +209,11 @@ export function CuadroMandoNomina() {
         <div className="flex flex-wrap items-end gap-3 border-t border-border pt-3">
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Rige desde (fecha)</Label>
-            <Input
-              type="date"
+            <DatePickerField
               className="w-44"
               value={params.fechaDesde}
               disabled={!esNueva}
-              onChange={(e) => set("fechaDesde", e.target.value)}
+              onChange={(value) => set("fechaDesde", value)}
             />
           </div>
           <div className="flex gap-2">

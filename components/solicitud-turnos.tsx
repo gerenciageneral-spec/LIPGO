@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -496,10 +497,9 @@ export function SolicitudTurnos() {
                         </Select>
                       </TableCell>
                       <TableCell>
-                        <Input
-                          type="date"
+                        <DatePickerField
                           value={linea.fecharequerida}
-                          onChange={(e) => updateLinea(linea.id, "fecharequerida", e.target.value)}
+                          onChange={(value) => updateLinea(linea.id, "fecharequerida", value)}
                         />
                       </TableCell>
                       <TableCell>
@@ -593,11 +593,10 @@ export function SolicitudTurnos() {
                   <Label htmlFor="filter-fecha-desde" className="text-xs">
                     Fecha solicitud desde
                   </Label>
-                  <Input
+                  <DatePickerField
                     id="filter-fecha-desde"
-                    type="date"
                     value={filterFechaDesde}
-                    onChange={(e) => setFilterFechaDesde(e.target.value)}
+                    onChange={setFilterFechaDesde}
                     className="h-9 w-[170px]"
                   />
                 </div>
@@ -605,11 +604,10 @@ export function SolicitudTurnos() {
                   <Label htmlFor="filter-fecha-hasta" className="text-xs">
                     Fecha solicitud hasta
                   </Label>
-                  <Input
+                  <DatePickerField
                     id="filter-fecha-hasta"
-                    type="date"
                     value={filterFechaHasta}
-                    onChange={(e) => setFilterFechaHasta(e.target.value)}
+                    onChange={setFilterFechaHasta}
                     className="h-9 w-[170px]"
                   />
                 </div>

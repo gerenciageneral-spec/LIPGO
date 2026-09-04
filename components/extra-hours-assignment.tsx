@@ -4,6 +4,7 @@ import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -356,11 +357,10 @@ export function ExtraHoursAssignment({
         <div className="flex items-end gap-2">
           <div className="grid gap-1">
             <Label htmlFor="fecha-he">Fecha</Label>
-            <Input
+            <DatePickerField
               id="fecha-he"
-              type="date"
               value={fecha}
-              onChange={(e) => setFecha(e.target.value)}
+              onChange={setFecha}
               className="w-44"
             />
           </div>

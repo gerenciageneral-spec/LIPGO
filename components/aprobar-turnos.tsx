@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
@@ -982,21 +983,19 @@ export function AprobarTurnos() {
               <div className="flex flex-wrap items-end gap-4">
                 <div className="space-y-1">
                   <Label htmlFor="filtro-fecha-solicitud">Fecha Solicitud</Label>
-                  <Input
+                  <DatePickerField
                     id="filtro-fecha-solicitud"
-                    type="date"
                     value={filtroFechaSolicitud}
-                    onChange={(e) => setFiltroFechaSolicitud(e.target.value)}
+                    onChange={setFiltroFechaSolicitud}
                     className="w-44"
                   />
                 </div>
                 <div className="space-y-1">
                   <Label htmlFor="filtro-fecha-requerida">Fecha Requerida</Label>
-                  <Input
+                  <DatePickerField
                     id="filtro-fecha-requerida"
-                    type="date"
                     value={filtroFechaRequerida}
-                    onChange={(e) => setFiltroFechaRequerida(e.target.value)}
+                    onChange={setFiltroFechaRequerida}
                     className="w-44"
                   />
                 </div>
