@@ -16,7 +16,7 @@ import { useEffect, useMemo, useState } from "react"
 import dynamic from "next/dynamic"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Button } from "@/components/ui/button"
 import {
   Select,
@@ -185,19 +185,17 @@ export default function VisorUbicaciones() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1.5fr_auto] gap-3 items-end">
           <div>
             <label className="text-sm font-medium">Fecha Inicio</label>
-            <Input
-              type="date"
+            <DatePickerField
               value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
+              onChange={setStartDate}
               className="mt-1"
             />
           </div>
           <div>
             <label className="text-sm font-medium">Fecha Fin</label>
-            <Input
-              type="date"
+            <DatePickerField
               value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
+              onChange={setEndDate}
               className="mt-1"
             />
           </div>

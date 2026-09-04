@@ -11,6 +11,7 @@ import * as XLSX from "xlsx"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Label } from "@/components/ui/label"
@@ -115,11 +116,11 @@ function ConsultaMovimientos() {
       <Card className="flex flex-wrap items-end gap-3 p-3">
         <div>
           <Label className="text-[11px] uppercase text-muted-foreground">Desde</Label>
-          <Input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className="mt-1 h-9 w-40" />
+          <DatePickerField value={desde} onChange={setDesde} className="mt-1 h-9 w-40" />
         </div>
         <div>
           <Label className="text-[11px] uppercase text-muted-foreground">Hasta</Label>
-          <Input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} className="mt-1 h-9 w-40" />
+          <DatePickerField value={hasta} onChange={setHasta} className="mt-1 h-9 w-40" />
         </div>
         <div>
           <Label className="text-[11px] uppercase text-muted-foreground">Producto / código</Label>

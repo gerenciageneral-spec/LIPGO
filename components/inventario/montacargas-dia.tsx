@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
@@ -326,12 +327,11 @@ export default function MontacargasDia() {
                 <Label htmlFor="fecha-desde" className="text-xs font-medium text-muted-foreground">
                   Desde
                 </Label>
-                <Input
+                <DatePickerField
                   id="fecha-desde"
-                  type="date"
                   value={fechaDesde}
-                  max={fechaHasta || undefined}
-                  onChange={(e) => setFechaDesde(e.target.value)}
+                  maxDate={fechaHasta || undefined}
+                  onChange={setFechaDesde}
                   className="w-full sm:w-44"
                 />
               </div>
@@ -339,12 +339,11 @@ export default function MontacargasDia() {
                 <Label htmlFor="fecha-hasta" className="text-xs font-medium text-muted-foreground">
                   Hasta
                 </Label>
-                <Input
+                <DatePickerField
                   id="fecha-hasta"
-                  type="date"
                   value={fechaHasta}
-                  min={fechaDesde || undefined}
-                  onChange={(e) => setFechaHasta(e.target.value)}
+                  minDate={fechaDesde || undefined}
+                  onChange={setFechaHasta}
                   className="w-full sm:w-44"
                 />
               </div>

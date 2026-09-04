@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 // `Table` (componente) se omite intencionalmente: introduce un wrapper
 // interno con `overflow-x-auto` que rompe `position: sticky` del thead.
@@ -215,10 +216,9 @@ export function InventoryTransactionsManagement() {
 
               <div className="space-y-2">
                 <Label className="text-xs sm:text-sm">Fecha</Label>
-                <Input
-                  type="date"
+                <DatePickerField
                   value={filters.fecha}
-                  onChange={(e) => setFilters({ ...filters, fecha: e.target.value })}
+                  onChange={(value) => setFilters({ ...filters, fecha: value })}
                   className="h-8 sm:h-9 text-xs sm:text-sm"
                 />
               </div>
