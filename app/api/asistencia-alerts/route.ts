@@ -50,12 +50,14 @@ export async function GET(request: Request) {
       })
       .split(",")[0]
 
-    // 1) Headcount activos
+    // 1) Headcount activos, SIN administrativos: no marcan turno, asi que
+    //    alertar por su "inasistencia" seria una alarma permanente y falsa.
     const { data: headcount, error: hcErr } = await supabaseAdmin
       .from("headcount")
       .select("identificacion, nombre")
       .eq("idempresa", empresaId)
       .eq("estado", "Activo")
+      .not("admin", "is", true)
       .order("nombre", { ascending: true })
 
     if (hcErr) {

@@ -49,12 +49,21 @@ export async function GET(request: Request) {
 
     console.log("[v0] Fetching attendance table for date:", colombiaDate, "empresa:", empresaId)
 
-    // Get all active people from headcount
+    // Roster del dia: activos del proyecto, SIN el personal administrativo.
+    //
+    // El administrativo no marca turno ni se le asigna puesto, asi que en esta
+    // tabla solo seria ruido: filas permanentes en "Ausente" que ensucian el
+    // conteo de presentes y las alertas de novedad.
+    //
+    // `not("admin", "is", true)` y no `neq(true)`: la columna es nullable y la
+    // mayoria de los operativos la tienen en null --nunca se les puso la
+    // bandera--, y un `neq` descartaria justamente a esos.
     const { data: headcountData, error: headcountError } = await supabaseAdmin
       .from("headcount")
       .select("identificacion, nombre")
       .eq("idempresa", empresaId)
       .eq("estado", "Activo")
+      .not("admin", "is", true)
       .order("nombre", { ascending: true })
 
     if (headcountError) {

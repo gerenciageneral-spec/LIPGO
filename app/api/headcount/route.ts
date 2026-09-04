@@ -31,7 +31,17 @@ export async function GET(request: NextRequest) {
       // que alguien los traslade.
       query = query.eq("admin", true).or(`idempresa.eq.${empresaId},idempresa.is.null`)
     } else {
-      query = query.eq("idempresa", empresaId)
+      // Operativo = del proyecto y NO administrativo.
+      //
+      // El `not("admin", "is", true)` hace falta explicitamente: `admin` es
+      // nullable y en Postgres `admin <> true` descarta los NULL, que son la
+      // mayoria de los operativos --nadie les puso la bandera en false--. Con
+      // `not is true` entran los false Y los null, que es lo correcto.
+      //
+      // Antes esto no hacia falta porque los administrativos vivian en su
+      // propia lista sin filtro de empresa; al amarrarlos al proyecto pasaron
+      // a cumplir tambien la condicion de esta rama y salian en las dos.
+      query = query.eq("idempresa", empresaId).not("admin", "is", true)
     }
 
     const { data, error } = await query

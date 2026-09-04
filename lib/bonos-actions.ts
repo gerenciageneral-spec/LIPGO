@@ -110,7 +110,11 @@ export async function getColaboradoresBonos(
       q = q.eq("admin", true)
       if (idempresa != null) q = q.or(`idempresa.eq.${idempresa},idempresa.is.null`)
     } else if (idempresa != null) {
-      q = q.eq("idempresa", idempresa)
+      // Operativo = del proyecto y NO administrativo. El `not is true` incluye
+      // los `admin` en false Y en null --la columna es nullable y la mayoria de
+      // los operativos no la tienen puesta--; un `neq(true)` descartaria los
+      // null, que son casi todos.
+      q = q.eq("idempresa", idempresa).not("admin", "is", true)
     }
     const { data, error } = await q
     if (error) return { success: false, data: [], message: error.message }

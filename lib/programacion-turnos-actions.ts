@@ -164,11 +164,16 @@ export async function getActiveHeadcountForScheduling(
   if (!empresaId) return []
 
   const supabase = await getSupabaseAdmin()
+  // Se excluye al personal administrativo: no se le programan turnos, y
+  // ofrecerlo en el selector solo permite crearle una fila de asistencia que
+  // despues nadie sabe por que existe. Ver la nota de
+  // app/api/attendance/table/route.ts sobre `not is true` y los null.
   const { data, error } = await supabase
     .from("headcount")
     .select("id, nombre, identificacion")
     .eq("idempresa", empresaId)
     .eq("estado", "Activo")
+    .not("admin", "is", true)
     .order("nombre", { ascending: true })
 
   if (error) {

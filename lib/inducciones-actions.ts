@@ -800,7 +800,9 @@ export async function listTrabajadoresEmpresa(
       query = query.eq("admin", true)
       if (idempresa != null) query = query.or(`idempresa.eq.${idempresa},idempresa.is.null`)
     } else if (idempresa != null) {
-      query = query.eq("idempresa", idempresa)
+      // Operativo = del proyecto y NO administrativo. Ver la nota de
+      // lib/bonos-actions.ts sobre por que `not is true` y no `neq(true)`.
+      query = query.eq("idempresa", idempresa).not("admin", "is", true)
     }
 
     const { data, error } = await query
