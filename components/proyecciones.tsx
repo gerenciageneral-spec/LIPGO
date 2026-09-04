@@ -14,7 +14,7 @@ import { toast } from "@/components/ui/use-toast"
 import { createClient } from "@/lib/supabase-client"
 import { Calendar } from "@/components/ui/calendar"
 import { useAuth } from "@/components/auth-provider"
-import { format } from "date-fns"
+import { format, parseISO } from "date-fns"
 import { es } from "date-fns/locale"
 import { saveTolva, updateTolva, saveProyecciones } from "@/lib/orders-actions"
 
@@ -554,17 +554,32 @@ console.log("[v0] Proyecciones: Loading employees for empresa:", selectedEmpresa
           <div className="grid grid-cols-3 gap-4">
             <div className="space-y-2">
               <Label htmlFor="fechaFabricacion">Fecha de Proyección</Label>
-              <Input
-                id="fechaFabricacion"
-                type="date"
-                value={tolvaData.fechaFabricacion}
-                onChange={(e) =>
-                  setTolvaData((prev) => ({
-                    ...prev,
-                    fechaFabricacion: e.target.value,
-                  }))
-                }
-              />
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    id="fechaFabricacion"
+                    type="button"
+                    variant="outline"
+                    className="w-full justify-start font-normal"
+                  >
+                    {format(parseISO(tolvaData.fechaFabricacion), "dd/MM/yyyy")}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    mode="single"
+                    selected={parseISO(tolvaData.fechaFabricacion)}
+                    onSelect={(date) =>
+                      date &&
+                      setTolvaData((prev) => ({
+                        ...prev,
+                        fechaFabricacion: format(date, "yyyy-MM-dd"),
+                      }))
+                    }
+                    locale={es}
+                  />
+                </PopoverContent>
+              </Popover>
             </div>
 
             <div className="space-y-2">
