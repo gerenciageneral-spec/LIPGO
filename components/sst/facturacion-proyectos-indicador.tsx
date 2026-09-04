@@ -9,10 +9,9 @@ import { useCallback, useEffect, useState } from "react"
 import { Loader2, Receipt, FileWarning, ShieldCheck, Building2, RefreshCw } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { SST_TOKENS } from "@/components/sst/sst-utils"
-import { SigHeader, SigKpi, SigSection, SigFilterBar, SigField, sigControl } from "@/components/sst/sig-ui"
+import { SigHeader, SigKpi, SigSection, SigFilterBar, SigField, SigDatePicker } from "@/components/sst/sig-ui"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { getFacturacionPorProyecto } from "@/lib/sig-actions"
 
 const mesActualIni = () => {
@@ -57,10 +56,10 @@ export function FacturacionProyectosIndicador() {
 
       <SigFilterBar>
         <SigField label="Desde">
-          <Input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className={`${sigControl} w-auto`} />
+          <SigDatePicker value={desde} onChange={setDesde} />
         </SigField>
         <SigField label="Hasta">
-          <Input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} className={`${sigControl} w-auto`} />
+          <SigDatePicker value={hasta} onChange={setHasta} />
         </SigField>
         <Button size="sm" variant="outline" onClick={() => { setDesde(mesActualIni()); setHasta("") }}>Este mes</Button>
         <Button size="sm" variant="ghost" onClick={() => { setDesde("2020-01-01"); setHasta("") }}>Ver histórico</Button>

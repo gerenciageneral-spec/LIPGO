@@ -17,7 +17,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { useToast } from "@/hooks/use-toast"
 import { SST_TOKENS } from "@/components/sst/sst-utils"
-import { SigHeader, SigFilterBar, SigField, SigKpi, sigControl } from "@/components/sst/sig-ui"
+import { SigHeader, SigFilterBar, SigField, SigKpi, SigDatePicker } from "@/components/sst/sig-ui"
 import { useAuth } from "@/components/auth-provider"
 import {
   getIndicadores,
@@ -254,10 +254,10 @@ export function IndicadoresSIG() {
 
       <SigFilterBar cliente={selectedEmpresaNombre}>
         <SigField label="Desde">
-          <Input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className={`${sigControl} w-auto`} />
+          <SigDatePicker value={desde} onChange={setDesde} />
         </SigField>
         <SigField label="Hasta">
-          <Input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} className={`${sigControl} w-auto`} />
+          <SigDatePicker value={hasta} onChange={setHasta} />
         </SigField>
         {(desde || hasta) && (
           <Button variant="ghost" size="sm" onClick={() => { setDesde(""); setHasta("") }}>Limpiar</Button>

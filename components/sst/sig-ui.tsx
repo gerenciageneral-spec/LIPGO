@@ -6,6 +6,11 @@
 
 import type { ReactNode } from "react"
 import { SST_TOKENS } from "@/components/sst/sst-utils"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Calendar } from "@/components/ui/calendar"
+import { format, parseISO } from "date-fns"
+import { es } from "date-fns/locale"
+import { cn } from "@/lib/utils"
 
 /** Encabezado de página con banner en degradado de marca LIP. */
 export function SigHeader({
@@ -81,6 +86,45 @@ export function SigField({ label, children }: { label: string; children: ReactNo
 /** Clase para selects/inputs con estilo de marca (fondo light, texto ink). */
 export const sigControl =
   "h-9 rounded-lg border bg-[#E6F4F8]/50 px-2.5 text-sm font-medium text-[#0A2540] outline-none transition focus:ring-2 focus:ring-[#00B4CC]/40"
+
+/**
+ * Selector de fecha con estilo de marca -- reemplaza `<input type="date">`
+ * dentro de `SigFilterBar`/`SigField`. Usa Popover (sin controlar open/
+ * onOpenChange) + Calendar, el mismo patrón ya usado en
+ * dashboard-operacion-dia.tsx/tolva.tsx/proyecciones.tsx: el calendario
+ * nativo del navegador se cerraba al navegar entre meses con las flechas.
+ * `value`/`onChange` siguen siendo string "YYYY-MM-DD" (o "" vacío) para no
+ * tocar el resto de la lógica de cada módulo que ya filtra por ese string.
+ */
+export function SigDatePicker({
+  value,
+  onChange,
+  placeholder = "Seleccionar fecha",
+  className,
+}: {
+  value: string
+  onChange: (value: string) => void
+  placeholder?: string
+  className?: string
+}) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button type="button" className={cn(sigControl, "inline-flex w-auto items-center", className)}>
+          {value ? format(parseISO(value), "dd/MM/yyyy") : <span className="text-muted-foreground">{placeholder}</span>}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-auto p-0" align="start">
+        <Calendar
+          mode="single"
+          selected={value ? parseISO(value) : undefined}
+          onSelect={(date) => onChange(date ? format(date, "yyyy-MM-dd") : "")}
+          locale={es}
+        />
+      </PopoverContent>
+    </Popover>
+  )
+}
 
 /**
  * Tarjeta KPI premium: número grande y jerárquico, chip de ícono tintado,

@@ -11,7 +11,7 @@ import { Loader2, Smile, Meh, Frown, Star, Target, History, Wand2, Trash2, Info 
 import { useAuth } from "@/components/auth-provider"
 import { useToast } from "@/hooks/use-toast"
 import { SST_TOKENS } from "@/components/sst/sst-utils"
-import { SigHeader, SigFilterBar, SigField, SigKpi, SigSection, sigControl } from "@/components/sst/sig-ui"
+import { SigHeader, SigFilterBar, SigField, SigKpi, SigSection, SigDatePicker } from "@/components/sst/sig-ui"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -161,10 +161,10 @@ export function CalificacionConductor() {
 
       <SigFilterBar cliente={selectedEmpresaNombre}>
         <SigField label="Desde">
-          <Input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className={`${sigControl} w-auto`} />
+          <SigDatePicker value={desde} onChange={setDesde} />
         </SigField>
         <SigField label="Hasta">
-          <Input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} className={`${sigControl} w-auto`} />
+          <SigDatePicker value={hasta} onChange={setHasta} />
         </SigField>
         {(desde || hasta) && (
           <Button variant="ghost" size="sm" onClick={() => { setDesde(""); setHasta("") }}>Limpiar</Button>

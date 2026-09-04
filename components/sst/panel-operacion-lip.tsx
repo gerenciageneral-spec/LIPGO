@@ -9,11 +9,10 @@
 import { useEffect, useMemo, useState } from "react"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { useToast } from "@/hooks/use-toast"
 import { SST_TOKENS } from "@/components/sst/sst-utils"
-import { SigHeader, SigFilterBar, SigField, SigKpi, SigSection, sigControl } from "@/components/sst/sig-ui"
+import { SigHeader, SigFilterBar, SigField, SigKpi, SigSection, SigDatePicker } from "@/components/sst/sig-ui"
 import { useAuth } from "@/components/auth-provider"
 import { getPanelOperacionLIP } from "@/lib/sig-actions"
 import { Loader2, Truck, Users, ShieldCheck, Camera, Clock, Package, Timer, Smile, Target, Gauge, Receipt, FileWarning, ChevronDown } from "lucide-react"
@@ -307,10 +306,10 @@ export function PanelOperacionLIP() {
 
       <SigFilterBar cliente={selectedEmpresaNombre}>
         <SigField label="Desde">
-          <Input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className={`${sigControl} w-auto`} />
+          <SigDatePicker value={desde} onChange={setDesde} />
         </SigField>
         <SigField label="Hasta">
-          <Input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} className={`${sigControl} w-auto`} />
+          <SigDatePicker value={hasta} onChange={setHasta} />
         </SigField>
         {(desde || hasta) && (
           <Button variant="ghost" size="sm" onClick={() => { setDesde(""); setHasta("") }}>Limpiar</Button>
