@@ -54,6 +54,14 @@ import { CierreFinanciero } from "@/components/cierre-financiero"
 import { GESTION_LIPGO_DESDE } from "@/lib/facturacion-constantes"
 
 const money = (n: number) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO")
+// Tarifas por unidad (ej. Huevo $2,95) pierden el sentido si se redondean a
+// peso entero -- $3 no deja ver que la tarifa real es $2,95. money() sigue
+// igual (redondeado) para Total/valor_a_facturar; esto es solo para mostrar
+// la TARIFA cuando trae decimales reales.
+const moneyTarifa = (n: number) => {
+  const v = Number(n) || 0
+  return Number.isInteger(v) ? money(v) : "$" + v.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
 const ton = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { maximumFractionDigits: 2 })
 // La columna de cantidad es una sola para toneladas, horas, turnos y unidades:
 // la unidad va al lado del número y SOLO las toneladas suman al tonelaje del documento.
@@ -151,7 +159,7 @@ function SoporteAnexo({ lineas }: { lineas: SoporteLinea[] }) {
                     <td className="py-1 text-right tabular-nums">
                       {ton(l.toneladas)} <span className="text-[9px] text-muted-foreground">{uLabel(l.unidad)}</span>
                     </td>
-                    <td className="py-1 text-right tabular-nums text-muted-foreground">{money(l.tarifa)}</td>
+                    <td className="py-1 text-right tabular-nums text-muted-foreground">{moneyTarifa(l.tarifa)}</td>
                     <td className="py-1 pr-2 text-right tabular-nums">{money(l.valor)}</td>
                   </tr>
                 ))}
@@ -1161,7 +1169,7 @@ export function CuadroControlFacturacion() {
                               </span>
                             </TableCell>
                             <TableCell className="text-right text-xs tabular-nums">
-                              {f.sin_tarifa ? <span className="font-semibold text-red-600">sin tarifa</span> : money(f.tarifa || 0)}
+                              {f.sin_tarifa ? <span className="font-semibold text-red-600">sin tarifa</span> : moneyTarifa(f.tarifa || 0)}
                             </TableCell>
                             <TableCell className="text-right text-xs tabular-nums">{money(f.valor_a_facturar)}</TableCell>
                             <TableCell className="text-xs">
@@ -1431,7 +1439,7 @@ export function CuadroControlFacturacion() {
                                           {ton(it.toneladas)}
                                           {!esTon(it.unidad) && <span className="ml-1 text-[9px] text-muted-foreground">{uLabel(it.unidad)}</span>}
                                         </td>
-                                        <td className="py-1.5 text-right tabular-nums text-muted-foreground">{money(it.tarifa)}</td>
+                                        <td className="py-1.5 text-right tabular-nums text-muted-foreground">{moneyTarifa(it.tarifa)}</td>
                                         <td className="py-1.5 text-right tabular-nums">
                                           <span className="inline-flex items-center justify-end gap-1.5">
                                             <span className={`inline-block h-2 w-2 rounded-full ${it.valorFacturado > 0 ? "bg-red-500" : "bg-emerald-500"}`} />
@@ -1511,7 +1519,7 @@ export function CuadroControlFacturacion() {
                                                       <td className="py-1 text-right tabular-nums">
                                                         {ton(l.toneladas)} {uLabel(l.unidad)}
                                                       </td>
-                                                      <td className="py-1 text-right tabular-nums text-muted-foreground">{money(l.tarifa)}</td>
+                                                      <td className="py-1 text-right tabular-nums text-muted-foreground">{moneyTarifa(l.tarifa)}</td>
                                                       <td className="py-1 pr-2 text-right tabular-nums">{money(l.valor)}</td>
                                                     </tr>
                                                   ))}
