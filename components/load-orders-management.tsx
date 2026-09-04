@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import {
   FileTextIcon,
@@ -512,11 +513,10 @@ export function LoadOrdersManagement() {
               <Label htmlFor="filter-fecha-orden" className="text-xs">
                 Fecha Orden
               </Label>
-              <Input
+              <DatePickerField
                 id="filter-fecha-orden"
-                type="date"
                 value={filterFechaOrden}
-                onChange={(e) => setFilterFechaOrden(e.target.value)}
+                onChange={setFilterFechaOrden}
                 className="h-8 text-xs"
               />
             </div>
@@ -525,11 +525,10 @@ export function LoadOrdersManagement() {
               <Label htmlFor="filter-fecha-cargue" className="text-xs">
                 Fecha Cargue
               </Label>
-              <Input
+              <DatePickerField
                 id="filter-fecha-cargue"
-                type="date"
                 value={filterFechaCargue}
-                onChange={(e) => setFilterFechaCargue(e.target.value)}
+                onChange={setFilterFechaCargue}
                 className="h-8 text-xs"
               />
             </div>
@@ -749,11 +748,10 @@ export function LoadOrdersManagement() {
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <Label htmlFor="nueva-fecha-cargue">Nueva Fecha de Cargue</Label>
-              <Input
+              <DatePickerField
                 id="nueva-fecha-cargue"
-                type="date"
                 value={newFechaCargue}
-                onChange={(e) => setNewFechaCargue(e.target.value)}
+                onChange={setNewFechaCargue}
               />
             </div>
           </div>

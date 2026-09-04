@@ -15,6 +15,7 @@ import {
 } from "@/lib/actions"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -513,10 +514,9 @@ function OrderEditPage({ order, onSave, onCancel }: OrderEditPageProps) {
               <Label className="text-[10px]">
                 Fecha del Pedido <span className="text-red-500">*</span>
               </Label>
-              <Input
-                type="date"
+              <DatePickerField
                 value={fechaPedido}
-                onChange={(e) => setFechaPedido(e.target.value)}
+                onChange={setFechaPedido}
                 className="text-[10px] h-7"
               />
             </div>
@@ -525,10 +525,9 @@ function OrderEditPage({ order, onSave, onCancel }: OrderEditPageProps) {
               <Label className="text-[10px]">
                 Fecha Programada <span className="text-red-500">*</span>
               </Label>
-              <Input
-                type="date"
+              <DatePickerField
                 value={fechaProgramada}
-                onChange={(e) => setFechaProgramada(e.target.value)}
+                onChange={setFechaProgramada}
                 className="text-[10px] h-7"
               />
             </div>

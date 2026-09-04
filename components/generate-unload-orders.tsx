@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Command, CommandList, CommandGroup, CommandInput, CommandItem } from "@/components/ui/command"
 import { Check, ChevronsUpDown } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -359,14 +360,13 @@ console.log("[v0] selectedEmpresaId:", selectedEmpresaId)
           <div className="grid grid-cols-3 gap-4">
             <div className="space-y-2">
               <Label htmlFor="fecha-descargue">Fecha de Descargue</Label>
-              <Input
+              <DatePickerField
                 id="fecha-descargue"
-                type="date"
                 value={orderData.fechaDescargue}
-                onChange={(e) =>
+                onChange={(value) =>
                   setOrderData((prev) => ({
                     ...prev,
-                    fechaDescargue: e.target.value,
+                    fechaDescargue: value,
                   }))
                 }
               />

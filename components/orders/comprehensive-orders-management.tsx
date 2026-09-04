@@ -16,6 +16,7 @@ import {
 } from "@/lib/orders-actions"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Textarea } from "@/components/ui/textarea"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import {
@@ -758,20 +759,18 @@ export function ComprehensiveOrdersManagement() {
 
             <div>
               <Label className="text-xs">Fecha Desde</Label>
-              <Input
-                type="date"
+              <DatePickerField
                 value={fechaDesde}
-                onChange={(e) => setFechaDesde(e.target.value)}
+                onChange={setFechaDesde}
                 className="h-8 text-xs"
               />
             </div>
 
             <div>
               <Label className="text-xs">Fecha Hasta</Label>
-              <Input
-                type="date"
+              <DatePickerField
                 value={fechaHasta}
-                onChange={(e) => setFechaHasta(e.target.value)}
+                onChange={setFechaHasta}
                 className="h-8 text-xs"
               />
             </div>

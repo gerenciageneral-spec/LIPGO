@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Badge } from "@/components/ui/badge"
 import {
   Dialog,
@@ -143,7 +144,7 @@ export function ApoyoCargue() {
         <CardContent className="space-y-4">
           <div className="flex items-center gap-3">
             <label className="text-sm font-medium">Fecha</label>
-            <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="w-44" />
+            <DatePickerField value={fecha} onChange={setFecha} className="w-44" />
             <Button variant="outline" size="sm" onClick={cargarOrdenes} disabled={loading} className="gap-2">
               <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
               Actualizar

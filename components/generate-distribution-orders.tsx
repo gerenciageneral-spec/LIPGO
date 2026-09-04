@@ -7,6 +7,7 @@ import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -320,14 +321,13 @@ export function GenerateDistributionOrders() {
           <div className="grid grid-cols-3 gap-4">
             <div className="space-y-2">
               <Label htmlFor="fecha-distribucion">Fecha de Distribución</Label>
-              <Input
+              <DatePickerField
                 id="fecha-distribucion"
-                type="date"
                 value={orderData.fechaDistribucion}
-                onChange={(e) =>
+                onChange={(value) =>
                   setOrderData((prev) => ({
                     ...prev,
-                    fechaDistribucion: e.target.value,
+                    fechaDistribucion: value,
                   }))
                 }
               />

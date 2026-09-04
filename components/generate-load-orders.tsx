@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { MultiSelect } from "@/components/ui/multi-select"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { ChevronsUpDown } from "lucide-react" // Added ChevronsUpDown for combobox
 import { cn } from "@/lib/utils"
@@ -898,11 +899,10 @@ function GenerateLoadOrdersComponent() {
                     <Label htmlFor="fechaOrdenCargue" className="text-[10px] lg:text-xs">
                       Fecha Orden de Cargue
                     </Label>
-                    <Input
+                    <DatePickerField
                       id="fechaOrdenCargue"
-                      type="date"
                       value={fechaOrdenCargue}
-                      onChange={(e) => setFechaOrdenCargue(e.target.value)}
+                      onChange={setFechaOrdenCargue}
                       className={`bg-white h-6 lg:h-7 text-[10px] lg:text-xs ${
                         missingFields.has("fechaCargue") ? "border-red-500 border-2" : ""
                       }`}
@@ -913,11 +913,10 @@ function GenerateLoadOrdersComponent() {
                     <Label htmlFor="fechaEntrega" className="text-[10px] lg:text-xs">
                       Fecha Entrega
                     </Label>
-                    <Input
+                    <DatePickerField
                       id="fechaEntrega"
-                      type="date"
                       value={fechaEntrega}
-                      onChange={(e) => setFechaEntrega(e.target.value)}
+                      onChange={setFechaEntrega}
                       className={`bg-white h-6 lg:h-7 text-[10px] lg:text-xs ${
                         missingFields.has("fechaEntrega") ? "border-red-500 border-2" : ""
                       }`}
@@ -992,11 +991,10 @@ function GenerateLoadOrdersComponent() {
                     Fecha
                   </Label>
                   <div className="space-y-0.5">
-                    <Input
+                    <DatePickerField
                       id="fecha-filter"
-                      type="date"
                       value={selectedFecha}
-                      onChange={(e) => setSelectedFecha(e.target.value)}
+                      onChange={setSelectedFecha}
                       className="bg-white h-6 lg:h-7 text-[10px] lg:text-xs"
                     />
                     {selectedFecha && (

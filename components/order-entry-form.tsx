@@ -29,6 +29,7 @@ import { generateAndUploadOrderPDF } from "@/lib/pdf-actions" // Imported for PD
 import { toast } from "@/components/ui/use-toast"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
@@ -810,11 +811,10 @@ function OrderEntryForm({ onManageOrders, editOrderId }: OrderEntryFormProps = {
 
             <div className="space-y-2">
               <Label htmlFor="fecha-programada">Fecha Programada *</Label>
-              <Input
+              <DatePickerField
                 id="fecha-programada"
-                type="date"
                 value={fechaProgramada}
-                onChange={(e) => setFechaProgramada(e.target.value)}
+                onChange={setFechaProgramada}
               />
             </div>
 

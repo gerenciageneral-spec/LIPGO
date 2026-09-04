@@ -26,6 +26,7 @@ import {
 import { uploadPDF } from "@/lib/pdf-actions"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import {
   Loader2,
@@ -1351,11 +1352,10 @@ export function OrdersManagement(_props?: { onEditOrder?: (orderId: number) => v
 
                 <div className="space-y-2">
                   <Label htmlFor="edit-fecha-programada">Fecha Programada *</Label>
-                  <Input
+                  <DatePickerField
                     id="edit-fecha-programada"
-                    type="date"
                     value={editFechaProgramada}
-                    onChange={(e) => setEditFechaProgramada(e.target.value)}
+                    onChange={setEditFechaProgramada}
                   />
                 </div>
 
@@ -1802,24 +1802,22 @@ export function OrdersManagement(_props?: { onEditOrder?: (orderId: number) => v
                       <Label htmlFor="filter-fecha-desde" className="text-xs sm:text-sm">
                         Fecha Desde
                       </Label>
-                      <Input
+                      <DatePickerField
                         id="filter-fecha-desde"
-                        type="date"
                         className="h-8 sm:h-9 text-xs"
                         value={fechaDesde}
-                        onChange={(e) => setFechaDesde(e.target.value)}
+                        onChange={setFechaDesde}
                       />
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="filter-fecha-hasta" className="text-xs sm:text-sm">
                         Fecha Hasta
                       </Label>
-                      <Input
+                      <DatePickerField
                         id="filter-fecha-hasta"
-                        type="date"
                         className="h-8 sm:h-9 text-xs"
                         value={fechaHasta}
-                        onChange={(e) => setFechaHasta(e.target.value)}
+                        onChange={setFechaHasta}
                       />
                     </div>
                   </div>
