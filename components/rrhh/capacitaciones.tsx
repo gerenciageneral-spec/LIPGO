@@ -12,6 +12,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import {
   Select,
@@ -491,25 +492,22 @@ export default function Capacitaciones() {
                 </div>
                 <div>
                   <Label htmlFor="fecha">Fecha *</Label>
-                  <Input
+                  <DatePickerField
                     id="fecha"
-                    type="date"
                     value={formData.fecha}
-                    onChange={(e) =>
-                      setFormData({ ...formData, fecha: e.target.value })
+                    onChange={(value) =>
+                      setFormData({ ...formData, fecha: value })
                     }
-                    required
                   />
                 </div>
                 <div>
                   <Label htmlFor="fecha_fin">Fecha fin</Label>
-                  <Input
+                  <DatePickerField
                     id="fecha_fin"
-                    type="date"
                     value={formData.fecha_fin}
-                    min={formData.fecha || undefined}
-                    onChange={(e) =>
-                      setFormData({ ...formData, fecha_fin: e.target.value })
+                    minDate={formData.fecha || undefined}
+                    onChange={(value) =>
+                      setFormData({ ...formData, fecha_fin: value })
                     }
                   />
                 </div>

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
@@ -504,11 +505,10 @@ export default function ExamenesMedicos() {
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="fecha_examen">Fecha del examen</Label>
-                    <Input
+                    <DatePickerField
                       id="fecha_examen"
-                      type="date"
                       value={fechaExamen}
-                      onChange={(e) => setFechaExamen(e.target.value)}
+                      onChange={setFechaExamen}
                     />
                   </div>
                 </div>

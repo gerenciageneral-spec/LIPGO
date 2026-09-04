@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { useToast } from "@/hooks/use-toast"
 import { Plus, Edit2, Trash2 } from "lucide-react"
 import {
@@ -156,7 +157,7 @@ export default function DotacionEPPManagement() {
                   ))}
                 </SelectContent>
               </Select>
-              <Input type="date" value={formData.fecha_entrega} onChange={(e) => setFormData({ ...formData, fecha_entrega: e.target.value })} />
+              <DatePickerField value={formData.fecha_entrega} onChange={(value) => setFormData({ ...formData, fecha_entrega: value })} />
               <Input placeholder="Tipo de Item" value={formData.tipo_item} onChange={(e) => setFormData({ ...formData, tipo_item: e.target.value })} />
               <Input placeholder="Item" value={formData.item} onChange={(e) => setFormData({ ...formData, item: e.target.value })} />
               <Input placeholder="Talla" value={formData.talla} onChange={(e) => setFormData({ ...formData, talla: e.target.value })} />

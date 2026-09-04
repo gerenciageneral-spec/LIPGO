@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { useToast } from "@/hooks/use-toast"
 import { Plus, Edit2, Trash2 } from "lucide-react"
 import {
@@ -173,8 +174,8 @@ export default function ContratosManagement() {
                   ))}
                 </SelectContent>
               </Select>
-              <Input type="date" value={formData.fecha_inicio} onChange={(e) => setFormData({ ...formData, fecha_inicio: e.target.value })} />
-              <Input type="date" value={formData.fecha_fin} onChange={(e) => setFormData({ ...formData, fecha_fin: e.target.value })} placeholder="Fecha fin (opcional)" />
+              <DatePickerField value={formData.fecha_inicio} onChange={(value) => setFormData({ ...formData, fecha_inicio: value })} />
+              <DatePickerField value={formData.fecha_fin} onChange={(value) => setFormData({ ...formData, fecha_fin: value })} placeholder="Fecha fin (opcional)" />
               <Select value={formData.tipo_contrato} onValueChange={(val) => setFormData({ ...formData, tipo_contrato: val })}>
                 <SelectTrigger>
                   <SelectValue />

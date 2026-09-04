@@ -56,6 +56,7 @@ import { SigHeader, SigKpi, SigSection, SigFilterBar, SigField, sigControl } fro
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
@@ -631,7 +632,7 @@ export default function RecobroIncapacidades() {
                 </div>
                 <div className="space-y-1.5 col-span-2">
                   <Label htmlFor="fr">Fecha de radicación</Label>
-                  <Input id="fr" type="date" value={gForm.fecha_radicado_recobro} onChange={(e) => setGForm({ ...gForm, fecha_radicado_recobro: e.target.value })} />
+                  <DatePickerField id="fr" value={gForm.fecha_radicado_recobro} onChange={(value) => setGForm({ ...gForm, fecha_radicado_recobro: value })} />
                 </div>
                 <div className="space-y-1.5 col-span-2">
                   <Label htmlFor="obs">Observación (glosa, nota)</Label>

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -739,20 +740,18 @@ export default function Ausentismos() {
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label htmlFor="fi">Fecha inicial</Label>
-                    <Input
+                    <DatePickerField
                       id="fi"
-                      type="date"
                       value={form.fecha_inicial}
-                      onChange={(e) => setForm({ ...form, fecha_inicial: e.target.value })}
+                      onChange={(value) => setForm({ ...form, fecha_inicial: value })}
                     />
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="ff">Fecha final</Label>
-                    <Input
+                    <DatePickerField
                       id="ff"
-                      type="date"
                       value={form.fecha_final}
-                      onChange={(e) => setForm({ ...form, fecha_final: e.target.value })}
+                      onChange={(value) => setForm({ ...form, fecha_final: value })}
                     />
                   </div>
                 </div>

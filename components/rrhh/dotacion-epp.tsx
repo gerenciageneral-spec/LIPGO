@@ -12,6 +12,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import {
   Table,
@@ -346,17 +347,15 @@ export default function DotacionEPP() {
                 </div>
                 <div>
                   <Label htmlFor="fecha_entrega">Fecha Entrega *</Label>
-                  <Input
+                  <DatePickerField
                     id="fecha_entrega"
-                    type="date"
                     value={formData.fecha_entrega}
-                    onChange={(e) =>
+                    onChange={(value) =>
                       setFormData({
                         ...formData,
-                        fecha_entrega: e.target.value,
+                        fecha_entrega: value,
                       })
                     }
-                    required
                   />
                 </div>
                 <div>

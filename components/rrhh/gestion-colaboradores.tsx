@@ -12,6 +12,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Separator } from "@/components/ui/separator"
@@ -807,7 +808,11 @@ function FieldInput({
       <Label>
         {label} {required && <span className="text-destructive">*</span>}
       </Label>
-      <Input type={type} value={value} onChange={(e) => onChange(e.target.value)} required={required} />
+      {type === "date" ? (
+        <DatePickerField value={value} onChange={onChange} />
+      ) : (
+        <Input type={type} value={value} onChange={(e) => onChange(e.target.value)} required={required} />
+      )}
     </div>
   )
 }

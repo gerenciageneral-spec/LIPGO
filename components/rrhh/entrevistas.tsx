@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -117,7 +118,11 @@ function Field({
       <Label>
         {label} {required && <span className="text-destructive">*</span>}
       </Label>
-      <Input type={type} value={value} onChange={(e) => onChange(e.target.value)} />
+      {type === "date" ? (
+        <DatePickerField value={value} onChange={onChange} />
+      ) : (
+        <Input type={type} value={value} onChange={(e) => onChange(e.target.value)} />
+      )}
     </div>
   )
 }

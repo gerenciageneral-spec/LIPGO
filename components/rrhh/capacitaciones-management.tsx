@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/components/auth-provider"
@@ -254,22 +255,20 @@ export default function CapacitacionesManagement() {
 
               <div className="space-y-1.5">
                 <Label htmlFor="cap-fecha">Fecha inicio *</Label>
-                <Input
+                <DatePickerField
                   id="cap-fecha"
-                  type="date"
                   value={formData.fecha}
-                  onChange={(e) => setFormData({ ...formData, fecha: e.target.value })}
+                  onChange={(value) => setFormData({ ...formData, fecha: value })}
                 />
               </div>
 
               <div className="space-y-1.5">
                 <Label htmlFor="cap-fecha-fin">Fecha fin</Label>
-                <Input
+                <DatePickerField
                   id="cap-fecha-fin"
-                  type="date"
                   value={formData.fecha_fin}
-                  onChange={(e) =>
-                    setFormData({ ...formData, fecha_fin: e.target.value })
+                  onChange={(value) =>
+                    setFormData({ ...formData, fecha_fin: value })
                   }
                 />
               </div>

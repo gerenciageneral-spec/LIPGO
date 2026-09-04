@@ -11,6 +11,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import {
   Table,
@@ -279,12 +280,10 @@ const handleSubmit = async (e: React.FormEvent) => {
                 {/* Fecha Inicio */}
                 <div>
                   <Label htmlFor="fecha_inicio">Fecha Inicio *</Label>
-                  <Input
+                  <DatePickerField
                     id="fecha_inicio"
-                    type="date"
                     value={formData.fecha_inicio}
-                    onChange={(e) => setFormData({ ...formData, fecha_inicio: e.target.value })}
-                    required
+                    onChange={(value) => setFormData({ ...formData, fecha_inicio: value })}
                   />
                 </div>
 
@@ -292,11 +291,10 @@ const handleSubmit = async (e: React.FormEvent) => {
                 {formData.tipo_contrato !== "indefinido" && (
                   <div>
                     <Label htmlFor="fecha_fin">Fecha Fin</Label>
-                    <Input
+                    <DatePickerField
                       id="fecha_fin"
-                      type="date"
                       value={formData.fecha_fin}
-                      onChange={(e) => setFormData({ ...formData, fecha_fin: e.target.value })}
+                      onChange={(value) => setFormData({ ...formData, fecha_fin: value })}
                     />
                   </div>
                 )}
@@ -304,22 +302,20 @@ const handleSubmit = async (e: React.FormEvent) => {
                 {/* Fecha Envio */}
                 <div>
                   <Label htmlFor="fechaenvio">Fecha de Envio</Label>
-                  <Input
+                  <DatePickerField
                     id="fechaenvio"
-                    type="date"
                     value={formData.fechaenvio}
-                    onChange={(e) => setFormData({ ...formData, fechaenvio: e.target.value })}
+                    onChange={(value) => setFormData({ ...formData, fechaenvio: value })}
                   />
                 </div>
 
                 {/* Fecha Firma */}
                 <div>
                   <Label htmlFor="fechafirma">Fecha de Firma</Label>
-                  <Input
+                  <DatePickerField
                     id="fechafirma"
-                    type="date"
                     value={formData.fechafirma}
-                    onChange={(e) => setFormData({ ...formData, fechafirma: e.target.value })}
+                    onChange={(value) => setFormData({ ...formData, fechafirma: value })}
                   />
                 </div>
 

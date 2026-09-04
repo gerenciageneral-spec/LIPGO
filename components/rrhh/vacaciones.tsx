@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -458,11 +459,11 @@ export default function Vacaciones() {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Desde</Label>
-                <Input type="date" value={solForm.fecha_inicio} onChange={(e) => setSolForm({ ...solForm, fecha_inicio: e.target.value })} />
+                <DatePickerField value={solForm.fecha_inicio} onChange={(value) => setSolForm({ ...solForm, fecha_inicio: value })} />
               </div>
               <div className="space-y-1.5">
                 <Label>Hasta</Label>
-                <Input type="date" value={solForm.fecha_fin} onChange={(e) => setSolForm({ ...solForm, fecha_fin: e.target.value })} />
+                <DatePickerField value={solForm.fecha_fin} onChange={(value) => setSolForm({ ...solForm, fecha_fin: value })} />
               </div>
             </div>
             <div className="text-sm text-muted-foreground">
