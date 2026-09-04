@@ -82,9 +82,14 @@ export interface BonosResumen {
  * para que las dos pantallas muestren siempre la misma gente:
  *   · `operativo`      → los del proyecto del SELECTOR GLOBAL (cada id es su
  *                        centro de costo).
- *   · `administrativo` → TODO el personal marcado `headcount.admin = true`,
- *                        SIN filtro de empresa: el administrativo es transversal
- *                        a LIP, no pertenece a un proyecto.
+ *   · `administrativo` → el personal marcado `headcount.admin = true` DEL
+ *                        PROYECTO indicado. El administrativo tambien pertenece
+ *                        a un proyecto: es su centro de costo, y un bono se
+ *                        carga a un proyecto concreto.
+ *
+ * Los administrativos sin proyecto asignado (`idempresa` null) se incluyen
+ * siempre: la columna admite null y hay registros viejos asi. Si se omitieran,
+ * esa gente no podria recibir un bono desde ninguna pantalla.
  */
 export async function getColaboradoresBonos(
   origen: OrigenColaborador = "operativo",
@@ -101,8 +106,12 @@ export async function getColaboradoresBonos(
       .select("nombre, identificacion, idempresa, estado, cargo, admin")
       .order("estado", { ascending: true })
       .order("nombre", { ascending: true })
-    if (origen === "administrativo") q = q.eq("admin", true)
-    else if (idempresa != null) q = q.eq("idempresa", idempresa)
+    if (origen === "administrativo") {
+      q = q.eq("admin", true)
+      if (idempresa != null) q = q.or(`idempresa.eq.${idempresa},idempresa.is.null`)
+    } else if (idempresa != null) {
+      q = q.eq("idempresa", idempresa)
+    }
     const { data, error } = await q
     if (error) return { success: false, data: [], message: error.message }
 

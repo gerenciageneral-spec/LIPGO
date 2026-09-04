@@ -6,20 +6,31 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const selectedEmpresaId = searchParams.get("empresaId")
-    // Cuando admin=true se listan TODOS los administrativos sin filtrar por
-    // empresa (un administrativo puede o no estar asociado a un idempresa).
     const adminOnly = searchParams.get("admin") === "true"
 
     const supabase = createServerClient()
 
+    const empresaId = selectedEmpresaId
+      ? parseInt(selectedEmpresaId, 10)
+      : await getCurrentEmpresaIdForInsert()
+
     let query = supabase.from("headcount").select("*").order("id", { ascending: false })
 
     if (adminOnly) {
-      query = query.eq("admin", true)
+      // El administrativo tambien pertenece a un proyecto.
+      //
+      // Antes se listaban TODOS los `admin=true` sin filtrar por empresa, pero
+      // el alta ya guardaba `idempresa` (ver el POST de abajo): la persona
+      // quedaba amarrada a un proyecto y aun asi aparecia en todos. Ahora se
+      // filtra igual que el operativo.
+      //
+      // Se incluyen ademas los que tengan `idempresa` en NULL --la columna lo
+      // permite y hay registros viejos asi--. Si se omitieran, esa gente
+      // desapareceria de todas las pestañas sin que nadie se entere; asi
+      // aparecen en todos los proyectos, marcados como "sin proyecto", hasta
+      // que alguien los traslade.
+      query = query.eq("admin", true).or(`idempresa.eq.${empresaId},idempresa.is.null`)
     } else {
-      const empresaId = selectedEmpresaId
-        ? parseInt(selectedEmpresaId, 10)
-        : await getCurrentEmpresaIdForInsert()
       query = query.eq("idempresa", empresaId)
     }
 

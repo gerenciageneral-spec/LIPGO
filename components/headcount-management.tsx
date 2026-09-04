@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -57,8 +57,8 @@ const DOCUMENT_FIELDS = [
 
 export default function HeadcountManagement() {
   const { selectedEmpresaId } = useAuth()
-  // Pestaña activa: "operativo" (filtrado por empresa) o "administrativo"
-  // (todo el personal admin=true sin filtro de empresa).
+  // Pestaña activa: "operativo" o "administrativo". Las DOS filtran por el
+  // proyecto seleccionado: el administrativo tambien pertenece a un proyecto.
   const [activeTab, setActiveTab] = useState<"operativo" | "administrativo">("operativo")
   const [people, setPeople] = useState<HeadcountPerson[]>([])
   const [loading, setLoading] = useState(true)
@@ -91,6 +91,13 @@ export default function HeadcountManagement() {
   const [transferCompanies, setTransferCompanies] = useState<{ id: number; nombre: string }[]>([])
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>("")
   const [personToTransfer, setPersonToTransfer] = useState<HeadcountPerson | null>(null)
+  // Administrativos que quedaron sin proyecto. Se listan en todos los proyectos
+  // --si se ocultaran, desaparecerian sin que nadie lo note-- y se avisa para
+  // que alguien los asigne.
+  const sinProyecto = useMemo(
+    () => people.filter((p) => p.idempresa == null).length,
+    [people],
+  )
   const [transferLoading, setTransferLoading] = useState(false)
   // Búsqueda por identificación y filtro por estado.
   const [searchId, setSearchId] = useState("")
@@ -108,7 +115,7 @@ export default function HeadcountManagement() {
 
   useEffect(() => {
     // La pestaña administrativa no depende de la empresa seleccionada.
-    if (activeTab === "administrativo" || selectedEmpresaId) {
+    if (selectedEmpresaId) {
       loadPeople()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -136,10 +143,11 @@ export default function HeadcountManagement() {
   const loadPeople = async () => {
     try {
       setLoading(true)
-      // En administrativo se pide todo el personal admin=true sin filtro de empresa.
+      // Las dos pestañas van contra el proyecto activo; `admin=true` solo
+      // decide si se listan los administrativos o los operativos.
       const url =
         activeTab === "administrativo"
-          ? `/api/headcount?admin=true`
+          ? `/api/headcount?admin=true&empresaId=${selectedEmpresaId}`
           : `/api/headcount?empresaId=${selectedEmpresaId}`
       const response = await fetch(url, {
         cache: "no-store",
@@ -461,8 +469,15 @@ export default function HeadcountManagement() {
 
       {activeTab === "administrativo" && (
         <p className="text-sm text-muted-foreground">
-          Mostrando todo el personal administrativo (independiente del proyecto). Los registros
-          creados aquí quedan marcados como administrativos automáticamente.
+          Personal administrativo <strong>del proyecto seleccionado</strong>. Los registros creados
+          aquí quedan marcados como administrativos y asignados a ese proyecto; para moverlos usa
+          «Trasladar a otro proyecto».
+          {sinProyecto > 0 && (
+            <span className="text-amber-700">
+              {" "}
+              Hay {sinProyecto} sin proyecto asignado: aparecen en todos hasta que se trasladen.
+            </span>
+          )}
         </p>
       )}
 
@@ -521,6 +536,18 @@ export default function HeadcountManagement() {
                         <Badge variant="secondary" className="gap-1 text-[10px]">
                           <Briefcase className="h-3 w-3" />
                           Administrativo
+                        </Badge>
+                      )}
+                      {/* Sin proyecto: aparece en TODOS los proyectos hasta que
+                          alguien lo traslade. Se marca para que no se confunda
+                          con alguien que si pertenece a este. */}
+                      {person.idempresa == null && (
+                        <Badge
+                          variant="outline"
+                          className="gap-1 border-amber-400 text-[10px] text-amber-700"
+                          title="No tiene proyecto asignado: se ve en todos. Usa 'Trasladar a otro proyecto' para asignarlo."
+                        >
+                          Sin proyecto
                         </Badge>
                       )}
                     </div>
@@ -823,6 +850,26 @@ export default function HeadcountManagement() {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+
+            {/* Qué se lleva el traslado y qué no.
+                No todo el historial guarda su propio proyecto: la evidencia de
+                inducciones, por ejemplo, lo deriva del head count, así que se
+                MUEVE con la persona. Asistencia y nómina sí lo guardan y se
+                quedan donde ocurrieron. Decirlo antes evita el susto de ver un
+                indicador cambiar sin explicación. */}
+            <div className="rounded-md border bg-muted/40 p-3 text-xs">
+              <p className="font-medium">Qué pasa con su historial</p>
+              <ul className="mt-1.5 list-disc space-y-0.5 pl-4 text-muted-foreground">
+                <li>
+                  <strong>Se queda</strong> en el proyecto actual: asistencia, nómina, ausentismos,
+                  bonos y liquidaciones. Guardan su propio proyecto.
+                </li>
+                <li>
+                  <strong>Se mueve</strong> con la persona: evidencia de inducciones, contratos y
+                  dotación. Dejarán de verse en el proyecto de origen.
+                </li>
+              </ul>
             </div>
           </div>
 

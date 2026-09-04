@@ -770,8 +770,12 @@ export interface TrabajadorOpcion {
 
 /**
  * Lista los trabajadores (headcount) para seleccionarlos al programar una
- * induccion. Si `admin` es true se devuelven TODOS los administrativos sin
- * filtrar por empresa; de lo contrario, los de la empresa indicada.
+ * induccion. Si `admin` es true se devuelven los administrativos DEL PROYECTO
+ * indicado --el administrativo tambien pertenece a un proyecto--; de lo
+ * contrario, los operativos de esa misma empresa.
+ *
+ * Los administrativos sin proyecto (`idempresa` null) se incluyen siempre: hay
+ * registros viejos asi y, de omitirlos, no se les podria programar nada.
  *
  * `asignados` son los IDs que la induccion ya tiene programados. Los que no
  * aparezcan en el listado normal se agregan igual, marcados `disponible: false`.
@@ -794,6 +798,7 @@ export async function listTrabajadoresEmpresa(
       .order("nombre", { ascending: true })
     if (admin) {
       query = query.eq("admin", true)
+      if (idempresa != null) query = query.or(`idempresa.eq.${idempresa},idempresa.is.null`)
     } else if (idempresa != null) {
       query = query.eq("idempresa", idempresa)
     }

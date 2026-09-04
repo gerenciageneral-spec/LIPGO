@@ -191,13 +191,15 @@ function RegistrarBonoTab() {
     })
   }, [empresaId, toast])
 
-  // Los administrativos NO dependen del proyecto: se cargan una sola vez.
+  // Los administrativos tambien pertenecen a un proyecto, asi que se recargan
+  // al cambiar de proyecto igual que los operativos. Los que no tengan proyecto
+  // asignado se incluyen en todos (ver getColaboradoresBonos).
   useEffect(() => {
-    getColaboradoresBonos("administrativo").then((r) => {
+    getColaboradoresBonos("administrativo", empresaId).then((r) => {
       if (r.success) setAdministrativos(r.data)
       else toast({ title: "No se pudo cargar el personal administrativo", description: r.message, variant: "destructive" })
     })
-  }, [toast])
+  }, [empresaId, toast])
 
   const seleccionado = useMemo(() => lista.find((c) => c.nombre === persona), [lista, persona])
 

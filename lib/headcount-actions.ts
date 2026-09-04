@@ -6,7 +6,9 @@ import { getCurrentEmpresaIdForInsert } from "@/lib/user-context"
 
 export interface HeadcountPerson {
   id?: number
-  idempresa: number
+  /** Proyecto al que pertenece. Puede venir null: la columna lo permite y hay
+   *  registros administrativos viejos que se crearon sin proyecto. */
+  idempresa: number | null
   identificacion: string
   nombre: string
   estado: string
