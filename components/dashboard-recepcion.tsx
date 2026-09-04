@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import {
   Select,
   SelectContent,
@@ -2269,13 +2270,11 @@ export function DashboardRecepcion() {
         <div className="flex flex-wrap items-center gap-2">
           {/* Selector de periodo segun la vista activa */}
           {vista === "diario" ? (
-            <Input
-              type="date"
+            <DatePickerField
               value={selectedDate}
-              max={hoyBogota}
-              onChange={(e) => setSelectedDate(e.target.value || hoyBogota)}
+              maxDate={hoyBogota}
+              onChange={(value) => setSelectedDate(value || hoyBogota)}
               className="h-8 w-[150px] text-xs"
-              aria-label="Seleccionar día"
             />
           ) : vista === "mensual" ? (
             <>

@@ -63,6 +63,7 @@ import {
 import { useAuth } from "@/components/auth-provider"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { getDashboardPedidosData } from "@/lib/dashboard-pedidos-actions"
 import {
   getDashboardRecepcionData,
@@ -715,16 +716,14 @@ ${node.outerHTML}
           {/* Selector de fecha del cierre. Permite consultar dias
               anteriores; el maximo es hoy (no hay cierre futuro). */}
           <div className="flex items-center gap-1.5">
-            <Input
-              type="date"
+            <DatePickerField
               value={fechaSel}
-              max={getBogotaHoy()}
-              onChange={(e) =>
-                setFechaSel(e.target.value || getBogotaHoy())
+              maxDate={getBogotaHoy()}
+              onChange={(value) =>
+                setFechaSel(value || getBogotaHoy())
               }
               disabled={loading}
               className="h-8 w-[150px] text-xs"
-              aria-label="Fecha del cierre"
             />
             {!esHoy ? (
               <Button

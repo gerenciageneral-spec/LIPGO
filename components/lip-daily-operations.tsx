@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from "react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { useAuth } from "@/components/auth-provider"
 import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -287,7 +288,7 @@ export function LipDailyOperations() {
           </Select>
           <div className="flex items-center gap-1">
             <CalendarDays className="h-4 w-4 text-muted-foreground" />
-            <Input type="date" value={selectedDate} onChange={e => handleDateChange(e.target.value)} className="h-8 w-40 text-xs" max={getTodayColombia()} />
+            <DatePickerField value={selectedDate} onChange={handleDateChange} className="h-8 w-40 text-xs" maxDate={getTodayColombia()} />
           </div>
           {!isToday && <Button variant="outline" size="sm" onClick={handleToday} className="h-8 text-xs">Hoy</Button>}
           <Button variant="outline" size="sm" onClick={() => loadData()} className="h-8"><RefreshCw className="h-3.5 w-3.5" /></Button>

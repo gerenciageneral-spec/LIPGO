@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { KpiCard } from "@/components/orders/dashboard-pedidos/kpi-card"
@@ -228,11 +228,10 @@ export function CierreDiarioPanel({ empresaId }: { empresaId?: number | null } =
         <CardContent className="flex flex-wrap items-end gap-3 p-4">
           <div className="space-y-1">
             <Label className="text-xs">Día</Label>
-            <Input
-              type="date"
+            <DatePickerField
               value={fecha}
-              max={hoyISO()}
-              onChange={(e) => setFecha(e.target.value || hoyISO())}
+              maxDate={hoyISO()}
+              onChange={(value) => setFecha(value || hoyISO())}
               className="h-8 w-[160px] text-xs"
             />
           </div>
