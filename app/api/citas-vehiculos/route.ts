@@ -42,7 +42,7 @@ export async function GET(request: Request) {
 export async function PATCH(request: Request) {
   try {
     const body = await request.json()
-    const { id, estatus } = body
+    const { id, estatus, ocargue } = body
 
     if (!id) {
       return NextResponse.json({ error: "ID is required" }, { status: 400 })
@@ -50,9 +50,16 @@ export async function PATCH(request: Request) {
 
     const supabase = await createClient()
 
+    // ocargue guarda la orden (cargue o descargue) en la que se procesó esta
+    // cita -- mismo campo/patrón que ya usan assignVehicleToLoadOrder y
+    // generateLoadOrder para cargue; opcional para no romper llamadas viejas
+    // que solo mandan estatus.
+    const update: { estatus: string; ocargue?: string } = { estatus }
+    if (ocargue !== undefined) update.ocargue = ocargue
+
     const { data, error } = await supabase
       .from("citasvehiculos")
-      .update({ estatus })
+      .update(update)
       .eq("id", id)
       .select()
       .single()

@@ -304,6 +304,7 @@ console.log("[v0] selectedEmpresaId:", selectedEmpresaId)
               body: JSON.stringify({
                 id: selectedAppointmentId,
                 estatus: "Procesado",
+                ocargue: result.orderCode,
               }),
             })
             console.log("[v0] Vehicle appointment marked as Procesado")
