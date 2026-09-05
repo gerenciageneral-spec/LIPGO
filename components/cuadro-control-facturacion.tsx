@@ -212,7 +212,10 @@ function SoporteAnexo({ lineas }: { lineas: SoporteLinea[] }) {
 }
 
 // Exporta el soporte a Excel (una hoja por owner × operación) — opción, no el flujo.
-function exportarSoporteExcel(lineas: SoporteLinea[], nombre: string) {
+// `consecutivo` = id de la prefactura ya guardada (bigserial, único): viaja como
+// columna en cada fila -- no solo en el nombre del archivo -- para poder
+// amarrar esta línea a la factura real el día que exista ese cruce.
+function exportarSoporteExcel(lineas: SoporteLinea[], nombre: string, consecutivo?: number) {
   const { grupos } = agruparSoporte(lineas)
   const wb = XLSX.utils.book_new()
   const usados = new Set<string>()
@@ -237,6 +240,7 @@ function exportarSoporteExcel(lineas: SoporteLinea[], nombre: string) {
       porOrden.set(l.numeroorden, acc)
     }
     const rows = Array.from(porOrden.entries()).map(([numeroorden, o]) => ({
+      Prefactura: consecutivo ?? "",
       Fecha: o.fecha ?? "",
       Orden: numeroorden,
       Tiquete: o.tiquete ?? "",
@@ -248,7 +252,7 @@ function exportarSoporteExcel(lineas: SoporteLinea[], nombre: string) {
       Valor: Math.round(o.valor),
     }))
     rows.push({
-      Fecha: "", Orden: "", Tiquete: "", Placa: "", Servicio: "SUBTOTAL",
+      Prefactura: consecutivo ?? "", Fecha: "", Orden: "", Tiquete: "", Placa: "", Servicio: "SUBTOTAL",
       Cantidad: Number(g.ton.toFixed(3)), Unidad: uLabel(g.lineas[0]?.unidad),
       Tarifa: "" as any, Valor: Math.round(g.valor),
     })
@@ -1718,7 +1722,7 @@ export function CuadroControlFacturacion() {
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>#</TableHead>
+                          <TableHead>Consecutivo</TableHead>
                           <TableHead>Período</TableHead>
                           <TableHead className="text-right">Toneladas</TableHead>
                           <TableHead className="text-right">Total</TableHead>
@@ -1730,7 +1734,7 @@ export function CuadroControlFacturacion() {
                       <TableBody>
                         {guardadas.map((p) => (
                           <TableRow key={p.id}>
-                            <TableCell className="text-xs font-medium">{p.id}</TableCell>
+                            <TableCell className="text-xs font-semibold tabular-nums">#{p.id}</TableCell>
                             <TableCell className="text-xs">
                               {p.periodo_desde || "inicio"} → {p.periodo_hasta || "fin"}
                             </TableCell>
@@ -1791,7 +1795,7 @@ export function CuadroControlFacturacion() {
                               Soporte de la prefactura #{p.id} · {p.proyecto} · {p.periodo_desde || "inicio"} → {p.periodo_hasta || "fin"}
                             </div>
                             {sop.length > 0 && (
-                              <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => exportarSoporteExcel(sop, `${p.proyecto}_${p.id}`)}>
+                              <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => exportarSoporteExcel(sop, `${p.proyecto}_${p.id}`, p.id)}>
                                 <Download className="mr-1 h-3 w-3" /> Excel (opcional)
                               </Button>
                             )}
