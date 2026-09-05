@@ -714,10 +714,14 @@ export function CuadroControlFacturacion() {
       if (u.includes("AVIMOL")) return "AVIMOL"
       return w.substring(0, 12)
     }
-    // Agrupar filas por owner × operación, en orden estable.
+    // Agrupar filas por owner × operación, en orden estable. Las placas propias
+    // de ID2 (cubiertas por el fijo mensual) van en SU PROPIO anexo -- separado
+    // del anexo con tarifa real -- para poder medir sus toneladas de Cargue/
+    // Descargue sin mezclarlas con lo que sí se factura (pedido explícito).
     const grupos = new Map<string, { owner: string; op: string; filas: typeof data.filas }>()
     for (const f of data.filas) {
-      const op = f.tipooperacion || "(sin op)"
+      const opBase = f.tipooperacion || "(sin op)"
+      const op = f.cubierto_por_fijo ? `${opBase} (Placas propias)` : opBase
       const k = `${f.owner}|||${op}`
       const g = grupos.get(k) || { owner: f.owner, op, filas: [] as any }
       g.filas.push(f)

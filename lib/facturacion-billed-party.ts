@@ -30,6 +30,8 @@
 // facturacion-control-actions.ts, cierre-financiero-actions.ts y
 // analisis-financiero-actions.ts para que los tres calculen exactamente igual.
 
+import { esPlacaDistribucion } from "@/lib/distribucion-placas"
+
 const OPS_POR_TRANSPORTE_ID2 = new Set(["cargue", "descargue", "distribucion"])
 
 // Productos que se facturan por UNIDAD (cantidad digitada en la orden) en vez
@@ -59,6 +61,7 @@ export function facturadoAOwner(
   operacion: string | null,
   transporte: string | null,
   subcategoria?: string | null,
+  placa?: string | null,
 ): FacturadoA {
   if (esProductoPorUnidad(subcategoria)) return { owner: ownerProducto, cubiertoPorFijo: false }
   if (idempresa !== 2) return { owner: ownerProducto, cubiertoPorFijo: false }
@@ -67,6 +70,11 @@ export function facturadoAOwner(
   const tr = String(transporte ?? "").trim().toUpperCase()
   if (tr === "ZAMUDIO") return { owner: "Zamudio", cubiertoPorFijo: false }
   if (tr === "TERCEROS") return { owner: "Terceros", cubiertoPorFijo: false }
-  if (tr === "AVIMOL") return { owner: ownerProducto, cubiertoPorFijo: true }
+  // Corregido (2026-09-05): antes se confiaba ciegamente en transporte==="AVIMOL"
+  // (campo digitado, puede estar mal puesto). Ahora se exige que la PLACA esté
+  // REALMENTE matriculada en Configuración → Placas de Distribución (fuente de
+  // verdad, lib/distribucion-placas.ts) -- un vehículo mal etiquetado como
+  // AVIMOL que no está en esa lista (ej. QHC434) sí debe facturar tarifa normal.
+  if (tr === "AVIMOL") return { owner: ownerProducto, cubiertoPorFijo: esPlacaDistribucion(idempresa, placa) }
   return { owner: ownerProducto, cubiertoPorFijo: false } // Susanita u otro: sin cambio
 }

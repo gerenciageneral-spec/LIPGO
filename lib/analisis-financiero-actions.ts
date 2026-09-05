@@ -400,7 +400,7 @@ async function realPorCodigo(
     // transporte Zamudio/Terceros SÍ se factura (a esa transportadora, no a
     // Avimol) — para el margen del PROYECTO Avimol esa plata sigue contando.
     // Mismo criterio que getControlFacturacion — ver lib/facturacion-billed-party.ts.
-    const fa = facturadoAOwner(idempresa, owner, r.tipooperacion, r.transporte)
+    const fa = facturadoAOwner(idempresa, owner, r.tipooperacion, r.transporte, undefined, r.placa)
     // Una línea puede alimentar MÁS DE UN código (Distribución de Avimol: el
     // mismo tonelaje/valor completo se registra en cargue Y descargue, no se
     // parte a la mitad) — ver codigoDe().

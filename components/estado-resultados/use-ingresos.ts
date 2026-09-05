@@ -137,7 +137,7 @@ async function sumarYAgruparToneladas(
   while (offset < MAX_ROWS) {
     const { data: page, error } = await supabase
       .from("facturacion")
-      .select("valor_a_facturar, tipooperacion, owner, toneladas, transporte, idempresa")
+      .select("valor_a_facturar, tipooperacion, owner, toneladas, transporte, idempresa, placa")
       .in("idempresa", ids)
       .gte("fechacargue", desde)
       .lt("fechacargue", hastaExclusivo)
@@ -151,6 +151,8 @@ async function sumarYAgruparToneladas(
         String(r.owner ?? "SIN OWNER").trim(),
         String(r.tipooperacion ?? ""),
         (r.transporte as string | null) ?? null,
+        undefined,
+        (r.placa as string | null) ?? null,
       )
       const v = fa.cubiertoPorFijo ? 0 : Number(r.valor_a_facturar) || 0
       suma += v

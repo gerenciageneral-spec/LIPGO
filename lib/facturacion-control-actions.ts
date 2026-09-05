@@ -773,7 +773,7 @@ export async function getPrefactura(
         // (que es como está montada `tarifasoperacion`); la reasignación es de
         // destinatario, no de tarifa. Con `cubiertoPorFijo` el movimiento cuenta
         // en toneladas pero sale en 0 — igual que en el cuadro.
-        const fa = facturadoAOwner(idempresa, owner, r.tipooperacion, r.transporte, r.subcategoria)
+        const fa = facturadoAOwner(idempresa, owner, r.tipooperacion, r.transporte, r.subcategoria, r.placa)
         const tarifaFacturada = fa.cubiertoPorFijo ? 0 : tServicio
         // Huevos (y cualquier producto por unidad): se cobra la CANTIDAD digitada
         // en la orden (detalleoc.cantidad), no el peso. La báscula no le aplica.
@@ -1284,7 +1284,7 @@ export async function getControlFacturacion(
       // ton/mes; con transporte Zamudio/Terceros se factura a esa transportadora,
       // no a Avimol. Ver lib/facturacion-billed-party.ts. Huevos queda exento de
       // esta regla (siempre se factura a Avimol, sin importar el transporte).
-      const fa = facturadoAOwner(idempresa, a.owner, a.op, a.r.transporte, a.r.subcategoria)
+      const fa = facturadoAOwner(idempresa, a.owner, a.op, a.r.transporte, a.r.subcategoria, a.r.placa)
       if (fa.cubiertoPorFijo) valor = 0
       // Filtro de OWNER sobre el owner YA RESUELTO (`fa.owner`), que es el que
       // se muestra en pantalla y el que alimenta el desplegable. Antes se
@@ -1576,7 +1576,7 @@ export async function getValoresNetosOrden(
         // tonelada — pero SÍ cuenta en totalDet (denominador del prorrateo de
         // báscula de la orden). Ver lib/facturacion-billed-party.ts. Huevos
         // queda exento (siempre se factura a Avimol, sin importar el transporte).
-        const fa = facturadoAOwner(idempresa, owner, r.tipooperacion, r.transporte, r.subcategoria)
+        const fa = facturadoAOwner(idempresa, owner, r.tipooperacion, r.transporte, r.subcategoria, r.placa)
         const porUnidad = esProductoPorUnidad(r.subcategoria)
         if (porUnidad) ordenesPorUnidad.add(on)
         const cantidad = porUnidad ? cantMap.get(`${on}|||${String(r.producto || "").trim()}`) || 0 : 0
