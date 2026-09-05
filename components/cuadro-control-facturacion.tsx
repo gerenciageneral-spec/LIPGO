@@ -408,7 +408,7 @@ export function CuadroControlFacturacion() {
       Cliente: f.cliente ?? "",
       Cantidad: Number(f.toneladas.toFixed(3)),
       Peso: f.fuente_peso === "bascula" ? "báscula" : "orden",
-      Tarifa: f.sin_tarifa ? "SIN TARIFA" : f.tarifa,
+      Tarifa: f.sin_tarifa ? "SIN TARIFA" : f.cubierto_por_fijo ? "FIJO MENSUAL" : f.tarifa,
       Total: Math.round(f.valor_a_facturar),
       Estado: f.estadofactura ?? "(sin gestionar)",
       Categoría: CAT_LABEL[f.categoria],
@@ -739,14 +739,16 @@ export function CuadroControlFacturacion() {
 
       if (logo) {
         try {
-          doc.addImage(logo, "PNG", 40, 24, 101, 50)
+          // 160×79px reales -- se respeta esa proporción (~2.03) para que no se
+          // vea deformado; más grande que antes porque se veía angosto.
+          doc.addImage(logo, "PNG", 40, 20, 130, 64)
         } catch {}
       }
       doc.setFontSize(9).setFont("helvetica", "normal").setTextColor(90)
       doc.text("LIP PROGRESSIVE INTEGRAL LOGISTICS SAS · NIT 901725963-8", MW - 40, 46, { align: "right" })
 
       doc.setFontSize(14).setFont("helvetica", "bold").setTextColor(...navy)
-      doc.text(`ANEXO DE FACTURACIÓN — ${g.owner.toUpperCase()}`, MW / 2, 92, { align: "center" })
+      doc.text(`ANEXO DE FACTURACIÓN — ${g.owner.toUpperCase()}`, MW / 2, 98, { align: "center" })
       doc.setFontSize(9.5).setFont("helvetica", "normal").setTextColor(90)
       // "al" en vez de "→": las fuentes estándar de jsPDF (WinAnsi) no traen la
       // flecha unicode y la imprimen como un carácter roto.
@@ -754,7 +756,7 @@ export function CuadroControlFacturacion() {
         pending.desde || pending.hasta
           ? ` · ${fmtFechaAnexo(pending.desde || null)} al ${fmtFechaAnexo(pending.hasta || null)}`
           : ""
-      doc.text(`${proyectoNombre} · ${g.op}${periodo}`, MW / 2, 108, { align: "center" })
+      doc.text(`${proyectoNombre} · ${g.op}${periodo}`, MW / 2, 114, { align: "center" })
 
       let subTon = 0
       let subVal = 0
@@ -770,13 +772,13 @@ export function CuadroControlFacturacion() {
           f.producto ?? "-",
           f.tiquete ?? "-",
           `${ton(f.toneladas)} ${uLabel(f.unidad)}`,
-          f.sin_tarifa ? "SIN TARIFA" : moneyPdf(f.tarifa ?? 0),
+          f.sin_tarifa ? "SIN TARIFA" : f.cubierto_por_fijo ? "FIJO MENSUAL" : moneyPdf(f.tarifa ?? 0),
           moneyPdf(f.valor_a_facturar),
         ]
       })
 
       autoTable(doc, {
-        startY: 128,
+        startY: 134,
         margin: { left: 40, right: 40 },
         head: [
           [
@@ -1267,7 +1269,13 @@ export function CuadroControlFacturacion() {
                               </span>
                             </TableCell>
                             <TableCell className="text-right text-xs tabular-nums">
-                              {f.sin_tarifa ? <span className="font-semibold text-red-600">sin tarifa</span> : moneyTarifa(f.tarifa || 0)}
+                              {f.sin_tarifa ? (
+                                <span className="font-semibold text-red-600">sin tarifa</span>
+                              ) : f.cubierto_por_fijo ? (
+                                <span className="text-muted-foreground">fijo mensual</span>
+                              ) : (
+                                moneyTarifa(f.tarifa || 0)
+                              )}
                             </TableCell>
                             <TableCell className="text-right text-xs tabular-nums">{money(f.valor_a_facturar)}</TableCell>
                             <TableCell className="text-xs">

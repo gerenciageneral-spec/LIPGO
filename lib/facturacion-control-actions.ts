@@ -97,6 +97,11 @@ export interface ControlFacturaFila {
   tarifa: number | null
   valor_a_facturar: number // total = cantidad × tarifa
   sin_tarifa: boolean
+  /** true = esta línea SÍ tiene tarifa configurada, pero no se factura por
+   *  tonelada porque va cubierta por el fijo mensual (placa propia Avimol) --
+   *  `tarifa` queda null y `valor_a_facturar` en 0 A PROPÓSITO. Sin esta bandera,
+   *  la UI no puede distinguir "cubierto por fijo" de "sin tarifa real". */
+  cubierto_por_fijo: boolean
   estadofactura: string | null
   categoria: CategoriaFactura
   valorpago: number | null
@@ -1314,6 +1319,7 @@ export async function getControlFacturacion(
         tarifa: a.sinTarifa || toneladas <= 0 || fa.cubiertoPorFijo ? null : Math.round((valor / toneladas) * 100) / 100,
         valor_a_facturar: valor,
         sin_tarifa: a.sinTarifa,
+        cubierto_por_fijo: fa.cubiertoPorFijo,
         estadofactura: est?.estado ?? null,
         categoria: categoriaDeFactura(est?.facturasiigo, est?.estado),
         valorpago: est?.valorpago ?? null,
