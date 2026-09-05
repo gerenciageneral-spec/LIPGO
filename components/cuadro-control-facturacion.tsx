@@ -67,6 +67,30 @@ const ton = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { maximumFra
 // La columna de cantidad es una sola para toneladas, horas, turnos y unidades:
 // la unidad va al lado del número y SOLO las toneladas suman al tonelaje del documento.
 const uLabel = (u?: UnidadCobro) => (u === "h" ? "h" : u === "turno" ? "turnos" : u === "u" ? "u" : "t")
+// Formato de moneda del anexo en PDF: SIEMPRE 2 decimales (pedido explícito),
+// a diferencia de money()/moneyTarifa() que redondean cuando el valor es entero.
+const moneyPdf = (n: number) => "$ " + (Number(n) || 0).toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+// `fecha` llega como "YYYY-MM-DD" (a veces con hora) de un campo `date` de Postgres;
+// se parte el string en vez de `new Date()` para no arrastrar corrimientos de zona horaria.
+const fmtFechaAnexo = (s: string | null) => {
+  if (!s) return "-"
+  const [y, m, d] = String(s).slice(0, 10).split("-")
+  return y && m && d ? `${d}/${m}/${y}` : String(s)
+}
+async function cargarLogoLip(): Promise<string | null> {
+  try {
+    const r = await fetch("/lip-logo.png")
+    const b = await r.blob()
+    return await new Promise((res) => {
+      const fr = new FileReader()
+      fr.onload = () => res(fr.result as string)
+      fr.onerror = () => res(null)
+      fr.readAsDataURL(b)
+    })
+  } catch {
+    return null
+  }
+}
 const esTon = (u?: UnidadCobro) => u !== "h" && u !== "turno" && u !== "u"
 
 // Semáforo de facturación (lo determina la FACTURA DE SIIGO):
@@ -673,9 +697,11 @@ export function CuadroControlFacturacion() {
 
   const proyectoNombre = empresas.find((e) => e.id === empresaId)?.nombre || `Empresa ${empresaId}`
 
-  // Anexos por OWNER × TIPO DE OPERACIÓN (una hoja por cada combinación, para
-  // facturar cada ID por operación sin mezclar). Cada hoja lleva su subtotal.
-  const exportarAnexos = () => {
+  // Anexos por OWNER × TIPO DE OPERACIÓN: un PDF por cada combinación (grupo),
+  // con el logo de LIP -- reemplaza el Excel multi-hoja anterior (pedido
+  // explícito: mismo agrupamiento, ahora un documento por grupo en vez de una
+  // hoja). Descarga cada PDF automáticamente, uno tras otro.
+  const exportarAnexos = async () => {
     if (!data) return
     const abrev = (w: string) => {
       const u = w.toUpperCase()
@@ -693,40 +719,107 @@ export function CuadroControlFacturacion() {
       g.filas.push(f)
       grupos.set(k, g)
     }
-    const wb = XLSX.utils.book_new()
-    const nombresUsados = new Set<string>()
-    for (const g of Array.from(grupos.values()).sort((a, b) => a.owner.localeCompare(b.owner) || a.op.localeCompare(b.op))) {
+
+    const { default: jsPDF } = await import("jspdf")
+    const autoTable = (await import("jspdf-autotable")).default
+    const logo = await cargarLogoLip()
+    const navy: [number, number, number] = [13, 59, 110]
+
+    const gruposOrdenados = Array.from(grupos.values()).sort(
+      (a, b) => a.owner.localeCompare(b.owner) || a.op.localeCompare(b.op),
+    )
+    for (let gi = 0; gi < gruposOrdenados.length; gi++) {
+      const g = gruposOrdenados[gi]
+      const doc = new jsPDF({ unit: "pt", format: "letter", orientation: "landscape" })
+      const MW = doc.internal.pageSize.getWidth()
+
+      if (logo) {
+        try {
+          doc.addImage(logo, "PNG", 40, 24, 101, 50)
+        } catch {}
+      }
+      doc.setFontSize(9).setFont("helvetica", "normal").setTextColor(90)
+      doc.text("LIP PROGRESSIVE INTEGRAL LOGISTICS SAS · NIT 901725963-8", MW - 40, 46, { align: "right" })
+
+      doc.setFontSize(14).setFont("helvetica", "bold").setTextColor(...navy)
+      doc.text(`ANEXO DE FACTURACIÓN — ${g.owner.toUpperCase()}`, MW / 2, 92, { align: "center" })
+      doc.setFontSize(9.5).setFont("helvetica", "normal").setTextColor(90)
+      // "al" en vez de "→": las fuentes estándar de jsPDF (WinAnsi) no traen la
+      // flecha unicode y la imprimen como un carácter roto.
+      const periodo =
+        pending.desde || pending.hasta
+          ? ` · ${fmtFechaAnexo(pending.desde || null)} al ${fmtFechaAnexo(pending.hasta || null)}`
+          : ""
+      doc.text(`${proyectoNombre} · ${g.op}${periodo}`, MW / 2, 108, { align: "center" })
+
       let subTon = 0
       let subVal = 0
-      const rows = g.filas.map((f) => {
+      const filas = g.filas.map((f) => {
         subTon += f.toneladas
         subVal += f.valor_a_facturar
-        return {
-          Fecha: f.fecha ?? "",
-          "Orden de cargue": f.numeroorden,
-          Placa: f.placa ?? "",
-          Tiquete: f.tiquete ?? "",
-          Owner: f.owner,
-          Operación: f.tipooperacion ?? "",
-          Cliente: f.cliente ?? "",
-          Cantidad: Number(f.toneladas.toFixed(3)),
-          Tarifa: f.sin_tarifa ? "SIN TARIFA" : f.tarifa,
-          Total: Math.round(f.valor_a_facturar),
-          Estado: f.estadofactura ?? "(sin gestionar)",
-        }
+        return [
+          fmtFechaAnexo(f.fecha),
+          f.transporte ?? "-",
+          f.placa ?? "-",
+          f.numeroorden,
+          f.tipooperacion ?? g.op,
+          f.producto ?? "-",
+          f.tiquete ?? "-",
+          `${ton(f.toneladas)} ${uLabel(f.unidad)}`,
+          f.sin_tarifa ? "SIN TARIFA" : moneyPdf(f.tarifa ?? 0),
+          moneyPdf(f.valor_a_facturar),
+        ]
       })
-      rows.push({
-        Fecha: "", "Orden de cargue": "", Placa: "", Tiquete: "", Owner: "", Operación: "SUBTOTAL",
-        Cliente: "", Cantidad: Number(subTon.toFixed(3)), Tarifa: "" as any, Total: Math.round(subVal), Estado: "",
+
+      autoTable(doc, {
+        startY: 128,
+        margin: { left: 40, right: 40 },
+        head: [
+          [
+            "FECHA",
+            "TRANSPORTE",
+            "PLACA",
+            "ORDEN",
+            "TIPO DE\nOPERACIÓN",
+            "PRODUCTO",
+            "TIQUETE\nBÁSCULA",
+            "PESO\nBÁSCULA",
+            "TARIFA",
+            "SUBTOTAL\nFACTURA",
+          ],
+        ],
+        body: filas,
+        foot: [["", "", "", "", "", "", `TOTAL ${g.op.toUpperCase()}`, `${ton(subTon)} ${uLabel(g.filas[0]?.unidad)}`, "", moneyPdf(subVal)]],
+        theme: "grid",
+        styles: { fontSize: 8, cellPadding: 5, textColor: 20, halign: "center", valign: "middle" },
+        headStyles: { fillColor: navy, textColor: 255, fontStyle: "bold", fontSize: 8 },
+        footStyles: { fillColor: [230, 230, 230], textColor: 20, fontStyle: "bold" },
+        // Anchos calibrados contra datos reales (no el ejemplo corto "Bultos"):
+        // PRODUCTO trae nombres completos de hasta 45 caracteres -- necesita
+        // mucho más espacio que PLACA/PESO, que siempre son cortos.
+        columnStyles: {
+          0: { cellWidth: 55 },
+          1: { cellWidth: 68, halign: "left" },
+          2: { cellWidth: 40 },
+          3: { cellWidth: 78 },
+          4: { cellWidth: 58 },
+          5: { cellWidth: 142, halign: "left" },
+          6: { cellWidth: 78 },
+          7: { cellWidth: 51 },
+          8: { cellWidth: 68, halign: "right", fontStyle: "bold", textColor: navy },
+          9: { cellWidth: 74, halign: "right", fontStyle: "bold", textColor: navy },
+        },
       })
-      // Nombre de hoja único, <=31 chars, sin caracteres inválidos.
-      let nombre = `${abrev(g.owner)} - ${g.op}`.substring(0, 31).replace(/[\\/?*[\]:]/g, "")
-      let i = 2
-      while (nombresUsados.has(nombre)) nombre = `${nombre.substring(0, 28)}(${i++})`
-      nombresUsados.add(nombre)
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), nombre || "Anexo")
+
+      const nombreArchivo = `Anexo_${abrev(g.owner)}_${g.op}_${new Date().toISOString().slice(0, 10)}`.replace(
+        /[^a-zA-Z0-9_-]+/g,
+        "_",
+      )
+      doc.save(`${nombreArchivo}.pdf`)
+      // Pequeña pausa entre descargas: sin ella el navegador puede descartar
+      // silenciosamente las siguientes al disparar varias casi al tiempo.
+      if (gi < gruposOrdenados.length - 1) await new Promise((res) => setTimeout(res, 300))
     }
-    XLSX.writeFile(wb, `Anexos_por_owner_operacion_${new Date().toISOString().slice(0, 10)}.xlsx`)
   }
 
   return (

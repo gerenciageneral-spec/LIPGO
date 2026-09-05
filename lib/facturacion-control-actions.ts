@@ -81,6 +81,9 @@ export interface ControlFacturaFila {
   tiquete: string | null
   tipooperacion: string | null
   cliente: string | null
+  /** Producto de la primera línea de detalle de la orden×owner (representativo;
+   *  si la orden mezcla productos para el mismo owner, no se desglosan aparte). */
+  producto: string | null
   owner: string
   /** Quién mueve la carga. En Avimol determina la condición de pago. */
   transporte: string | null
@@ -1297,6 +1300,7 @@ export async function getControlFacturacion(
         tiquete: esCargueODistribucionCedi ? a.on : a.r.tiquetebascula ?? null,
         tipooperacion: a.op || null,
         cliente: a.r.cliente ?? null,
+        producto: a.r.producto ?? null,
         owner: fa.owner,
         transporte: a.r.transporte ?? null,
         mediopago: est?.mediopago ?? null,
