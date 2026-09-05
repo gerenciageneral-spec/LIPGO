@@ -746,8 +746,9 @@ export function CuadroControlFacturacion() {
       if (logo) {
         try {
           // 160×79px reales -- se respeta esa proporción (~2.03) para que no se
-          // vea deformado; más grande que antes porque se veía angosto.
-          doc.addImage(logo, "PNG", 40, 20, 130, 64)
+          // vea deformado; agrandado de nuevo (pedido explícito, con la muestra
+          // del PDF de Indupan como referencia de tamaño), misma posición.
+          doc.addImage(logo, "PNG", 40, 20, 180, 89)
         } catch {}
       }
       doc.setFontSize(8).setFont("helvetica", "normal").setTextColor(90)
