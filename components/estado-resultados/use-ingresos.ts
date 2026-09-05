@@ -27,7 +27,9 @@
 import useSWR from "swr"
 import { supabase } from "@/lib/supabase-client"
 import { getConciliacionAvimol } from "@/lib/conciliacion-avimol-actions"
+import { getMapaPlacasDistribucion } from "@/lib/facturacion-control-actions"
 import { facturadoAOwner } from "@/lib/facturacion-billed-party"
+import { hidratarCachePlacas } from "@/lib/distribucion-placas"
 
 export interface DetalleIngreso {
   nombre: string
@@ -133,6 +135,13 @@ async function sumarYAgruparToneladas(
   let filas = 0
   let offset = 0
   const grupos = new Map<string, { valor: number; registros: number; toneladas: number }>()
+
+  // `facturadoAOwner` (vía `esPlacaDistribucion`) lee un caché en memoria que
+  // este código -- corriendo en el navegador -- no puede calentar directo
+  // (esa función usa el cliente admin de Supabase). Se trae el mapa real por
+  // un Server Action serializable y se hidrata el caché antes de usarlo, o
+  // esPlacaDistribucion caería siempre al DEFAULT hardcodeado del código.
+  hidratarCachePlacas(await getMapaPlacasDistribucion())
 
   while (offset < MAX_ROWS) {
     const { data: page, error } = await supabase

@@ -1508,6 +1508,16 @@ export async function getControlFacturacion(
 }
 
 /**
+ * Mapa empresa→placas activas de "Placas de Distribución" (tabla `distribucion_placas`),
+ * serializable, para que un hook CLIENTE (que no puede usar el cliente admin de Supabase)
+ * pueda hidratar el caché de `lib/distribucion-placas.ts` con `hidratarCachePlacas()` y
+ * así ver la tabla real -- no el DEFAULT hardcodeado -- al llamar `facturadoAOwner()`.
+ */
+export async function getMapaPlacasDistribucion(): Promise<Record<number, string[]>> {
+  return await cargarPlacasDistribucion()
+}
+
+/**
  * Valor NETO por orden (mismo cálculo del cuadro/prefactura: cada operación × tarifa por
  * owner/id_empresa/subcategoría; báscula prorrateada en plantas). LIGERO: solo calcula
  * las órdenes que se le pasan (la página visible de Gestión de Facturas). Base antes de

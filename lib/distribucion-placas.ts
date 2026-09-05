@@ -31,6 +31,18 @@ export function invalidarCachePlacas(): void {
   _exp = 0
 }
 
+/**
+ * Hidrata el caché con un mapa ya resuelto (ej. traído por un Server Action
+ * desde código CLIENTE, que no puede llamar a `cargarPlacasDistribucion()`
+ * directamente porque esta usa el cliente admin de Supabase). Sin esto, un
+ * hook de navegador cae siempre al DEFAULT hardcodeado y nunca ve cambios
+ * reales del módulo Placas de Distribución.
+ */
+export function hidratarCachePlacas(mapa: Record<number, string[]>): void {
+  _cache = mapa
+  _exp = Date.now() + TTL_MS
+}
+
 /** Carga (y cachea) el mapa empresa→placas activas desde la tabla. Fallback al DEFAULT. */
 export async function cargarPlacasDistribucion(): Promise<Record<number, string[]>> {
   const now = Date.now()
