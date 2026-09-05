@@ -254,6 +254,14 @@ function subcatKey(s: string | null | undefined): string {
   return k
 }
 
+// EMPAQUE (Papel, Polipropileno): no tiene tarifa propia en `tarifasoperacion` --
+// confirmado por el usuario 2026-09-05, solo suma PESO a la orden, cobra la MISMA
+// tarifa del producto real que empaca (nunca el fallback "tarifa más alta").
+function esEmpaque(s: string | null | undefined): boolean {
+  const k = subcatKey(s)
+  return k === "PAPEL" || k === "POLIPROPILENO" || k.includes("EMPAQUE")
+}
+
 async function tarifasDeEmpresa(sb: any, idempresa: number): Promise<TarifasEmpresa> {
   const t: TarifasEmpresa = { exact: new Map(), porOpOwner: new Map(), porOp: new Map(), susanita: 0 }
   const setMax = (m: Map<string, number>, k: string, v: number) => m.set(k, Math.max(m.get(k) || 0, v))
@@ -1224,6 +1232,29 @@ export async function getControlFacturacion(
       sb,
       facturas.filter((r) => esProductoPorUnidad(r.subcategoria)).map((r) => ({ numeroorden: r.numeroorden, producto: r.producto })),
     )
+    // El EMPAQUE (Papel, Polipropileno) no tiene tarifa propia en `tarifasoperacion`
+    // -- sin este paso, `lookupTarifa` caía al fallback "tarifa más alta configurada"
+    // para ese owner/operación (ej. Mogolla $19.416), encareciendo cualquier orden
+    // que llevara un poco de empaque de más. Se calcula primero el total de
+    // PRODUCTO real (sin empaque) por orden×owner, para tarifar el empaque a esa
+    // MISMA tarifa efectiva (confirmado por el usuario: el empaque solo suma peso,
+    // no cambia la tarifa).
+    const productoTonPorOrdenOwner = new Map<string, number>()
+    const productoValorPorOrdenOwner = new Map<string, number>()
+    for (const r of facturas) {
+      const on = String(r.numeroorden || "").trim()
+      if (!on || !procesadas.has(on)) continue
+      if (esExcluida(r)) continue
+      if (esEmpaque(r.subcategoria)) continue
+      const servicio = servicioDe(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa)
+      if (filtraOperacion(r, servicio)) continue
+      const owner = ownerDeLinea(idempresa, r.placa, String(r.owner || "SIN OWNER"))
+      const ton = num(r.toneladas)
+      const tarifa = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
+      const k = key(on, owner)
+      productoTonPorOrdenOwner.set(k, (productoTonPorOrdenOwner.get(k) || 0) + ton)
+      productoValorPorOrdenOwner.set(k, (productoValorPorOrdenOwner.get(k) || 0) + ton * tarifa)
+    }
     for (const r of facturas) {
       const on = String(r.numeroorden || "").trim()
       if (!on || !procesadas.has(on)) continue
@@ -1232,7 +1263,17 @@ export async function getControlFacturacion(
       if (filtraOperacion(r, servicio)) continue
       const owner = ownerDeLinea(idempresa, r.placa, String(r.owner || "SIN OWNER"))
       const ton = num(r.toneladas)
-      const tarifa = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
+      let tarifa: number
+      if (esEmpaque(r.subcategoria)) {
+        const kEmp = key(on, owner)
+        const tonProducto = productoTonPorOrdenOwner.get(kEmp) || 0
+        const valorProducto = productoValorPorOrdenOwner.get(kEmp) || 0
+        // Sin producto real en la misma orden (caso raro, empaque suelto): se
+        // cae al cálculo normal en vez de dejarlo sin tarifa.
+        tarifa = tonProducto > 0 ? valorProducto / tonProducto : tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
+      } else {
+        tarifa = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
+      }
       const sinTarifa = tarifa <= 0
       // Huevos (y cualquier producto por unidad): se cobra la CANTIDAD digitada,
       // no el peso. Ver esProductoPorUnidad.
