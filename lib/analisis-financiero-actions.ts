@@ -95,6 +95,14 @@ function subcatKey(s: string | null | undefined): string {
   return esSubproducto(s) ? "MOGOLLA KG." : ownerKey(s)
 }
 
+// EMPAQUE (Papel, Polipropileno): no tiene tarifa propia en `tarifasoperacion` --
+// solo suma peso, cobra la MISMA tarifa del producto real que empaca (mismo
+// criterio que lib/facturacion-control-actions.ts).
+function esEmpaque(s: string | null | undefined): boolean {
+  const k = subcatKey(s)
+  return k === "PAPEL" || k === "POLIPROPILENO" || k.includes("EMPAQUE")
+}
+
 interface TarifasEmpresa {
   exact: Map<string, number>
   porOpOwner: Map<string, number>
@@ -375,6 +383,27 @@ async function realPorCodigo(
     }
   }
 
+  // EMPAQUE (Papel, Polipropileno): no tiene tarifa propia -- sin esto,
+  // tarifaDeServicio caía al fallback "tarifa más alta configurada". Total de
+  // PRODUCTO real (sin empaque) por orden×owner, para tarifar el empaque a esa
+  // misma tarifa efectiva (mismo criterio que getControlFacturacion/getPrefactura).
+  const productoTonPorOrdenOwner = new Map<string, number>()
+  const productoValorPorOrdenOwner = new Map<string, number>()
+  for (const r of filas) {
+    const on = String(r.numeroorden || "").trim()
+    if (!on || !procesadas.has(on)) continue
+    if (esEmpaque(r.subcategoria)) continue
+    const placa = String(r.placa ?? "").trim().toUpperCase()
+    const cl = norm(r.cliente)
+    if (placasExcluidas.has(placa) && !cl.includes("SUSANITA")) continue
+    const owner = ownerDeLinea(idempresa, r.placa, String(r.owner || "SIN OWNER"))
+    const ton = num(r.toneladas)
+    const tarifa = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
+    const kProd = `${on}|||${owner}`
+    productoTonPorOrdenOwner.set(kProd, (productoTonPorOrdenOwner.get(kProd) || 0) + ton)
+    productoValorPorOrdenOwner.set(kProd, (productoValorPorOrdenOwner.get(kProd) || 0) + ton * tarifa)
+  }
+
   // Acumular por (orden, código) — igual que el Cuadro acumula por (orden, owner) —
   // y el denominador del prorrateo es el detalle TOTAL de la orden (todos los códigos).
   type Acc = { on: string; codigo: string; op: string; tonDet: number; valorDet: number }
@@ -394,7 +423,15 @@ async function realPorCodigo(
     ordenTotalDet.set(on, (ordenTotalDet.get(on) || 0) + ton)
     if (!codigos) continue // producto/operación fuera del acuerdo (no se pierde del denominador, sí de la salida)
 
-    const tarifa = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
+    let tarifa: number
+    if (esEmpaque(r.subcategoria)) {
+      const kEmp = `${on}|||${owner}`
+      const tonProducto = productoTonPorOrdenOwner.get(kEmp) || 0
+      const valorProducto = productoValorPorOrdenOwner.get(kEmp) || 0
+      tarifa = tonProducto > 0 ? valorProducto / tonProducto : tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
+    } else {
+      tarifa = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
+    }
     // Avimol (id2) placa propia: cubierto por el fijo de 600 ton/mes, no se
     // factura por tonelada aquí (ya está en Cargos Fijos, no se duplica). Con
     // transporte Zamudio/Terceros SÍ se factura (a esa transportadora, no a

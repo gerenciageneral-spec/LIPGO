@@ -741,6 +741,43 @@ export async function getPrefactura(
       if (data.length < 1000) break
     }
 
+    // EMPAQUE (Papel, Polipropileno): no tiene tarifa propia en `tarifasoperacion`
+    // -- sin este paso, `tarifaDeServicio` caía al fallback "tarifa más alta
+    // configurada" del owner/operación. Se calcula primero el total de PRODUCTO
+    // real (sin empaque) por orden×owner, para tarifar el empaque a esa misma
+    // tarifa efectiva (mismo criterio y mismo bug que getControlFacturacion).
+    const productoTonPorOrdenOwner = new Map<string, number>()
+    const productoValorPorOrdenOwner = new Map<string, number>()
+    for (let offset = 0; ; offset += 1000) {
+      let q = sb
+        .from("facturacion")
+        .select("numeroorden, cliente, placa, owner, subcategoria, toneladas, transporte, tipooperacion")
+        .eq("idempresa", idempresa)
+      if (filtros.desde) q = q.gte("fechacargue", filtros.desde)
+      if (filtros.hasta) q = q.lte("fechacargue", filtros.hasta)
+      const { data, error } = await q.range(offset, offset + 999)
+      if (error) return { success: false, message: error.message }
+      if (!data || data.length === 0) break
+      for (const r of data) {
+        const on = String(r.numeroorden || "").trim()
+        if (!procesadas.has(on)) continue
+        if (esEmpaque(r.subcategoria)) continue
+        const placa = String(r.placa ?? "").trim().toUpperCase()
+        const cl = String(r.cliente ?? "").toUpperCase()
+        if (placasExcluidas.has(placa) && !cl.includes("SUSANITA")) continue
+        const servicioPre = servicioDe(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa)
+        if (soloProduccion) continue
+        if (hayFiltroOps && servicioPre !== "Susanita" && !opSet.has(String(r.tipooperacion ?? "").trim().toLowerCase())) continue
+        const owner = ownerDeLinea(idempresa, r.placa, String(r.owner || "SIN OWNER"))
+        const ton = num(r.toneladas)
+        const tarifa = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
+        const kProd = `${on}|||${owner}`
+        productoTonPorOrdenOwner.set(kProd, (productoTonPorOrdenOwner.get(kProd) || 0) + ton)
+        productoValorPorOrdenOwner.set(kProd, (productoValorPorOrdenOwner.get(kProd) || 0) + ton * tarifa)
+      }
+      if (data.length < 1000) break
+    }
+
     // Líneas de la vista facturacion (TABLA ORIGEN).
     const origen: PrefacturaLinea[] = []
     for (let offset = 0; ; offset += 1000) {
@@ -776,7 +813,15 @@ export async function getPrefactura(
         const owner = ownerDeLinea(idempresa, r.placa, String(r.owner || "SIN OWNER"))
         const est = estadoPorOrden.get(on)
         const estadofactura = est?.estado ?? null
-        const tServicio = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
+        let tServicio: number
+        if (esEmpaque(r.subcategoria)) {
+          const kEmp = `${on}|||${owner}`
+          const tonProducto = productoTonPorOrdenOwner.get(kEmp) || 0
+          const valorProducto = productoValorPorOrdenOwner.get(kEmp) || 0
+          tServicio = tonProducto > 0 ? valorProducto / tonProducto : tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
+        } else {
+          tServicio = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
+        }
         // Quién PAGA esta línea. La tarifa se busca con el owner del PRODUCTO
         // (que es como está montada `tarifasoperacion`); la reasignación es de
         // destinatario, no de tarifa. Con `cubiertoPorFijo` el movimiento cuenta
@@ -1599,6 +1644,32 @@ export async function getValoresNetosOrden(
       }
     }
 
+    // EMPAQUE (Papel, Polipropileno): no tiene tarifa propia -- sin esto,
+    // tarifaDeServicio caía al fallback "tarifa más alta configurada". Total de
+    // PRODUCTO real (sin empaque) por orden, para tarifar el empaque a esa
+    // misma tarifa efectiva (mismo criterio que getControlFacturacion/getPrefactura).
+    const productoTonPorOrden = new Map<string, number>()
+    const productoValorPorOrden = new Map<string, number>()
+    for (const chunk of chunks) {
+      const { data } = await sb
+        .from("facturacion")
+        .select("numeroorden, owner, subcategoria, toneladas, tipooperacion, transporte, placa, cliente")
+        .eq("idempresa", idempresa)
+        .in("numeroorden", chunk)
+      for (const r of data || []) {
+        const on = String(r.numeroorden || "").trim()
+        if (esEmpaque(r.subcategoria)) continue
+        const placa = String(r.placa ?? "").trim().toUpperCase()
+        const cl = String(r.cliente ?? "").toUpperCase()
+        if (placasExcluidas.has(placa) && !cl.includes("SUSANITA")) continue
+        const owner = ownerDeLinea(idempresa, r.placa, String(r.owner || "SIN OWNER"))
+        const ton = num(r.toneladas)
+        const tarifa = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
+        productoTonPorOrden.set(on, (productoTonPorOrden.get(on) || 0) + ton)
+        productoValorPorOrden.set(on, (productoValorPorOrden.get(on) || 0) + ton * tarifa)
+      }
+    }
+
     // Líneas de la vista SOLO de esas órdenes.
     const valorAcc = new Map<string, number>()
     const totalDet = new Map<string, number>()
@@ -1622,7 +1693,14 @@ export async function getValoresNetosOrden(
         if (placasExcluidas.has(placa) && !cl.includes("SUSANITA")) continue // WMP446 salvo Susanita
         const owner = ownerDeLinea(idempresa, r.placa, String(r.owner || "SIN OWNER"))
         const ton = num(r.toneladas)
-        const tarifa = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
+        let tarifa: number
+        if (esEmpaque(r.subcategoria)) {
+          const tonProducto = productoTonPorOrden.get(on) || 0
+          const valorProducto = productoValorPorOrden.get(on) || 0
+          tarifa = tonProducto > 0 ? valorProducto / tonProducto : tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
+        } else {
+          tarifa = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
+        }
         // Avimol (id2) placa propia: cubierto por el fijo, no se factura por
         // tonelada — pero SÍ cuenta en totalDet (denominador del prorrateo de
         // báscula de la orden). Ver lib/facturacion-billed-party.ts. Huevos
