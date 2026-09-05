@@ -714,14 +714,16 @@ export function CuadroControlFacturacion() {
       if (u.includes("AVIMOL")) return "AVIMOL"
       return w.substring(0, 12)
     }
-    // Agrupar filas por owner × operación, en orden estable. Las placas propias
-    // de ID2 (cubiertas por el fijo mensual) van en SU PROPIO anexo -- separado
-    // del anexo con tarifa real -- para poder medir sus toneladas de Cargue/
-    // Descargue sin mezclarlas con lo que sí se factura (pedido explícito).
+    // Agrupar filas por owner × operación, en orden estable. Placa de
+    // Distribución (Configuración → Placas de Distribución, cubierta por el
+    // fijo mensual): mismo criterio y mismo nombre que ya usa Prefactura
+    // (servicioDe() → "Cargue/Descargue propio") -- Cargue, Descargue y su
+    // clon de Distribución de esa placa van TODOS al mismo anexo, sin separar
+    // por operación puntual (pedido explícito, para medir sus toneladas
+    // juntas sin mezclarlas con lo que sí se factura).
     const grupos = new Map<string, { owner: string; op: string; filas: typeof data.filas }>()
     for (const f of data.filas) {
-      const opBase = f.tipooperacion || "(sin op)"
-      const op = f.cubierto_por_fijo ? `${opBase} (Placas propias)` : opBase
+      const op = f.cubierto_por_fijo ? "Cargue/Descargue propio" : f.tipooperacion || "(sin op)"
       const k = `${f.owner}|||${op}`
       const g = grupos.get(k) || { owner: f.owner, op, filas: [] as any }
       g.filas.push(f)
@@ -748,12 +750,12 @@ export function CuadroControlFacturacion() {
           doc.addImage(logo, "PNG", 40, 20, 130, 64)
         } catch {}
       }
-      doc.setFontSize(9).setFont("helvetica", "normal").setTextColor(90)
+      doc.setFontSize(8).setFont("helvetica", "normal").setTextColor(90)
       doc.text("LIP PROGRESSIVE INTEGRAL LOGISTICS SAS · NIT 901725963-8", MW - 40, 46, { align: "right" })
 
-      doc.setFontSize(14).setFont("helvetica", "bold").setTextColor(...navy)
+      doc.setFontSize(12).setFont("helvetica", "bold").setTextColor(...navy)
       doc.text(`ANEXO DE FACTURACIÓN — ${g.owner.toUpperCase()}`, MW / 2, 98, { align: "center" })
-      doc.setFontSize(9.5).setFont("helvetica", "normal").setTextColor(90)
+      doc.setFontSize(8.5).setFont("helvetica", "normal").setTextColor(90)
       // "al" en vez de "→": las fuentes estándar de jsPDF (WinAnsi) no traen la
       // flecha unicode y la imprimen como un carácter roto.
       const periodo =
@@ -764,7 +766,9 @@ export function CuadroControlFacturacion() {
 
       let subTon = 0
       let subVal = 0
-      const filas = g.filas.map((f) => {
+      // Orden cronológico ascendente (día 1 primero, el más reciente al final).
+      const filasOrdenadas = [...g.filas].sort((a, b) => String(a.fecha ?? "").localeCompare(String(b.fecha ?? "")))
+      const filas = filasOrdenadas.map((f) => {
         subTon += f.toneladas
         subVal += f.valor_a_facturar
         return [
@@ -801,8 +805,8 @@ export function CuadroControlFacturacion() {
         body: filas,
         foot: [["", "", "", "", "", "", `TOTAL ${g.op.toUpperCase()}`, `${ton(subTon)} ${uLabel(g.filas[0]?.unidad)}`, "", moneyPdf(subVal)]],
         theme: "grid",
-        styles: { fontSize: 8, cellPadding: 5, textColor: 20, halign: "center", valign: "middle" },
-        headStyles: { fillColor: navy, textColor: 255, fontStyle: "bold", fontSize: 8 },
+        styles: { fontSize: 7, cellPadding: 3, textColor: 20, halign: "center", valign: "middle" },
+        headStyles: { fillColor: navy, textColor: 255, fontStyle: "bold", fontSize: 7 },
         footStyles: { fillColor: [230, 230, 230], textColor: 20, fontStyle: "bold" },
         // Anchos calibrados contra datos reales (no el ejemplo corto "Bultos"):
         // PRODUCTO trae nombres completos de hasta 45 caracteres -- necesita
