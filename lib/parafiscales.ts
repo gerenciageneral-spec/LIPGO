@@ -196,6 +196,13 @@ export interface EntradaAportes {
   smlv: number
   /** true = personal administrativo (headcount.admin). */
   esAdmin: boolean
+  /**
+   * true = `ibcTrabajado` viene de un valor REAL confirmado (radicado en Aportes
+   * en Línea), no de la fórmula día a día -- se omite el piso de 1 SMLV
+   * proporcional (que compara contra los DÍAS que cuenta LIPgo, no
+   * necesariamente los mismos días con que se radicó el valor real).
+   */
+  ibcTrabajadoEsReal?: boolean
 }
 
 export interface Aportes {
@@ -282,7 +289,7 @@ export function calcularAportes(e: EntradaAportes, p: ParametrosParafiscales): A
   //     de 1 SMLV proporcional a esos días.
   let ibcTrab = Math.max(0, Number(e.ibcTrabajado) || 0)
   const pisoTrab = (smlv / 30) * diasTrab
-  if (diasTrab > 0 && ibcTrab < pisoTrab) {
+  if (!e.ibcTrabajadoEsReal && diasTrab > 0 && ibcTrab < pisoTrab) {
     notas.push(`IBC de días trabajados ajustado al piso de 1 SMLV proporcional (${diasTrab} días).`)
     ibcTrab = pisoTrab
   }

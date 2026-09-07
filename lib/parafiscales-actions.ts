@@ -9,17 +9,16 @@
 // por su novedad (`pagonomina.novedad_reportada`) y cotiza según la norma PILA:
 //   · Trabajado  → IBC = `total_liquidado_dia` (BASE del día + extras + recargos +
 //     dominical/festivo, SIN auxilio de transporte) + la BONIFICACIÓN por productividad
-//     = excedente de destajo NETO de la quincena (piso 0), TODA prestacional. Cotiza
-//     TODO, incl. ARL. RESTAURADO 2026-08-29: el commit f706a7f (14-ago) lo había
-//     sacado del IBC ("bono NO prestacional"), pero se comparó contra la planilla REAL
-//     de Aportes en Línea de julio-2026 (60 personas cruzadas por cédula) y con el bono
-//     adentro la brecha promedio baja de $234k a $118k por persona (a $57k cuando además
-//     coincide el conteo de días) — la vieja fórmula sí es la que de verdad se radicó en
-//     la PILA. Confirmado por el usuario: debe coincidir con lo pagado en Siigo.
-//     NOTA pendiente (la razón original de f706a7f): esto vuelve a dejar que lo
-//     PROYECTADO (`cabeceraoc.tipooperacion = 'proyeccion'`) entre al IBC vía este mismo
-//     bono si un mes se consulta ANTES de cerrar sus proyecciones — no debería afectar
-//     meses ya cerrados como julio, pero vigilar si se usa para el mes en curso.
+//     = excedente de destajo NETO de la quincena (piso 0), TODA prestacional -- pero
+//     SOLO desde el 1-jul-2026 (`BONO_DESTAJO_IBC_DESDE`). Confirmado por el usuario
+//     2026-09-07 (mismo corte ya validado en liquidaciones-actions.ts): antes de julio
+//     el concepto 52 no estaba claro/consolidado, por eso no entra al IBC de esos meses;
+//     desde julio sí, y debe coincidir 100% con lo realmente pagado. Cotiza TODO, incl.
+//     ARL, cuando aplica.
+//     NOTA pendiente: esto deja que lo PROYECTADO (`cabeceraoc.tipooperacion =
+//     'proyeccion'`) entre al IBC vía este mismo bono si un mes se consulta ANTES de
+//     cerrar sus proyecciones — no debería afectar meses ya cerrados, pero vigilar si
+//     se usa para el mes en curso.
 //   · Vacaciones → IBC = salario/día. Cotiza pensión + caja (no salud, no ARL).
 //   · Incapacidad→ IBC = salario/día (día completo). Cotiza pensión + salud (no ARL).
 //   · Ausentismo → licencia no remunerada: solo 12% de pensión (empleador).
@@ -49,6 +48,10 @@ export interface ParafiscalPersona extends Aportes {
   esAdmin: boolean
   dias: number
   devengado: number
+  /** IBC REALMENTE radicado en Aportes en Línea ese mes (parafiscales_real), si se guardó. */
+  ibcReal: number | null
+  /** true si `ibc` viene del valor real guardado (no de la fórmula en vivo). */
+  tieneValorReal: boolean
 }
 
 export interface ResumenParafiscales {
@@ -89,6 +92,10 @@ function finDeMes(anio: number, mes: number): string {
 //               caja, SIN ARL (día pagado pero sin exposición a riesgo laboral).
 //   · RETIRO  → día de baja: NO cotiza (se descarta).
 //   · TRAB    → trabajado / descanso / festivo: cotiza TODO (incl. ARL).
+// Bono de destajo (concepto 52) al IBC solo desde esta fecha -- ver comentario
+// de cabecera. Mismo corte confirmado ya en liquidaciones-actions.ts.
+const BONO_DESTAJO_IBC_DESDE = "2026-07-01"
+
 type TipoDiaCotizacion = "TRAB" | "VAC" | "INCAP" | "AUS" | "LICR" | "RETIRO"
 function clasificarDiaCotizacion(novedad: string | null | undefined): TipoDiaCotizacion {
   const s = String(novedad || "")
@@ -269,6 +276,21 @@ export async function getParafiscales(
     }
     if (infoPorNombre.size === 0) return { success: true, data: [], params, smlv, auxilio: auxilioMes }
 
+    // Valor REAL (histórico) del IBC, cuando el mes ya se radicó en Aportes en
+    // Línea y no coincide con la fórmula (destajo antes de julio-2026, ajustes
+    // puntuales). Gana sobre el cálculo en vivo cuando está presente. Mismo
+    // patrón que liquidaciones_retiro.*_real.
+    const { data: reales } = await admin
+      .from("parafiscales_real")
+      .select("identificacion, ibc_real")
+      .eq("anio", anio)
+      .eq("mes", mes)
+    const ibcRealPorCedula = new Map<string, number>()
+    for (const r of reales || []) {
+      if (r.ibc_real == null) continue
+      ibcRealPorCedula.set(String(r.identificacion).trim(), Number(r.ibc_real))
+    }
+
     // Nómina del mes (paginada — Supabase topa en 1000 filas por respuesta).
     const desde = `${anio}-${String(mes).padStart(2, "0")}-01`
     const hasta = finDeMes(anio, mes)
@@ -359,8 +381,10 @@ export async function getParafiscales(
           // desde pagonomina) y se aplica MAX(0,·) por quincena más abajo — validado
           // contra la planilla real de julio-2026 (ver comentario arriba).
           a.ibcTrab += Number(r.total_liquidado_dia || 0)
-          if (diaMes <= 15) a.excQ1 += Number(r.bonif_prestacional || 0)
-          else a.excQ2 += Number(r.bonif_prestacional || 0)
+          if (fecha >= BONO_DESTAJO_IBC_DESDE) {
+            if (diaMes <= 15) a.excQ1 += Number(r.bonif_prestacional || 0)
+            else a.excQ2 += Number(r.bonif_prestacional || 0)
+          }
           if (!esDia31) a.diasTrab += 1
         }
       }
@@ -381,10 +405,17 @@ export async function getParafiscales(
       // TODA prestacional → entra al IBC. Es exactamente el "52-Bonificación Por
       // Productividad" del archivo plano.
       const bonoProductividad = Math.max(0, a.excQ1) + Math.max(0, a.excQ2)
+      // Si hay valor REAL guardado para esta persona-mes, se ajusta el IBC de
+      // días trabajados para que el total (`ap.ibc`) dé EXACTO el valor real
+      // radicado (el resto de bases -- vacaciones/incapacidad/etc -- no cambian,
+      // solo se re-cuadra la parte "trabajado", que es donde vive la diferencia).
+      const ibcReal = ibcRealPorCedula.get(info.identificacion) ?? null
+      const otrasBasesSalario =
+        (Math.max(Number(info.salario) || 0, smlv) / 30) * (a.diasVac + a.diasIncap + a.diasAus + a.diasLicr)
       const ap = calcularAportes(
         {
           salario: info.salario,
-          ibcTrabajado: a.ibcTrab + bonoProductividad,
+          ibcTrabajado: ibcReal != null ? Math.max(0, ibcReal - otrasBasesSalario) : a.ibcTrab + bonoProductividad,
           diasTrabajados: a.diasTrab,
           diasVacaciones: a.diasVac,
           diasIncapacidad: a.diasIncap,
@@ -393,6 +424,7 @@ export async function getParafiscales(
           auxilio,
           smlv,
           esAdmin: info.esAdmin,
+          ibcTrabajadoEsReal: ibcReal != null,
         },
         params,
       )
@@ -404,6 +436,8 @@ export async function getParafiscales(
         esAdmin: info.esAdmin,
         dias: diasCotizados,
         devengado: ap.ibc,
+        ibcReal,
+        tieneValorReal: ibcReal != null,
       })
     }
 
@@ -448,5 +482,42 @@ export async function getParafiscales(
     return { success: true, data, resumen, params, smlv, auxilio: auxilioMes }
   } catch (e: any) {
     return { success: false, data: [], message: e?.message || "Error al calcular los parafiscales." }
+  }
+}
+
+// Valor REAL (histórico) del IBC de una persona-mes, cuando lo radicado en
+// Aportes en Línea no coincide con la fórmula en vivo. Pasar `ibcReal: null`
+// lo deja SIN valor real (el cálculo en vivo vuelve a aplicar).
+export async function guardarValorRealParafiscal(payload: {
+  idempresa: number | null
+  identificacion: string
+  persona: string
+  anio: number
+  mes: number
+  ibcReal: number | null
+  diasReal: number | null
+}): Promise<{ success: boolean; message?: string }> {
+  if (!payload?.identificacion || !payload.anio || !payload.mes) {
+    return { success: false, message: "Datos incompletos." }
+  }
+  try {
+    const admin: any = await getSupabaseAdmin()
+    const { error } = await admin.from("parafiscales_real").upsert(
+      {
+        idempresa: payload.idempresa,
+        identificacion: payload.identificacion,
+        persona: payload.persona,
+        anio: payload.anio,
+        mes: payload.mes,
+        ibc_real: payload.ibcReal,
+        dias_real: payload.diasReal,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "identificacion,anio,mes" },
+    )
+    if (error) return { success: false, message: error.message }
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al guardar el valor real." }
   }
 }

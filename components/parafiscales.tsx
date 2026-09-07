@@ -30,10 +30,14 @@ import {
   Info,
   RotateCcw,
   RefreshCw,
+  BadgeCheck,
+  Pencil,
+  X,
 } from "lucide-react"
 import {
   getParafiscales,
   guardarParametrosParafiscales,
+  guardarValorRealParafiscal,
   type ParafiscalPersona,
   type ResumenParafiscales,
 } from "@/lib/parafiscales-actions"
@@ -79,6 +83,11 @@ export default function Parafiscales() {
   const [showNomenclatura, setShowNomenclatura] = useState(false)
   // Confirmación explícita cuando un parámetro se aparta del valor de ley vigente.
   const [confirmaReforma, setConfirmaReforma] = useState(false)
+  // Valor REAL del IBC (lo radicado en Aportes en Línea), cuando difiere de la
+  // fórmula en vivo -- mismo patrón que el "valor real" de Liquidaciones.
+  const [editandoReal, setEditandoReal] = useState<string | null>(null)
+  const [valorReal, setValorReal] = useState("")
+  const [guardandoReal, setGuardandoReal] = useState<string | null>(null)
 
   const cargar = useCallback(async () => {
     if (!consolidado && !selectedEmpresaId) {
@@ -138,6 +147,38 @@ export default function Parafiscales() {
   const setP = (k: keyof ParametrosParafiscales, v: number | boolean | string) => {
     setParams((prev) => ({ ...prev, [k]: v }) as ParametrosParafiscales)
     setConfirmaReforma(false)
+  }
+
+  const abrirEdicionReal = (p: ParafiscalPersona) => {
+    setEditandoReal(p.identificacion)
+    setValorReal(p.ibcReal != null ? String(Math.round(p.ibcReal)) : "")
+  }
+
+  const guardarReal = async (p: ParafiscalPersona) => {
+    const num = valorReal.trim() === "" ? null : Number(valorReal)
+    if (num != null && !Number.isFinite(num)) {
+      toast({ title: "Valor inválido", description: "Ingresa un número o deja el campo vacío.", variant: "destructive" })
+      return
+    }
+    setGuardandoReal(p.identificacion)
+    const r = await guardarValorRealParafiscal({
+      idempresa: p.idempresa,
+      identificacion: p.identificacion,
+      persona: p.persona,
+      anio,
+      mes,
+      ibcReal: num,
+      diasReal: p.dias,
+    })
+    setGuardandoReal(null)
+    if (r.success) {
+      setEditandoReal(null)
+      await cargar()
+      toast({
+        title: "Guardado",
+        description: num != null ? "Se guardó el IBC real de Aportes en Línea." : "Se quitó el valor real (vuelve a la fórmula).",
+      })
+    } else toast({ title: "Error", description: r.message, variant: "destructive" })
   }
 
   // Preview en vivo: cómo queda un trabajador de SMLV con estos parámetros.
@@ -685,7 +726,7 @@ export default function Parafiscales() {
                   <TableRow>
                     <TableHead>Trabajador</TableHead>
                     <TableHead className="text-center">Días (trab · nov.)</TableHead>
-                    <TableHead className="text-right">IBC total</TableHead>
+                    <TableHead className="text-right">IBC total (real ✎)</TableHead>
                     <TableHead className="text-right">IBC salud</TableHead>
                     <TableHead className="text-right">IBC ARL</TableHead>
                     <TableHead className="text-right">Auxilio</TableHead>
@@ -744,7 +785,62 @@ export default function Parafiscales() {
                           {p.diasLicenciaRemunerada > 0 && ` · ${p.diasLicenciaRemunerada}l`}
                         </div>
                       </TableCell>
-                      <TableCell className="text-right tabular-nums">{money(p.ibc)}</TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {editandoReal === p.identificacion ? (
+                          <div className="flex items-center justify-end gap-1">
+                            <Input
+                              type="number"
+                              step="1"
+                              placeholder="Fórmula"
+                              className="h-7 w-28 text-right"
+                              value={valorReal}
+                              onChange={(e) => setValorReal(e.target.value)}
+                              autoFocus
+                            />
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 w-7 p-0"
+                              disabled={guardandoReal === p.identificacion}
+                              onClick={() => guardarReal(p)}
+                              title="Guardar valor real"
+                            >
+                              {guardandoReal === p.identificacion ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Save className="h-3.5 w-3.5" />
+                              )}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 w-7 p-0"
+                              onClick={() => setEditandoReal(null)}
+                              title="Cancelar"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        ) : (
+                          <span className="inline-flex items-center justify-end gap-1">
+                            {p.tieneValorReal && (
+                              <BadgeCheck
+                                className="h-3.5 w-3.5 text-emerald-600"
+                                aria-label="IBC real confirmado (Aportes en Línea)"
+                              />
+                            )}
+                            {money(p.ibc)}
+                            <button
+                              type="button"
+                              onClick={() => abrirEdicionReal(p)}
+                              className="text-muted-foreground/60 hover:text-foreground"
+                              title="Editar IBC real (Aportes en Línea)"
+                            >
+                              <Pencil className="h-3 w-3" />
+                            </button>
+                          </span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-right tabular-nums text-muted-foreground">
                         {p.ibcSalud === 0 ? "—" : money(p.ibcSalud)}
                       </TableCell>
@@ -792,6 +888,11 @@ export default function Parafiscales() {
                   “—” = no se causa: por la exoneración del art. 114-1 del E.T. (devenga menos de{" "}
                   {params.umbralExoneracionSmlv} SMMLV) o porque ese concepto no aplica a los días del mes. La{" "}
                   <strong>Caja de Compensación</strong> nunca se exonera.
+                </p>
+                <p>
+                  <BadgeCheck className="inline h-3 w-3 text-emerald-600" /> junto al IBC = se guardó el valor{" "}
+                  <strong>REAL</strong> radicado en Aportes en Línea para ese mes (prevalece sobre la fórmula). El
+                  ícono de lápiz permite registrarlo o borrarlo — dejar el campo vacío vuelve a la fórmula en vivo.
                 </p>
               </div>
             </CardContent>
