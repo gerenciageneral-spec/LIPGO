@@ -100,6 +100,17 @@ function defaultPagadoHasta(fechaRetiro: string): string {
 // dentro de [desde, hasta]. Se usan los datos reales de LIPgo; el único relleno
 // (los 4 primeros días de enero que no existen en el sistema) se maneja aparte.
 //
+// "Sin Registro" SIN motivo (novedad_reportada vacía) y en $0: verificado con
+// datos reales 2026-09-07 (Omar Villar, Jesús De La Hoz -- ambos cargo
+// "Cargue/Descargue", pago por tonelada) que esto es un hueco de captura de
+// actividad, NO una ausencia real -- a diferencia de "Sin Registro" con un
+// motivo real (13-Incapacidad, 38-Licencia no remunerada), que sí debe seguir
+// en $0. Se rellena con el salario básico del día (el piso garantizado,
+// incluso para quien trabaja al destajo). Confirmado que NO aplica cuando ya
+// hay un total_liquidado_dia real (turno con "Sin Registro" pagado completo,
+// ej. Luis Ángel Arrieta, cargo "Distribución Turno" -- no se toca, ya paga
+// bien).
+//
 // Bono de destajo (`bonif_prestacional`, novedad "52-Bonificación Por
 // Productividad"): confirmado por el usuario (2026-09-07) que SÍ es base de
 // prestaciones (cesantías/intereses/prima/vacaciones) -- coincide con el
@@ -113,14 +124,18 @@ function defaultPagadoHasta(fechaRetiro: string): string {
 // diario.
 const BONO_DESTAJO_PRESTACIONAL_DESDE = "2026-07-01"
 
-function sumaPeriodo(rows: any[], desde: string, hasta: string): { dev: number; dias: number } {
+function sumaPeriodo(rows: any[], desde: string, hasta: string, salarioDia: number): { dev: number; dias: number } {
   let dev = 0
   let dias = 0
   const bonoPorQuincena = new Map<string, number>()
   for (const r of rows) {
     const f = String(r.fecha)
     if (f >= desde && f <= hasta) {
-      dev += Number(r.total_liquidado_dia || 0)
+      const sinRegistroSinMotivo =
+        String(r.actividad_registrada || "") === "Sin Registro" &&
+        !String(r.novedad_reportada || "").trim() &&
+        Number(r.total_liquidado_dia || 0) === 0
+      dev += sinRegistroSinMotivo ? salarioDia : Number(r.total_liquidado_dia || 0)
       dias += 1
       if (f >= BONO_DESTAJO_PRESTACIONAL_DESDE) {
         const esp = r.especialidad === true || String(r.especialidad) === "true"
@@ -308,7 +323,7 @@ export async function getLiquidaciones(
         const auxMensual = auxPorAnio.get(anio) ?? 0
         const salarioMensual = info.salario || smlvPorAnio.get(anio) || 0
         const salarioDia = salarioMensual / 30
-        const ce = sumaPeriodo(rows, cesDesdeReal, info.fecha_retiro)
+        const ce = sumaPeriodo(rows, cesDesdeReal, info.fecha_retiro, salarioDia)
 
         // Relleno SOLO de los primeros días de enero que no existen en el sistema
         // (hasta 4), y únicamente si el trabajador venía del año anterior (tiene
@@ -349,19 +364,19 @@ export async function getLiquidaciones(
         // el submódulo de Deducciones (fuera del alcance de este fix).
         if (info.fecha_retiro >= `${anio}-06-01` && info.fecha_retiro <= `${anio}-06-30`) {
           if (info.fechainicio && String(info.fechainicio) === info.fecha_retiro) {
-            const prc = sumaPeriodo(rows, cesDesdeReal, info.fecha_retiro)
+            const prc = sumaPeriodo(rows, cesDesdeReal, info.fecha_retiro, salarioDia)
             prima = (prc.dev + (pp.incluyeAux ? (auxMensual / 30) * prc.dias : 0)) * (pp.pctPrima / 100)
           } else {
             prima = 0
           }
         } else if (info.fecha_retiro < `${anio}-06-01`) {
-          const prc = sumaPeriodo(rows, cesDesdeReal, info.fecha_retiro)
+          const prc = sumaPeriodo(rows, cesDesdeReal, info.fecha_retiro, salarioDia)
           prima = (prc.dev + (pp.incluyeAux ? (auxMensual / 30) * prc.dias : 0)) * (pp.pctPrima / 100)
         } else {
           const primaDesde2Base = info.fecha_retiro >= `${anio}-12-15` ? `${anio}-12-15` : `${anio}-07-01`
           const primaDesde2 =
             info.fechainicio && String(info.fechainicio) > primaDesde2Base ? String(info.fechainicio) : primaDesde2Base
-          const pr2 = sumaPeriodo(rows, primaDesde2, info.fecha_retiro)
+          const pr2 = sumaPeriodo(rows, primaDesde2, info.fecha_retiro, salarioDia)
           prima = (pr2.dev + (pp.incluyeAux ? (auxMensual / 30) * pr2.dias : 0)) * (pp.pctPrima / 100)
         }
 
