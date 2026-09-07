@@ -67,6 +67,13 @@ export interface LiquidacionPersona {
   soporte_url: string | null
   soporte_nombre: string | null
   novedades: LiquidacionNovedad[]
+  // Valor REAL guardado (histórico), si existe -- para mostrar en pantalla
+  // cuál de las 4 prestaciones viene de la fórmula y cuál de un valor
+  // confirmado manualmente.
+  cesantias_real: number | null
+  intereses_real: number | null
+  prima_real: number | null
+  vacaciones_real: number | null
 }
 
 async function leerParametrosPrestaciones(admin: any): Promise<ParametrosPrestaciones> {
@@ -459,6 +466,10 @@ export async function getLiquidaciones(
         soporte_url: est?.soporte_url ?? null,
         soporte_nombre: est?.soporte_nombre ?? null,
         novedades,
+        cesantias_real: est?.cesantias_real ?? null,
+        intereses_real: est?.intereses_real ?? null,
+        prima_real: est?.prima_real ?? null,
+        vacaciones_real: est?.vacaciones_real ?? null,
       })
     }
 

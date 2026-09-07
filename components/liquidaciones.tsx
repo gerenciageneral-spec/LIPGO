@@ -29,6 +29,7 @@ import {
   SlidersHorizontal,
   Scale,
   RefreshCw,
+  BadgeCheck,
 } from "lucide-react"
 import * as XLSX from "xlsx"
 import {
@@ -36,6 +37,7 @@ import {
   guardarEstadoLiquidacion,
   guardarPagadoHasta,
   guardarParametrosPrestaciones,
+  guardarValoresRealesLiquidacion,
   subirSoporteLiquidacion,
   type LiquidacionPersona,
   type ParametrosPrestaciones,
@@ -63,6 +65,9 @@ export default function Liquidaciones() {
   const [showNomenclatura, setShowNomenclatura] = useState(false)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState<string | null>(null)
+  const [realesEdit, setRealesEdit] = useState<
+    Record<string, { cesantias: string; intereses: string; prima: string; vacaciones: string }>
+  >({})
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const uploadTarget = useRef<LiquidacionPersona | null>(null)
 
@@ -85,12 +90,27 @@ export default function Liquidaciones() {
     cargar()
   }, [cargar])
 
-  const toggle = (persona: string) =>
+  const toggle = (p: LiquidacionPersona) => {
+    setRealesEdit((prev) =>
+      prev[p.identificacion]
+        ? prev
+        : {
+            ...prev,
+            [p.identificacion]: {
+              cesantias: p.cesantias_real != null ? String(p.cesantias_real) : "",
+              intereses: p.intereses_real != null ? String(p.intereses_real) : "",
+              prima: p.prima_real != null ? String(p.prima_real) : "",
+              vacaciones: p.vacaciones_real != null ? String(p.vacaciones_real) : "",
+            },
+          },
+    )
     setExpanded((prev) => {
       const next = new Set(prev)
+      const persona = p.persona
       next.has(persona) ? next.delete(persona) : next.add(persona)
       return next
     })
+  }
 
   const kpis = useMemo(() => {
     const pendientes = data.filter((p) => p.estado === "pendiente")
@@ -144,6 +164,31 @@ export default function Liquidaciones() {
     if (r.success) {
       await cargar()
       toast({ title: "Actualizado", description: value ? `Pagado hasta ${value}.` : "Se borró la fecha de pago." })
+    } else toast({ title: "Error", description: r.message, variant: "destructive" })
+  }
+
+  const setReal = (identificacion: string, campo: "cesantias" | "intereses" | "prima" | "vacaciones", value: string) =>
+    setRealesEdit((prev) => ({ ...prev, [identificacion]: { ...prev[identificacion], [campo]: value } }))
+
+  const guardarReales = async (p: LiquidacionPersona) => {
+    const edit = realesEdit[p.identificacion]
+    if (!edit) return
+    const num = (s: string) => (s.trim() === "" ? null : Number(s))
+    setBusy(p.identificacion)
+    const r = await guardarValoresRealesLiquidacion({
+      idempresa: p.idempresa,
+      identificacion: p.identificacion,
+      persona: p.persona,
+      fecha_retiro: p.fecha_retiro,
+      cesantias_real: num(edit.cesantias),
+      intereses_real: num(edit.intereses),
+      prima_real: num(edit.prima),
+      vacaciones_real: num(edit.vacaciones),
+    })
+    setBusy(null)
+    if (r.success) {
+      await cargar()
+      toast({ title: "Guardado", description: "Se actualizaron los valores reales de la liquidación." })
     } else toast({ title: "Error", description: r.message, variant: "destructive" })
   }
 
@@ -422,17 +467,45 @@ export default function Liquidaciones() {
                   data.map((p) => (
                     <Fragment key={p.identificacion || p.persona}>
                       <TableRow>
-                        <TableCell className="cursor-pointer" onClick={() => toggle(p.persona)}>
+                        <TableCell className="cursor-pointer" onClick={() => toggle(p)}>
                           {expanded.has(p.persona) ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                         </TableCell>
                         <TableCell className="font-medium">{p.persona}</TableCell>
                         <TableCell className="font-mono text-xs">{p.identificacion}</TableCell>
                         <TableCell className="font-mono text-xs">{p.fecha_retiro || "—"}</TableCell>
                         <TableCell className="text-right tabular-nums">{money(p.total)}</TableCell>
-                        <TableCell className="text-right tabular-nums">{money(p.prima)}</TableCell>
-                        <TableCell className="text-right tabular-nums">{money(p.cesantias)}</TableCell>
-                        <TableCell className="text-right tabular-nums">{money(p.intereses)}</TableCell>
-                        <TableCell className="text-right tabular-nums">{money(p.vacaciones)}</TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          <span className="inline-flex items-center gap-1 justify-end">
+                            {p.prima_real != null && (
+                              <BadgeCheck className="h-3.5 w-3.5 text-emerald-600" aria-label="Valor real confirmado" />
+                            )}
+                            {money(p.prima)}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          <span className="inline-flex items-center gap-1 justify-end">
+                            {p.cesantias_real != null && (
+                              <BadgeCheck className="h-3.5 w-3.5 text-emerald-600" aria-label="Valor real confirmado" />
+                            )}
+                            {money(p.cesantias)}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          <span className="inline-flex items-center gap-1 justify-end">
+                            {p.intereses_real != null && (
+                              <BadgeCheck className="h-3.5 w-3.5 text-emerald-600" aria-label="Valor real confirmado" />
+                            )}
+                            {money(p.intereses)}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          <span className="inline-flex items-center gap-1 justify-end">
+                            {p.vacaciones_real != null && (
+                              <BadgeCheck className="h-3.5 w-3.5 text-emerald-600" aria-label="Valor real confirmado" />
+                            )}
+                            {money(p.vacaciones)}
+                          </span>
+                        </TableCell>
                         <TableCell className="text-right font-semibold tabular-nums">{money(p.total_liquidacion)}</TableCell>
                         <TableCell>
                           {p.estado === "liquidada" ? (
@@ -489,6 +562,50 @@ export default function Liquidaciones() {
                                   Novedades <strong>posteriores</strong> a esta fecha (nómina pendiente), hasta el retiro.
                                 </span>
                               </div>
+
+                              <div className="rounded-md border border-border bg-background p-2">
+                                <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+                                  <BadgeCheck className="h-3.5 w-3.5 text-emerald-600" />
+                                  Valor real confirmado (opcional) — si lo pagado en Siigo no coincide con el cálculo,
+                                  ingrésalo aquí y prevalece sobre la fórmula.
+                                </div>
+                                <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
+                                  {[
+                                    { k: "cesantias" as const, l: "Cesantías" },
+                                    { k: "intereses" as const, l: "Intereses" },
+                                    { k: "prima" as const, l: "Prima" },
+                                    { k: "vacaciones" as const, l: "Vacaciones" },
+                                  ].map((f) => (
+                                    <div key={f.k} className="space-y-1">
+                                      <Label className="text-xs text-muted-foreground">{f.l}</Label>
+                                      <Input
+                                        type="number"
+                                        step="0.01"
+                                        placeholder="Fórmula"
+                                        className="h-8"
+                                        value={realesEdit[p.identificacion]?.[f.k] ?? ""}
+                                        onChange={(e) => setReal(p.identificacion, f.k, e.target.value)}
+                                      />
+                                    </div>
+                                  ))}
+                                  <div className="flex items-end">
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      disabled={busy === p.identificacion}
+                                      onClick={() => guardarReales(p)}
+                                    >
+                                      {busy === p.identificacion ? (
+                                        <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                                      ) : (
+                                        <Save className="mr-2 h-3.5 w-3.5" />
+                                      )}
+                                      Guardar
+                                    </Button>
+                                  </div>
+                                </div>
+                              </div>
+
                               {p.novedades.length === 0 ? (
                                 <div className="text-sm text-muted-foreground">Sin novedades de nómina pendientes.</div>
                               ) : (
