@@ -49,31 +49,69 @@ export interface LiquidacionNovedad {
   total_liquidado_dia: number
 }
 
+export interface DeduccionLiquidacion {
+  id: string
+  concepto: string
+  valor: number
+  observacion: string | null
+}
+
 export interface LiquidacionPersona {
   persona: string
   identificacion: string
   idempresa: number | null
   fecha_retiro: string | null
   pagado_hasta: string | null
+  motivo_retiro: string | null
   dias: number
   total: number // nómina pendiente
   prima: number
   cesantias: number
   intereses: number
   vacaciones: number
-  prestaciones: number // suma de las 4
-  total_liquidacion: number // nómina pendiente + prestaciones
+  indemnizacion: number
+  prestaciones: number // suma de las 4 prestaciones + indemnización
+  deducciones: number // suma de los items registrados
+  deduccion_items: DeduccionLiquidacion[]
+  total_liquidacion: number // nómina pendiente + prestaciones − deducciones
   estado: EstadoLiquidacion
   soporte_url: string | null
   soporte_nombre: string | null
   novedades: LiquidacionNovedad[]
   // Valor REAL guardado (histórico), si existe -- para mostrar en pantalla
-  // cuál de las 4 prestaciones viene de la fórmula y cuál de un valor
+  // cuál de las prestaciones viene de la fórmula y cuál de un valor
   // confirmado manualmente.
   cesantias_real: number | null
   intereses_real: number | null
   prima_real: number | null
   vacaciones_real: number | null
+  indemnizacion_real: number | null
+}
+
+// INDEMNIZACIÓN por despido SIN JUSTA CAUSA -- Ley 789/2002 art. 28 (modifica
+// CST art. 64). Solo aplica cuando el motivo del retiro es "sin justa causa"
+// (renuncia voluntaria, justa causa o terminación de período de prueba NO
+// generan indemnización). Salario ≤10 SMLMV: 30 días si el vínculo es ≤1 año;
+// 30 + 20 días por cada año adicional (proporcional) si es >1 año. Salario
+// >10 SMLMV: 20 días / 20 + 15 por año adicional. Días de vínculo con
+// convención /360 (igual que el resto del módulo, ej. intereses de cesantías).
+function calcularIndemnizacion(
+  motivoRetiro: string | null,
+  salarioMensual: number,
+  smlv: number,
+  fechainicio: string | null,
+  fechaRetiro: string,
+): number {
+  if (!/sin\s+justa\s+causa/i.test(String(motivoRetiro || ""))) return 0
+  if (!fechainicio) return 0
+  const diasVinculo = Math.max(0, Math.round((Date.parse(fechaRetiro) - Date.parse(fechainicio)) / 86_400_000))
+  const anios = diasVinculo / 360
+  const salarioDia = salarioMensual / 30
+  const superaDiezSmlmv = smlv > 0 && salarioMensual > 10 * smlv
+  const diasBase = superaDiezSmlmv ? 20 : 30
+  const diasPorAnioAdicional = superaDiezSmlmv ? 15 : 20
+  const diasIndemnizacion = anios <= 1 ? diasBase : diasBase + diasPorAnioAdicional * (anios - 1)
+  return diasIndemnizacion * salarioDia
 }
 
 async function leerParametrosPrestaciones(admin: any): Promise<ParametrosPrestaciones> {
@@ -168,7 +206,7 @@ export async function getLiquidaciones(
     // 1) Retirados (Inactivo) del cliente seleccionado.
     const { data: retirados, error: rErr } = await admin
       .from("headcount")
-      .select("identificacion, nombre, fecha_retiro, idempresa, contratosiigo, salario, fechainicio")
+      .select("identificacion, nombre, fecha_retiro, idempresa, contratosiigo, salario, fechainicio, motivo_retiro")
       .eq("idempresa", idempresa)
       .ilike("estado", "inactivo")
     if (rErr) return { success: false, data: [], message: rErr.message }
@@ -183,6 +221,7 @@ export async function getLiquidaciones(
         contratosiigo: string
         salario: number
         fechainicio: string | null
+        motivo_retiro: string | null
       }
     >()
     for (const r of retirados) {
@@ -195,6 +234,7 @@ export async function getLiquidaciones(
         contratosiigo: String(r.contratosiigo || "").trim(),
         salario: Number(r.salario) || 0,
         fechainicio: r.fechainicio ?? null,
+        motivo_retiro: r.motivo_retiro ?? null,
       })
     }
 
@@ -231,12 +271,13 @@ export async function getLiquidaciones(
         intereses_real: number | null
         prima_real: number | null
         vacaciones_real: number | null
+        indemnizacion_real: number | null
       }
     >()
     const { data: estados } = await admin
       .from("liquidaciones_retiro")
       .select(
-        "identificacion, estado, soporte_url, soporte_nombre, pagado_hasta, cesantias_real, intereses_real, prima_real, vacaciones_real",
+        "identificacion, estado, soporte_url, soporte_nombre, pagado_hasta, cesantias_real, intereses_real, prima_real, vacaciones_real, indemnizacion_real",
       )
       .eq("idempresa", idempresa)
     for (const e of estados || []) {
@@ -249,7 +290,26 @@ export async function getLiquidaciones(
         intereses_real: e.intereses_real ?? null,
         prima_real: e.prima_real ?? null,
         vacaciones_real: e.vacaciones_real ?? null,
+        indemnizacion_real: e.indemnizacion_real ?? null,
       })
+    }
+
+    // 4b) Deducciones registradas caso-por-caso (préstamos, anticipos, otros
+    // descuentos autorizados) -- no calculables por fórmula.
+    const cedulas = Array.from(infoPorNombre.values()).map((i) => i.identificacion)
+    const deduccionesPorCedula = new Map<string, DeduccionLiquidacion[]>()
+    if (cedulas.length > 0) {
+      const { data: deducciones } = await admin
+        .from("liquidaciones_retiro_deducciones")
+        .select("id, identificacion, concepto, valor, observacion")
+        .eq("idempresa", idempresa)
+        .in("identificacion", cedulas)
+      for (const d of deducciones || []) {
+        const cedula = String(d.identificacion || "").trim()
+        const arr = deduccionesPorCedula.get(cedula) || []
+        arr.push({ id: d.id, concepto: d.concepto, valor: Number(d.valor) || 0, observacion: d.observacion ?? null })
+        deduccionesPorCedula.set(cedula, arr)
+      }
     }
 
     // 5) TODAS las novedades de pagonomina de esos retirados (para prestaciones y
@@ -333,8 +393,16 @@ export async function getLiquidaciones(
       let cesantias = 0
       let intereses = 0
       let vacaciones = 0
+      let indemnizacion = 0
       if (info.fecha_retiro) {
         const anio = Number(info.fecha_retiro.slice(0, 4))
+        indemnizacion = calcularIndemnizacion(
+          info.motivo_retiro,
+          info.salario || smlvPorAnio.get(anio) || 0,
+          smlvPorAnio.get(anio) || 0,
+          info.fechainicio,
+          info.fecha_retiro,
+        )
         const cesDesde = `${anio}-01-01`
         // Si el vínculo empezó DENTRO del año del retiro, las ventanas de
         // causación arrancan en la fecha real de ingreso, no en enero-1 -- de
@@ -445,8 +513,11 @@ export async function getLiquidaciones(
       if (est?.intereses_real != null) intereses = est.intereses_real
       if (est?.prima_real != null) prima = est.prima_real
       if (est?.vacaciones_real != null) vacaciones = est.vacaciones_real
+      if (est?.indemnizacion_real != null) indemnizacion = est.indemnizacion_real
 
-      const prestaciones = prima + cesantias + intereses + vacaciones
+      const prestaciones = prima + cesantias + intereses + vacaciones + indemnizacion
+      const deduccion_items = deduccionesPorCedula.get(info.identificacion) || []
+      const deducciones = deduccion_items.reduce((s, d) => s + d.valor, 0)
 
       data.push({
         persona: nombre,
@@ -454,14 +525,18 @@ export async function getLiquidaciones(
         idempresa: info.idempresa,
         fecha_retiro: info.fecha_retiro,
         pagado_hasta,
+        motivo_retiro: info.motivo_retiro,
         dias: novedades.length,
         total,
         prima,
         cesantias,
         intereses,
         vacaciones,
+        indemnizacion,
         prestaciones,
-        total_liquidacion: total + prestaciones,
+        deducciones,
+        deduccion_items,
+        total_liquidacion: total + prestaciones - deducciones,
         estado: est?.estado ?? "pendiente",
         soporte_url: est?.soporte_url ?? null,
         soporte_nombre: est?.soporte_nombre ?? null,
@@ -470,6 +545,7 @@ export async function getLiquidaciones(
         intereses_real: est?.intereses_real ?? null,
         prima_real: est?.prima_real ?? null,
         vacaciones_real: est?.vacaciones_real ?? null,
+        indemnizacion_real: est?.indemnizacion_real ?? null,
       })
     }
 
@@ -563,6 +639,7 @@ export async function guardarValoresRealesLiquidacion(payload: {
   intereses_real: number | null
   prima_real: number | null
   vacaciones_real: number | null
+  indemnizacion_real: number | null
 }): Promise<{ success: boolean; message?: string }> {
   if (!payload?.identificacion) return { success: false, message: "Datos incompletos." }
   try {
@@ -576,6 +653,7 @@ export async function guardarValoresRealesLiquidacion(payload: {
       intereses_real: payload.intereses_real,
       prima_real: payload.prima_real,
       vacaciones_real: payload.vacaciones_real,
+      indemnizacion_real: payload.indemnizacion_real,
     })
     if (error) return { success: false, message: error.message }
     return { success: true }
@@ -605,6 +683,65 @@ export async function guardarPagadoHasta(payload: {
     return { success: true }
   } catch (e: any) {
     return { success: false, message: e?.message || "Error al guardar la fecha." }
+  }
+}
+
+// Motivo de retiro (headcount.motivo_retiro) -- de él depende si aplica
+// indemnización (solo "Sin Justa Causa", ver calcularIndemnizacion).
+export async function guardarMotivoRetiro(payload: {
+  identificacion: string
+  motivo_retiro: string | null
+}): Promise<{ success: boolean; message?: string }> {
+  if (!payload?.identificacion) return { success: false, message: "Datos incompletos." }
+  try {
+    const admin: any = await getSupabaseAdmin()
+    const { error } = await admin
+      .from("headcount")
+      .update({ motivo_retiro: payload.motivo_retiro || null })
+      .eq("identificacion", payload.identificacion)
+    if (error) return { success: false, message: error.message }
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al guardar el motivo de retiro." }
+  }
+}
+
+// ---- Deducciones (caso por caso: préstamos, anticipos, otros descuentos) ----
+export async function agregarDeduccionLiquidacion(payload: {
+  idempresa: number | null
+  identificacion: string
+  persona: string
+  concepto: string
+  valor: number
+  observacion: string | null
+}): Promise<{ success: boolean; message?: string }> {
+  if (!payload?.identificacion || !payload?.concepto) return { success: false, message: "Datos incompletos." }
+  try {
+    const admin: any = await getSupabaseAdmin()
+    const { error } = await admin.from("liquidaciones_retiro_deducciones").insert({
+      idempresa: payload.idempresa,
+      identificacion: payload.identificacion,
+      persona: payload.persona,
+      concepto: payload.concepto,
+      valor: payload.valor,
+      observacion: payload.observacion || null,
+    })
+    if (error) return { success: false, message: error.message }
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al guardar la deducción." }
+  }
+}
+
+export async function eliminarDeduccionLiquidacion(id: string): Promise<{ success: boolean; message?: string }> {
+  if (!id) return { success: false, message: "Falta el identificador." }
+  try {
+    const admin: any = await getSupabaseAdmin()
+    const { error } = await admin.from("liquidaciones_retiro_deducciones").delete().eq("id", id)
+    if (error) return { success: false, message: error.message }
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al eliminar la deducción." }
   }
 }
 

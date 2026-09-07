@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import {
   Loader2,
@@ -30,6 +31,9 @@ import {
   Scale,
   RefreshCw,
   BadgeCheck,
+  AlertTriangle,
+  Plus,
+  Trash2,
 } from "lucide-react"
 import * as XLSX from "xlsx"
 import {
@@ -38,10 +42,29 @@ import {
   guardarPagadoHasta,
   guardarParametrosPrestaciones,
   guardarValoresRealesLiquidacion,
+  guardarMotivoRetiro,
+  agregarDeduccionLiquidacion,
+  eliminarDeduccionLiquidacion,
   subirSoporteLiquidacion,
   type LiquidacionPersona,
   type ParametrosPrestaciones,
 } from "@/lib/liquidaciones-actions"
+
+const MOTIVOS_RETIRO = [
+  "Voluntario",
+  "Justa Causa",
+  "Sin Justa Causa",
+  "Periodo de Prueba",
+  "Terminación Justa Causa Periodo de Prueba",
+] as const
+
+const CONCEPTOS_DEDUCCION = [
+  "Préstamo",
+  "Anticipo de nómina",
+  "Otros descuentos autorizados",
+  "Licencia no remunerada",
+  "Otro",
+] as const
 
 const money = (n: number) =>
   "$" + (Number(n) || 0).toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -66,7 +89,10 @@ export default function Liquidaciones() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState<string | null>(null)
   const [realesEdit, setRealesEdit] = useState<
-    Record<string, { cesantias: string; intereses: string; prima: string; vacaciones: string }>
+    Record<string, { cesantias: string; intereses: string; prima: string; vacaciones: string; indemnizacion: string }>
+  >({})
+  const [deduccionForm, setDeduccionForm] = useState<
+    Record<string, { concepto: string; valor: string; observacion: string }>
   >({})
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const uploadTarget = useRef<LiquidacionPersona | null>(null)
@@ -101,6 +127,7 @@ export default function Liquidaciones() {
               intereses: p.intereses_real != null ? String(p.intereses_real) : "",
               prima: p.prima_real != null ? String(p.prima_real) : "",
               vacaciones: p.vacaciones_real != null ? String(p.vacaciones_real) : "",
+              indemnizacion: p.indemnizacion_real != null ? String(p.indemnizacion_real) : "",
             },
           },
     )
@@ -167,8 +194,11 @@ export default function Liquidaciones() {
     } else toast({ title: "Error", description: r.message, variant: "destructive" })
   }
 
-  const setReal = (identificacion: string, campo: "cesantias" | "intereses" | "prima" | "vacaciones", value: string) =>
-    setRealesEdit((prev) => ({ ...prev, [identificacion]: { ...prev[identificacion], [campo]: value } }))
+  const setReal = (
+    identificacion: string,
+    campo: "cesantias" | "intereses" | "prima" | "vacaciones" | "indemnizacion",
+    value: string,
+  ) => setRealesEdit((prev) => ({ ...prev, [identificacion]: { ...prev[identificacion], [campo]: value } }))
 
   const guardarReales = async (p: LiquidacionPersona) => {
     const edit = realesEdit[p.identificacion]
@@ -184,11 +214,56 @@ export default function Liquidaciones() {
       intereses_real: num(edit.intereses),
       prima_real: num(edit.prima),
       vacaciones_real: num(edit.vacaciones),
+      indemnizacion_real: num(edit.indemnizacion),
     })
     setBusy(null)
     if (r.success) {
       await cargar()
       toast({ title: "Guardado", description: "Se actualizaron los valores reales de la liquidación." })
+    } else toast({ title: "Error", description: r.message, variant: "destructive" })
+  }
+
+  const cambiarMotivo = async (p: LiquidacionPersona, motivo: string) => {
+    setBusy(p.identificacion)
+    const r = await guardarMotivoRetiro({ identificacion: p.identificacion, motivo_retiro: motivo || null })
+    setBusy(null)
+    if (r.success) {
+      await cargar()
+      toast({ title: "Actualizado", description: motivo ? `Motivo: ${motivo}.` : "Se borró el motivo de retiro." })
+    } else toast({ title: "Error", description: r.message, variant: "destructive" })
+  }
+
+  const agregarDeduccion = async (p: LiquidacionPersona) => {
+    const f = deduccionForm[p.identificacion]
+    const valor = Number(f?.valor)
+    if (!f?.concepto || !valor || valor <= 0) {
+      toast({ title: "Datos incompletos", description: "Elige un concepto e ingresa un valor mayor a 0.", variant: "destructive" })
+      return
+    }
+    setBusy(p.identificacion)
+    const r = await agregarDeduccionLiquidacion({
+      idempresa: p.idempresa,
+      identificacion: p.identificacion,
+      persona: p.persona,
+      concepto: f.concepto,
+      valor,
+      observacion: f.observacion || null,
+    })
+    setBusy(null)
+    if (r.success) {
+      setDeduccionForm((prev) => ({ ...prev, [p.identificacion]: { concepto: "", valor: "", observacion: "" } }))
+      await cargar()
+      toast({ title: "Deducción agregada", description: `${f.concepto}: ${money(valor)}` })
+    } else toast({ title: "Error", description: r.message, variant: "destructive" })
+  }
+
+  const quitarDeduccion = async (p: LiquidacionPersona, id: string) => {
+    setBusy(p.identificacion)
+    const r = await eliminarDeduccionLiquidacion(id)
+    setBusy(null)
+    if (r.success) {
+      await cargar()
+      toast({ title: "Eliminada", description: "Se quitó la deducción." })
     } else toast({ title: "Error", description: r.message, variant: "destructive" })
   }
 
@@ -225,13 +300,16 @@ export default function Liquidaciones() {
         "Persona",
         "Identificación",
         "Fecha retiro",
+        "Motivo retiro",
         "Estado",
         "Nómina pendiente",
         "Prima",
         "Cesantías",
         "Intereses cesantías",
         "Vacaciones",
+        "Indemnización",
         "Total prestaciones",
+        "Deducciones",
         "Total a pagar",
         "Soporte",
       ]
@@ -239,20 +317,23 @@ export default function Liquidaciones() {
         p.persona,
         p.identificacion,
         p.fecha_retiro || "",
+        p.motivo_retiro || "",
         p.estado,
         p.total,
         p.prima,
         p.cesantias,
         p.intereses,
         p.vacaciones,
+        p.indemnizacion,
         p.prestaciones,
+        p.deducciones,
         p.total_liquidacion,
         p.soporte_url || "",
       ])
       const ws = XLSX.utils.aoa_to_sheet([headers, ...rows])
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, "Liquidaciones")
-      ws["!cols"] = [26, 15, 12, 11, 16, 14, 14, 16, 14, 16, 16, 40].map((wch) => ({ wch }))
+      ws["!cols"] = [26, 15, 12, 22, 11, 16, 14, 14, 16, 14, 16, 16, 14, 16, 40].map((wch) => ({ wch }))
       XLSX.writeFile(wb, `liquidaciones-${new Date().toISOString().split("T")[0]}.xlsx`)
       toast({ title: "Éxito", description: "Archivo exportado correctamente" })
     } catch {
@@ -451,6 +532,7 @@ export default function Liquidaciones() {
                   <TableHead className="text-right">Cesantías</TableHead>
                   <TableHead className="text-right">Intereses</TableHead>
                   <TableHead className="text-right">Vacaciones</TableHead>
+                  <TableHead className="text-right">Indemnización</TableHead>
                   <TableHead className="text-right">Total a pagar</TableHead>
                   <TableHead>Estado</TableHead>
                   <TableHead className="text-right">Acciones</TableHead>
@@ -459,7 +541,7 @@ export default function Liquidaciones() {
               <TableBody>
                 {data.length === 0 && !loading ? (
                   <TableRow>
-                    <TableCell colSpan={12} className="py-8 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={13} className="py-8 text-center text-sm text-muted-foreground">
                       No hay personal retirado con contrato para esta empresa.
                     </TableCell>
                   </TableRow>
@@ -472,7 +554,23 @@ export default function Liquidaciones() {
                         </TableCell>
                         <TableCell className="font-medium">{p.persona}</TableCell>
                         <TableCell className="font-mono text-xs">{p.identificacion}</TableCell>
-                        <TableCell className="font-mono text-xs">{p.fecha_retiro || "—"}</TableCell>
+                        <TableCell className="font-mono text-xs">
+                          <div className="flex flex-col gap-0.5">
+                            <span>{p.fecha_retiro || "—"}</span>
+                            {p.motivo_retiro && (
+                              <span
+                                className={`inline-flex w-fit items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-sans font-medium ${
+                                  /sin\s+justa\s+causa/i.test(p.motivo_retiro)
+                                    ? "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400"
+                                    : "bg-muted text-muted-foreground"
+                                }`}
+                              >
+                                {/sin\s+justa\s+causa/i.test(p.motivo_retiro) && <AlertTriangle className="h-2.5 w-2.5" />}
+                                {p.motivo_retiro}
+                              </span>
+                            )}
+                          </div>
+                        </TableCell>
                         <TableCell className="text-right tabular-nums">{money(p.total)}</TableCell>
                         <TableCell className="text-right tabular-nums">
                           <span className="inline-flex items-center gap-1 justify-end">
@@ -504,6 +602,18 @@ export default function Liquidaciones() {
                               <BadgeCheck className="h-3.5 w-3.5 text-emerald-600" aria-label="Valor real confirmado" />
                             )}
                             {money(p.vacaciones)}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          <span className="inline-flex items-center gap-1 justify-end">
+                            {p.indemnizacion_real != null && (
+                              <BadgeCheck className="h-3.5 w-3.5 text-emerald-600" aria-label="Valor real confirmado" />
+                            )}
+                            {p.indemnizacion > 0 ? (
+                              <span className="font-medium text-red-600 dark:text-red-400">{money(p.indemnizacion)}</span>
+                            ) : (
+                              money(p.indemnizacion)
+                            )}
                           </span>
                         </TableCell>
                         <TableCell className="text-right font-semibold tabular-nums">{money(p.total_liquidacion)}</TableCell>
@@ -547,7 +657,7 @@ export default function Liquidaciones() {
                       </TableRow>
                       {expanded.has(p.persona) && (
                         <TableRow>
-                          <TableCell colSpan={12} className="bg-muted/30 p-0">
+                          <TableCell colSpan={13} className="bg-muted/30 p-0">
                             <div className="space-y-2 p-3">
                               <div className="flex flex-wrap items-center gap-2 text-sm">
                                 <span className="text-muted-foreground">Pagado hasta:</span>
@@ -563,18 +673,43 @@ export default function Liquidaciones() {
                                 </span>
                               </div>
 
+                              <div className="flex flex-wrap items-center gap-2 text-sm">
+                                <span className="text-muted-foreground">Motivo de retiro:</span>
+                                <Select
+                                  value={p.motivo_retiro || ""}
+                                  onValueChange={(value) => cambiarMotivo(p, value)}
+                                  disabled={busy === p.identificacion}
+                                >
+                                  <SelectTrigger className="h-8 w-64">
+                                    <SelectValue placeholder="Sin especificar" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {MOTIVOS_RETIRO.map((m) => (
+                                      <SelectItem key={m} value={m}>
+                                        {m}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                                <span className="text-xs text-muted-foreground">
+                                  La indemnización (Ley 789/2002) solo aplica cuando el motivo es{" "}
+                                  <strong>Sin Justa Causa</strong>.
+                                </span>
+                              </div>
+
                               <div className="rounded-md border border-border bg-background p-2">
                                 <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
                                   <BadgeCheck className="h-3.5 w-3.5 text-emerald-600" />
                                   Valor real confirmado (opcional) — si lo pagado en Siigo no coincide con el cálculo,
                                   ingrésalo aquí y prevalece sobre la fórmula.
                                 </div>
-                                <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
+                                <div className="grid grid-cols-2 gap-2 md:grid-cols-6">
                                   {[
                                     { k: "cesantias" as const, l: "Cesantías" },
                                     { k: "intereses" as const, l: "Intereses" },
                                     { k: "prima" as const, l: "Prima" },
                                     { k: "vacaciones" as const, l: "Vacaciones" },
+                                    { k: "indemnizacion" as const, l: "Indemnización" },
                                   ].map((f) => (
                                     <div key={f.k} className="space-y-1">
                                       <Label className="text-xs text-muted-foreground">{f.l}</Label>
@@ -601,6 +736,115 @@ export default function Liquidaciones() {
                                         <Save className="mr-2 h-3.5 w-3.5" />
                                       )}
                                       Guardar
+                                    </Button>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="rounded-md border border-border bg-background p-2">
+                                <div className="mb-2 flex items-center justify-between gap-2">
+                                  <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+                                    <AlertTriangle className="h-3.5 w-3.5 text-red-600" />
+                                    Deducciones (préstamos, anticipos, otros descuentos autorizados)
+                                  </div>
+                                  {p.deducciones > 0 && (
+                                    <span className="text-xs font-semibold text-red-600 dark:text-red-400">
+                                      Total: −{money(p.deducciones)}
+                                    </span>
+                                  )}
+                                </div>
+                                {p.deduccion_items.length > 0 && (
+                                  <div className="mb-2 space-y-1">
+                                    {p.deduccion_items.map((d) => (
+                                      <div
+                                        key={d.id}
+                                        className="flex items-center justify-between gap-2 rounded border border-border/60 bg-muted/30 px-2 py-1 text-xs"
+                                      >
+                                        <div>
+                                          <span className="font-medium">{d.concepto}</span>
+                                          {d.observacion && <span className="ml-1 text-muted-foreground">— {d.observacion}</span>}
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                          <span className="tabular-nums text-red-600 dark:text-red-400">−{money(d.valor)}</span>
+                                          <Button
+                                            size="sm"
+                                            variant="ghost"
+                                            className="h-6 w-6 p-0"
+                                            disabled={busy === p.identificacion}
+                                            onClick={() => quitarDeduccion(p, d.id)}
+                                          >
+                                            <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
+                                          </Button>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                                <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
+                                  <div className="space-y-1 md:col-span-2">
+                                    <Label className="text-xs text-muted-foreground">Concepto</Label>
+                                    <Select
+                                      value={deduccionForm[p.identificacion]?.concepto || ""}
+                                      onValueChange={(value) =>
+                                        setDeduccionForm((prev) => ({
+                                          ...prev,
+                                          [p.identificacion]: { ...prev[p.identificacion], concepto: value, valor: prev[p.identificacion]?.valor || "", observacion: prev[p.identificacion]?.observacion || "" },
+                                        }))
+                                      }
+                                    >
+                                      <SelectTrigger className="h-8">
+                                        <SelectValue placeholder="Elegir concepto" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        {CONCEPTOS_DEDUCCION.map((c) => (
+                                          <SelectItem key={c} value={c}>
+                                            {c}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                  <div className="space-y-1">
+                                    <Label className="text-xs text-muted-foreground">Valor</Label>
+                                    <Input
+                                      type="number"
+                                      step="0.01"
+                                      className="h-8"
+                                      value={deduccionForm[p.identificacion]?.valor || ""}
+                                      onChange={(e) =>
+                                        setDeduccionForm((prev) => ({
+                                          ...prev,
+                                          [p.identificacion]: { ...prev[p.identificacion], concepto: prev[p.identificacion]?.concepto || "", valor: e.target.value, observacion: prev[p.identificacion]?.observacion || "" },
+                                        }))
+                                      }
+                                    />
+                                  </div>
+                                  <div className="space-y-1">
+                                    <Label className="text-xs text-muted-foreground">Observación (opcional)</Label>
+                                    <Input
+                                      className="h-8"
+                                      value={deduccionForm[p.identificacion]?.observacion || ""}
+                                      onChange={(e) =>
+                                        setDeduccionForm((prev) => ({
+                                          ...prev,
+                                          [p.identificacion]: { ...prev[p.identificacion], concepto: prev[p.identificacion]?.concepto || "", valor: prev[p.identificacion]?.valor || "", observacion: e.target.value },
+                                        }))
+                                      }
+                                    />
+                                  </div>
+                                  <div className="flex items-end">
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      disabled={busy === p.identificacion}
+                                      onClick={() => agregarDeduccion(p)}
+                                    >
+                                      {busy === p.identificacion ? (
+                                        <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                                      ) : (
+                                        <Plus className="mr-2 h-3.5 w-3.5" />
+                                      )}
+                                      Agregar
                                     </Button>
                                   </div>
                                 </div>
