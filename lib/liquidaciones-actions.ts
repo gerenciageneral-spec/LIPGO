@@ -208,14 +208,29 @@ export async function getLiquidaciones(
       smlvPorAnio.set(Number(a.anio), Number(a.smlv || 0))
     }
 
-    // 4) Estado/soporte/pagado_hasta guardado.
+    // 4) Estado/soporte/pagado_hasta guardado + valores REALES (histórico).
+    // Si una persona ya liquidada tiene guardado el valor real de una
+    // prestación (porque lo que pagó Siigo no coincide con la fórmula --
+    // huecos de datos históricos, ajustes manuales de RRHH), ese valor real
+    // GANA sobre el cálculo en vivo. Confirmado por el usuario 2026-09-07.
     const estadoPorCedula = new Map<
       string,
-      { estado: EstadoLiquidacion; soporte_url: string | null; soporte_nombre: string | null; pagado_hasta: string | null }
+      {
+        estado: EstadoLiquidacion
+        soporte_url: string | null
+        soporte_nombre: string | null
+        pagado_hasta: string | null
+        cesantias_real: number | null
+        intereses_real: number | null
+        prima_real: number | null
+        vacaciones_real: number | null
+      }
     >()
     const { data: estados } = await admin
       .from("liquidaciones_retiro")
-      .select("identificacion, estado, soporte_url, soporte_nombre, pagado_hasta")
+      .select(
+        "identificacion, estado, soporte_url, soporte_nombre, pagado_hasta, cesantias_real, intereses_real, prima_real, vacaciones_real",
+      )
       .eq("idempresa", idempresa)
     for (const e of estados || []) {
       estadoPorCedula.set(String(e.identificacion || "").trim(), {
@@ -223,6 +238,10 @@ export async function getLiquidaciones(
         soporte_url: e.soporte_url ?? null,
         soporte_nombre: e.soporte_nombre ?? null,
         pagado_hasta: e.pagado_hasta ?? null,
+        cesantias_real: e.cesantias_real ?? null,
+        intereses_real: e.intereses_real ?? null,
+        prima_real: e.prima_real ?? null,
+        vacaciones_real: e.vacaciones_real ?? null,
       })
     }
 
@@ -412,6 +431,14 @@ export async function getLiquidaciones(
         // ingresada) en vez de un promedio calculado sobre horas extra/destajo.
         vacaciones = Math.max(0, vacCausadasDias - diasDisfrutados) * salarioDia
       }
+
+      // Valor REAL guardado (histórico) gana sobre el cálculo en vivo, campo
+      // por campo -- ver comentario en el punto 4 más arriba.
+      if (est?.cesantias_real != null) cesantias = est.cesantias_real
+      if (est?.intereses_real != null) intereses = est.intereses_real
+      if (est?.prima_real != null) prima = est.prima_real
+      if (est?.vacaciones_real != null) vacaciones = est.vacaciones_real
+
       const prestaciones = prima + cesantias + intereses + vacaciones
 
       data.push({
@@ -510,6 +537,39 @@ export async function guardarEstadoLiquidacion(payload: {
     return { success: true }
   } catch (e: any) {
     return { success: false, message: e?.message || "Error al guardar el estado." }
+  }
+}
+
+// Valores REALES (histórico) de una prestación, cuando lo pagado en Siigo no
+// coincide con la fórmula. Pasar null en un campo lo deja SIN valor real (el
+// cálculo en vivo vuelve a aplicar para ese campo).
+export async function guardarValoresRealesLiquidacion(payload: {
+  idempresa: number | null
+  identificacion: string
+  persona: string
+  fecha_retiro: string | null
+  cesantias_real: number | null
+  intereses_real: number | null
+  prima_real: number | null
+  vacaciones_real: number | null
+}): Promise<{ success: boolean; message?: string }> {
+  if (!payload?.identificacion) return { success: false, message: "Datos incompletos." }
+  try {
+    const admin: any = await getSupabaseAdmin()
+    const { error } = await upsertLiquidacion(admin, {
+      idempresa: payload.idempresa,
+      identificacion: payload.identificacion,
+      persona: payload.persona,
+      fecha_retiro: payload.fecha_retiro,
+      cesantias_real: payload.cesantias_real,
+      intereses_real: payload.intereses_real,
+      prima_real: payload.prima_real,
+      vacaciones_real: payload.vacaciones_real,
+    })
+    if (error) return { success: false, message: error.message }
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al guardar los valores reales." }
   }
 }
 
