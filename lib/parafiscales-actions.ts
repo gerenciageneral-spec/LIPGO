@@ -19,7 +19,7 @@
 //     'proyeccion'`) entre al IBC vía este mismo bono si un mes se consulta ANTES de
 //     cerrar sus proyecciones — no debería afectar meses ya cerrados, pero vigilar si
 //     se usa para el mes en curso.
-//   · Vacaciones → IBC = salario/día. Cotiza pensión + caja (no salud, no ARL).
+//   · Vacaciones → IBC = salario/día. Cotiza pensión + salud + caja (no ARL).
 //   · Incapacidad→ IBC = salario/día (día completo). Cotiza pensión + salud (no ARL).
 //   · Ausentismo → licencia no remunerada: solo 12% de pensión (empleador).
 //   · Licencia remunerada (luto/maternidad/paternidad) → pensión + salud + caja, SIN ARL.
@@ -36,6 +36,7 @@ import {
   calcularAportes,
   validarParametros,
   PARAFISCALES_DEFAULT,
+  clasificarDiaCotizacion,
   type Aportes,
   type ClaseRiesgo,
   type ParametrosParafiscales,
@@ -80,35 +81,9 @@ function finDeMes(anio: number, mes: number): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`
 }
 
-// Clasifica un día de pagonomina por su `novedad_reportada` (texto crudo de
-// registroasistencia). Determina sobre qué aportes cotiza ese día (matriz PILA).
-// REGLA RECTORA: la ARL solo se causa los días efectivamente TRABAJADOS; cualquier
-// novedad que impida al trabajador presentarse (vacaciones, incapacidad, licencia
-// remunerada o no, ausentismo) NO paga ARL.
-//   · VAC     → vacaciones: cotiza pensión + caja (no salud, no ARL).
-//   · INCAP   → incapacidad EG/AT: cotiza pensión + salud (no caja, no ARL).
-//   · AUS     → ausentismo / licencia NO remunerada: solo 12% de pensión (empleador).
-//   · LICR    → licencia REMUNERADA (luto, maternidad, paternidad…): pensión + salud +
-//               caja, SIN ARL (día pagado pero sin exposición a riesgo laboral).
-//   · RETIRO  → día de baja: NO cotiza (se descarta).
-//   · TRAB    → trabajado / descanso / festivo: cotiza TODO (incl. ARL).
 // Bono de destajo (concepto 52) al IBC solo desde esta fecha -- ver comentario
 // de cabecera. Mismo corte confirmado ya en liquidaciones-actions.ts.
 const BONO_DESTAJO_IBC_DESDE = "2026-07-01"
-
-type TipoDiaCotizacion = "TRAB" | "VAC" | "INCAP" | "AUS" | "LICR" | "RETIRO"
-function clasificarDiaCotizacion(novedad: string | null | undefined): TipoDiaCotizacion {
-  const s = String(novedad || "")
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-  if (s.includes("vacacion")) return "VAC"
-  if (s.includes("incapacidad")) return "INCAP"
-  if (s.includes("no remunerada")) return "AUS" // debe ir ANTES de "licencia"
-  if (s.includes("licencia")) return "LICR" // luto, maternidad, paternidad, etc. (remuneradas)
-  if (s.includes("retiro")) return "RETIRO"
-  return "TRAB" // vacío, "Descanso", festivo o jornada normal
-}
 
 async function leerParametros(admin: any, anio: number): Promise<ParametrosParafiscales> {
   const { data } = await admin.from("parametros_parafiscales").select("*").eq("anio", anio).maybeSingle()

@@ -229,7 +229,7 @@ export interface Aportes {
   // --- IBC por CONCEPTO (la base sobre la que cotiza cada aporte) ---
   /** Base de pensión (empleador): trabajado + vacaciones + incapacidad + ausentismo. */
   ibcPension: number
-  /** Base de salud: trabajado + incapacidad (vacaciones y ausentismo NO cotizan salud). */
+  /** Base de salud: trabajado + vacaciones + incapacidad + licencia rem. (ausentismo NO cotiza salud). */
   ibcSalud: number
   /** Base de ARL: SOLO días trabajados (no hay riesgo laboral en vac/incap/ausencia). */
   ibcArl: number
@@ -331,14 +331,16 @@ export function calcularAportes(e: EntradaAportes, p: ParametrosParafiscales): A
   //   · Pensión (empleador 12%): TODOS los días (trab + vac + incap + ausencia + licencia rem.).
   //   · Pensión (trabajador 4%): trab + vac + incap + licencia rem. — el ausentismo lo cotiza
   //     SOLO el empleador (no se le descuenta al trabajador por un día no laborado).
-  //   · Salud: trab + incap + licencia rem. (vacaciones y ausentismo NO cotizan salud).
+  //   · Salud: trab + VACACIONES + incap + licencia rem. (solo ausentismo NO cotiza salud
+  //     -- confirmado con la planilla real de julio-2026, tarifa 0.04 no-cero en días de
+  //     vacaciones; el comentario anterior lo daba por excluido y era un error).
   //   · ARL: SOLO días trabajados. Cualquier novedad que impida asistir a trabajar
   //     (vacaciones, incapacidad, licencia rem. o no rem., ausentismo) NO causa ARL.
   //   · Caja/SENA/ICBF: trab + vacaciones + licencia rem. (+ auxilio de transporte).
   const auxilio = Math.max(0, Number(e.auxilio) || 0)
   const ibcPension = ibcTrab + ibcVac + ibcIncap + ibcAus + ibcLicr
   const ibcPensionEmpleado = ibcTrab + ibcVac + ibcIncap + ibcLicr
-  const ibcSalud = ibcTrab + ibcIncap + ibcLicr
+  const ibcSalud = ibcTrab + ibcVac + ibcIncap + ibcLicr
   const ibcArl = ibcTrab
   const ibcCaja = ibcTrab + ibcVac + ibcLicr
   const baseParafiscales = ibcCaja + (p.incluyeAuxParafiscales ? auxilio : 0)
@@ -393,4 +395,30 @@ export function calcularAportes(e: EntradaAportes, p: ParametrosParafiscales): A
     totalPila: totalEmpresa + totalEmpleado,
     notas,
   }
+}
+
+// Clasifica un día de pagonomina por su `novedad_reportada` (texto crudo de
+// registroasistencia). Determina sobre qué aportes cotiza ese día (matriz PILA).
+// REGLA RECTORA: la ARL solo se causa los días efectivamente TRABAJADOS; cualquier
+// novedad que impida al trabajador presentarse (vacaciones, incapacidad, licencia
+// remunerada o no, ausentismo) NO paga ARL.
+//   · VAC     → vacaciones: cotiza pensión + salud + caja (no ARL).
+//   · INCAP   → incapacidad EG/AT: cotiza pensión + salud (no caja, no ARL).
+//   · AUS     → ausentismo / licencia NO remunerada: solo 12% de pensión (empleador).
+//   · LICR    → licencia REMUNERADA (luto, maternidad, paternidad…): pensión + salud +
+//               caja, SIN ARL (día pagado pero sin exposición a riesgo laboral).
+//   · RETIRO  → día de baja: NO cotiza (se descarta).
+//   · TRAB    → trabajado / descanso / festivo: cotiza TODO (incl. ARL).
+export type TipoDiaCotizacion = "TRAB" | "VAC" | "INCAP" | "AUS" | "LICR" | "RETIRO"
+export function clasificarDiaCotizacion(novedad: string | null | undefined): TipoDiaCotizacion {
+  const s = String(novedad || "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+  if (s.includes("vacacion")) return "VAC"
+  if (s.includes("incapacidad")) return "INCAP"
+  if (s.includes("no remunerada")) return "AUS" // debe ir ANTES de "licencia"
+  if (s.includes("licencia")) return "LICR" // luto, maternidad, paternidad, etc. (remuneradas)
+  if (s.includes("retiro")) return "RETIRO"
+  return "TRAB" // vacío, "Descanso", festivo o jornada normal
 }

@@ -33,6 +33,7 @@ import {
   BadgeCheck,
   Pencil,
   X,
+  Download,
 } from "lucide-react"
 import {
   getParafiscales,
@@ -41,6 +42,7 @@ import {
   type ParafiscalPersona,
   type ResumenParafiscales,
 } from "@/lib/parafiscales-actions"
+import { generarArchivoCargaPila } from "@/lib/parafiscales-exportador-actions"
 import {
   calcularAportes,
   validarParametros,
@@ -88,6 +90,7 @@ export default function Parafiscales() {
   const [editandoReal, setEditandoReal] = useState<string | null>(null)
   const [valorReal, setValorReal] = useState("")
   const [guardandoReal, setGuardandoReal] = useState<string | null>(null)
+  const [descargandoCarga, setDescargandoCarga] = useState(false)
 
   const cargar = useCallback(async () => {
     if (!consolidado && !selectedEmpresaId) {
@@ -179,6 +182,32 @@ export default function Parafiscales() {
         description: num != null ? "Se guardó el IBC real de Aportes en Línea." : "Se quitó el valor real (vuelve a la fórmula).",
       })
     } else toast({ title: "Error", description: r.message, variant: "destructive" })
+  }
+
+  const descargarArchivoCarga = async () => {
+    setDescargandoCarga(true)
+    const r = await generarArchivoCargaPila(anio, mes)
+    setDescargandoCarga(false)
+    if (!r.success || !r.base64) {
+      toast({ title: "No se pudo generar el archivo", description: r.message, variant: "destructive" })
+      return
+    }
+    const bytes = Uint8Array.from(atob(r.base64), (c) => c.charCodeAt(0))
+    const blob = new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = r.filename || `Planilla PILA ${mes}-${anio}.xlsx`
+    a.click()
+    URL.revokeObjectURL(url)
+    if (r.excepciones && r.excepciones.length > 0) {
+      toast({
+        title: `Archivo generado -- ${r.excepciones.length} caso(s) para revisar`,
+        description: r.excepciones.slice(0, 3).map((e) => `${e.persona}: ${e.motivo}`).join(" · "),
+      })
+    } else {
+      toast({ title: "Archivo generado", description: "Revísalo antes de subirlo a Aportes en Línea." })
+    }
   }
 
   // Preview en vivo: cómo queda un trabajador de SMLV con estos parámetros.
@@ -279,6 +308,14 @@ export default function Parafiscales() {
             <Landmark className="h-5 w-5 text-primary" /> Parafiscales y Seguridad Social
           </CardTitle>
           <div className="flex gap-2">
+            <Button size="sm" variant="default" onClick={descargarArchivoCarga} disabled={descargandoCarga || loading}>
+              {descargandoCarga ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="mr-2 h-4 w-4" />
+              )}
+              Archivo de carga (Aportes en Línea)
+            </Button>
             <Button size="sm" variant="outline" onClick={cargar} disabled={loading}>
               <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Actualizar
             </Button>
