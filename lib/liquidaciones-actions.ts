@@ -445,34 +445,26 @@ export async function getLiquidaciones(
         cesantias = baseCes * (pp.pctCesantias / 100)
         intereses = cesantias * (pp.pctInteresesCesantias / 100) * (diasCes / 360)
 
-        // PRIMA — la prima del 1er semestre se ADELANTA con la nómina del 15-jun a
-        // quien ya venía de una quincena anterior (confirmado por el usuario
-        // 2026-09-07: "las personas retiradas desde el día 16 aparecen en cero
-        // porque se les pagó de forma anticipada el 15 de junio con la nómina").
-        // Verificado con 10 casos reales: retiro en junio → prima liquidación = $0,
-        // sin importar el día exacto ni la antigüedad -- la ÚNICA excepción es
-        // alguien que ingresa y se retira el MISMO día (nunca pasó por una
-        // quincena, nunca recibió el adelanto), a quien sí se le prorratea normal.
-        // El recobro de lo pagado de más ("mayor valor pagado en primas") es una
-        // DEDUCCIÓN, no un valor negativo de esta línea -- pendiente de modelar en
-        // el submódulo de Deducciones (fuera del alcance de este fix).
-        if (info.fecha_retiro >= `${anio}-06-01` && info.fecha_retiro <= `${anio}-06-30`) {
-          if (info.fechainicio && String(info.fechainicio) === info.fecha_retiro) {
-            const prc = sumaPeriodo(rows, cesDesdeReal, info.fecha_retiro, salarioDia)
-            prima = (prc.dev + (pp.incluyeAux ? (auxMensual / 30) * prc.dias : 0)) * (pp.pctPrima / 100)
-          } else {
-            prima = 0
-          }
-        } else if (info.fecha_retiro < `${anio}-06-01`) {
-          const prc = sumaPeriodo(rows, cesDesdeReal, info.fecha_retiro, salarioDia)
-          prima = (prc.dev + (pp.incluyeAux ? (auxMensual / 30) * prc.dias : 0)) * (pp.pctPrima / 100)
-        } else {
-          const primaDesde2Base = info.fecha_retiro >= `${anio}-12-15` ? `${anio}-12-15` : `${anio}-07-01`
-          const primaDesde2 =
-            info.fechainicio && String(info.fechainicio) > primaDesde2Base ? String(info.fechainicio) : primaDesde2Base
-          const pr2 = sumaPeriodo(rows, primaDesde2, info.fecha_retiro, salarioDia)
-          prima = (pr2.dev + (pp.incluyeAux ? (auxMensual / 30) * pr2.dias : 0)) * (pp.pctPrima / 100)
-        }
+        // PRIMA — estrictamente proporcional por ley (CST art. 306, Ley 1788 de
+        // 2016): 8.33% del devengado + auxilio de transporte del período de
+        // causación del semestre en curso. 1er semestre: desde 1-ene (o la fecha
+        // de ingreso si es posterior) hasta el retiro. 2do semestre: desde 1-jul
+        // (o la fecha de ingreso si es posterior) hasta el retiro. Sin
+        // excepciones por fecha de retiro -- confirmado por el usuario
+        // 2026-09-07: "nosotros pagamos las primas de acuerdo a la ley... lo que
+        // hacemos EN OCASIONES es proyectar del 15 al 30 para pagar a un
+        // trabajador" -- es decir, cualquier adelanto/proyección es una práctica
+        // operativa puntual (no todas las liquidaciones), y NO una regla legal
+        // que la fórmula deba asumir para todo el mundo. Cuando esa práctica
+        // puntual haga que el pago real de Siigo no coincida con este cálculo,
+        // se registra el valor REAL en pantalla (prima_real) en vez de
+        // convertirlo en una excepción de la fórmula.
+        const primaEnSemestre2 = info.fecha_retiro >= `${anio}-07-01`
+        const primaDesdeBase = primaEnSemestre2 ? `${anio}-07-01` : cesDesde
+        const primaDesde =
+          info.fechainicio && String(info.fechainicio) > primaDesdeBase ? String(info.fechainicio) : primaDesdeBase
+        const pr = sumaPeriodo(rows, primaDesde, info.fecha_retiro, salarioDia)
+        prima = (pr.dev + (pp.incluyeAux ? (auxMensual / 30) * pr.dias : 0)) * (pp.pctPrima / 100)
 
         // Vacaciones: se ACUMULAN de forma continua durante TODO el vínculo (no se
         // reinician cada año). Días causados = pctVacaciones × días de vínculo (≈15/año,

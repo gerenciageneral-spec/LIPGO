@@ -447,7 +447,7 @@ export default function Liquidaciones() {
                         c: "Prima de servicios",
                         n: "CST art. 306 · Ley 1788 de 2016",
                         b: "Salario + auxilio de transporte",
-                        f: "1 mes de salario por año (15 días/semestre), proporcional. 1er semestre pagado al 30-jun → retiro en junio descuenta los días pagados de más.",
+                        f: "1 mes de salario por año (15 días/semestre), proporcional al período causado del semestre en curso (desde 1-ene o 1-jul, o la fecha de ingreso si es posterior).",
                       },
                       {
                         c: "Cesantías",
