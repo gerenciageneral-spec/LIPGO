@@ -99,38 +99,41 @@ function defaultPagadoHasta(fechaRetiro: string): string {
 // Suma el devengado REAL (total_liquidado_dia) y cuenta los días con registro
 // dentro de [desde, hasta]. Se usan los datos reales de LIPgo; el único relleno
 // (los 4 primeros días de enero que no existen en el sistema) se maneja aparte.
-//   - `extra` = parte del devengado que el CST art. 192 EXCLUYE de la base de
-//     vacaciones: trabajo suplementario/horas extras (hed+hedf+hen, lo que entra
-//     al total del día) + trabajo en descanso obligatorio (dominical/festivo:
-//     pago_domingo + recargodominical). Así la base de vacaciones = dev − extra.
-// NO incluye la bonificación por productividad (`bonif_prestacional`, novedad
-// "52-Bonificación Por Productividad" del archivo plano): es un bono NO
-// prestacional (no constitutivo de salario, igual que en el IBC de Parafiscales),
-// así que no entra a la base de cesantías/prima/vacaciones. Eso sí, sigue siendo
-// plata que el trabajador ganó: la nómina PENDIENTE (más abajo, `excPendiente`)
-// se sigue pagando completa, solo la base de PRESTACIONES lo excluye.
-function sumaPeriodo(
-  rows: any[],
-  desde: string,
-  hasta: string,
-): { dev: number; dias: number; extra: number } {
+//
+// Bono de destajo (`bonif_prestacional`, novedad "52-Bonificación Por
+// Productividad"): confirmado por el usuario (2026-09-07) que SÍ es base de
+// prestaciones (cesantías/intereses/prima/vacaciones) -- coincide con el
+// comentario canónico de lib/revision-nomina-actions.ts ("bono neto de
+// destajo... TODO prestacional") -- pero solo para quien trabaja al DESTAJO
+// (toneladas>0 y no "especialidad"/turno, mismo criterio `esDestajo` de ese
+// archivo) y solo DESDE el 1-jul-2026 (antes de esa fecha el bono no era base
+// de prestaciones). Se acumula por QUINCENA con piso $0 antes de sumarlo,
+// igual que `excPendiente` más abajo para la nómina pendiente -- así un mes
+// con días buenos y malos mezclados no resta plata ya "asegurada" por el piso
+// diario.
+const BONO_DESTAJO_PRESTACIONAL_DESDE = "2026-07-01"
+
+function sumaPeriodo(rows: any[], desde: string, hasta: string): { dev: number; dias: number } {
   let dev = 0
   let dias = 0
-  let extra = 0
+  const bonoPorQuincena = new Map<string, number>()
   for (const r of rows) {
     const f = String(r.fecha)
     if (f >= desde && f <= hasta) {
       dev += Number(r.total_liquidado_dia || 0)
-      extra +=
-        Number(r.hed || 0) +
-        Number(r.hedf || 0) +
-        Number(r.hen || 0) +
-        Number(r.pago_domingo || 0) +
-        Number(r.recargodominical || 0)
       dias += 1
+      if (f >= BONO_DESTAJO_PRESTACIONAL_DESDE) {
+        const esp = r.especialidad === true || String(r.especialidad) === "true"
+        const esDestajo = Number(r.toneladas || 0) > 0 && !esp
+        if (esDestajo) {
+          const clave = f.slice(0, 7) + (Number(f.slice(8, 10)) <= 15 ? "-Q1" : "-Q2")
+          bonoPorQuincena.set(clave, (bonoPorQuincena.get(clave) || 0) + Number(r.bonif_prestacional || 0))
+        }
+      }
     }
   }
-  return { dev, dias, extra }
+  for (const v of bonoPorQuincena.values()) dev += Math.max(0, v)
+  return { dev, dias }
 }
 
 export async function getLiquidaciones(
@@ -211,7 +214,7 @@ export async function getLiquidaciones(
     // 5) TODAS las novedades de pagonomina de esos retirados (para prestaciones y
     //    pendientes). Paginado.
     const cols =
-      "fecha, persona, actividad_registrada, novedad_reportada, base_dia, hed, hedf, hen, hef, hn, pago_domingo, recargodominical, bonif_prestacional, total_liquidado_dia"
+      "fecha, persona, actividad_registrada, novedad_reportada, base_dia, hed, hedf, hen, hef, hn, pago_domingo, recargodominical, bonif_prestacional, total_liquidado_dia, especialidad, toneladas"
     let all: any[] = []
     const pageSize = 1000
     let offset = 0
@@ -292,10 +295,20 @@ export async function getLiquidaciones(
       if (info.fecha_retiro) {
         const anio = Number(info.fecha_retiro.slice(0, 4))
         const cesDesde = `${anio}-01-01`
+        // Si el vínculo empezó DENTRO del año del retiro, las ventanas de
+        // causación arrancan en la fecha real de ingreso, no en enero-1 -- de
+        // lo contrario `pagonomina` trae filas "Sin Registro" (piso $0) desde
+        // enero para CUALQUIER persona del roster, sin importar cuándo entró,
+        // e inflan/deflactan el conteo de días (auxilio prorrateado de más,
+        // promedio diario de vacaciones de menos) aunque no aporten devengado.
+        // Verificado con datos reales 2026-09-07 (Carlos Pacheco, Jesús Escalona:
+        // pagonomina con filas desde enero pese a haber ingresado en junio).
+        const cesDesdeReal =
+          info.fechainicio && String(info.fechainicio) > cesDesde ? String(info.fechainicio) : cesDesde
         const auxMensual = auxPorAnio.get(anio) ?? 0
         const salarioMensual = info.salario || smlvPorAnio.get(anio) || 0
         const salarioDia = salarioMensual / 30
-        const ce = sumaPeriodo(rows, cesDesde, info.fecha_retiro)
+        const ce = sumaPeriodo(rows, cesDesdeReal, info.fecha_retiro)
 
         // Relleno SOLO de los primeros días de enero que no existen en el sistema
         // (hasta 4), y únicamente si el trabajador venía del año anterior (tiene
@@ -317,26 +330,37 @@ export async function getLiquidaciones(
         const diasCes = ce.dias + fillDias
 
         const auxPropCes = (auxMensual / 30) * diasCes
-        // Base de cesantías = devengado (base diaria) + relleno enero + auxilio.
-        // NO incluye el bono de productividad: no es prestacional.
+        // Base de cesantías = devengado (incluye el bono de destajo desde
+        // julio-2026, ver sumaPeriodo) + relleno enero + auxilio.
         const baseCes = ce.dev + fillMonto + (pp.incluyeAux ? auxPropCes : 0)
         cesantias = baseCes * (pp.pctCesantias / 100)
         intereses = cesantias * (pp.pctInteresesCesantias / 100) * (diasCes / 360)
 
-        // PRIMA — la prima del 1er semestre se pagó hasta el 30-jun. Según la fecha:
-        //  · Retiro en junio → ya recibió prima hasta el 30-jun → se DESCUENTAN los
-        //    días pagados de más (del retiro al 30-jun) → valor NEGATIVO.
-        //  · Retiro antes de junio → prima ene→retiro PENDIENTE (aún no pagada).
-        //  · Retiro 2do semestre → prima desde jul (o dic si ya se pagó).
-        const primaBaseDiaria = (salarioMensual + (pp.incluyeAux ? auxMensual : 0)) / 30
+        // PRIMA — la prima del 1er semestre se ADELANTA con la nómina del 15-jun a
+        // quien ya venía de una quincena anterior (confirmado por el usuario
+        // 2026-09-07: "las personas retiradas desde el día 16 aparecen en cero
+        // porque se les pagó de forma anticipada el 15 de junio con la nómina").
+        // Verificado con 10 casos reales: retiro en junio → prima liquidación = $0,
+        // sin importar el día exacto ni la antigüedad -- la ÚNICA excepción es
+        // alguien que ingresa y se retira el MISMO día (nunca pasó por una
+        // quincena, nunca recibió el adelanto), a quien sí se le prorratea normal.
+        // El recobro de lo pagado de más ("mayor valor pagado en primas") es una
+        // DEDUCCIÓN, no un valor negativo de esta línea -- pendiente de modelar en
+        // el submódulo de Deducciones (fuera del alcance de este fix).
         if (info.fecha_retiro >= `${anio}-06-01` && info.fecha_retiro <= `${anio}-06-30`) {
-          const diasDeMas = 30 - Number(info.fecha_retiro.slice(8, 10))
-          prima = -(diasDeMas * primaBaseDiaria * (pp.pctPrima / 100))
+          if (info.fechainicio && String(info.fechainicio) === info.fecha_retiro) {
+            const prc = sumaPeriodo(rows, cesDesdeReal, info.fecha_retiro)
+            prima = (prc.dev + (pp.incluyeAux ? (auxMensual / 30) * prc.dias : 0)) * (pp.pctPrima / 100)
+          } else {
+            prima = 0
+          }
         } else if (info.fecha_retiro < `${anio}-06-01`) {
-          const prc = sumaPeriodo(rows, cesDesde, info.fecha_retiro)
+          const prc = sumaPeriodo(rows, cesDesdeReal, info.fecha_retiro)
           prima = (prc.dev + (pp.incluyeAux ? (auxMensual / 30) * prc.dias : 0)) * (pp.pctPrima / 100)
         } else {
-          const primaDesde2 = info.fecha_retiro >= `${anio}-12-15` ? `${anio}-12-15` : `${anio}-07-01`
+          const primaDesde2Base = info.fecha_retiro >= `${anio}-12-15` ? `${anio}-12-15` : `${anio}-07-01`
+          const primaDesde2 =
+            info.fechainicio && String(info.fechainicio) > primaDesde2Base ? String(info.fechainicio) : primaDesde2Base
           const pr2 = sumaPeriodo(rows, primaDesde2, info.fecha_retiro)
           prima = (pr2.dev + (pp.incluyeAux ? (auxMensual / 30) * pr2.dias : 0)) * (pp.pctPrima / 100)
         }
@@ -346,26 +370,32 @@ export async function getLiquidaciones(
         // desde la fecha de ingreso) MENOS los días ya disfrutados. Se paga lo
         // pendiente al salario básico/día. Ej: si ya disfrutó su año pero siguió
         // laborando, quedan las pocas causadas después.
-        const inicioVinculo =
-          info.fechainicio && String(info.fechainicio) < info.fecha_retiro ? String(info.fechainicio) : cesDesde
-        const diasVinculo = Math.max(
-          0,
-          Math.round((Date.parse(info.fecha_retiro) - Date.parse(inicioVinculo)) / 86_400_000),
-        )
+        // `diasVinculo` para alguien que YA venía de antes del 1-ene usa la fecha
+        // real de ingreso (así no se reinicia la acumulación cada año). Para quien
+        // ingresó DENTRO del año del retiro, se reutiliza `diasCes` (ya calculado
+        // arriba a partir de `cesDesdeReal`) en vez de restar fechas -- restar
+        // fechas rompía con ingreso=retiro el mismo día (diferencia de fechas = 0,
+        // pero sí hay 1 día causado). Verificado con datos reales 2026-09-07
+        // (varias personas con ingreso y retiro el mismo día, ej. Felipe Pérez
+        // Vega, Juan David Gámez Tatis).
+        const diasVinculo = veniaAnioAnterior
+          ? Math.max(
+              0,
+              Math.round((Date.parse(info.fecha_retiro) - Date.parse(String(info.fechainicio))) / 86_400_000),
+            )
+          : diasCes
         const vacCausadasDias = (pp.pctVacaciones / 100) * diasVinculo
         const diasDisfrutados = rows.filter((r: any) =>
           /vacaciones\s+disfrutad/i.test(String(r.novedad_reportada || "")),
         ).length
-        // Los días pendientes se pagan sobre el DEVENGADO promedio, pero como manda
-        // el CST art. 192: la base es el SALARIO ORDINARIO, que EXCLUYE el trabajo
-        // suplementario (horas extras) y el de descanso obligatorio (dominical/
-        // festivo) — y también el auxilio de transporte (que no está en el devengado).
-        // No es sobre el salario mínimo: es el promedio diario ordinario real.
-        // Base ordinaria = devengado − extras/dominical (excluidos por art. 192) +
-        // relleno. NO incluye el bono de productividad: no es prestacional.
-        const devOrdinario = ce.dev - ce.extra + fillMonto
-        const promedioDiaOrdinario = diasCes > 0 ? devOrdinario / diasCes : salarioDia
-        vacaciones = Math.max(0, vacCausadasDias - diasDisfrutados) * promedioDiaOrdinario
+        // Los días pendientes se pagan al SALARIO DIARIO BÁSICO (salarioMensual/30),
+        // no al promedio real devengado -- verificado con datos reales 2026-09-07
+        // (Carlos Pacheco: usar el promedio real devengado daba $128.989 vs. real
+        // $160.094; con salario básico da ~$163.062, a menos de un día de tenencia
+        // de diferencia). Coincide con el criterio general de LIPgo para "básico
+        // por día" (`salarioDia`, usado igual en la prima/cesantías de gente recién
+        // ingresada) en vez de un promedio calculado sobre horas extra/destajo.
+        vacaciones = Math.max(0, vacCausadasDias - diasDisfrutados) * salarioDia
       }
       const prestaciones = prima + cesantias + intereses + vacaciones
 
