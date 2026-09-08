@@ -116,15 +116,23 @@ function esEmpaque(s: string | null | undefined): boolean {
 }
 
 interface TarifasEmpresa {
-  exact: Map<string, number>
-  porOpOwner: Map<string, number>
-  porOp: Map<string, number>
+  exact: Map<string, number | null>
+  porOpSubcat: Map<string, number | null>
+  porOpOwner: Map<string, number | null>
+  porOp: Map<string, number | null>
   susanita: number
 }
 
+// Mismo endurecimiento que lib/facturacion-control-actions.ts: si dos filas
+// de tarifasoperacion caen en la MISMA llave con valores DISTINTOS, no hay
+// forma segura de adivinar cuál aplica -- se marca ambigua (null) en vez de
+// tomar el máximo a ciegas. Ver lipgo-tarifa-indupan-mogolla-fallback.
 async function tarifasDeEmpresa(sb: any, idempresa: number): Promise<TarifasEmpresa> {
-  const t: TarifasEmpresa = { exact: new Map(), porOpOwner: new Map(), porOp: new Map(), susanita: 0 }
-  const setMax = (m: Map<string, number>, k: string, v: number) => m.set(k, Math.max(m.get(k) || 0, v))
+  const t: TarifasEmpresa = { exact: new Map(), porOpSubcat: new Map(), porOpOwner: new Map(), porOp: new Map(), susanita: 0 }
+  const setUnanime = (m: Map<string, number | null>, k: string, v: number) => {
+    if (!m.has(k)) { m.set(k, v); return }
+    if (m.get(k) !== v) m.set(k, null)
+  }
   const { data: tar } = await sb.from("tarifasoperacion").select("operacion, empresafactura, producto, tarifa").eq("empresaid", idempresa)
   for (const r of tar || []) {
     const op = String(r.operacion ?? "").trim().toLowerCase()
@@ -136,9 +144,16 @@ async function tarifasDeEmpresa(sb: any, idempresa: number): Promise<TarifasEmpr
       t.susanita = Math.max(t.susanita, v)
       continue
     }
-    setMax(t.exact, `${op}|||${owner}|||${subcat}`, v)
-    setMax(t.porOpOwner, `${op}|||${owner}`, v)
-    setMax(t.porOp, op, v)
+    setUnanime(t.exact, `${op}|||${owner}|||${subcat}`, v)
+    // Ignora el owner a propósito: si el proyecto solo tiene UN owner real
+    // configurado (ej. ID2 = AVIMOL), un owner de producto distinto (Molinos
+    // del Atlántico, o remapeado a Terceros/Zamudio por transporte) cobra
+    // igual -- "es la misma tarifa" (confirmado por el usuario 2026-09-08).
+    // Si el proyecto SÍ tiene tarifas distintas por owner (ej. ID3), esta
+    // llave queda ambigua y no se usa.
+    setUnanime(t.porOpSubcat, `${op}|||${subcat}`, v)
+    setUnanime(t.porOpOwner, `${op}|||${owner}`, v)
+    setUnanime(t.porOp, op, v)
   }
   return t
 }
@@ -147,7 +162,13 @@ function lookupTarifa(operacion: string | null, owner: string, subcategoria: str
   const op = String(operacion ?? "").trim().toLowerCase()
   const ok = ownerKeyFactura(owner)
   const sk = subcatKey(subcategoria)
-  return t.exact.get(`${op}|||${ok}|||${sk}`) ?? t.porOpOwner.get(`${op}|||${ok}`) ?? t.porOp.get(op) ?? 0
+  return (
+    t.exact.get(`${op}|||${ok}|||${sk}`) ??
+    t.porOpSubcat.get(`${op}|||${sk}`) ??
+    t.porOpOwner.get(`${op}|||${ok}`) ??
+    t.porOp.get(op) ??
+    0
+  )
 }
 
 function tarifaDeServicio(

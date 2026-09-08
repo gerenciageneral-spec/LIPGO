@@ -229,9 +229,10 @@ function servicioDe(
 // (ej. en Avimol Cargue de PT=15.099 y de sub-producto Mogolla=19.416; en Funza Cargue
 // Molinos=17.318 vs AVIMOL/Indupan=14.844). Todo sale de la tabla, sin hardcodear.
 export interface TarifasEmpresa {
-  exact: Map<string, number> // `${op}|||${ownerK}|||${subcatK}` → tarifa
-  porOpOwner: Map<string, number> // `${op}|||${ownerK}` → máximo (fallback si no hay subcat)
-  porOp: Map<string, number> // `${op}` → máximo (fallback general)
+  exact: Map<string, number | null> // `${op}|||${ownerK}|||${subcatK}` → tarifa (null = ambiguo, ver setUnanime)
+  porOpSubcat: Map<string, number | null> // `${op}|||${subcatK}` → misma tarifa sin importar owner (ej. ID2: un solo owner real, "Terceros/Zamudio" deben cobrar igual)
+  porOpOwner: Map<string, number | null> // `${op}|||${ownerK}` → fallback si no hay subcat
+  porOp: Map<string, number | null> // `${op}` → fallback general
   susanita: number
 }
 
@@ -280,8 +281,22 @@ function esEmpaque(s: string | null | undefined): boolean {
 }
 
 async function tarifasDeEmpresa(sb: any, idempresa: number): Promise<TarifasEmpresa> {
-  const t: TarifasEmpresa = { exact: new Map(), porOpOwner: new Map(), porOp: new Map(), susanita: 0 }
-  const setMax = (m: Map<string, number>, k: string, v: number) => m.set(k, Math.max(m.get(k) || 0, v))
+  const t: TarifasEmpresa = { exact: new Map(), porOpSubcat: new Map(), porOpOwner: new Map(), porOp: new Map(), susanita: 0 }
+  // Si dos filas de tarifasoperacion caen en la MISMA llave con valores
+  // DISTINTOS, no hay forma segura de adivinar cuál aplica -- se marca la
+  // llave como AMBIGUA (null) en vez de tomar el máximo a ciegas (ese
+  // Math.max silencioso fue justo lo que facturó Cargue de Producto
+  // Terminado de ID1 a la tarifa de Mogolla, ver
+  // lipgo-tarifa-indupan-mogolla-fallback). Una llave ambigua nunca se usa
+  // como tarifa: lookupTarifa cae al siguiente nivel (?? la ignora igual que
+  // "no encontrada"), y si TODOS los niveles son ambiguos/vacíos devuelve 0
+  // -- visible como "sin tarifa", nunca un número plausible pero incorrecto.
+  // Cuando la llave tiene un SOLO valor real (el caso normal, ej. una sola
+  // tarifa de Tolva para todo el proyecto) el resultado es idéntico a antes.
+  const setUnanime = (m: Map<string, number | null>, k: string, v: number) => {
+    if (!m.has(k)) { m.set(k, v); return }
+    if (m.get(k) !== v) m.set(k, null)
+  }
   const { data: tar } = await sb
     .from("tarifasoperacion")
     .select("operacion, empresafactura, producto, tarifa")
@@ -294,20 +309,32 @@ async function tarifasDeEmpresa(sb: any, idempresa: number): Promise<TarifasEmpr
     if (!op || v <= 0) continue
     // Descargue SUSANITA es una tarifa especial por cliente, no por owner/producto.
     if (op === "descargue" && owner === "SUSANITA") { t.susanita = Math.max(t.susanita, v); continue }
-    setMax(t.exact, `${op}|||${owner}|||${subcat}`, v)
-    setMax(t.porOpOwner, `${op}|||${owner}`, v)
-    setMax(t.porOp, op, v)
+    setUnanime(t.exact, `${op}|||${owner}|||${subcat}`, v)
+    // `porOpSubcat` ignora el owner a propósito: cuando un proyecto solo tiene
+    // UN owner real configurado (ej. ID2 = AVIMOL), el owner del PRODUCTO que
+    // trae la vista puede venir distinto (Molinos del Atlántico, o remapeado a
+    // Terceros/Zamudio por transporte) sin que eso cambie la tarifa -- "es la
+    // misma tarifa" (confirmado por el usuario 2026-09-08). Si el proyecto SÍ
+    // tiene tarifas distintas por owner (ej. ID3: Molinos $17.318 vs AVIMOL
+    // $14.844), esta llave queda ambigua y no se usa -- no se adivina.
+    setUnanime(t.porOpSubcat, `${op}|||${subcat}`, v)
+    setUnanime(t.porOpOwner, `${op}|||${owner}`, v)
+    setUnanime(t.porOp, op, v)
   }
   return t
 }
 
-// Tarifa por (operación, owner, subcategoría) con fallback: exacta → (op+owner) → (op).
+// Tarifa por (operación, owner, subcategoría) con fallback: exacta → (op+producto,
+// sin owner) → (op+owner, sin producto) → (op). Cada nivel solo se usa si es
+// UNÁNIME para esa llave (ver setUnanime) -- nunca se adivina entre valores
+// reales distintos.
 function lookupTarifa(operacion: string | null, owner: string, subcategoria: string | null, t: TarifasEmpresa): number {
   const op = String(operacion ?? "").trim().toLowerCase()
   const ok = ownerKeyFactura(owner)
   const sk = subcatKey(subcategoria)
   return (
     t.exact.get(`${op}|||${ok}|||${sk}`) ??
+    t.porOpSubcat.get(`${op}|||${sk}`) ??
     t.porOpOwner.get(`${op}|||${ok}`) ??
     t.porOp.get(op) ??
     0
