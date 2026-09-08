@@ -30,6 +30,27 @@
 -- también allá -- los dos lados deben coincidir o se paga dos veces (por el
 -- plano Y por la liquidación) o no se paga por ninguno.
 --
+-- ACTUALIZACIÓN (mismo día, tras revisión pedida por el usuario: "si se
+-- realiza un retiro se debe calcular todas las novedades de nómina que
+-- tenga ese trabajador hasta que se le marca la novedad de retiro"): se
+-- agregan 2 correcciones más, necesarias PORQUE ahora un retiro nuevo SÍ
+-- pasa por esta vista (antes ni se planteaba el problema, quedaban fuera
+-- del todo). Dos mecanismos de esta vista difieren dinero del DÍA DE CIERRE
+-- (15 o último día del mes) a la "quincena siguiente" -- válido para alguien
+-- que sigue activo, pero un retirado NUNCA tiene quincena siguiente, así que
+-- ese dinero se perdería para siempre en vez de solo pagarse tarde:
+--   a) `fecha_efectiva_turno` (horas extra/recargo del día de cierre, ramas
+--      07/10/11/12/26/08/25): ahora NO se desplaza si la persona está
+--      retirada -- cobra su día de cierre completo en su propia quincena.
+--   b) El bono de destajo del día de cierre en `agrupado_quincena`: mismo
+--      criterio, no se pone en $0 si la persona está retirada.
+-- Nueva columna `es_retirado` en `base_datos` para saber esto. Verificado
+-- con datos reales que NO hacía falta ningún cambio en cómo se CALCULAN los
+-- valores (`total_liquidado_dia` en `pagonomina` ya incluye horas extra y
+-- recargos completos para personal de turno, confirmado con datos reales) --
+-- el único problema era que esos valores se estaban DIFIRIENDO a una
+-- quincena que para un retirado nunca llega.
+--
 -- ALCANCE DELIBERADAMENTE ACOTADO -- 3 exclusiones de retirados que NO se
 -- tocan aquí, a propósito, porque son conceptos DISTINTOS de "nómina
 -- pendiente" (los días trabajados + su bono de destajo + horas extra, que es
@@ -126,14 +147,26 @@ create or replace view public.archivoplano as
             -- la aritmética de fechas de Postgres.
             -- Antes del 2026-08-15 se conserva el criterio viejo (mismo día, sin
             -- desplazar), para no reescribir quincenas ya enviadas a Siigo.
+                -- NO desplazar si la persona está RETIRADA: el desplazamiento
+                -- asume que existe una "quincena siguiente" donde caer -- para
+                -- un retirado esa quincena nunca llega, y sus horas extra/
+                -- recargo del día de cierre se perderían para siempre en vez
+                -- de solo pagarse tarde. Un retirado cobra su día de cierre
+                -- COMPLETO en su propia (última) quincena. NOTA (2026-09-08).
                 CASE
                     WHEN ((p.fecha >= DATE '2026-08-15')
                       AND ((EXTRACT(day FROM p.fecha) = 15)
-                        OR (p.fecha = ((date_trunc('month'::text, (p.fecha)::timestamp with time zone) + interval '1 month' - interval '1 day'))::date)))
+                        OR (p.fecha = ((date_trunc('month'::text, (p.fecha)::timestamp with time zone) + interval '1 month' - interval '1 day'))::date))
+                      AND (lower(COALESCE(h.estado, 'activo'::text)) <> 'inactivo'::text))
                     THEN (p.fecha + interval '1 day')::date
                     ELSE p.fecha
                 END AS fecha_efectiva_turno,
-            to_char((p.fecha)::timestamp with time zone, 'DD/MM/YYYY'::text) AS fecha_evento
+            to_char((p.fecha)::timestamp with time zone, 'DD/MM/YYYY'::text) AS fecha_evento,
+            -- RETIRADO: sin esta bandera, los mecanismos que difieren dinero a
+            -- la "quincena siguiente" (destajo del día de cierre, ver
+            -- `agrupado_quincena` más abajo) no tienen forma de saber que para
+            -- esta persona esa quincena nunca va a llegar.
+            (lower(COALESCE(h.estado, 'activo'::text)) = 'inactivo'::text) AS es_retirado
            FROM (pagonomina p
              -- TRIM en los DOS lados, igual que en pagonomina: `headcount.nombre`
              -- puede traer espacios de sobra del digitado y sin TRIM el cruce falla
@@ -261,11 +294,17 @@ create or replace view public.archivoplano as
             -- sobrante). `max(...)` y no `sum(...)` porque el JOIN de abajo
             -- repite el mismo total en cada fila-día de `base_datos`: sumarlo
             -- multiplicaría el ajuste por la cantidad de días de la quincena.
+            -- NO diferir (pagar YA, completo) si la persona está RETIRADA
+            -- (`es_retirado`, ver base_datos): diferir asume una quincena
+            -- siguiente que a un retirado nunca le va a llegar -- su destajo
+            -- del día de cierre se perdería para siempre en vez de pagarse
+            -- tarde. NOTA (2026-09-08).
             (sum(
                 CASE
                     WHEN ((base_datos.fecha >= DATE '2026-08-15')
                       AND ((EXTRACT(day FROM base_datos.fecha) = 15)
-                        OR (base_datos.fecha = ((date_trunc('month'::text, (base_datos.fecha)::timestamp with time zone) + interval '1 month' - interval '1 day'))::date)))
+                        OR (base_datos.fecha = ((date_trunc('month'::text, (base_datos.fecha)::timestamp with time zone) + interval '1 month' - interval '1 day'))::date))
+                      AND (NOT base_datos.es_retirado))
                     THEN (0)::numeric
                     ELSE base_datos.bonif_prestacional
                 END)
