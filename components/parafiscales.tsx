@@ -44,6 +44,7 @@ import {
 } from "@/lib/parafiscales-actions"
 import { generarArchivoCargaPila } from "@/lib/parafiscales-exportador-actions"
 import PrestacionesActivos from "@/components/prestaciones-activos"
+import CuadroControlNomina from "@/components/cuadro-control-nomina"
 import {
   calcularAportes,
   validarParametros,
@@ -303,6 +304,8 @@ export default function Parafiscales() {
 
   return (
     <div className="space-y-4">
+      <CuadroControlNomina parafiscalesResumen={resumen} parafiscalesPeriodoLabel={`${MESES[mes - 1]} ${anio}`} />
+
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
           <CardTitle className="flex items-center gap-2 text-lg">
