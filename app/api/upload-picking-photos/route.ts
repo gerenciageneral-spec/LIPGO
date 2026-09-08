@@ -62,6 +62,22 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: false, error: "No se encontró la orden" }, { status: 404 })
       }
 
+      // No se puede cerrar (fin de operación) una orden que sigue con una
+      // pausa abierta (tabla `pausas`, fin IS NULL) — hay que reanudarla
+      // primero. Antes no había ningún gate para esto (ni UI ni servidor).
+      const { data: pausasAbiertas } = await supabaseAdmin
+        .from("pausas")
+        .select("id")
+        .eq("ordendecargue", orderRow.ordendecargue)
+        .is("fin", null)
+        .limit(1)
+      if (pausasAbiertas && pausasAbiertas.length > 0) {
+        return NextResponse.json(
+          { success: false, error: "La orden está en pausa; reanúdela antes de cargar las fotos y cerrar" },
+          { status: 400 },
+        )
+      }
+
       // Misma excepción que ya usan Picking/Packing/Centro de Coordinación
       // para no exigir personal: Distribución sin facturar tampoco exige
       // tipo de pago (no hay tonelaje que repartir).

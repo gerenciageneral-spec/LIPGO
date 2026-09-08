@@ -1565,13 +1565,15 @@ function MuelleRow({
                 <Button
                   size="sm"
                   onClick={onCerrarFotos}
-                  disabled={!puedeConcluirSinPersonal && (!auxiliaresLabel || !o.tipoPago)}
+                  disabled={o.pausado || (!puedeConcluirSinPersonal && (!auxiliaresLabel || !o.tipoPago))}
                   title={
-                    !puedeConcluirSinPersonal && !auxiliaresLabel
-                      ? "Asigna personal antes de cerrar"
-                      : !puedeConcluirSinPersonal && !o.tipoPago
-                        ? "Elige tipo de pago antes de cerrar"
-                        : undefined
+                    o.pausado
+                      ? "Reanuda el cargue antes de cerrar"
+                      : !puedeConcluirSinPersonal && !auxiliaresLabel
+                        ? "Asigna personal antes de cerrar"
+                        : !puedeConcluirSinPersonal && !o.tipoPago
+                          ? "Elige tipo de pago antes de cerrar"
+                          : undefined
                   }
                 >
                   <Camera className="mr-1 h-3.5 w-3.5" /> Cargar fotos (cierra la OC)

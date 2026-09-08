@@ -739,10 +739,12 @@ export function Packing() {
                             // ni necesita tipo de pago, así que se puede cerrar directo. Un
                             // Descargue de Huevos en ID2 tampoco: ese personal se paga aparte.
                             disabled={
-                              !esDistribucionNoFacturable(order) &&
-                              !esDescargueHuevosSinPersonal(order) &&
-                              (!order.auxiliares || (!order.tipo_pago && !esClonDistribucion(order)))
+                              pausedOrders.has(order.ordendecargue) ||
+                              (!esDistribucionNoFacturable(order) &&
+                                !esDescargueHuevosSinPersonal(order) &&
+                                (!order.auxiliares || (!order.tipo_pago && !esClonDistribucion(order))))
                             }
+                            title={pausedOrders.has(order.ordendecargue) ? "Reanuda el descargue antes de cerrar" : undefined}
                             size="sm"
                             variant="outline"
                             className="h-7 text-[10px] px-2"

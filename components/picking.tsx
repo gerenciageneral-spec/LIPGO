@@ -1714,7 +1714,8 @@ const loadOrders = async () => {
                             size="sm"
                             variant="outline"
                             onClick={() => handleUploadPhotos(order)}
-                            disabled={!order.auxiliares || !order.tipo_pago}
+                            disabled={!order.auxiliares || !order.tipo_pago || pausedOrders.has(order.ordendecargue)}
+                            title={pausedOrders.has(order.ordendecargue) ? "Reanuda el cargue antes de cerrar" : undefined}
                             className="h-7 text-[10px] px-2"
                           >
                             <Camera className="h-3 w-3 mr-1" />
