@@ -114,10 +114,15 @@ const CAT_LABEL: Record<CategoriaFactura, string> = {
   en_proceso: "En proceso",
   sin_gestionar: "Sin gestionar",
 }
-// Agrupa el soporte (detalle de órdenes) por OWNER × OPERACIÓN, con subtotales.
+// Agrupa el soporte (detalle de órdenes) por OWNER × OPERACIÓN × UNIDAD, con
+// subtotales. La unidad separa un concepto por UNIDAD (Huevos) del tonelaje
+// normal de la misma operación -- sin esto "AVIMOL · Descargue" mezclaba
+// Huevos con Producto Terminado en el mismo bloque/subtotal (pedido explícito
+// 2026-09-08: Huevos siempre en su propio anexo).
 interface SoporteGrupo {
   owner: string
   operacion: string
+  unidad: UnidadCobro
   lineas: SoporteLinea[]
   ton: number
   valor: number
@@ -126,15 +131,16 @@ function agruparSoporte(lineas: SoporteLinea[]): { grupos: SoporteGrupo[]; total
   const map = new Map<string, SoporteGrupo>()
   for (const l of lineas) {
     const op = l.operacion || "(sin operación)"
-    const k = `${l.owner}|||${op}`
-    const g = map.get(k) || { owner: l.owner, operacion: op, lineas: [], ton: 0, valor: 0 }
+    const unidad = l.unidad || "t"
+    const k = `${l.owner}|||${op}|||${unidad}`
+    const g = map.get(k) || { owner: l.owner, operacion: op, unidad, lineas: [], ton: 0, valor: 0 }
     g.lineas.push(l)
     g.ton += Number(l.toneladas) || 0
     g.valor += Number(l.valor) || 0
     map.set(k, g)
   }
   const grupos = Array.from(map.values()).sort(
-    (a, b) => a.owner.localeCompare(b.owner) || a.operacion.localeCompare(b.operacion),
+    (a, b) => a.owner.localeCompare(b.owner) || a.operacion.localeCompare(b.operacion) || a.unidad.localeCompare(b.unidad),
   )
   // Las horas extra comparten la columna de cantidad pero NO son tonelaje.
   const totalTon = lineas.reduce((s, l) => s + (esTon(l.unidad) ? Number(l.toneladas) || 0 : 0), 0)
@@ -150,10 +156,15 @@ function SoporteAnexo({ lineas }: { lineas: SoporteLinea[] }) {
   return (
     <div className="space-y-4">
       {grupos.map((g) => (
-        <div key={`${g.owner}|||${g.operacion}`}>
+        <div key={`${g.owner}|||${g.operacion}|||${g.unidad}`}>
           <div className="mb-1 flex items-center justify-between">
             <div className="text-xs font-bold uppercase tracking-wide">
               {g.owner} · {g.operacion}
+              {!esTon(g.unidad) && (
+                <span className="ml-1.5 rounded bg-violet-100 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-violet-700 dark:bg-violet-950/50 dark:text-violet-300">
+                  por unidad
+                </span>
+              )}
             </div>
             <div className="text-[11px] text-muted-foreground">{g.lineas.length} órdenes</div>
           </div>
@@ -192,7 +203,9 @@ function SoporteAnexo({ lineas }: { lineas: SoporteLinea[] }) {
                   <td className="py-1 pl-2" colSpan={6}>
                     Subtotal {g.owner} · {g.operacion}
                   </td>
-                  <td className="py-1 text-right tabular-nums">{ton(g.ton)}</td>
+                  <td className="py-1 text-right tabular-nums">
+                    {ton(g.ton)} <span className="text-[9px] font-normal text-muted-foreground">{uLabel(g.unidad)}</span>
+                  </td>
                   <td></td>
                   <td className="py-1 pr-2 text-right tabular-nums">{money(g.valor)}</td>
                 </tr>
@@ -256,7 +269,7 @@ function exportarSoporteExcel(lineas: SoporteLinea[], nombre: string, consecutiv
       Cantidad: Number(g.ton.toFixed(3)), Unidad: uLabel(g.lineas[0]?.unidad),
       Tarifa: "" as any, Valor: Math.round(g.valor),
     })
-    let hoja = `${abrev(g.owner)} - ${g.operacion}`.substring(0, 31).replace(/[\\/?*[\]:]/g, "")
+    let hoja = `${abrev(g.owner)} - ${g.operacion}${esTon(g.unidad) ? "" : " (u)"}`.substring(0, 31).replace(/[\\/?*[\]:]/g, "")
     let i = 2
     while (usados.has(hoja)) hoja = `${hoja.substring(0, 28)}(${i++})`
     usados.add(hoja)
@@ -298,7 +311,11 @@ export function CuadroControlFacturacion() {
   const [pref, setPref] = useState<Prefactura | null>(null)
   const [prefLoading, setPrefLoading] = useState(false)
   const [selKeys, setSelKeys] = useState<Set<string>>(new Set())
-  const keyRes = (owner: string, servicio: string) => `${owner}|||${servicio}`
+  // La unidad entra en la llave: un concepto por UNIDAD (Huevos) nunca debe
+  // compartir selección/expansión/detalle con el tonelaje normal de la misma
+  // operación (ej. "AVIMOL · Descargue" trae huevos y producto terminado
+  // mezclados si no se separa aquí) -- pedido explícito 2026-09-08.
+  const keyRes = (owner: string, servicio: string, unidad: string) => `${owner}|||${servicio}|||${unidad}`
   // Guardar / retomar prefacturas (borrador → aprobada, luego Siigo).
   const [guardando, setGuardando] = useState(false)
   const [guardadas, setGuardadas] = useState<PrefacturaGuardada[]>([])
@@ -438,7 +455,7 @@ export function CuadroControlFacturacion() {
       return
     }
     setPref(r.data)
-    setSelKeys(new Set(r.data.resumen.map((x) => keyRes(x.owner, x.operacion)))) // todo seleccionado
+    setSelKeys(new Set(r.data.resumen.map((x) => keyRes(x.owner, x.operacion, x.unidad)))) // todo seleccionado
   }
 
   const toggleSel = (k: string) =>
@@ -452,7 +469,7 @@ export function CuadroControlFacturacion() {
   // Desglosa POR FACTURAR (verde) vs YA FACTURADO (rojo, no recobrar) para no cobrar doble.
   const prefSel = useMemo(() => {
     if (!pref) return null
-    const rows = pref.resumen.filter((x) => selKeys.has(keyRes(x.owner, x.operacion)))
+    const rows = pref.resumen.filter((x) => selKeys.has(keyRes(x.owner, x.operacion, x.unidad)))
     type Grupo = {
       owner: string
       items: typeof rows
@@ -500,7 +517,7 @@ export function CuadroControlFacturacion() {
       totalEnProceso,
       totalProduccion,
       totalOperacion,
-      keys: new Set(rows.map((r) => keyRes(r.owner, r.operacion))),
+      keys: new Set(rows.map((r) => keyRes(r.owner, r.operacion, r.unidad))),
     }
   }, [pref, selKeys])
 
@@ -511,7 +528,7 @@ export function CuadroControlFacturacion() {
     if (!pref || !prefSel) return []
     const deOrdenes = pref.origen
       // solo lo seleccionado y POR FACTURAR (sin factura Siigo) — igual que lo que se factura
-      .filter((l) => prefSel.keys.has(keyRes(l.owner, l.grupoResumen)) && l.categoria !== "facturado")
+      .filter((l) => prefSel.keys.has(keyRes(l.owner, l.grupoResumen, l.unidad)) && l.categoria !== "facturado")
       .map((l) => ({
         owner: l.owner,
         operacion: l.grupoResumen || "",
@@ -524,10 +541,10 @@ export function CuadroControlFacturacion() {
         toneladas: Number((l.toneladas || 0).toFixed(3)),
         tarifa: l.tarifaServicio,
         valor: Math.round(l.valorServicio),
-        unidad: "t" as const,
+        unidad: l.unidad,
         tiquete: l.tiquete,
       }))
-    const deProduccion = (pref.soporteProduccion || []).filter((l) => prefSel.keys.has(keyRes(l.owner, l.operacion)))
+    const deProduccion = (pref.soporteProduccion || []).filter((l) => prefSel.keys.has(keyRes(l.owner, l.operacion, l.unidad || "t")))
     return [...deOrdenes, ...deProduccion]
   }, [pref, prefSel])
 
@@ -569,7 +586,7 @@ export function CuadroControlFacturacion() {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), "PREFACTURA")
     // TABLA ORIGEN de lo SELECCIONADO (soporte).
     const origen = pref.origen
-      .filter((l) => prefSel.keys.has(keyRes(l.owner, l.grupoResumen)))
+      .filter((l) => prefSel.keys.has(keyRes(l.owner, l.grupoResumen, l.unidad)))
       .map((l) => ({
         "Fecha Orden": l.fechaorden ?? "",
         "Fecha Cargue": l.fechacargue ?? "",
@@ -591,7 +608,7 @@ export function CuadroControlFacturacion() {
     // La PRODUCCIÓN no tiene orden de cargue: su respaldo es el día a día, y va
     // en su propia hoja para que el anexo del cliente esté completo.
     const prod = (pref.soporteProduccion || [])
-      .filter((l) => prefSel.keys.has(keyRes(l.owner, l.operacion)))
+      .filter((l) => prefSel.keys.has(keyRes(l.owner, l.operacion, l.unidad || "t")))
       .map((l) => ({
         Fecha: l.fecha ?? "",
         Owner: l.owner,
@@ -695,9 +712,11 @@ export function CuadroControlFacturacion() {
       return n
     })
 
-  // Órdenes (líneas origen) detrás de un owner×servicio, para navegar el detalle.
-  const detalleDe = (owner: string, operacion: string) =>
-    (pref?.origen || []).filter((l) => l.owner === owner && l.grupoResumen === operacion)
+  // Órdenes (líneas origen) detrás de un owner×servicio×unidad, para navegar el
+  // detalle -- la unidad es obligatoria o un concepto por unidad (Huevos) trae
+  // también las líneas por tonelada de la misma operación.
+  const detalleDe = (owner: string, operacion: string, unidad: string) =>
+    (pref?.origen || []).filter((l) => l.owner === owner && l.grupoResumen === operacion && l.unidad === unidad)
 
   const proyectoNombre = empresas.find((e) => e.id === empresaId)?.nombre || `Empresa ${empresaId}`
 
@@ -714,18 +733,21 @@ export function CuadroControlFacturacion() {
       if (u.includes("AVIMOL")) return "AVIMOL"
       return w.substring(0, 12)
     }
-    // Agrupar filas por owner × operación, en orden estable. Placa de
+    // Agrupar filas por owner × operación × UNIDAD, en orden estable. Placa de
     // Distribución (Configuración → Placas de Distribución, cubierta por el
     // fijo mensual): mismo criterio y mismo nombre que ya usa Prefactura
     // (servicioDe() → "Cargue/Descargue propio") -- Cargue, Descargue y su
     // clon de Distribución de esa placa van TODOS al mismo anexo, sin separar
     // por operación puntual (pedido explícito, para medir sus toneladas
-    // juntas sin mezclarlas con lo que sí se factura).
-    const grupos = new Map<string, { owner: string; op: string; filas: typeof data.filas }>()
+    // juntas sin mezclarlas con lo que sí se factura). La UNIDAD sí separa
+    // siempre: un concepto por unidad (Huevos) nunca comparte anexo con el
+    // tonelaje normal de la misma operación -- son magnitudes distintas y no
+    // se pueden sumar en el mismo total (pedido explícito 2026-09-08).
+    const grupos = new Map<string, { owner: string; op: string; unidad: UnidadCobro; filas: typeof data.filas }>()
     for (const f of data.filas) {
       const op = f.cubierto_por_fijo ? "Cargue/Descargue propio" : f.tipooperacion || "(sin op)"
-      const k = `${f.owner}|||${op}`
-      const g = grupos.get(k) || { owner: f.owner, op, filas: [] as any }
+      const k = `${f.owner}|||${op}|||${f.unidad}`
+      const g = grupos.get(k) || { owner: f.owner, op, unidad: f.unidad, filas: [] as any }
       g.filas.push(f)
       grupos.set(k, g)
     }
@@ -736,10 +758,14 @@ export function CuadroControlFacturacion() {
     const navy: [number, number, number] = [13, 59, 110]
 
     const gruposOrdenados = Array.from(grupos.values()).sort(
-      (a, b) => a.owner.localeCompare(b.owner) || a.op.localeCompare(b.op),
+      (a, b) => a.owner.localeCompare(b.owner) || a.op.localeCompare(b.op) || a.unidad.localeCompare(b.unidad),
     )
     for (let gi = 0; gi < gruposOrdenados.length; gi++) {
       const g = gruposOrdenados[gi]
+      // Título/nombre del PDF de un concepto por unidad (hoy solo Huevos, ver
+      // esProductoPorUnidad): sin esto dos PDFs distintos ("AVIMOL · Descargue"
+      // en toneladas y en unidades) se verían/llamarían casi igual.
+      const opLabel = esTon(g.unidad) ? g.op : `${g.op} · Por unidad`
       const doc = new jsPDF({ unit: "pt", format: "letter", orientation: "landscape" })
       const MW = doc.internal.pageSize.getWidth()
 
@@ -763,7 +789,7 @@ export function CuadroControlFacturacion() {
         pending.desde || pending.hasta
           ? ` · ${fmtFechaAnexo(pending.desde || null)} al ${fmtFechaAnexo(pending.hasta || null)}`
           : ""
-      doc.text(`${proyectoNombre} · ${g.op}${periodo}`, MW / 2, 114, { align: "center" })
+      doc.text(`${proyectoNombre} · ${opLabel}${periodo}`, MW / 2, 114, { align: "center" })
 
       let subTon = 0
       let subVal = 0
@@ -804,7 +830,7 @@ export function CuadroControlFacturacion() {
           ],
         ],
         body: filas,
-        foot: [["", "", "", "", "", "", `TOTAL ${g.op.toUpperCase()}`, `${ton(subTon)} ${uLabel(g.filas[0]?.unidad)}`, "", moneyPdf(subVal)]],
+        foot: [["", "", "", "", "", "", `TOTAL ${opLabel.toUpperCase()}`, `${ton(subTon)} ${uLabel(g.filas[0]?.unidad)}`, "", moneyPdf(subVal)]],
         theme: "grid",
         styles: { fontSize: 7, cellPadding: 3, textColor: 20, halign: "center", valign: "middle" },
         headStyles: { fillColor: navy, textColor: 255, fontStyle: "bold", fontSize: 7 },
@@ -826,7 +852,7 @@ export function CuadroControlFacturacion() {
         },
       })
 
-      const nombreArchivo = `Anexo_${abrev(g.owner)}_${g.op}_${new Date().toISOString().slice(0, 10)}`.replace(
+      const nombreArchivo = `Anexo_${abrev(g.owner)}_${opLabel}_${new Date().toISOString().slice(0, 10)}`.replace(
         /[^a-zA-Z0-9_-]+/g,
         "_",
       )
@@ -1409,7 +1435,7 @@ export function CuadroControlFacturacion() {
                           ¿Qué facturar? ({selKeys.size}/{pref.resumen.length} conceptos)
                         </span>
                         <div className="flex gap-3 text-xs">
-                          <button className="text-primary hover:underline" onClick={() => setSelKeys(new Set(pref.resumen.map((x) => keyRes(x.owner, x.operacion))))}>
+                          <button className="text-primary hover:underline" onClick={() => setSelKeys(new Set(pref.resumen.map((x) => keyRes(x.owner, x.operacion, x.unidad))))}>
                             Todo
                           </button>
                           <button className="text-primary hover:underline" onClick={() => setSelKeys(new Set())}>
@@ -1419,7 +1445,7 @@ export function CuadroControlFacturacion() {
                       </div>
                       <div className="grid gap-x-6 gap-y-1 p-3 sm:grid-cols-2 lg:grid-cols-3">
                         {pref.resumen.map((x) => {
-                          const k = keyRes(x.owner, x.operacion)
+                          const k = keyRes(x.owner, x.operacion, x.unidad)
                           const soloFacturado = x.valorPorFacturar === 0 && x.valorFacturado > 0
                           return (
                             <label key={k} className={`flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-xs hover:bg-muted/50 ${selKeys.has(k) ? "" : "opacity-50"}`}>
@@ -1427,6 +1453,11 @@ export function CuadroControlFacturacion() {
                               <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${soloFacturado ? "bg-red-500" : x.valorFacturado > 0 ? "bg-amber-400" : "bg-emerald-500"}`} />
                               <span className="flex-1 truncate">
                                 <span className="font-medium">{x.owner}</span> · {x.operacion}
+                                {!esTon(x.unidad) && (
+                                  <span className="ml-1 rounded bg-violet-100 px-1 py-px text-[9px] font-semibold uppercase text-violet-700 dark:bg-violet-950/50 dark:text-violet-300">
+                                    por unidad
+                                  </span>
+                                )}
                                 {x.bloque === "produccion" && (
                                   <span className="ml-1 rounded bg-sky-100 px-1 py-px text-[9px] font-semibold uppercase text-sky-700 dark:bg-sky-950/50 dark:text-sky-300">
                                     prod
@@ -1524,14 +1555,14 @@ export function CuadroControlFacturacion() {
                               </thead>
                               <tbody>
                                 {g.items.map((it) => {
-                                  const k = keyRes(it.owner, it.operacion)
+                                  const k = keyRes(it.owner, it.operacion, it.unidad)
                                   const abierto = expand.has(k)
                                   // `bloque` decide cómo se presenta; `fuente`, de dónde sale el
                                   // respaldo. La tolva de Indupan suma como producción pero su
                                   // detalle sigue siendo el de las órdenes.
                                   const esBloqueProd = it.bloque === "produccion"
                                   const esProd = it.fuente === "produccion"
-                                  const det = abierto && !esProd ? detalleDe(it.owner, it.operacion) : []
+                                  const det = abierto && !esProd ? detalleDe(it.owner, it.operacion, it.unidad) : []
                                   const detProd = abierto && esProd ? detalleProduccionDe(it.owner, it.operacion) : []
                                   return (
                                     <Fragment key={k}>
@@ -1543,6 +1574,11 @@ export function CuadroControlFacturacion() {
                                           <span className="inline-flex items-center gap-1">
                                             <ChevronRight className={`h-3 w-3 text-muted-foreground transition-transform ${abierto ? "rotate-90" : ""}`} />
                                             {it.operacion}
+                                            {!esTon(it.unidad) && (
+                                              <span className="rounded bg-violet-100 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-violet-700 dark:bg-violet-950/50 dark:text-violet-300">
+                                                por unidad
+                                              </span>
+                                            )}
                                             {esBloqueProd && (
                                               <span className="rounded bg-sky-100 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-sky-700 dark:bg-sky-950/50 dark:text-sky-300">
                                                 producción
