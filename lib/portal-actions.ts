@@ -553,29 +553,40 @@ export async function getNovedadesAsistenciaPortal(
  * es lo que la regla busca castigar. Antes contaban como novedad y dejaban a la
  * persona sin poder pedir anticipo durante el mes siguiente a volver.
  *
- *   · %vacacion% -> "31- Vacaciones disfrutadas".
- *   · %descanso% -> "Descanso" y "Descanso compensatorio domingo anterior".
+ *   · %vacacion%    -> "31- Vacaciones disfrutadas".
+ *   · %descanso%    -> "Descanso" y "Descanso compensatorio domingo anterior".
+ *   · %incapacidad% -> "13- Incapacidad por enfermedad general al 100%",
+ *                      "14- Incapacidad por enfermedad general al 50",
+ *                      "15- Incapacidad por enfermedad general al 66%- ingreso"
+ *                      y las de origen laboral.
  *
  * Se comparan por PATRON y no por el codigo exacto para tolerar variantes
  * historicas del texto sin tener que enumerarlas.
  *
- * SIGUEN BLOQUEANDO, que es el proposito de la regla: incapacidades, licencias
- * (remuneradas y no), ausencias y retiro.
+ * POR QUE LA INCAPACIDAD DEJO DE BLOQUEAR (2026-09): estar incapacitado no es
+ * una falta. La regla existe para que no pida anticipo quien viene faltando,
+ * pero a alguien que se enfermo se lo estaba castigando doble --deja de
+ * percibir parte del salario Y ademas no podia pedir el anticipo-- que es justo
+ * cuando mas lo necesita. Reportado por un usuario cuyo unico registro de los
+ * ultimos 30 dias era una incapacidad.
+ *
+ * SIGUEN BLOQUEANDO, que es el proposito de la regla: licencias (remuneradas y
+ * no remuneradas), ausencias y retiro.
  */
-const NOVEDADES_NO_BLOQUEAN_ANTICIPO = ["%vacacion%", "%descanso%"]
+const NOVEDADES_NO_BLOQUEAN_ANTICIPO = ["%vacacion%", "%descanso%", "%incapacidad%"]
 
 /**
  * Indica si el colaborador tiene al menos UNA novedad de asistencia en los
  * ultimos 30 dias contados desde hoy. Se usa como bloqueo para solicitar
- * anticipos: la regla de negocio dice que si el trabajador ha tenido alguna
- * novedad reciente (incapacidad, permiso, ausencia, etc.) no puede solicitar
- * anticipo. Los descansos programados —vacaciones y descansos— quedan fuera;
- * ver NOVEDADES_NO_BLOQUEAN_ANTICIPO.
+ * anticipos: la regla de negocio dice que si el trabajador ha venido faltando
+ * (permiso, licencia, ausencia) no puede solicitar anticipo. Las vacaciones,
+ * los descansos y las incapacidades quedan FUERA; ver
+ * NOVEDADES_NO_BLOQUEAN_ANTICIPO.
  *
  * Filtramos en SQL por:
  *   - identificacion = X
  *   - asistencia not null y distinto de ""
- *   - asistencia que no sea de vacaciones ni descanso
+ *   - asistencia que no sea vacaciones, descanso ni incapacidad
  *   - fecha >= (hoy - 30 dias)
  *
  * Usamos `head: true` + `count: "exact"` para no traer filas; solo
@@ -604,10 +615,11 @@ export async function tieneNovedadesUltimos30Dias(
       .neq("asistencia", "")
       .gte("fecha", fechaIso)
 
-    // Los descansos programados no descalifican. Cada `not` es un filtro
-    // independiente y PostgREST los une con AND, que es justo lo que se quiere:
-    // la fila cuenta solo si NO coincide con NINGUNO de los patrones. Van
-    // despues del `is null` de arriba, que ya dejo fuera las filas sin novedad.
+    // Los descansos programados y las incapacidades no descalifican. Cada `not`
+    // es un filtro independiente y PostgREST los une con AND, que es justo lo
+    // que se quiere: la fila cuenta solo si NO coincide con NINGUNO de los
+    // patrones. Van despues del `is null` de arriba, que ya dejo fuera las
+    // filas sin novedad.
     for (const patron of NOVEDADES_NO_BLOQUEAN_ANTICIPO) {
       query = query.not("asistencia", "ilike", patron)
     }
