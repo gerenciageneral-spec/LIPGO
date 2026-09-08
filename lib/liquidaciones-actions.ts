@@ -86,6 +86,13 @@ export interface LiquidacionPersona {
   // por el archivo plano de la quincena, NO por esta liquidación -- se
   // muestra solo como referencia, sin sumar a total_liquidacion.
   nominaPagadaPorPlano: boolean
+  // Gaps encontrados reconciliando contra Siigo (caso real Yair de Jesús Truyol
+  // Caballero, 2026-09-08): Siigo prorratea el auxilio de transporte y descuenta
+  // 4% salud + 4% pensión sobre CADA nómina, incluida la pendiente de un retiro;
+  // LIPgo no calculaba ninguno de los dos. Ambos en $0 si nominaPagadaPorPlano
+  // (esa nómina la paga el plano, que ya lo resuelve).
+  auxilioTransportePendiente: number
+  deduccionLeyPendiente: number // 4% salud + 4% pensión sobre `total` (el IBC, sin el auxilio)
   prima: number
   cesantias: number
   intereses: number
@@ -543,6 +550,15 @@ export async function getLiquidaciones(
       const deducciones = deduccion_items.reduce((s, d) => s + d.valor, 0)
       const nominaPagadaPorPlano = !!info.fecha_retiro && info.fecha_retiro >= NOMINA_PENDIENTE_EN_PLANO_DESDE
 
+      // Auxilio de transporte prorrateado + deducciones de ley sobre la nómina
+      // PENDIENTE (no sobre prestaciones -- esas no cotizan). Prorrateo por días
+      // de nómina pendiente (`novedades.length`), mismo criterio que el resto del
+      // módulo. Solo bajo la regla vieja: con la nueva, el plano ya los resuelve.
+      const anioNominaPendiente = info.fecha_retiro ? Number(info.fecha_retiro.slice(0, 4)) : null
+      const auxMensualPendiente = anioNominaPendiente ? auxPorAnio.get(anioNominaPendiente) ?? 0 : 0
+      const auxilioTransportePendiente = nominaPagadaPorPlano ? 0 : (auxMensualPendiente / 30) * novedades.length
+      const deduccionLeyPendiente = nominaPagadaPorPlano ? 0 : total * 0.08
+
       data.push({
         persona: nombre,
         identificacion: info.identificacion,
@@ -553,6 +569,8 @@ export async function getLiquidaciones(
         dias: novedades.length,
         total,
         nominaPagadaPorPlano,
+        auxilioTransportePendiente,
+        deduccionLeyPendiente,
         prima,
         cesantias,
         intereses,
@@ -561,7 +579,11 @@ export async function getLiquidaciones(
         prestaciones,
         deducciones,
         deduccion_items,
-        total_liquidacion: (nominaPagadaPorPlano ? 0 : total) + prestaciones - deducciones,
+        total_liquidacion:
+          (nominaPagadaPorPlano ? 0 : total + auxilioTransportePendiente) +
+          prestaciones -
+          deducciones -
+          deduccionLeyPendiente,
         estado: est?.estado ?? "pendiente",
         soporte_url: est?.soporte_url ?? null,
         soporte_nombre: est?.soporte_nombre ?? null,

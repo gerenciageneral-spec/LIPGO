@@ -438,6 +438,8 @@ export default function Liquidaciones() {
         "Motivo retiro",
         "Estado",
         "Nómina pendiente",
+        "Aux. transporte pendiente",
+        "Deducción ley pendiente",
         "Prima",
         "Cesantías",
         "Intereses cesantías",
@@ -455,6 +457,8 @@ export default function Liquidaciones() {
         p.motivo_retiro || "",
         p.estado,
         p.total,
+        p.auxilioTransportePendiente,
+        p.deduccionLeyPendiente,
         p.prima,
         p.cesantias,
         p.intereses,
@@ -468,7 +472,7 @@ export default function Liquidaciones() {
       const ws = XLSX.utils.aoa_to_sheet([headers, ...rows])
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, "Liquidaciones")
-      ws["!cols"] = [26, 15, 12, 22, 11, 16, 14, 14, 16, 14, 16, 16, 14, 16, 40].map((wch) => ({ wch }))
+      ws["!cols"] = [26, 15, 12, 22, 11, 16, 16, 16, 14, 14, 16, 14, 16, 16, 14, 16, 40].map((wch) => ({ wch }))
       XLSX.writeFile(wb, `liquidaciones-${new Date().toISOString().split("T")[0]}.xlsx`)
       toast({ title: "Éxito", description: "Archivo exportado correctamente" })
     } catch {
@@ -579,6 +583,12 @@ export default function Liquidaciones() {
                         n: "Pago quincenal (1–15 / 16–fin)",
                         b: "Devengado real de LIPgo (tarifa por tonelada / turno)",
                         f: "Novedades posteriores a “Pagado hasta” y hasta la fecha de retiro. Desde el 9-sep-2026 se paga por el archivo plano de la quincena en un retiro nuevo (NO suma al total de esta liquidación); en un retiro de antes de esa fecha, sigue sumando como siempre.",
+                      },
+                      {
+                        c: "Aux. transporte y deducción de ley (nómina pendiente)",
+                        n: "Ley 15 de 1959 · Art. 204/205 Ley 100 de 1993",
+                        b: "Auxilio de transporte del año, prorrateado por día · 4% salud + 4% pensión sobre la nómina pendiente (sin el auxilio)",
+                        f: "Solo aplica en retiros de antes del 9-sep-2026 (la nómina pendiente sigue sumando en esta liquidación). Replica lo que Siigo ya hace automático en cada ciclo — confirmado con el caso real de Yair de Jesús Truyol Caballero.",
                       },
                       {
                         c: "Prima de servicios",
@@ -814,6 +824,14 @@ export default function Liquidaciones() {
                             {p.nominaPagadaPorPlano && (
                               <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[9px] font-medium text-sky-700 dark:bg-sky-950 dark:text-sky-400">
                                 <Landmark className="h-2.5 w-2.5" /> cubierta por el plano
+                              </span>
+                            )}
+                            {!p.nominaPagadaPorPlano && (p.auxilioTransportePendiente > 0 || p.deduccionLeyPendiente > 0) && (
+                              <span
+                                className="text-[9px] font-medium text-muted-foreground"
+                                title="Auxilio de transporte prorrateado y descuentos de ley (4% salud + 4% pensión) sobre la nómina pendiente, igual que Siigo"
+                              >
+                                +{money(p.auxilioTransportePendiente)} aux · −{money(p.deduccionLeyPendiente)} ley
                               </span>
                             )}
                           </div>

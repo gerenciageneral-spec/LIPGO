@@ -201,6 +201,19 @@ create or replace view public.pagonomina as
             -- negativo cuando hay toneladas sin tarifa. Fuera de Avimol, sin cambio:
             -- id1/3/4 siguen pagando Distribución con su propia tarifa y auxiliares.
             AND NOT ((cabeceraoc.idempresa = 2) AND (cabeceraoc.tipooperacion = 'Distribucion'::text))
+            -- PROYECCIÓN MANUAL DESCONTINUADA (2026-09-08, hallado en la reconciliación
+            -- contra Siigo): hasta el 2026-08-30 "Ajuste de Proyecciones" (hoy "Ajuste
+            -- Nómina Anterior") comparaba contra una fila manual `cabeceraoc.tipooperacion
+            -- = 'proyeccion'` que el negocio dejó de usar (ver lib/ajuste-proyeccion-
+            -- actions.ts, que YA descarta este tipo — `if (tipo === "proyeccion") continue`
+            -- — pero esta vista nunca tuvo la misma exclusión). Esas filas quedaron con
+            -- `fincargue` puesto (cierran igual que una orden real) y llevaban auxiliares
+            -- reales en su columna `auxiliares` — 40 filas confirmadas, ene-jul 2026, 87
+            -- personas, ~3.836 t fantasma, coincide con el hueco encontrado al reconciliar
+            -- el bono de destajo contra los acumulados reales de Siigo (LIPgo salía ~21%
+            -- más alto que Siigo en esos meses). Nunca fueron producción real — exclusión
+            -- TOTAL, mismo criterio que la de Avimol arriba.
+            AND NOT (cabeceraoc.tipooperacion = 'proyeccion'::text)
         ), produccion_diaria AS (
          SELECT t.fechacargue AS fecha,
             t.nombre_auxiliar AS persona,
