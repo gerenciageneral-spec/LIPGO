@@ -59,6 +59,23 @@ function sumaPeriodoActivo(rows: any[], desde: string, hasta: string, salarioDia
     }
   }
   for (const v of bonoPorQuincena.values()) dev += Math.max(0, v)
+  // Relleno SOLO de los primeros días de enero-2026 que no existen en el
+  // sistema (arranque de LIPgo, hasta 4 días) -- mismo mecanismo ya validado
+  // en lib/liquidaciones-actions.ts (`fillDias`). Sin esto, cualquier periodo
+  // que incluya enero-2026 queda corto en la base salarial, no solo en el
+  // bono (que antes de julio-2026 de todas formas NO vive en LIPgo -- ver
+  // comentario de cabecera, usar valor_real para esos periodos).
+  if (desde <= "2026-01-01" && hasta >= "2026-01-01") {
+    const primerDia = rows
+      .map((r: any) => String(r.fecha))
+      .filter((fx: string) => fx >= "2026-01-01" && fx <= hasta)
+      .sort()[0]
+    if (primerDia) {
+      const fillDias = Math.max(0, Math.min(Number(primerDia.slice(8, 10)) - 1, 4))
+      dev += fillDias * salarioDia
+      dias += fillDias
+    }
+  }
   return { dev, dias }
 }
 
