@@ -483,16 +483,28 @@ function armarPersona(
         if (esDestajo || esp) domTrabajado += domingo
         else domDescanso += domingo
       }
-      if (esDestajo) {
+      // Apoyo en cargue (especialidad=true CON tonelaje real ese día): la vista
+      // `pagonomina` (scripts/pagonomina_reemplazo.sql:659,872) ya deja
+      // `bonif_prestacional` en $0 salvo que haya un apoyo real registrado en
+      // `apoyo_cargue_asignaciones` -- ese dinero SÍ viaja al archivo plano
+      // (novedad 52) aunque la persona sea de turno fijo. No se suma a
+      // `esDestajo`/`tipo`/HC (esas clasificaciones siguen viendo a la persona
+      // como "Turno", que es correcto operativamente) pero SÍ debe sumar al
+      // "Neto de la quincena" que ve RRHH, o esta pantalla mostraría menos de
+      // lo que realmente se paga. Confirmado 2026-09-07 con el caso real de
+      // Luis Antonio De Leon García (apoyo en cargue, agosto-2026).
+      const bonoApoyoCargue = esp ? Number(r.bonif_prestacional || 0) : 0
+      if (esDestajo || bonoApoyoCargue !== 0) {
         // EXCLUIR EL DÍA DE CIERRE del neto de ESTA quincena — igual que
         // archivoplano_reemplazo.sql: ese día ya se pagó a día pleno, y su
         // excedente queda diferido a la quincena SIGUIENTE (Ajuste Nómina
         // Anterior). Sin esto, el "Neto de la quincena" de esta pantalla no
         // cuadraba con lo que de verdad viaja al archivo plano.
-        if (diaCierre) excedenteDiaCierre += excedente
-        else neto += excedente
-        diasDestajo += 1
-        if (excedente >= 0) diasAltos += 1
+        const excedenteTotal = excedente + bonoApoyoCargue
+        if (diaCierre) excedenteDiaCierre += excedenteTotal
+        else neto += excedenteTotal
+        if (esDestajo) diasDestajo += 1
+        if (excedenteTotal >= 0) diasAltos += 1
         else diasBajos += 1
         toneladasMovidas += ton
         if (metaDia > 0) {

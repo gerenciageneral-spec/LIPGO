@@ -23,6 +23,7 @@
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getCurrentEmpresaId } from "@/lib/company-filter"
 import { getCurrentUsuarioForInsert } from "@/lib/user-context"
+import { getColombiaDateTime } from "@/lib/date-utils"
 
 const num = (v: any) => Number(v || 0)
 
@@ -145,6 +146,19 @@ export interface PersonalApoyoDisponible {
  * — a diferencia de getCarguDescarguePersonnel (Picking/Packing), que solo
  * ofrece PUESTOS_PICKING. Aquí el objetivo es justamente poder ofrecer
  * también al personal de turno fijo (especialidad=true).
+ *
+ * Reglas de disponibilidad (confirmadas por el usuario 2026-09-07, mismo
+ * criterio ya validado en lib/picking-actions.ts para Personal disponible):
+ *   - Quien ya marcó salida (`horasalida`) ya no está en el proyecto: no
+ *     disponible, sin importar la especialidad.
+ *   - Si `especialidad=true` (puesto fijo/especializado), SOLO puede aparecer
+ *     disponible para apoyar cargue una vez TERMINE su propio turno programado
+ *     (`horasalidaprogramada`) -- de lo contrario estaría apoyando cargue
+ *     mientras debería estar en su puesto de origen. Esta comparación de hora
+ *     solo aplica si la fecha consultada es HOY (para una fecha pasada su
+ *     turno ya terminó por definición; ver DatePickerField en el componente).
+ *   - `especialidad=false` no tiene esa restricción de horario -- son puestos
+ *     ya flexibles de cargue/descargue, igual que en Picking.
  */
 export async function getPersonalApoyoDisponible(
   fecha: string,
@@ -156,16 +170,29 @@ export async function getPersonalApoyoDisponible(
 
     let q = admin
       .from("registroasistencia")
-      .select("id, nombre, puesto, especialidad")
+      .select("id, nombre, puesto, especialidad, horasalidaprogramada")
       .eq("fecha", fecha)
       .is("asistencia", null) // excluye Ausentes
       .not("horaingreso", "is", null) // excluye programados que no han confirmado llegada (ver picking-actions.ts)
+      .is("horasalida", null) // excluye a quien ya marcó salida real: ya salió del proyecto hoy
       .order("nombre", { ascending: true })
     if (idempresa) q = q.eq("idempresa", idempresa)
     const { data, error } = await q
     if (error) throw new Error(error.message)
 
-    const out: PersonalApoyoDisponible[] = (data || []).map((r: any) => ({
+    const colombiaDate = await getColombiaDateTime()
+    const esHoy = fecha === colombiaDate.toLocaleDateString("en-CA")
+    const horaActual = colombiaDate.toTimeString().slice(0, 5)
+
+    const disponibles = (data || []).filter((r: any) => {
+      if (!esEspecialidad(r.especialidad)) return true
+      if (!esHoy) return true // fecha pasada: su turno ya terminó
+      const horaSalidaProgramada = (r.horasalidaprogramada || "").toString().slice(0, 5)
+      if (!horaSalidaProgramada) return true // sin dato programado: se deja disponible (dato incompleto, no regla de negocio)
+      return horaActual >= horaSalidaProgramada
+    })
+
+    const out: PersonalApoyoDisponible[] = disponibles.map((r: any) => ({
       id: r.id,
       nombre: r.nombre,
       puesto: r.puesto ?? null,

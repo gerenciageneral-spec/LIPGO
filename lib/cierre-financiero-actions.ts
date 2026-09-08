@@ -44,6 +44,7 @@ import {
   type ProcesoCierre,
 } from "@/lib/cierre-financiero-procesos"
 import { GESTION_LIPGO_DESDE } from "@/lib/facturacion-constantes"
+import { getParafiscales } from "@/lib/parafiscales-actions"
 
 const num = (v: any) => {
   const n = Number(String(v ?? "").replace(/,/g, ""))
@@ -253,9 +254,28 @@ function detalleDe(b: Bucket, nombre: string): DetalleProceso {
   return d
 }
 
-// Factores del estado de resultados (use-costo-nomina.ts): prestaciones 21,83%
-// + seguridad social 18,44%. Se replican para que las dos pantallas aten.
-const FACTOR_PROVISION = 1 + 0.2183 + 0.1844
+// Factor de prestaciones sociales del estado de resultados (use-costo-nomina.ts):
+// 21,83% (cesantías 8,33 + intereses 1 + prima 8,33 + vacaciones 4,17). Se
+// replica para que las dos pantallas aten -- sigue siendo una PROVISIÓN
+// contable estimada para personal activo (no hay un "real" para algo que aún
+// no se causa; ver Fase 3b en la memoria de este cierre).
+const FACTOR_PRESTACIONES = 1.2183
+
+// Seguridad social YA NO es un % plano (era 18,44% aquí) -- se reemplazó por
+// el aporte patronal REAL de Parafiscales (pensión+ARL+caja+salud patronal+
+// SENA+ICBF), prorrateado a los días transcurridos del mes si `fecha` no es
+// fin de mes. Confirmado por el usuario 2026-09-07: "el costo de nómina debe
+// ser el real, como se pagó". Ver `calcularSegSocialRealMes` más abajo.
+async function calcularSegSocialRealMes(idempresa: number, desde: string, fecha: string): Promise<number> {
+  const anio = Number(desde.slice(0, 4))
+  const mes = Number(desde.slice(5, 7))
+  const diasMes = new Date(anio, mes, 0).getDate()
+  const diaFecha = Number(fecha.slice(8, 10))
+  const fraccion = Math.min(1, Math.max(0, diaFecha / diasMes))
+  const r = await getParafiscales(idempresa, anio, mes)
+  if (!r.success || !r.resumen) return 0
+  return r.resumen.totalEmpresa * fraccion
+}
 
 // ---------------------------------------------------------------------------
 // El cálculo de UN proyecto
@@ -835,7 +855,8 @@ async function cierreDeProyecto(
     })
   }
 
-  const costoProvisionadoMes = Math.round(costoMes * FACTOR_PROVISION)
+  const segSocialRealMes = await calcularSegSocialRealMes(idempresa, desde, fecha)
+  const costoProvisionadoMes = Math.round(costoMes * FACTOR_PRESTACIONES + segSocialRealMes)
 
   return {
     idempresa,

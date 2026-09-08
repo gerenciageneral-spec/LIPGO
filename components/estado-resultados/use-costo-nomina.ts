@@ -2,6 +2,8 @@
 
 import useSWR from "swr"
 import { supabase } from "@/lib/supabase-client"
+import { getParafiscales } from "@/lib/parafiscales-actions"
+import type { ConceptoPrestacion } from "@/lib/prestaciones-activos-actions"
 
 // El 15 y el ultimo dia del mes son el dia de cierre de su quincena (desde el
 // piso 2026-08-15): ese dia se paga el "dia pleno" y su excedente de destajo
@@ -68,15 +70,18 @@ export const PROVISIONES_PRESTACIONES = {
   vacaciones: 0.0417, // 4.17%
 } as const
 
-export const PROVISIONES_SEG_SOCIAL = {
-  // NOTA: `saludEmpleado` (8.5%) y `pensionEmpleado` (12%) se removieron
-  // del estado de resultados por solicitud del negocio: no se reflejan
-  // aqui dentro del P&L. Si se requiere reincorporarlos en el futuro,
-  // basta con anadir el campo aqui y la fila correspondiente en
-  // seccion-costo-nomina.
+// Seguridad social YA NO es un % plano estimado -- se reemplazo por el aporte
+// patronal REAL (pension+ARL+caja+salud patronal+SENA+ICBF), calculado mes a
+// mes con `getParafiscales` (lib/parafiscales-actions.ts), ya validado al
+// 100% contra las 7 planillas reales de Aportes en Linea (ver memoria
+// lipgo-parafiscales-pila-reconciliacion). Confirmado por el usuario
+// 2026-09-07: "el costo de nomina debe ser el real, como se pago... de lo
+// contrario seria ineficaz el estado de resultados". Se deja esta constante
+// SOLO como referencia legal en la UI (ya no se usa para calcular).
+export const PROVISIONES_SEG_SOCIAL_REFERENCIA = {
   pensionEmpresa: 0.12, // 12%
   cajaCompensacion: 0.04, // 4%
-  provisionEmpresa: 0.0244, // 2.44%
+  arl: 0.0244, // 2.44% (varia por clase de riesgo; esto es solo referencial)
 } as const
 
 export interface ProvisionesPrestaciones {
@@ -88,10 +93,97 @@ export interface ProvisionesPrestaciones {
 }
 
 export interface ProvisionesSegSocial {
+  /** Aporte patronal REAL de pension (getParafiscales.resumen.pensionEmpleador). */
   pensionEmpresa: number
+  /** Aporte patronal REAL de Caja de Compensacion (resumen.caja). */
   cajaCompensacion: number
-  provisionEmpresa: number
+  /** Aporte patronal REAL de ARL (resumen.arl). */
+  arl: number
+  /** Salud patronal + SENA + ICBF reales -- normalmente $0 por la exoneracion
+   * del art. 114-1 (E.T.), pero puede ser mayor a $0 si hay salarios altos. */
+  otros: number
   total: number
+}
+
+/** Meses (anio, mes) cubiertos por [desde, hasta], con la FRACCION de ese mes
+ * que cae dentro del rango (1 = mes completo; <1 = quincena o rango parcial).
+ * `getParafiscales` solo calcula MESES completos, asi que un rango de
+ * quincena se resuelve prorrateando el aporte real del mes completo por la
+ * fraccion de dias que corresponde -- mas preciso que un % plano estimado,
+ * aunque no es "el real exacto de esos 15 dias" (Aportes en Linea no se
+ * radica por quincena).
+ */
+function mesesEnRango(desde: string, hasta: string): Array<{ anio: number; mes: number; fraccion: number }> {
+  const out: Array<{ anio: number; mes: number; fraccion: number }> = []
+  const [ay, am] = desde.slice(0, 7).split("-").map(Number)
+  const [by, bm] = hasta.slice(0, 7).split("-").map(Number)
+  let y = ay
+  let m = am
+  while (y < by || (y === by && m <= bm)) {
+    const diasMes = new Date(y, m, 0).getDate()
+    const diaDesde = y === ay && m === am ? Number(desde.slice(8, 10)) : 1
+    const diaHasta = y === by && m === bm ? Number(hasta.slice(8, 10)) : diasMes
+    const fraccion = Math.max(0, diaHasta - diaDesde + 1) / diasMes
+    if (fraccion > 0) out.push({ anio: y, mes: m, fraccion })
+    m += 1
+    if (m > 12) {
+      m = 1
+      y += 1
+    }
+  }
+  return out
+}
+
+/** Si [desde,hasta] queda TOTALMENTE dentro de un periodo de
+ * `prestaciones_activos_pagos` ya marcado 'pagada' para ese concepto, suma el
+ * valor REAL (valor_real si se ajustó, si no valor_calculado) de esas
+ * personas, prorrateado por la fraccion de dias que [desde,hasta] cubre
+ * dentro del periodo pagado. Devuelve null si no hay cobertura completa (el
+ * llamador debe usar la provision estimada como respaldo). */
+async function obtenerPrestacionRealSiPagada(
+  ids: number[],
+  concepto: ConceptoPrestacion,
+  desde: string,
+  hasta: string,
+): Promise<number | null> {
+  const { data, error } = await supabase
+    .from("prestaciones_activos_pagos")
+    .select("idempresa, periodo_desde, periodo_hasta, valor_real, valor_calculado, estado")
+    .eq("concepto", concepto)
+    .eq("estado", "pagada")
+    .in("idempresa", ids)
+    .lte("periodo_desde", desde)
+    .gte("periodo_hasta", hasta)
+  if (error || !data || data.length === 0) return null
+  // Todas las filas encontradas ya cumplen periodo_desde<=desde y
+  // periodo_hasta>=hasta (cobertura completa) por el filtro de arriba.
+  let total = 0
+  for (const r of data as any[]) {
+    const diasPeriodo = Math.round((Date.parse(r.periodo_hasta) - Date.parse(r.periodo_desde)) / 86_400_000) + 1
+    const diasRango = Math.round((Date.parse(hasta) - Date.parse(desde)) / 86_400_000) + 1
+    const fraccion = diasPeriodo > 0 ? Math.min(1, diasRango / diasPeriodo) : 0
+    total += (Number(r.valor_real) || Number(r.valor_calculado) || 0) * fraccion
+  }
+  return total
+}
+
+/** Suma el aporte patronal REAL (Parafiscales) de todas las empresas en
+ * `ids`, para cada mes cubierto por [desde, hasta], prorrateado si el rango
+ * no cubre el mes completo (quincena). */
+async function calcularSegSocialReal(ids: number[], desde: string, hasta: string): Promise<ProvisionesSegSocial> {
+  const meses = mesesEnRango(desde, hasta)
+  let pensionEmpresa = 0, cajaCompensacion = 0, arl = 0, otros = 0
+  for (const { anio, mes, fraccion } of meses) {
+    for (const id of ids) {
+      const r = await getParafiscales(id, anio, mes)
+      if (!r.success || !r.resumen) continue
+      pensionEmpresa += r.resumen.pensionEmpleador * fraccion
+      cajaCompensacion += r.resumen.caja * fraccion
+      arl += r.resumen.arl * fraccion
+      otros += (r.resumen.saludEmpleador + r.resumen.sena + r.resumen.icbf) * fraccion
+    }
+  }
+  return { pensionEmpresa, cajaCompensacion, arl, otros, total: pensionEmpresa + cajaCompensacion + arl + otros }
 }
 
 export interface CostoNominaData {
@@ -288,28 +380,37 @@ export function useCostoNomina({
         .filter((b: any) => !nombresRetirados.has(String(b.nombre || "").trim().toUpperCase()))
         .reduce((acc: number, b: any) => acc + (Number(b.valor) || 0), 0)
 
-      // --- Provisiones de prestaciones sociales --------------------
-      const cesantias = totalLiquidado * PROVISIONES_PRESTACIONES.cesantias
-      const interesesCesantias =
-        totalLiquidado * PROVISIONES_PRESTACIONES.interesesCesantias
-      const prima = totalLiquidado * PROVISIONES_PRESTACIONES.prima
+      // --- Prestaciones sociales: REAL cuando el periodo ya se pagó ------
+      // (módulo "Prestaciones Sociales · Personal Activo", dentro de
+      // Parafiscales -- lib/prestaciones-activos-actions.ts). Si [desde,hasta]
+      // cae dentro de un periodo YA marcado 'pagada' para ese concepto, se usa
+      // el valor real (prorrateado); si no, sigue la provisión legal estimada
+      // -- vacaciones sigue siendo provisión (no hay un pago masivo periódico
+      // equivalente para personal activo; `vacaciones_liquidaciones` es solo
+      // el cash-out al retiro, otro concepto).
+      const [cesantiasReal, interesesReal, primaReal] = await Promise.all([
+        obtenerPrestacionRealSiPagada(ids, "cesantias", desde, hasta),
+        obtenerPrestacionRealSiPagada(ids, "intereses_cesantias", desde, hasta),
+        obtenerPrestacionRealSiPagada(ids, "prima", desde, hasta),
+      ])
+      const cesantias = cesantiasReal ?? totalLiquidado * PROVISIONES_PRESTACIONES.cesantias
+      const interesesCesantias = interesesReal ?? totalLiquidado * PROVISIONES_PRESTACIONES.interesesCesantias
+      const prima = primaReal ?? totalLiquidado * PROVISIONES_PRESTACIONES.prima
       const vacaciones = totalLiquidado * PROVISIONES_PRESTACIONES.vacaciones
       const totalPrestaciones =
         cesantias + interesesCesantias + prima + vacaciones
 
-      // --- Provisiones de seguridad social -------------------------
-      // `saludEmpleado` (8.5%) y `pensionEmpleado` (12%) se removieron
-      // por solicitud del negocio: no se reflejan aqui dentro del P&L.
-      const pensionEmpresa =
-        totalLiquidado * PROVISIONES_SEG_SOCIAL.pensionEmpresa
-      const cajaCompensacion =
-        totalLiquidado * PROVISIONES_SEG_SOCIAL.cajaCompensacion
-      const provisionEmpresa =
-        totalLiquidado * PROVISIONES_SEG_SOCIAL.provisionEmpresa
-      const totalSegSocial =
-        pensionEmpresa + cajaCompensacion + provisionEmpresa
+      // --- Seguridad social: aporte patronal REAL (ya no % plano) --------
+      // `saludEmpleado` (deduccion) y `pensionEmpleado` (deduccion) siguen
+      // fuera del P&L (son retencion al trabajador, no costo de la empresa)
+      // -- `getParafiscales.resumen` ya las separa igual (pensionEmpleador/
+      // saludEmpleador = costo empresa; pensionEmpleado/saludEmpleado =
+      // retencion). Incluye a retirados por sus dias TRABAJADOS ese mes (el
+      // aporte a Pension/ARL/Caja de esos dias es un costo real ya pagado,
+      // aparte de que su nomina PENDIENTE se siga viendo en Liquidaciones).
+      const segSocial = await calcularSegSocialReal(ids, desde, hasta)
 
-      const costoTotal = totalLiquidado + totalPrestaciones + totalSegSocial + totalBonosNoPrestacionales
+      const costoTotal = totalLiquidado + totalPrestaciones + segSocial.total + totalBonosNoPrestacionales
 
       return {
         totalLiquidado,
@@ -321,12 +422,7 @@ export function useCostoNomina({
           vacaciones,
           total: totalPrestaciones,
         },
-        segSocial: {
-          pensionEmpresa,
-          cajaCompensacion,
-          provisionEmpresa,
-          total: totalSegSocial,
-        },
+        segSocial,
         bonosNoPrestacionales: totalBonosNoPrestacionales,
         costoTotal,
       }

@@ -15,6 +15,7 @@
 //   - Prima: desde 1-ene (si retiro en 1er semestre) o 1-jul (si 2do semestre).
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
+import { clasificarDiaCotizacion } from "@/lib/parafiscales"
 
 export type EstadoLiquidacion = "pendiente" | "liquidada"
 
@@ -183,8 +184,14 @@ function sumaPeriodo(rows: any[], desde: string, hasta: string, salarioDia: numb
       dev += sinRegistroSinMotivo ? salarioDia : Number(r.total_liquidado_dia || 0)
       dias += 1
       if (f >= BONO_DESTAJO_PRESTACIONAL_DESDE) {
-        const esp = r.especialidad === true || String(r.especialidad) === "true"
-        const esDestajo = Number(r.toneladas || 0) > 0 && !esp
+        // Ya NO se excluye especialidad=true: la vista `pagonomina` (scripts/
+        // pagonomina_reemplazo.sql:659,872) ya deja `bonif_prestacional` en $0
+        // para un día de especialidad=true SIN apoyo en cargue real (toneladas
+        // sin asignación en apoyo_cargue_asignaciones) -- filtrar de nuevo por
+        // `!especialidad` aquí duplicaba la exclusión y de paso le quitaba a la
+        // persona el apoyo en cargue que Siigo SÍ le paga real (novedad 52).
+        // Confirmado 2026-09-07 con el caso real de Luis Antonio De Leon García.
+        const esDestajo = Number(r.toneladas || 0) > 0
         if (esDestajo) {
           const clave = f.slice(0, 7) + (Number(f.slice(8, 10)) <= 15 ? "-Q1" : "-Q2")
           bonoPorQuincena.set(clave, (bonoPorQuincena.get(clave) || 0) + Number(r.bonif_prestacional || 0))
@@ -486,8 +493,12 @@ export async function getLiquidaciones(
             )
           : diasCes
         const vacCausadasDias = (pp.pctVacaciones / 100) * diasVinculo
-        const diasDisfrutados = rows.filter((r: any) =>
-          /vacaciones\s+disfrutad/i.test(String(r.novedad_reportada || "")),
+        // Misma clasificación de novedades que Parafiscales (`clasificarDiaCotizacion`)
+        // -- una sola fuente de verdad para qué es un día de vacaciones, en vez de
+        // dos regex mantenidos por separado que podrían divergir con un futuro
+        // código de novedad.
+        const diasDisfrutados = rows.filter(
+          (r: any) => clasificarDiaCotizacion(r.novedad_reportada) === "VAC",
         ).length
         // Los días pendientes se pagan al SALARIO DIARIO BÁSICO (salarioMensual/30),
         // no al promedio real devengado -- verificado con datos reales 2026-09-07

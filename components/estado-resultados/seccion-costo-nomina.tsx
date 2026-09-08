@@ -6,7 +6,6 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Separator } from "@/components/ui/separator"
 import {
   PROVISIONES_PRESTACIONES,
-  PROVISIONES_SEG_SOCIAL,
   type CostoNominaData,
 } from "./use-costo-nomina"
 
@@ -55,6 +54,20 @@ function FilaProvision({
           {valor != null ? fmtCOP(valor) : "—"}
         </span>
       </div>
+    </div>
+  )
+}
+
+/** Fila de un aporte REAL (no estimado por %) — mismo layout que FilaProvision
+ * pero sin columna de porcentaje, ya que el valor varia mes a mes (exoneracion
+ * art. 114-1, clase de riesgo, dias trabajados). */
+function FilaReal({ label, valor }: { label: string; valor: number | undefined }) {
+  return (
+    <div className="flex items-center justify-between gap-4 py-1.5 text-sm">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="w-32 text-right tabular-nums">
+        {valor != null ? fmtCOP(valor) : "—"}
+      </span>
     </div>
   )
 }
@@ -163,30 +176,25 @@ export default function SeccionCostoNomina({
               </div>
             </div>
 
-            {/* --------------- Provisiones seguridad social --------------- */}
+            {/* --------------- Seguridad social (aporte REAL) --------------- */}
             <div>
               <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Provision seguridad social
+                Seguridad social — aporte patronal real
               </h4>
+              <p className="mb-2 text-xs text-muted-foreground">
+                Por el proyecto asignado a cada persona en Head Count (LIP es una sola empresa/NIT; los ID son
+                proyectos/clientes internos) — misma asignación con la que se radica en Aportes en Línea. Puede no
+                coincidir exacto con "Total liquidado nómina" de arriba (esa cifra atribuye el costo al proyecto
+                donde se trabajó cada día, que puede diferir del proyecto asignado en días puntuales).
+              </p>
               <div className="rounded-md border border-border/60 px-3 py-2">
-                <FilaProvision
-                  label="Provision pension empresa"
-                  porcentaje={PROVISIONES_SEG_SOCIAL.pensionEmpresa}
-                  valor={data?.segSocial.pensionEmpresa}
-                />
-                <FilaProvision
-                  label="Provision caja de compensacion"
-                  porcentaje={PROVISIONES_SEG_SOCIAL.cajaCompensacion}
-                  valor={data?.segSocial.cajaCompensacion}
-                />
-                <FilaProvision
-                  label="Provision ARL"
-                  porcentaje={PROVISIONES_SEG_SOCIAL.provisionEmpresa}
-                  valor={data?.segSocial.provisionEmpresa}
-                />
+                <FilaReal label="Pension empresa" valor={data?.segSocial.pensionEmpresa} />
+                <FilaReal label="Caja de compensacion" valor={data?.segSocial.cajaCompensacion} />
+                <FilaReal label="ARL" valor={data?.segSocial.arl} />
+                <FilaReal label="Salud patronal + SENA + ICBF" valor={data?.segSocial.otros} />
                 <Separator className="my-2" />
                 <FilaTotal
-                  label="Total provisiones seg. social"
+                  label="Total seguridad social (real)"
                   valor={data?.segSocial.total}
                 />
               </div>

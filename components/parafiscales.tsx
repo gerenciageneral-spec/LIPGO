@@ -43,6 +43,7 @@ import {
   type ResumenParafiscales,
 } from "@/lib/parafiscales-actions"
 import { generarArchivoCargaPila } from "@/lib/parafiscales-exportador-actions"
+import PrestacionesActivos from "@/components/prestaciones-activos"
 import {
   calcularAportes,
   validarParametros,
@@ -934,6 +935,8 @@ export default function Parafiscales() {
               </div>
             </CardContent>
           </Card>
+
+          <PrestacionesActivos />
         </>
       )}
     </div>
