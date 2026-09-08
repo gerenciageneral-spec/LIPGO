@@ -36,7 +36,11 @@ create or replace view public.toneladasauxiliarespago as
             TRIM(BOTH FROM regexp_split_to_table(cabeceraoc.auxiliares, ','::text)) AS nombre_auxiliar
            FROM cabeceraoc
           WHERE ((cabeceraoc.fincargue IS NOT NULL) AND ((cabeceraoc.fincargue)::text <> ''::text)
-                 AND (cabeceraoc.facturar IS DISTINCT FROM false))
+                 AND (cabeceraoc.facturar IS DISTINCT FROM false)
+                 -- "proyeccion" excluido (2026-09-08): residuo de un módulo manual
+                 -- descontinuado en jul-2026, nunca fue tonelaje real (ver
+                 -- scripts/pagonomina_reemplazo.sql).
+                 AND NOT (cabeceraoc.tipooperacion = 'proyeccion'::text))
         ), liquidacion_individual AS (
          SELECT t.fechacargue,
             t.idempresa,

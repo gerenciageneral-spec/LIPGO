@@ -464,6 +464,7 @@ export async function getDashboardOperacionesData(
       .select(CAMPOS_OPERACIONES)
       .eq("idempresa", empresaId)
       .neq("tipooperacion", "Tolva")
+      .neq("tipooperacion", "proyeccion")
       .gte("fechacargue", fechaFiltro)
       .lt("fechacargue", diaSiguienteTabla)
       .order("ordendecargue", { ascending: false })
@@ -611,6 +612,7 @@ export async function getDashboardOperacionesStats(
       .select("ordendecargue, pesoorden, tipooperacion, fincargue, placa, estado, fechacargue")
       .eq("idempresa", empresaId)
       .neq("tipooperacion", "Tolva")
+      .neq("tipooperacion", "proyeccion")
       .gte("fechacargue", fechaFiltro)
       .lt("fechacargue", diaSiguienteStats)
 

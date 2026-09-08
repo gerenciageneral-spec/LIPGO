@@ -1688,9 +1688,16 @@ async function _computeIndicadoresValores(
     }
 
     // Toneladas (suma en memoria: pesovascula) + meta del periodo por sede.
+    // "proyeccion" excluido (2026-09-08): residuo de un módulo manual
+    // descontinuado en jul-2026, nunca fue tonelaje real (ver
+    // scripts/pagonomina_reemplazo.sql).
     const tonRows = await pagAll((from, to) =>
       filtroFechaOrden(
-        supabase.from("cabeceraoc").select("pesovascula,idempresa,fechaorden").in("idempresa", clientes),
+        supabase
+          .from("cabeceraoc")
+          .select("pesovascula,idempresa,fechaorden")
+          .in("idempresa", clientes)
+          .neq("tipooperacion", "proyeccion"),
       )
         .order("id", { ascending: true })
         .range(from, to),
@@ -4212,11 +4219,16 @@ export async function getPanelOperacionLIP(
     }
 
     // --- Órdenes (cabeceraoc): traer columnas necesarias y agregar en memoria ---
+    // "proyeccion" excluido (2026-09-08): residuo de un módulo manual
+    // descontinuado en jul-2026, nunca fue una orden real de cliente (ver
+    // scripts/pagonomina_reemplazo.sql) — sin esto inflaba tanto el tonelaje
+    // como los conteos de órdenes/evidencia/ciclo de este panel.
     const rows: any[] = await pagAll((from, to) => {
       let q = supabase
         .from("cabeceraoc")
         .select("idempresa,fechaorden,tipooperacion,pesovascula,iniciocargue,fincargue,fotospicking,pdfoc,doccargue,status,ordendecargue,estadofactura,fechacargue,placa,cliente,transporte,facturar")
         .in("idempresa", clientes)
+        .neq("tipooperacion", "proyeccion")
       if (desde) q = q.gte("fechaorden", desde)
       if (hasta) q = q.lte("fechaorden", hasta)
       return q.order("id", { ascending: true }).range(from, to)

@@ -435,6 +435,7 @@ export async function getCentroCoordinacion(
     for (const o of todasOrdenes) {
       if (!o.fincargue) continue
       const tipo = String(o.tipooperacion || "").trim()
+      if (tipo === "proyeccion") continue // residuo de un módulo manual descontinuado en jul-2026, nunca tonelaje real
       if (excluirAvimolDistribucion(idempresa, tipo)) continue
       const { peso } = pesoBaseCalculo(idempresa, tipo, num(o.pesovascula), num(o.pesoorden))
       if (peso > 0) cargadoHoyTon += peso
@@ -726,6 +727,7 @@ export async function getCentroCoordinacion(
       .eq("idempresa", idempresa)
       .eq("fechacargue", fechaAyer)
       .not("fincargue", "is", null)
+      .neq("tipooperacion", "proyeccion")
       .lte("fincargue", horaActual)
     let cargadoAyerMismaHoraTon = 0
     for (const o of ordenesAyer || []) {

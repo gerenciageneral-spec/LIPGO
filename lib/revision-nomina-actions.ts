@@ -1327,6 +1327,9 @@ export async function getConciliacionQuincena(
 
     // 1) Órdenes del periodo — MISMO universo que pagonomina: fincargue no vacío
     //    (la vista liquida por fechacargue). Paginado (tope Supabase 1000).
+    //    "proyeccion" excluido (2026-09-08): residuo de un módulo manual
+    //    descontinuado en jul-2026 (ver scripts/pagonomina_reemplazo.sql) —
+    //    nunca fue tonelaje real, mismo criterio que la vista ya corregida.
     const ordenesRaw: any[] = []
     for (let off = 0; ; off += 1000) {
       const { data, error } = await admin
@@ -1336,6 +1339,7 @@ export async function getConciliacionQuincena(
         .gte("fechacargue", desde)
         .lte("fechacargue", hasta)
         .not("fincargue", "is", null)
+        .neq("tipooperacion", "proyeccion")
         .range(off, off + 999)
       if (error) return { success: false, message: error.message }
       if (!data || data.length === 0) break
@@ -1724,7 +1728,8 @@ export async function getAuxiliaresVsAsistencia(
     const hasta = `${anio}-${String(mes).padStart(2, "0")}-${String(diaFin).padStart(2, "0")}`
 
     // 1) Órdenes del periodo — mismo universo/criterio de peso que la
-    //    conciliación báscula↔pago (pesoBaseCalculo), paginado.
+    //    conciliación báscula↔pago (pesoBaseCalculo), paginado. "proyeccion"
+    //    excluido — ver comentario equivalente en getConciliacionQuincena arriba.
     const ordenesRaw: any[] = []
     for (let off = 0; ; off += 1000) {
       const { data, error } = await admin
@@ -1734,6 +1739,7 @@ export async function getAuxiliaresVsAsistencia(
         .gte("fechacargue", desde)
         .lte("fechacargue", hasta)
         .not("fincargue", "is", null)
+        .neq("tipooperacion", "proyeccion")
         .range(off, off + 999)
       if (error) return { success: false, message: error.message }
       if (!data || data.length === 0) break

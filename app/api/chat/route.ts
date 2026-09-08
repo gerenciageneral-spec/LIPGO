@@ -280,6 +280,7 @@ COLUMNAS CLAVE (cablea cada pregunta a su tabla + columna EXACTA):
         · "toneladas descargadas" / "cuánto descargué" / "descargue"      ->  filtro: columna=tipooperacion, operador=eq, valor='Descargue'
       SIN ese filtro el total mezcla ambos tipos y da un número EQUIVOCADO.
     - "pesoorden" es el peso PLANEADO de la orden; usa pesovascula salvo que pidan explícitamente lo planeado.
+    - ¡CRÍTICO para CUALQUIER suma genérica de toneladas ("cuántas toneladas movió LIP", totales sin especificar cargue/descargue)! "tipooperacion"='proyeccion' son órdenes fantasma de un módulo manual descontinuado en jul-2026 (nunca tonelaje real) y 'Tolva'/'Tolva f' son otro concepto — agrega SIEMPRE el filtro columna=tipooperacion, operador=neq, valor='proyeccion' (y evalúa si también hace falta excluir Tolva/Tolva f) antes de sumar, salvo que la pregunta sea específicamente sobre Cargue o Descargue (esos valores ya excluyen 'proyeccion' por sí solos).
 
     ÓRDENES DE CARGUE / despachos (Tabla: cabeceraoc):
     - Número de órdenes: contar:true. Fecha del despacho: "fechacargue". Cargue SIN cerrar: filtro fincargue IS null.

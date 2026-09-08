@@ -533,6 +533,7 @@ export async function getGerenciaDashboardData(
       .select("pesoorden, tipooperacion, estado")
       .eq("idempresa", empresaId)
       .neq("tipooperacion", "Tolva")
+      .neq("tipooperacion", "proyeccion")
 
     const isFinalized = (e: string | null) => e === "Fin Operación" || e === "Finalizado LIP"
     const vehiculosDespachados =

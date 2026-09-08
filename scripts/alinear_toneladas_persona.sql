@@ -47,6 +47,11 @@ create or replace view public.toneladasauxiliares as
             TRIM(BOTH FROM regexp_split_to_table(cabeceraoc.auxiliares, ','::text)) AS nombre_auxiliar
            FROM cabeceraoc
           WHERE cabeceraoc.fincargue IS NOT NULL AND cabeceraoc.fincargue::text <> ''::text
+            -- "proyeccion" excluido (2026-09-08): residuo de un módulo manual
+            -- descontinuado en jul-2026, nunca fue tonelaje real (ver
+            -- scripts/pagonomina_reemplazo.sql) -- sin esto, el portal "Mi
+            -- Aporte" del trabajador podía mostrarle un tonelaje personal inflado.
+            AND cabeceraoc.tipooperacion <> 'proyeccion'::text
         ), liquidacion_final AS (
          SELECT t.ordendecargue,
             t.fechacargue,
@@ -114,10 +119,15 @@ create or replace view public.operaciones_desglosadas as
             array_length(string_to_array(c.auxiliares, ','::text), 1) AS cantidad_auxiliares,
             TRIM(BOTH FROM regexp_split_to_table(c.auxiliares, ','::text)) AS operador
            FROM cabeceraoc c
-             LEFT JOIN detalleoc d ON c.ordendecargue = d.numeroorden   -- LEFT: incluye órdenes SIN detalle (proyección/descargue) para que cuenten igual que el portal
+             LEFT JOIN detalleoc d ON c.ordendecargue = d.numeroorden   -- LEFT: incluye órdenes SIN detalle (descargue directo) para que cuenten igual que el portal
              LEFT JOIN det_orden do2 ON do2.numeroorden = c.ordendecargue
              LEFT JOIN productos p ON d.producto = p.nombre
           WHERE c.fincargue IS NOT NULL AND c.fincargue::text <> ''::text
+            -- "proyeccion" excluido (2026-09-08, mismo motivo que toneladasauxiliares
+            -- arriba): residuo de un módulo manual descontinuado en jul-2026, nunca
+            -- fue tonelaje real -- se saca de aquí también para seguir contando
+            -- igual que el portal.
+            AND c.tipooperacion <> 'proyeccion'::text
         )
  SELECT fecha AS "Fecha",
     operador AS "Operador",

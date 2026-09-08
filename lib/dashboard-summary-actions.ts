@@ -45,12 +45,15 @@ export async function getDailySummaryStats(selectedEmpresaId?: number) {
     }
 
     // 3. Toneladas movidas: Sum pesoorden from cabeceraoc
+    // "proyeccion" excluido (2026-09-08): residuo de un módulo manual
+    // descontinuado en jul-2026, nunca fue tonelaje real.
     const { data: toneladasData, error: toneladasError } = await supabase
       .from("cabeceraoc")
       .select("pesoorden")
       .eq("idempresa", empresaId)
       .eq("fechacargue", today)
       .not("fincargue", "is", null)
+      .neq("tipooperacion", "proyeccion")
 
     if (toneladasError) {
       console.error("[v0] Error fetching toneladas:", toneladasError)

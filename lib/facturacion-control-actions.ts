@@ -1675,7 +1675,12 @@ export async function getValoresNetosOrden(
     const esCedi = idempresa === 3 || idempresa === 4
     if (esBascula || esCedi) {
       for (const chunk of chunks) {
-        const { data } = await sb.from("cabeceraoc").select("ordendecargue, pesovascula, tipooperacion").eq("idempresa", idempresa).in("ordendecargue", chunk)
+        const { data } = await sb
+          .from("cabeceraoc")
+          .select("ordendecargue, pesovascula, tipooperacion")
+          .eq("idempresa", idempresa)
+          .in("ordendecargue", chunk)
+          .neq("tipooperacion", "proyeccion")
         for (const o of data || []) {
           const on = String(o.ordendecargue || "").trim()
           // Un mismo `ordendecargue` puede tener MÁS DE UN `cabeceraoc` (ej. un

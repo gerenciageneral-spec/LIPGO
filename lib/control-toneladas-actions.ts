@@ -85,6 +85,8 @@ export async function getControlToneladas(
 
     // 1) Órdenes del periodo, FINALIZADAS — mismo universo que pagonomina
     //    (liquida por fechacargue de órdenes con fincargue). Paginado (tope 1000).
+    //    "proyeccion" excluido — residuo de un módulo manual descontinuado en
+    //    jul-2026, nunca fue tonelaje real (ver scripts/pagonomina_reemplazo.sql).
     const ordenesRaw: any[] = []
     for (let off = 0; ; off += 1000) {
       const { data, error } = await admin
@@ -94,6 +96,7 @@ export async function getControlToneladas(
         .gte("fechacargue", desde)
         .lte("fechacargue", hasta)
         .not("fincargue", "is", null)
+        .neq("tipooperacion", "proyeccion")
         .range(off, off + 999)
       if (error) return { success: false, message: error.message }
       if (!data || data.length === 0) break
