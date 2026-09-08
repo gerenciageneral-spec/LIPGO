@@ -41,10 +41,26 @@ const OPS_POR_TRANSPORTE_ID2 = new Set(["cargue", "descargue", "distribucion"])
 // para Cargue/Descargue/Distribución por tonelada. Por eso se le exime de esa
 // regla y se factura SIEMPRE al owner del producto (Avimol), sin importar el
 // transporte que trajo la carga.
-const PRODUCTOS_POR_UNIDAD = new Set(["HUEVOS"])
+// "Materia Prima" = producto "Empaque MP" (Descargue, ID2), $1.355/paquete —
+// misma mecánica que Huevos, confirmada por el usuario 2026-09-08 ("copia
+// toda la lógica de Huevos... 1 paquete es una unidad"). OJO: la subcategoría
+// NO puede contener el substring "EMPAQUE" -- colisionaría con esEmpaque()
+// (lib/facturacion-control-actions.ts), la regla NO relacionada de Papel/
+// Polipropileno que hereda tarifa ajena en vez de tener la propia.
+const PRODUCTOS_POR_UNIDAD = new Set(["HUEVOS", "MATERIA PRIMA"])
 
 export function esProductoPorUnidad(subcategoria: string | null | undefined): boolean {
   return PRODUCTOS_POR_UNIDAD.has(String(subcategoria ?? "").toUpperCase().trim())
+}
+
+// "Empaque MP" (subcategoría "Materia Prima") es un servicio que LIP le
+// cobra directo a un TERCERO (no a Avimol, a diferencia de Huevos) --
+// confirmado por el usuario 2026-09-08: "Owner Tercero". A diferencia de
+// Huevos, aquí SÍ hay que reasignar el owner de facturación aunque el
+// producto se cobre por unidad.
+const SUBCATEGORIAS_OWNER_TERCEROS = new Set(["MATERIA PRIMA"])
+function ownerFijoTerceros(subcategoria: string | null | undefined): boolean {
+  return SUBCATEGORIAS_OWNER_TERCEROS.has(String(subcategoria ?? "").toUpperCase().trim())
 }
 
 export interface FacturadoA {
@@ -63,6 +79,7 @@ export function facturadoAOwner(
   subcategoria?: string | null,
   placa?: string | null,
 ): FacturadoA {
+  if (ownerFijoTerceros(subcategoria)) return { owner: "Terceros", cubiertoPorFijo: false }
   if (esProductoPorUnidad(subcategoria)) return { owner: ownerProducto, cubiertoPorFijo: false }
   if (idempresa !== 2) return { owner: ownerProducto, cubiertoPorFijo: false }
   const op = String(operacion ?? "").trim().toLowerCase()
