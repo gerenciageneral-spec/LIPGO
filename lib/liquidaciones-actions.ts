@@ -17,6 +17,21 @@
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { clasificarDiaCotizacion } from "@/lib/parafiscales"
 
+// Corte de la reversión "nómina pendiente vuelve a pagarse por el plano"
+// (2026-09-08, pedido explícito del usuario): antes, al retirarse alguien se
+// excluía TODA su nómina pendiente del archivo plano y se cobraba junto con
+// la liquidación (ver archivoplano_reemplazo.sql). Ahora la nómina de los
+// días trabajados hasta el retiro debe seguir saliendo en el plano de la
+// quincena (nómina normal) "mientras se organiza el pago de la liquidación";
+// Liquidaciones queda solo para las OTRAS acreencias (cesantías, intereses,
+// prima, vacaciones, indemnización). Cambio SOLO HACIA ADELANTE (confirmado
+// por el usuario): los retiros YA procesados (fecha_retiro < este corte) no
+// se tocan -- su nómina pendiente sigue sumando al total de Liquidaciones,
+// exactamente como antes. El MISMO corte gobierna la vista SQL `archivoplano`
+// (ver scripts/actualizar_archivoplano_nomina_pendiente.sql) -- si se mueve
+// aquí, hay que moverlo también allá.
+const NOMINA_PENDIENTE_EN_PLANO_DESDE = "2026-09-09"
+
 export type EstadoLiquidacion = "pendiente" | "liquidada"
 
 export interface ParametrosPrestaciones {
@@ -65,7 +80,12 @@ export interface LiquidacionPersona {
   pagado_hasta: string | null
   motivo_retiro: string | null
   dias: number
-  total: number // nómina pendiente
+  total: number // nómina pendiente (informativa si nominaPagadaPorPlano)
+  // true = esta persona se retiró bajo la regla NUEVA (fecha_retiro >=
+  // NOMINA_PENDIENTE_EN_PLANO_DESDE): su nómina pendiente ("total") se paga
+  // por el archivo plano de la quincena, NO por esta liquidación -- se
+  // muestra solo como referencia, sin sumar a total_liquidacion.
+  nominaPagadaPorPlano: boolean
   prima: number
   cesantias: number
   intereses: number
@@ -74,7 +94,7 @@ export interface LiquidacionPersona {
   prestaciones: number // suma de las 4 prestaciones + indemnización
   deducciones: number // suma de los items registrados
   deduccion_items: DeduccionLiquidacion[]
-  total_liquidacion: number // nómina pendiente + prestaciones − deducciones
+  total_liquidacion: number // prestaciones − deducciones (+ nómina pendiente SOLO si nominaPagadaPorPlano es false)
   estado: EstadoLiquidacion
   soporte_url: string | null
   soporte_nombre: string | null
@@ -521,6 +541,7 @@ export async function getLiquidaciones(
       const prestaciones = prima + cesantias + intereses + vacaciones + indemnizacion
       const deduccion_items = deduccionesPorCedula.get(info.identificacion) || []
       const deducciones = deduccion_items.reduce((s, d) => s + d.valor, 0)
+      const nominaPagadaPorPlano = !!info.fecha_retiro && info.fecha_retiro >= NOMINA_PENDIENTE_EN_PLANO_DESDE
 
       data.push({
         persona: nombre,
@@ -531,6 +552,7 @@ export async function getLiquidaciones(
         motivo_retiro: info.motivo_retiro,
         dias: novedades.length,
         total,
+        nominaPagadaPorPlano,
         prima,
         cesantias,
         intereses,
@@ -539,7 +561,7 @@ export async function getLiquidaciones(
         prestaciones,
         deducciones,
         deduccion_items,
-        total_liquidacion: total + prestaciones - deducciones,
+        total_liquidacion: (nominaPagadaPorPlano ? 0 : total) + prestaciones - deducciones,
         estado: est?.estado ?? "pendiente",
         soporte_url: est?.soporte_url ?? null,
         soporte_nombre: est?.soporte_nombre ?? null,
@@ -627,6 +649,40 @@ export async function guardarEstadoLiquidacion(payload: {
     return { success: true }
   } catch (e: any) {
     return { success: false, message: e?.message || "Error al guardar el estado." }
+  }
+}
+
+// Marcado masivo (ej. "marcar seleccionadas como pagadas" desde un filtro por
+// rango de fecha de retiro) -- mismo upsert de guardarEstadoLiquidacion, en
+// un solo viaje a la base para todo el lote.
+export async function guardarEstadoLiquidacionMasivo(
+  items: Array<{
+    idempresa: number | null
+    identificacion: string
+    persona: string
+    fecha_retiro: string | null
+    total: number
+  }>,
+  estado: EstadoLiquidacion,
+): Promise<{ success: boolean; message?: string; actualizadas: number }> {
+  if (!items?.length) return { success: false, message: "No hay liquidaciones seleccionadas.", actualizadas: 0 }
+  try {
+    const admin: any = await getSupabaseAdmin()
+    const filas = items.map((p) => ({
+      idempresa: p.idempresa,
+      identificacion: p.identificacion,
+      persona: p.persona,
+      fecha_retiro: p.fecha_retiro,
+      total_liquidado: p.total,
+      estado,
+      fecha_liquidacion: estado === "liquidada" ? new Date().toISOString() : null,
+      updated_at: new Date().toISOString(),
+    }))
+    const { error } = await admin.from("liquidaciones_retiro").upsert(filas, { onConflict: "idempresa,identificacion" })
+    if (error) return { success: false, message: error.message, actualizadas: 0 }
+    return { success: true, actualizadas: filas.length }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al guardar el estado en lote.", actualizadas: 0 }
   }
 }
 

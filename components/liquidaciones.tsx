@@ -34,11 +34,17 @@ import {
   AlertTriangle,
   Plus,
   Trash2,
+  Search,
+  Filter,
+  RotateCcw,
+  CheckSquare,
+  Landmark,
 } from "lucide-react"
 import * as XLSX from "xlsx"
 import {
   getLiquidaciones,
   guardarEstadoLiquidacion,
+  guardarEstadoLiquidacionMasivo,
   guardarPagadoHasta,
   guardarParametrosPrestaciones,
   guardarValoresRealesLiquidacion,
@@ -48,6 +54,7 @@ import {
   subirSoporteLiquidacion,
   type LiquidacionPersona,
   type ParametrosPrestaciones,
+  type EstadoLiquidacion,
 } from "@/lib/liquidaciones-actions"
 
 const MOTIVOS_RETIRO = [
@@ -77,6 +84,44 @@ const PARAMS_DEFAULT: ParametrosPrestaciones = {
   incluyeAux: true,
 }
 
+// Cuadro de control -- mismo lenguaje visual que components/cuadro-control-nomina.tsx
+// (franja de severidad + badge), adaptado a las tarjetas de Liquidaciones.
+type SeveridadKpi = "ok" | "warn" | "crit"
+const SEVERIDAD_TOKENS: Record<SeveridadKpi, { accent: string; icon: string; badgeBg: string; badgeText: string }> = {
+  ok: { accent: "before:bg-emerald-500", icon: "text-emerald-600 dark:text-emerald-400", badgeBg: "bg-emerald-500/10 dark:bg-emerald-500/15", badgeText: "text-emerald-700 dark:text-emerald-400" },
+  warn: { accent: "before:bg-amber-500", icon: "text-amber-600 dark:text-amber-400", badgeBg: "bg-amber-500/10 dark:bg-amber-500/15", badgeText: "text-amber-700 dark:text-amber-400" },
+  crit: { accent: "before:bg-rose-500", icon: "text-rose-600 dark:text-rose-400", badgeBg: "bg-rose-500/10 dark:bg-rose-500/15", badgeText: "text-rose-700 dark:text-rose-400" },
+}
+function TarjetaKpi({
+  icon: Icon,
+  titulo,
+  valor,
+  subtitulo,
+  severidad,
+  chip,
+}: {
+  icon: React.ElementType
+  titulo: string
+  valor: string
+  subtitulo: string
+  severidad: SeveridadKpi
+  chip?: string
+}) {
+  const t = SEVERIDAD_TOKENS[severidad]
+  return (
+    <div className={`relative overflow-hidden rounded-lg border border-border bg-card p-3 before:absolute before:inset-y-0 before:left-0 before:w-1 ${t.accent}`}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          <Icon className={`h-3.5 w-3.5 ${t.icon}`} /> {titulo}
+        </div>
+        {chip && <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${t.badgeBg} ${t.badgeText}`}>{chip}</span>}
+      </div>
+      <div className="mt-1.5 text-lg font-bold tabular-nums tracking-tight">{valor}</div>
+      <div className="text-[11px] text-muted-foreground">{subtitulo}</div>
+    </div>
+  )
+}
+
 export default function Liquidaciones() {
   const { selectedEmpresaId } = useAuth()
   const { toast } = useToast()
@@ -94,6 +139,15 @@ export default function Liquidaciones() {
   const [deduccionForm, setDeduccionForm] = useState<
     Record<string, { concepto: string; valor: string; observacion: string }>
   >({})
+  // Filtros/buscador (100% client-side: `data` ya trae TODO el retirado de
+  // este proyecto, no hace falta ida al servidor por cada cambio de filtro).
+  const [filtroTexto, setFiltroTexto] = useState("")
+  const [filtroDesde, setFiltroDesde] = useState("")
+  const [filtroHasta, setFiltroHasta] = useState("")
+  const [filtroEstado, setFiltroEstado] = useState<"todos" | EstadoLiquidacion>("todos")
+  // Selección para el marcado masivo -- solo sobre lo que el filtro deja ver.
+  const [seleccionadas, setSeleccionadas] = useState<Set<string>>(new Set())
+  const [marcandoMasivo, setMarcandoMasivo] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const uploadTarget = useRef<LiquidacionPersona | null>(null)
 
@@ -139,16 +193,97 @@ export default function Liquidaciones() {
     })
   }
 
+  // Cuadro de control: SIEMPRE sobre el total del proyecto (no sobre lo
+  // filtrado) -- es el estado real a vigilar, independiente de qué se esté
+  // buscando en la tabla en ese momento.
   const kpis = useMemo(() => {
     const pendientes = data.filter((p) => p.estado === "pendiente")
+    const liquidadas = data.filter((p) => p.estado === "liquidada")
+    const hoy = Date.now()
+    const DIAS_ALERTA = 30
+    const pendientesVencidas = pendientes.filter((p) => {
+      if (!p.fecha_retiro) return false
+      const dias = (hoy - Date.parse(p.fecha_retiro)) / 86_400_000
+      return dias > DIAS_ALERTA
+    })
     return {
       retirados: data.length,
       pendientes: pendientes.length,
+      liquidadas: liquidadas.length,
       totalNomina: pendientes.reduce((s, p) => s + p.total, 0),
       totalPrestaciones: pendientes.reduce((s, p) => s + p.prestaciones, 0),
       totalLiquidar: pendientes.reduce((s, p) => s + p.total_liquidacion, 0),
+      totalLiquidado: liquidadas.reduce((s, p) => s + p.total_liquidacion, 0),
+      vencidas: pendientesVencidas.length,
     }
   }, [data])
+
+  // Tabla/selección: sobre lo FILTRADO. Búsqueda por nombre/cédula, rango de
+  // fecha de retiro, estado -- lo que pidió el usuario ("no tiene ningún
+  // filtro, ni buscador").
+  const dataFiltrada = useMemo(() => {
+    const texto = filtroTexto.trim().toLowerCase()
+    return data.filter((p) => {
+      if (texto && !p.persona.toLowerCase().includes(texto) && !p.identificacion.includes(texto)) return false
+      if (filtroDesde && (!p.fecha_retiro || p.fecha_retiro < filtroDesde)) return false
+      if (filtroHasta && (!p.fecha_retiro || p.fecha_retiro > filtroHasta)) return false
+      if (filtroEstado !== "todos" && p.estado !== filtroEstado) return false
+      return true
+    })
+  }, [data, filtroTexto, filtroDesde, filtroHasta, filtroEstado])
+
+  const hayFiltrosActivos = !!(filtroTexto || filtroDesde || filtroHasta || filtroEstado !== "todos")
+  const limpiarFiltros = () => {
+    setFiltroTexto("")
+    setFiltroDesde("")
+    setFiltroHasta("")
+    setFiltroEstado("todos")
+  }
+
+  const toggleSeleccion = (identificacion: string) =>
+    setSeleccionadas((prev) => {
+      const next = new Set(prev)
+      next.has(identificacion) ? next.delete(identificacion) : next.add(identificacion)
+      return next
+    })
+  const todasFiltradasSeleccionadas =
+    dataFiltrada.length > 0 && dataFiltrada.every((p) => seleccionadas.has(p.identificacion))
+  const toggleSeleccionarTodas = () =>
+    setSeleccionadas((prev) => {
+      if (todasFiltradasSeleccionadas) {
+        const next = new Set(prev)
+        dataFiltrada.forEach((p) => next.delete(p.identificacion))
+        return next
+      }
+      const next = new Set(prev)
+      dataFiltrada.forEach((p) => next.add(p.identificacion))
+      return next
+    })
+
+  const marcarSeleccionadasComoPagadas = async () => {
+    const items = dataFiltrada.filter((p) => seleccionadas.has(p.identificacion) && p.estado !== "liquidada")
+    if (items.length === 0) {
+      toast({ title: "Nada por marcar", description: "Las seleccionadas ya están liquidadas o no hay ninguna marcada." })
+      return
+    }
+    setMarcandoMasivo(true)
+    const r = await guardarEstadoLiquidacionMasivo(
+      items.map((p) => ({
+        idempresa: p.idempresa,
+        identificacion: p.identificacion,
+        persona: p.persona,
+        fecha_retiro: p.fecha_retiro,
+        total: p.total_liquidacion,
+      })),
+      "liquidada",
+    )
+    setMarcandoMasivo(false)
+    if (r.success) {
+      toast({ title: "Actualizado", description: `${r.actualizadas} liquidación(es) marcada(s) como pagadas.` })
+      setSeleccionadas(new Set())
+      await cargar()
+    } else toast({ title: "Error", description: r.message, variant: "destructive" })
+  }
 
   const guardarParams = async () => {
     setSavingParams(true)
@@ -313,7 +448,7 @@ export default function Liquidaciones() {
         "Total a pagar",
         "Soporte",
       ]
-      const rows = data.map((p) => [
+      const rows = dataFiltrada.map((p) => [
         p.persona,
         p.identificacion,
         p.fecha_retiro || "",
@@ -362,16 +497,18 @@ export default function Liquidaciones() {
             <Button size="sm" variant="outline" onClick={() => setShowParams((s) => !s)}>
               <SlidersHorizontal className="mr-2 h-4 w-4" /> Parámetros de ley
             </Button>
-            <Button size="sm" variant="outline" onClick={exportar} disabled={loading || data.length === 0}>
+            <Button size="sm" variant="outline" onClick={exportar} disabled={loading || dataFiltrada.length === 0}>
               <Download className="mr-2 h-4 w-4" /> Exportar
             </Button>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            Retirados <strong>con contrato</strong> (nº SIIGO) y su liquidación: <strong>nómina pendiente</strong>{" "}
-            (posterior a "Pagado hasta") + <strong>prestaciones sociales</strong> (prima, cesantías, intereses,
-            vacaciones) sobre el devengado del período de causación.
+            Retirados <strong>con contrato</strong> (nº SIIGO) y su liquidación: <strong>prestaciones sociales</strong>{" "}
+            (prima, cesantías, intereses, vacaciones, indemnización si aplica) sobre el devengado del período de
+            causación. Desde el 9-sep-2026, la <strong>nómina pendiente</strong> (posterior a "Pagado hasta") de un
+            retiro nuevo se paga por el <strong>archivo plano</strong> de la quincena, no por esta liquidación — se
+            sigue mostrando aquí solo como referencia (retiros de antes de esa fecha no cambian).
           </p>
 
           {/* Parámetros de ley (prestaciones) */}
@@ -438,10 +575,10 @@ export default function Liquidaciones() {
                   <tbody className="align-top">
                     {[
                       {
-                        c: "Nómina pendiente",
+                        c: "Nómina pendiente (informativa)",
                         n: "Pago quincenal (1–15 / 16–fin)",
                         b: "Devengado real de LIPgo (tarifa por tonelada / turno)",
-                        f: "Novedades posteriores a “Pagado hasta” y hasta la fecha de retiro (la quincena en curso).",
+                        f: "Novedades posteriores a “Pagado hasta” y hasta la fecha de retiro. Desde el 9-sep-2026 se paga por el archivo plano de la quincena en un retiro nuevo (NO suma al total de esta liquidación); en un retiro de antes de esa fecha, sigue sumando como siempre.",
                       },
                       {
                         c: "Prima de servicios",
@@ -495,34 +632,121 @@ export default function Liquidaciones() {
             </div>
           )}
 
-          {/* KPIs */}
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-            <div className="rounded-lg border border-border p-3">
-              <p className="text-xs text-muted-foreground">Retirados</p>
-              <p className="text-2xl font-bold tabular-nums">{kpis.retirados}</p>
-            </div>
-            <div className="rounded-lg border border-border p-3">
-              <p className="text-xs text-muted-foreground">Pendientes</p>
-              <p className="text-2xl font-bold tabular-nums text-amber-600">{kpis.pendientes}</p>
-            </div>
-            <div className="rounded-lg border border-border p-3">
-              <p className="text-xs text-muted-foreground">Nómina pendiente</p>
-              <p className="text-xl font-bold tabular-nums text-foreground">{money(kpis.totalNomina)}</p>
-            </div>
-            <div className="rounded-lg border border-border p-3">
-              <p className="text-xs text-muted-foreground">Prestaciones</p>
-              <p className="text-xl font-bold tabular-nums text-foreground">{money(kpis.totalPrestaciones)}</p>
-            </div>
-            <div className="rounded-lg border border-border p-3">
-              <p className="text-xs text-muted-foreground">Total a liquidar</p>
-              <p className="text-xl font-bold tabular-nums text-primary">{money(kpis.totalLiquidar)}</p>
+          {/* Cuadro de control */}
+          <div className="space-y-2">
+            {kpis.vencidas > 0 && (
+              <div className="flex items-center gap-2 rounded-md bg-rose-500/5 px-3 py-1.5 text-xs text-rose-700 dark:text-rose-400">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                {kpis.vencidas} pendiente(s) con más de 30 días desde el retiro sin liquidar
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <TarjetaKpi
+                icon={UserMinus}
+                titulo="Retirados"
+                valor={String(kpis.retirados)}
+                subtitulo="con contrato SIIGO"
+                severidad="ok"
+              />
+              <TarjetaKpi
+                icon={Clock}
+                titulo="Pendientes"
+                valor={`${kpis.pendientes} · ${money(kpis.totalLiquidar)}`}
+                subtitulo="por liquidar"
+                severidad={kpis.vencidas > 0 ? "crit" : kpis.pendientes > 0 ? "warn" : "ok"}
+                chip={kpis.vencidas > 0 ? `${kpis.vencidas} VENCIDAS` : undefined}
+              />
+              <TarjetaKpi
+                icon={CheckCircle2}
+                titulo="Liquidadas"
+                valor={`${kpis.liquidadas} · ${money(kpis.totalLiquidado)}`}
+                subtitulo="ya pagadas"
+                severidad="ok"
+              />
+              <TarjetaKpi
+                icon={Landmark}
+                titulo="Nómina pend. (informativa)"
+                valor={money(kpis.totalNomina)}
+                subtitulo="de los pendientes -- ver regla del plano"
+                severidad="ok"
+              />
             </div>
           </div>
+
+          {/* Filtros / buscador */}
+          <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-muted/20 p-3">
+            <div className="min-w-[200px] flex-1 space-y-1">
+              <Label className="text-xs text-muted-foreground">Buscar (nombre o cédula)</Label>
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={filtroTexto}
+                  onChange={(e) => setFiltroTexto(e.target.value)}
+                  placeholder="Ej. Juan Pérez o 1004504508"
+                  className="h-9 pl-7 text-sm"
+                />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Retiro desde</Label>
+              <DatePickerField value={filtroDesde} onChange={setFiltroDesde} className="h-9 w-[150px]" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Retiro hasta</Label>
+              <DatePickerField value={filtroHasta} onChange={setFiltroHasta} className="h-9 w-[150px]" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Estado</Label>
+              <select
+                value={filtroEstado}
+                onChange={(e) => setFiltroEstado(e.target.value as "todos" | EstadoLiquidacion)}
+                className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+              >
+                <option value="todos">Todos</option>
+                <option value="pendiente">Pendiente</option>
+                <option value="liquidada">Liquidada</option>
+              </select>
+            </div>
+            {hayFiltrosActivos && (
+              <Button size="sm" variant="outline" onClick={limpiarFiltros} className="h-9">
+                <RotateCcw className="mr-1.5 h-3.5 w-3.5" /> Limpiar
+              </Button>
+            )}
+            <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
+              <Filter className="h-3.5 w-3.5" />
+              {dataFiltrada.length} de {data.length} mostrados
+            </div>
+          </div>
+
+          {/* Marcado masivo -- solo visible con algo seleccionado */}
+          {seleccionadas.size > 0 && (
+            <div className="flex items-center justify-between rounded-md border border-primary/30 bg-primary/5 px-3 py-2">
+              <span className="text-xs font-medium">{seleccionadas.size} seleccionada(s)</span>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" onClick={() => setSeleccionadas(new Set())}>
+                  Deseleccionar todo
+                </Button>
+                <Button size="sm" onClick={marcarSeleccionadasComoPagadas} disabled={marcandoMasivo}>
+                  {marcandoMasivo ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <CheckSquare className="mr-1.5 h-3.5 w-3.5" />}
+                  Marcar seleccionadas como pagadas
+                </Button>
+              </div>
+            </div>
+          )}
 
           <div className="overflow-x-auto rounded-lg border border-border">
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-8">
+                    <input
+                      type="checkbox"
+                      className="h-3.5 w-3.5 accent-primary"
+                      checked={todasFiltradasSeleccionadas}
+                      onChange={toggleSeleccionarTodas}
+                      aria-label="Seleccionar todo lo filtrado"
+                    />
+                  </TableHead>
                   <TableHead className="w-8" />
                   <TableHead>Persona</TableHead>
                   <TableHead>Cédula</TableHead>
@@ -539,16 +763,27 @@ export default function Liquidaciones() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.length === 0 && !loading ? (
+                {dataFiltrada.length === 0 && !loading ? (
                   <TableRow>
-                    <TableCell colSpan={13} className="py-8 text-center text-sm text-muted-foreground">
-                      No hay personal retirado con contrato para esta empresa.
+                    <TableCell colSpan={14} className="py-8 text-center text-sm text-muted-foreground">
+                      {data.length === 0
+                        ? "No hay personal retirado con contrato para esta empresa."
+                        : "Ningún registro coincide con el filtro."}
                     </TableCell>
                   </TableRow>
                 ) : (
-                  data.map((p) => (
+                  dataFiltrada.map((p) => (
                     <Fragment key={p.identificacion || p.persona}>
                       <TableRow>
+                        <TableCell>
+                          <input
+                            type="checkbox"
+                            className="h-3.5 w-3.5 accent-primary"
+                            checked={seleccionadas.has(p.identificacion)}
+                            onChange={() => toggleSeleccion(p.identificacion)}
+                            aria-label={`Seleccionar ${p.persona}`}
+                          />
+                        </TableCell>
                         <TableCell className="cursor-pointer" onClick={() => toggle(p)}>
                           {expanded.has(p.persona) ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                         </TableCell>
@@ -571,7 +806,18 @@ export default function Liquidaciones() {
                             )}
                           </div>
                         </TableCell>
-                        <TableCell className="text-right tabular-nums">{money(p.total)}</TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          <div className="flex flex-col items-end gap-0.5">
+                            <span className={p.nominaPagadaPorPlano ? "text-muted-foreground line-through decoration-1" : ""}>
+                              {money(p.total)}
+                            </span>
+                            {p.nominaPagadaPorPlano && (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[9px] font-medium text-sky-700 dark:bg-sky-950 dark:text-sky-400">
+                                <Landmark className="h-2.5 w-2.5" /> cubierta por el plano
+                              </span>
+                            )}
+                          </div>
+                        </TableCell>
                         <TableCell className="text-right tabular-nums">
                           <span className="inline-flex items-center gap-1 justify-end">
                             {p.prima_real != null && (
@@ -657,7 +903,7 @@ export default function Liquidaciones() {
                       </TableRow>
                       {expanded.has(p.persona) && (
                         <TableRow>
-                          <TableCell colSpan={13} className="bg-muted/30 p-0">
+                          <TableCell colSpan={14} className="bg-muted/30 p-0">
                             <div className="space-y-2 p-3">
                               <div className="flex flex-wrap items-center gap-2 text-sm">
                                 <span className="text-muted-foreground">Pagado hasta:</span>
