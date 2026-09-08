@@ -245,6 +245,23 @@ function ownerKey(s: string | null | undefined): string {
     .trim()
 }
 
+// La vista `facturacion` reporta el owner de un producto propio de ID1 como
+// "INDUPAN" (nombre corto, mapeado desde productos.id_empresa), pero
+// `tarifasoperacion.empresafactura` usa el nombre comercial "Harinera
+// Indupan" -- son la MISMA empresa facturadora, pero como texto NUNCA
+// calzaban. Sin este alias, cualquier línea de Cargue/Descargue/Distribución
+// de producto propio de INDUPAN no encontraba tarifa exacta NI por
+// (operación+owner) y caía al fallback global `porOp` (el máximo de
+// CUALQUIER owner para esa operación) -- confirmado con datos reales
+// 2026-09-08: 773 líneas de Cargue "INDUPAN|Producto Terminado" facturando a
+// $18.400 (tarifa real de Mogolla, el máximo del proyecto) en vez de su
+// tarifa real, $12.650.
+const OWNER_ALIAS: Record<string, string> = { INDUPAN: "HARINERA INDUPAN" }
+function ownerKeyFactura(s: string | null | undefined): string {
+  const k = ownerKey(s)
+  return OWNER_ALIAS[k] || k
+}
+
 // Normaliza la SUBCATEGORÍA a la categoría de tarifa. Los SUB-PRODUCTOS (Mogolla,
 // Salvado, Harina de Tercera) comparten la misma tarifa "Mogolla Kg." (confirmado por
 // el usuario); lo demás (Producto Terminado, etc.) queda con su nombre normalizado.
@@ -271,7 +288,7 @@ async function tarifasDeEmpresa(sb: any, idempresa: number): Promise<TarifasEmpr
     .eq("empresaid", idempresa)
   for (const r of tar || []) {
     const op = String(r.operacion ?? "").trim().toLowerCase()
-    const owner = ownerKey(r.empresafactura)
+    const owner = ownerKeyFactura(r.empresafactura)
     const subcat = subcatKey(r.producto) // el JOIN de la vista es t.producto = subcategoría del producto
     const v = num(r.tarifa)
     if (!op || v <= 0) continue
@@ -287,7 +304,7 @@ async function tarifasDeEmpresa(sb: any, idempresa: number): Promise<TarifasEmpr
 // Tarifa por (operación, owner, subcategoría) con fallback: exacta → (op+owner) → (op).
 function lookupTarifa(operacion: string | null, owner: string, subcategoria: string | null, t: TarifasEmpresa): number {
   const op = String(operacion ?? "").trim().toLowerCase()
-  const ok = ownerKey(owner)
+  const ok = ownerKeyFactura(owner)
   const sk = subcatKey(subcategoria)
   return (
     t.exact.get(`${op}|||${ok}|||${sk}`) ??

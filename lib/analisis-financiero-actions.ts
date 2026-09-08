@@ -90,6 +90,18 @@ function ownerKey(s: string | null | undefined): string {
   return norm(s)
 }
 
+// Mismo alias que lib/facturacion-control-actions.ts: la vista `facturacion`
+// reporta el owner de producto propio de ID1 como "INDUPAN" (nombre corto),
+// pero `tarifasoperacion.empresafactura` usa "Harinera Indupan" (nombre
+// comercial) -- sin este alias el lookup nunca calzaba y caía al fallback
+// global (tarifa más alta de CUALQUIER owner). Confirmado con datos reales
+// 2026-09-08.
+const OWNER_ALIAS: Record<string, string> = { INDUPAN: "HARINERA INDUPAN" }
+function ownerKeyFactura(s: string | null | undefined): string {
+  const k = ownerKey(s)
+  return OWNER_ALIAS[k] || k
+}
+
 /** Los SUB-PRODUCTOS (Mogolla, Salvado, Harina de Tercera) comparten tarifa. */
 function subcatKey(s: string | null | undefined): string {
   return esSubproducto(s) ? "MOGOLLA KG." : ownerKey(s)
@@ -116,7 +128,7 @@ async function tarifasDeEmpresa(sb: any, idempresa: number): Promise<TarifasEmpr
   const { data: tar } = await sb.from("tarifasoperacion").select("operacion, empresafactura, producto, tarifa").eq("empresaid", idempresa)
   for (const r of tar || []) {
     const op = String(r.operacion ?? "").trim().toLowerCase()
-    const owner = ownerKey(r.empresafactura)
+    const owner = ownerKeyFactura(r.empresafactura)
     const subcat = subcatKey(r.producto)
     const v = num(r.tarifa)
     if (!op || v <= 0) continue
@@ -133,7 +145,7 @@ async function tarifasDeEmpresa(sb: any, idempresa: number): Promise<TarifasEmpr
 
 function lookupTarifa(operacion: string | null, owner: string, subcategoria: string | null, t: TarifasEmpresa): number {
   const op = String(operacion ?? "").trim().toLowerCase()
-  const ok = ownerKey(owner)
+  const ok = ownerKeyFactura(owner)
   const sk = subcatKey(subcategoria)
   return t.exact.get(`${op}|||${ok}|||${sk}`) ?? t.porOpOwner.get(`${op}|||${ok}`) ?? t.porOp.get(op) ?? 0
 }
