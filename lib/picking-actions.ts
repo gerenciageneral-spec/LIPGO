@@ -1376,8 +1376,27 @@ export async function registerHoraPicking(orderId: number) {
  */
 export async function pausarOrden(ordenCargue: string) {
   const supabase = await createClient()
-  const inicio = await getColombiaTime()
 
+  // Idempotente: si la orden YA tiene una pausa abierta (doble clic, red
+  // lenta, dos pestañas) no se inserta otra fila -- eso es lo que dejaba
+  // pausas duplicadas para la misma orden y luego una de ellas quedaba
+  // huérfana porque `reanudarOrden` solo cierra la más reciente.
+  const { data: existente, error: findError } = await supabase
+    .from("pausas")
+    .select("id")
+    .eq("ordendecargue", ordenCargue)
+    .is("fin", null)
+    .limit(1)
+
+  if (findError) {
+    console.error("[v0] Error al verificar pausa existente:", findError)
+    return { success: false, message: findError.message }
+  }
+  if (existente && existente.length > 0) {
+    return { success: true, message: "El cargue ya estaba en pausa" }
+  }
+
+  const inicio = await getColombiaTime()
   const { error } = await supabase.from("pausas").insert([
     {
       ordendecargue: ordenCargue,
@@ -1401,32 +1420,36 @@ export async function reanudarOrden(ordenCargue: string) {
   const supabase = await createClient()
   const fin = await getColombiaTime()
 
-  // Buscar la pausa activa de la orden (la mas reciente que aun no tiene fin).
+  // Buscar TODAS las pausas activas de la orden (sin `fin`), no solo la mas
+  // reciente -- una orden nunca deberia tener mas de una pausa abierta a la
+  // vez (ver pausarOrden, ahora idempotente), pero si por datos previos a ese
+  // fix quedo mas de una huerfana, "Reanudar" debe cerrarlas TODAS de una vez
+  // en vez de dejar la orden bloqueada tras un solo clic.
   //
   // Se filtra SOLO por `fin is null`, no por `activo`. `activo` es una columna
   // GENERADA por la base a partir de otras: filtrar por ella ata este codigo a
   // una expresion que no esta versionada aqui y que puede cambiar sin aviso.
   // "Pausa abierta = pausa sin hora de fin" es la verdad del dominio, y es la
   // unica columna de estado que esta funcion escribe.
-  const { data: pausa, error: findError } = await supabase
+  const { data: pausas, error: findError } = await supabase
     .from("pausas")
     .select("id")
     .eq("ordendecargue", ordenCargue)
     .is("fin", null)
-    .order("id", { ascending: false })
-    .limit(1)
-    .maybeSingle()
 
   if (findError) {
     console.error("[v0] Error al buscar la pausa activa:", findError)
     return { success: false, message: findError.message }
   }
 
-  if (!pausa) {
+  if (!pausas || pausas.length === 0) {
     return { success: false, message: "No se encontró una pausa activa para esta orden" }
   }
 
-  const { error: updateError } = await supabase.from("pausas").update({ fin }).eq("id", pausa.id)
+  const { error: updateError } = await supabase
+    .from("pausas")
+    .update({ fin })
+    .in("id", pausas.map((p: { id: number }) => p.id))
 
   if (updateError) {
     console.error("[v0] Error al reanudar la orden:", updateError)
