@@ -118,6 +118,9 @@ export interface UserPermissions {
   // dedupe del árbol lo ocultaba).
   recobro_incapacidades: boolean
   vacaciones: boolean
+  // Reporte de Acumulados generado por LIPgo (mismo formato que el export de
+  // Siigo), fuente de verdad hacia adelante -- ver lib/acumulados-lipgo-actions.ts.
+  acumulados_lipgo: boolean
   visor: boolean
   // RRHH LIP
   gestion_contratos: boolean
@@ -369,6 +372,7 @@ export const MODULE_PERMISSION_MAP: Record<string, keyof UserPermissions> = {
   // Permiso propio para que sea gestionable por separado en Gestión de Usuarios.
   "Recobro de Incapacidades": "recobro_incapacidades",
   Vacaciones: "vacaciones",
+  "Acumulados LIPgo": "acumulados_lipgo",
   Turnos: "gestionturnos",
   "Programación de turnos": "programacionturnos",
   "Notificaciones al Personal": "notificaciones",

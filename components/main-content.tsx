@@ -154,6 +154,7 @@ import BienestarPrograma from "@/components/rrhh/bienestar-programa"
 import BienestarParticipacion from "@/components/rrhh/bienestar-participacion"
 import Nominapersonal from "@/components/nominapersonal" // Added import for Nominapersonal component
 import Liquidaciones from "@/components/liquidaciones"
+import AcumuladosLIPgo from "@/components/acumulados-lipgo"
 import Parafiscales from "@/components/parafiscales"
 import RevisionNomina from "@/components/revision-nomina"
 import Bonos from "@/components/bonos"
@@ -825,6 +826,10 @@ export function MainContent({
           ) : selectedModule === "Vacaciones" ? (
             <PermissionGuard moduleName="Vacaciones">
               <Vacaciones />
+            </PermissionGuard>
+          ) : selectedModule === "Acumulados LIPgo" ? (
+            <PermissionGuard moduleName="Acumulados LIPgo">
+              <AcumuladosLIPgo />
             </PermissionGuard>
           ) : selectedModule === "Auditoría 0312" ? (
             <PermissionGuard moduleName="Auditoría 0312">
