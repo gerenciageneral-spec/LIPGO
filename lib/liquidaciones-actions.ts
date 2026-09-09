@@ -197,11 +197,24 @@ function defaultPagadoHasta(fechaRetiro: string): string {
 // diario.
 const BONO_DESTAJO_PRESTACIONAL_DESDE = "2026-07-01"
 
+// Ajustes históricos reales de Siigo (2026-09-08): el cálculo de LIPgo para el
+// bono de destajo, aunque correcto en la fórmula, no siempre coincide peso a
+// peso con lo que Siigo reportó en una quincena YA OCURRIDA (redondeos,
+// ajustes manuales de RRHH, etc.). Reconciliado contra los Acumulados reales
+// de Siigo -- ver tabla `ajustes_historicos_siigo` y memoria de sesión. Cuando
+// existe un valor real para una quincena, REEMPLAZA el calculado (no se suma
+// encima): Siigo es la fuente de verdad para lo que ya pasó.
+function claveAjusteHistorico(identificacion: string, anio: number, mes: number, quincena: 1 | 2): string {
+  return `${identificacion}|${anio}-${mes}-Q${quincena}`
+}
+
 function sumaPeriodo(
   rows: any[],
   desde: string,
   hasta: string,
   salarioDia: number,
+  identificacion?: string,
+  ajustesHistoricos?: Map<string, number>,
 ): { dev: number; dias: number; diasAux: number } {
   let dev = 0
   let dias = 0
@@ -243,7 +256,16 @@ function sumaPeriodo(
       }
     }
   }
-  for (const v of bonoPorQuincena.values()) dev += Math.max(0, v)
+  for (const [clave, calculado] of bonoPorQuincena) {
+    let real = calculado
+    if (identificacion && ajustesHistoricos) {
+      const [anioQ, mesQ, qTxt] = clave.split("-")
+      const key = claveAjusteHistorico(identificacion, Number(anioQ), Number(mesQ), qTxt === "Q1" ? 1 : 2)
+      const override = ajustesHistoricos.get(key)
+      if (override != null) real = override
+    }
+    dev += Math.max(0, real)
+  }
   return { dev, dias, diasAux }
 }
 
@@ -399,6 +421,24 @@ export async function getLiquidaciones(
       rowsPorNombre.set(nombre, arr)
     }
 
+    // 5.5) Ajustes históricos reales de Siigo (bono de destajo, ver `sumaPeriodo`
+    // y memoria de sesión 2026-09-08) -- por cédula, para las personas de este
+    // proyecto. Cuando existe, reemplaza el cálculo de LIPgo para esa quincena.
+    const ajustesHistoricos = new Map<string, number>()
+    if (cedulas.length > 0) {
+      const { data: ajustes } = await admin
+        .from("ajustes_historicos_siigo")
+        .select("identificacion, anio, mes, quincena, valor_siigo_real")
+        .in("identificacion", cedulas)
+        .eq("concepto", "bono_destajo")
+      for (const a of ajustes || []) {
+        ajustesHistoricos.set(
+          claveAjusteHistorico(String(a.identificacion).trim(), a.anio, a.mes, a.quincena as 1 | 2),
+          Number(a.valor_siigo_real) || 0,
+        )
+      }
+    }
+
     // 6) Construir cada persona: pendiente + prestaciones.
     const data: LiquidacionPersona[] = []
     for (const [nombre, info] of infoPorNombre) {
@@ -473,7 +513,7 @@ export async function getLiquidaciones(
         const auxMensual = auxPorAnio.get(anio) ?? 0
         const salarioMensual = info.salario || smlvPorAnio.get(anio) || 0
         const salarioDia = salarioMensual / 30
-        const ce = sumaPeriodo(rows, cesDesdeReal, info.fecha_retiro, salarioDia)
+        const ce = sumaPeriodo(rows, cesDesdeReal, info.fecha_retiro, salarioDia, info.identificacion, ajustesHistoricos)
 
         // Relleno SOLO de los primeros días de enero que no existen en el sistema
         // (hasta 4), y únicamente si el trabajador venía del año anterior (tiene
@@ -522,7 +562,7 @@ export async function getLiquidaciones(
         const primaDesdeBase = primaEnSemestre2 ? `${anio}-07-01` : cesDesde
         const primaDesde =
           info.fechainicio && String(info.fechainicio) > primaDesdeBase ? String(info.fechainicio) : primaDesdeBase
-        const pr = sumaPeriodo(rows, primaDesde, info.fecha_retiro, salarioDia)
+        const pr = sumaPeriodo(rows, primaDesde, info.fecha_retiro, salarioDia, info.identificacion, ajustesHistoricos)
         prima = (pr.dev + (pp.incluyeAux ? (auxMensual / 30) * pr.diasAux : 0)) * (pp.pctPrima / 100)
 
         // Vacaciones: se ACUMULAN de forma continua durante TODO el vínculo (no se
