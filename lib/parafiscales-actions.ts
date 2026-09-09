@@ -228,8 +228,12 @@ export async function getParafiscales(
     >()
     for (const h of personal || []) {
       const nombre = String(h.nombre || "").trim()
-      // Sin contrato SIIGO no cotiza; y los auxiliares de PRUEBA nunca entran a PILA.
-      if (!nombre || !String(h.contratosiigo || "").trim() || /prueba/i.test(nombre)) continue
+      // Sin contrato SIIGO no cotiza; los auxiliares de PRUEBA nunca entran a PILA;
+      // y el placeholder "SIN AUXILIAR" (usado en ordenes sin ayudante asignado)
+      // tiene por error un contratosiigo relleno ("13-1", identificacion="13") que
+      // lo deja colar como si fuera un cotizante real -- $3M de IBC fantasma
+      // confirmado contra la planilla PILA real de agosto-2026.
+      if (!nombre || !String(h.contratosiigo || "").trim() || /prueba/i.test(nombre) || /sin auxiliar/i.test(nombre)) continue
       // Multi-empresa: una persona puede tener varias filas. Acumular esActivo (si
       // está Activa en cualquiera) y conservar fecha_retiro/fechainicio si alguna la trae
       // (la más temprana de fechainicio, por si hay filas con el dato incompleto).
