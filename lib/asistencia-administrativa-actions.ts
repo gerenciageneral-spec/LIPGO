@@ -128,6 +128,42 @@ export interface UpsertAsistenciaInput {
   novedad?: NovedadDia // requerido si tipo === "NOVEDAD"
   puesto?: string // requerido si tipo === "TRABAJADO" y esAdministrativo=false
   esAdministrativo: boolean
+
+  // --- Horas extra del día (solo operativo, tipo=TRABAJADO, día ÚNICO -- las
+  // horas extra varían día a día, no tiene sentido aplicar el mismo valor a
+  // todo un rango). Cierra un hueco real: "Asignación horas extra"
+  // (app/api/extra-hours/route.ts) solo puede ACTUALIZAR una fila que ya
+  // exista (nunca crea una donde no hay ninguna) y solo cubre puestos de
+  // especialidad -- si el día no existía en absoluto (el caso que este
+  // módulo resuelve), no había forma de registrarle horas extra en ningún
+  // lado.
+  //
+  // DOS CAMINOS, no se mezclan:
+  //  (a) Horario real (horaIngreso/horaSalida + programada) -- SOLO puestos
+  //      de especialidad: el trigger `trg_calcular_horas_extras`
+  //      (scripts/sig/57_politica_horas_extra.sql) calcula hed/hedf solo
+  //      ÉL, con la MISMA política que usa el flujo normal de campo. No se
+  //      tocan hed/hedf a mano aquí -- el trigger los sobreescribe en el
+  //      INSERT/UPDATE.
+  //  (b) Horas manuales (hed/hedf/hen/hef/hn directos) -- para puestos SIN
+  //      especialidad (el trigger no aplica) o cuando ya se conoce el
+  //      número exacto sin reconstruir el horario. Se marca
+  //      `extras_manual=true` para que el trigger NO las recalcule/pise.
+  horaIngreso?: string // "HH:MM"
+  horaSalida?: string
+  horaEntradaProgramada?: string
+  horaSalidaProgramada?: string
+  hed?: number
+  hedf?: number
+  hen?: number
+  hef?: number
+  hn?: number
+  // Refleja `registroasistencia.aprobado`: SOLO cuenta para nómina
+  // (pagonomina exige aprobado='aprobado') si se marca explícito aquí --
+  // por diseño, nunca se auto-aprueba. Mismo control de negocio que ya
+  // existe en "Asignación horas extra", ahora también disponible para
+  // correcciones retroactivas.
+  aprobarHorasExtra?: boolean
 }
 
 function listaFechas(desde: string, hasta: string): string[] {
@@ -164,11 +200,14 @@ export async function upsertAsistenciaDia(
   }
 
   const esRetiro = tipo === "NOVEDAD" && String(input.novedad || "").toLowerCase().includes("retiro")
+  const tieneHorarioReal = !!(input.horaIngreso || input.horaSalida)
+  const tieneHorasManuales = [input.hed, input.hedf, input.hen, input.hef, input.hn].some((v) => v != null)
   // Salvaguarda defensiva: "Retiro" nunca aplica a un rango (ambigüedad de
-  // cuál fecha queda como fecha_retiro final) -- la UI ya lo impide, esto
-  // blinda la server action si se llama de otro lado.
+  // cuál fecha queda como fecha_retiro final), y las horas extra tampoco
+  // (varían día a día, sea por horario real o manuales) -- la UI ya impide
+  // ambos casos, esto blinda la server action si se llama de otro lado.
   let fechaFin = input.fechaFin || input.fechaInicio
-  if (esRetiro) fechaFin = input.fechaInicio
+  if (esRetiro || tieneHorarioReal || tieneHorasManuales) fechaFin = input.fechaInicio
   const fechas = listaFechas(input.fechaInicio, fechaFin)
 
   try {
@@ -197,6 +236,36 @@ export async function upsertAsistenciaDia(
         especialidad: esEspecialidad,
         horasturno: esEspecialidad ? horasTurnoParaEspecialidad(input.puesto) : null,
       }
+      // Solo se incluyen los campos que el usuario realmente diligenció --
+      // en un UPDATE, omitir un campo lo deja intacto (no borra horas extra
+      // que ya existieran por otra vía, ej. Asignación horas extra).
+      //
+      // (a) Horario real: se deja que el TRIGGER `trg_calcular_horas_extras`
+      // calcule hed/hedf -- NO se fijan aquí a mano. Solo aplica de verdad
+      // si el puesto es de especialidad (el trigger lo exige); en un puesto
+      // sin especialidad estas horas quedan guardadas pero el trigger no
+      // las usa (no hay política de horas extra para puestos normales).
+      if (input.horaIngreso) filaBase.horaingreso = input.horaIngreso
+      if (input.horaSalida) filaBase.horasalida = input.horaSalida
+      if (input.horaEntradaProgramada) filaBase.horaentradaprogramada = input.horaEntradaProgramada
+      if (input.horaSalidaProgramada) filaBase.horasalidaprogramada = input.horaSalidaProgramada
+      // (b) Horas manuales: directo a hed/hedf/hen/hef/hn, con
+      // extras_manual=true para que el trigger no las recalcule/pise en un
+      // guardado posterior (ver comentario del trigger: "ajuste manual: no
+      // se tocan").
+      if (tieneHorasManuales) {
+        filaBase.extras_manual = true
+        if (input.hed != null) filaBase.hed = input.hed
+        if (input.hedf != null) filaBase.hedf = input.hedf
+        if (input.hen != null) filaBase.hen = input.hen
+        if (input.hef != null) filaBase.hef = input.hef
+        if (input.hn != null) filaBase.hn = input.hn
+      }
+      // Aprobación: nunca automática. Solo se fija si el usuario la marcó
+      // explícitamente -- pagonomina exige aprobado='aprobado' para contar
+      // las horas extra en nómina (mismo control que ya existe en
+      // "Asignación horas extra").
+      if (input.aprobarHorasExtra) filaBase.aprobado = "aprobado"
     }
 
     const { data: existentes, error: exErr } = await admin

@@ -57,6 +57,16 @@ export default function AsistenciaAdministrativa() {
   const [usarRango, setUsarRango] = useState(false)
   const [guardando, setGuardando] = useState(false)
 
+  // Horas extra (solo operativo, día único -- ver lib/asistencia-administrativa-actions.ts).
+  const [modoHorasExtra, setModoHorasExtra] = useState<"ninguna" | "horario" | "manual">("ninguna")
+  const [horaIngreso, setHoraIngreso] = useState("")
+  const [horaSalida, setHoraSalida] = useState("")
+  const [horaEntradaProgramada, setHoraEntradaProgramada] = useState("")
+  const [horaSalidaProgramada, setHoraSalidaProgramada] = useState("")
+  const [hed, setHed] = useState("")
+  const [hedf, setHedf] = useState("")
+  const [aprobarHorasExtra, setAprobarHorasExtra] = useState(false)
+
   useEffect(() => {
     if (!selectedEmpresaId) return
     setLoadingPersonas(true)
@@ -85,10 +95,17 @@ export default function AsistenciaAdministrativa() {
     setPuesto("")
     setNovedad("")
     setTipo("TRABAJADO")
+    setModoHorasExtra("ninguna")
+    setHoraIngreso(""); setHoraSalida(""); setHoraEntradaProgramada(""); setHoraSalidaProgramada("")
+    setHed(""); setHedf(""); setAprobarHorasExtra(false)
     cargarHistorial(p.identificacion)
   }
 
   const esRetiro = tipo === "NOVEDAD" && novedad.toLowerCase().includes("retiro")
+  const usaHorasExtra = tipo === "TRABAJADO" && modoHorasExtra !== "ninguna"
+  // Mismo criterio que la server action: retiro y horas extra nunca aplican
+  // a un rango de fechas.
+  const rangoDeshabilitado = esRetiro || usaHorasExtra
 
   const resultadosBusqueda = useMemo(() => {
     const q = busqueda.trim().toLowerCase()
@@ -108,17 +125,28 @@ export default function AsistenciaAdministrativa() {
       toast({ title: "Falta el puesto", description: "Selecciona qué puesto trabajó ese día.", variant: "destructive" })
       return
     }
+    if (usaHorasExtra && seleccionada.admin) {
+      toast({ title: "No aplica", description: "Las horas extra son solo para personal operativo.", variant: "destructive" })
+      return
+    }
     setGuardando(true)
     const r = await upsertAsistenciaDia({
       empresaId: selectedEmpresaId,
       identificacion: seleccionada.identificacion,
       nombre: seleccionada.nombre,
       fechaInicio: toISO(fechaInicio),
-      fechaFin: usarRango && fechaFin && !esRetiro ? toISO(fechaFin) : undefined,
+      fechaFin: usarRango && fechaFin && !rangoDeshabilitado ? toISO(fechaFin) : undefined,
       tipo,
       novedad: tipo === "NOVEDAD" ? (novedad as any) : undefined,
       puesto: tipo === "TRABAJADO" ? puesto : undefined,
       esAdministrativo: seleccionada.admin,
+      horaIngreso: modoHorasExtra === "horario" ? horaIngreso || undefined : undefined,
+      horaSalida: modoHorasExtra === "horario" ? horaSalida || undefined : undefined,
+      horaEntradaProgramada: modoHorasExtra === "horario" ? horaEntradaProgramada || undefined : undefined,
+      horaSalidaProgramada: modoHorasExtra === "horario" ? horaSalidaProgramada || undefined : undefined,
+      hed: modoHorasExtra === "manual" && hed !== "" ? Number(hed) : undefined,
+      hedf: modoHorasExtra === "manual" && hedf !== "" ? Number(hedf) : undefined,
+      aprobarHorasExtra: usaHorasExtra ? aprobarHorasExtra : undefined,
     })
     setGuardando(false)
     if (!r.success) {
@@ -254,15 +282,15 @@ export default function AsistenciaAdministrativa() {
                     type="checkbox"
                     id="usarRango"
                     checked={usarRango}
-                    disabled={esRetiro}
+                    disabled={rangoDeshabilitado}
                     onChange={(e) => setUsarRango(e.target.checked)}
                     className="h-4 w-4"
                   />
-                  <Label htmlFor="usarRango" className={esRetiro ? "text-sm text-muted-foreground" : "text-sm"}>
-                    Aplicar a un rango de fechas{esRetiro ? " (no disponible para Retiro)" : ""}
+                  <Label htmlFor="usarRango" className={rangoDeshabilitado ? "text-sm text-muted-foreground" : "text-sm"}>
+                    Aplicar a un rango de fechas{rangoDeshabilitado ? " (no disponible para Retiro/Horas extra)" : ""}
                   </Label>
                 </div>
-                {usarRango && !esRetiro && (
+                {usarRango && !rangoDeshabilitado && (
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-muted-foreground">hasta</span>
                     <Popover>
@@ -333,11 +361,95 @@ export default function AsistenciaAdministrativa() {
                   </div>
                 )}
 
-                <Button onClick={handleGuardar} disabled={guardando}>
-                  {guardando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
-                  Guardar
-                </Button>
+                {/* Este botón cubre Novedad (cualquiera) y Trabajado+Administrativo.
+                    Trabajado+Operativo tiene su propio botón más abajo, junto al
+                    bloque de horas extra. */}
+                {!(tipo === "TRABAJADO" && !seleccionada.admin) && (
+                  <Button onClick={handleGuardar} disabled={guardando}>
+                    {guardando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
+                    Guardar
+                  </Button>
+                )}
               </div>
+
+              {/* Horas extra: solo operativo, tipo=TRABAJADO, día único. */}
+              {tipo === "TRABAJADO" && !seleccionada.admin && (
+                <div className="space-y-2 rounded-lg border border-dashed border-border p-3">
+                  <Label className="text-sm">Horas extra de ese día (opcional)</Label>
+                  <div className="flex flex-wrap gap-3">
+                    <Select value={modoHorasExtra} onValueChange={(v: any) => setModoHorasExtra(v)}>
+                      <SelectTrigger className="w-[240px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ninguna">Sin horas extra</SelectItem>
+                        <SelectItem value="horario">Horario real (calcula solo)</SelectItem>
+                        <SelectItem value="manual">Horas manuales (número directo)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {modoHorasExtra === "horario" && (
+                    <div className="space-y-1">
+                      <p className="text-xs text-muted-foreground">
+                        Solo tiene efecto en puestos de especialidad: el sistema calcula las horas extra igual que el
+                        flujo normal de campo, con la misma política configurada.
+                      </p>
+                      <div className="flex flex-wrap gap-3">
+                        <div className="space-y-1">
+                          <Label className="text-xs">Entrada real</Label>
+                          <Input type="time" value={horaIngreso} onChange={(e) => setHoraIngreso(e.target.value)} className="w-[130px]" />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Salida real</Label>
+                          <Input type="time" value={horaSalida} onChange={(e) => setHoraSalida(e.target.value)} className="w-[130px]" />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Entrada programada</Label>
+                          <Input type="time" value={horaEntradaProgramada} onChange={(e) => setHoraEntradaProgramada(e.target.value)} className="w-[130px]" />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Salida programada</Label>
+                          <Input type="time" value={horaSalidaProgramada} onChange={(e) => setHoraSalidaProgramada(e.target.value)} className="w-[130px]" />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {modoHorasExtra === "manual" && (
+                    <div className="flex flex-wrap gap-3">
+                      <div className="space-y-1">
+                        <Label className="text-xs">HED (diurna 25%)</Label>
+                        <Input type="number" step="0.01" value={hed} onChange={(e) => setHed(e.target.value)} className="w-[110px]" />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">HEDF (dominical/festiva)</Label>
+                        <Input type="number" step="0.01" value={hedf} onChange={(e) => setHedf(e.target.value)} className="w-[110px]" />
+                      </div>
+                    </div>
+                  )}
+
+                  {usaHorasExtra && (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="aprobarHE"
+                        checked={aprobarHorasExtra}
+                        onChange={(e) => setAprobarHorasExtra(e.target.checked)}
+                        className="h-4 w-4"
+                      />
+                      <Label htmlFor="aprobarHE" className="text-sm">
+                        Aprobar estas horas extra ahora (necesario para que cuenten en nómina)
+                      </Label>
+                    </div>
+                  )}
+
+                  <Button onClick={handleGuardar} disabled={guardando} variant={usaHorasExtra ? "default" : "outline"}>
+                    {guardando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
+                    Guardar
+                  </Button>
+                </div>
+              )}
 
               {/* Historial */}
               <div className="space-y-2">
