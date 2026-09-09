@@ -83,6 +83,48 @@ export async function getPersonasAsistenciaAdministrativa(
   }
 }
 
+export interface EstadoHoyAdministrativo extends PersonaAsistenciaAdmin {
+  tieneHoy: boolean
+}
+
+/**
+ * Estado de HOY (o la fecha dada) para el personal administrativo activo:
+ * quién ya tiene fila en `registroasistencia` y quién falta. Pensado para
+ * que el registro sea DIARIO (a pedido del usuario) y no se acumule para
+ * fin de mes -- da visibilidad de "quién falta marcar hoy" de un vistazo.
+ */
+export async function getEstadoHoyAdministrativos(
+  empresaId: number,
+  fecha?: string,
+): Promise<{ success: boolean; data: EstadoHoyAdministrativo[]; message?: string }> {
+  try {
+    const fechaRef = fecha || new Date().toISOString().slice(0, 10)
+    const personasRes = await getPersonasAsistenciaAdministrativa(empresaId)
+    if (!personasRes.success) return { success: false, data: [], message: personasRes.message }
+    const administrativos = personasRes.data.filter(
+      (p) => p.admin && String(p.estado || "").toUpperCase() === "ACTIVO",
+    )
+    if (administrativos.length === 0) return { success: true, data: [] }
+
+    const admin: any = await getSupabaseAdmin()
+    const { data: filasHoy, error } = await admin
+      .from("registroasistencia")
+      .select("identificacion")
+      .eq("idempresa", empresaId)
+      .eq("fecha", fechaRef)
+      .in("identificacion", administrativos.map((p) => p.identificacion))
+    if (error) return { success: false, data: [], message: error.message }
+    const conFila = new Set((filasHoy || []).map((r: any) => String(r.identificacion).trim()))
+
+    const resultado = administrativos
+      .map((p) => ({ ...p, tieneHoy: conFila.has(p.identificacion) }))
+      .sort((a, b) => Number(a.tieneHoy) - Number(b.tieneHoy) || a.nombre.localeCompare(b.nombre))
+    return { success: true, data: resultado }
+  } catch (e: any) {
+    return { success: false, data: [], message: e?.message || "Error al calcular el estado de hoy." }
+  }
+}
+
 export interface FilaHistorialAsistencia {
   id: number
   fecha: string

@@ -25,9 +25,11 @@ import { es } from "date-fns/locale"
 import {
   getPersonasAsistenciaAdministrativa,
   getHistorialAsistenciaPersona,
+  getEstadoHoyAdministrativos,
   upsertAsistenciaDia,
   type PersonaAsistenciaAdmin,
   type FilaHistorialAsistencia,
+  type EstadoHoyAdministrativo,
 } from "@/lib/asistencia-administrativa-actions"
 import { NOVEDADES_DIA, OPERACIONES_OPTIONS, ESPECIALIDADES_OPTIONS } from "@/lib/asistencia-catalogos"
 
@@ -67,6 +69,24 @@ export default function AsistenciaAdministrativa() {
   const [hedf, setHedf] = useState("")
   const [aprobarHorasExtra, setAprobarHorasExtra] = useState(false)
 
+  // Estado de HOY para administrativos: el registro debe ser DIARIO (a
+  // pedido del usuario), no acumulado para fin de mes -- esto da
+  // visibilidad de quién falta marcar sin tener que buscarlo uno por uno.
+  const [estadoHoy, setEstadoHoy] = useState<EstadoHoyAdministrativo[]>([])
+  const [loadingEstadoHoy, setLoadingEstadoHoy] = useState(true)
+  const [marcandoHoy, setMarcandoHoy] = useState<string | null>(null)
+
+  const cargarEstadoHoy = () => {
+    if (!selectedEmpresaId) return
+    setLoadingEstadoHoy(true)
+    getEstadoHoyAdministrativos(selectedEmpresaId)
+      .then((r) => {
+        if (r.success) setEstadoHoy(r.data)
+        else toast({ title: "Error", description: r.message, variant: "destructive" })
+      })
+      .finally(() => setLoadingEstadoHoy(false))
+  }
+
   useEffect(() => {
     if (!selectedEmpresaId) return
     setLoadingPersonas(true)
@@ -76,7 +96,30 @@ export default function AsistenciaAdministrativa() {
         else toast({ title: "Error", description: r.message, variant: "destructive" })
       })
       .finally(() => setLoadingPersonas(false))
+    cargarEstadoHoy()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedEmpresaId, toast])
+
+  const marcarTrabajadoHoy = async (p: EstadoHoyAdministrativo) => {
+    if (!selectedEmpresaId) return
+    setMarcandoHoy(p.identificacion)
+    const r = await upsertAsistenciaDia({
+      empresaId: selectedEmpresaId,
+      identificacion: p.identificacion,
+      nombre: p.nombre,
+      fechaInicio: toISO(new Date()),
+      tipo: "TRABAJADO",
+      esAdministrativo: true,
+    })
+    setMarcandoHoy(null)
+    if (!r.success) {
+      toast({ title: "Error", description: r.message, variant: "destructive" })
+      return
+    }
+    toast({ title: "Marcado", description: `${p.nombre}: día de hoy registrado.` })
+    cargarEstadoHoy()
+    if (seleccionada?.identificacion === p.identificacion) cargarHistorial(p.identificacion)
+  }
 
   const cargarHistorial = (identificacion: string) => {
     if (!selectedEmpresaId) return
@@ -178,6 +221,61 @@ export default function AsistenciaAdministrativa() {
               operativo sin captura, o para personal administrativo, que no pasa por Tabla Asistencia.
             </AlertDescription>
           </Alert>
+
+          {/* Pendientes de hoy: la asistencia administrativa se registra a
+              DIARIO, no acumulada a fin de mes -- esto da visibilidad
+              inmediata de a quién le falta el día de hoy. */}
+          {loadingEstadoHoy ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Verificando asistencia de hoy...
+            </div>
+          ) : estadoHoy.length > 0 && (
+            <div
+              className={`space-y-2 rounded-lg border p-3 ${
+                estadoHoy.some((p) => !p.tieneHoy) ? "border-amber-300 bg-amber-50" : "border-green-300 bg-green-50"
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                {estadoHoy.some((p) => !p.tieneHoy) ? (
+                  <AlertCircle className="h-4 w-4 text-amber-600" />
+                ) : (
+                  <CheckCircle2 className="h-4 w-4 text-green-600" />
+                )}
+                <p className="text-sm font-medium">
+                  {estadoHoy.every((p) => p.tieneHoy)
+                    ? `Asistencia de hoy completa (${estadoHoy.length}/${estadoHoy.length} administrativos)`
+                    : `Faltan ${estadoHoy.filter((p) => !p.tieneHoy).length} de ${estadoHoy.length} administrativos por marcar hoy`}
+                </p>
+              </div>
+              {estadoHoy.some((p) => !p.tieneHoy) && (
+                <div className="space-y-1">
+                  {estadoHoy
+                    .filter((p) => !p.tieneHoy)
+                    .map((p) => (
+                      <div key={p.identificacion} className="flex items-center justify-between gap-2 rounded-md bg-white/70 px-2 py-1">
+                        <span className="text-sm">
+                          {p.nombre} <span className="text-xs text-muted-foreground">({p.identificacion})</span>
+                        </span>
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={marcandoHoy === p.identificacion}
+                            onClick={() => marcarTrabajadoHoy(p)}
+                          >
+                            {marcandoHoy === p.identificacion && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                            Marcar trabajado hoy
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => seleccionarPersona(p)}>
+                            Registrar novedad
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Selector de persona */}
           <div className="space-y-2">
