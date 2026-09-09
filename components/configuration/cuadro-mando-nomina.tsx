@@ -270,6 +270,19 @@ export function CuadroMandoNomina() {
               (salario de prueba del preview y fallback).
             </p>
           </div>
+          <div className="space-y-1 border-t border-border pt-3">
+            <Label className="text-xs text-muted-foreground">% pagado en incapacidad (13/14/15)</Label>
+            <Input
+              type="number"
+              step="0.01"
+              value={params.pctPagoIncapacidad ?? ""}
+              onChange={(e) => set("pctPagoIncapacidad", Number(e.target.value))}
+            />
+            <p className="text-xs text-muted-foreground">
+              % del día que LIP reconoce en cualquier incapacidad, sin importar el "50%"/"66%" del nombre de la
+              novedad (esa etiqueta es solo la clasificación legal de quién asume el día). Hoy: 100%.
+            </p>
+          </div>
         </Card>
 
         {/* 2) Jornada */}

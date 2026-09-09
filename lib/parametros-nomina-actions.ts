@@ -32,6 +32,8 @@ function rowToVigencia(r: any): VigenciaParametros {
       r.pct_recargo_nocturno_dominical != null
         ? Number(r.pct_recargo_nocturno_dominical)
         : PARAMS_NOMINA_DEFAULTS.pctRecargoNocturnoDominical,
+    pctPagoIncapacidad:
+      r.pct_pago_incapacidad != null ? Number(r.pct_pago_incapacidad) : PARAMS_NOMINA_DEFAULTS.pctPagoIncapacidad,
   }
 }
 
@@ -76,6 +78,7 @@ export async function guardarVigenciaParametros(v: VigenciaParametros): Promise<
       pct_hedf: v.pctHedf,
       pct_hef: v.pctHef,
       pct_recargo_nocturno_dominical: v.pctRecargoNocturnoDominical,
+      pct_pago_incapacidad: v.pctPagoIncapacidad,
       actualizado_at: new Date().toISOString(),
     }
     const { error } = await admin
@@ -127,6 +130,8 @@ function rowToParametros(anio: number, r: any | null): ParametrosNomina {
       r?.pct_recargo_nocturno_dominical != null
         ? Number(r.pct_recargo_nocturno_dominical)
         : PARAMS_NOMINA_DEFAULTS.pctRecargoNocturnoDominical,
+    pctPagoIncapacidad:
+      r?.pct_pago_incapacidad != null ? Number(r.pct_pago_incapacidad) : PARAMS_NOMINA_DEFAULTS.pctPagoIncapacidad,
   }
 }
 

@@ -25,6 +25,11 @@ export interface ParametrosLegalesBase {
   pctHedf: number
   pctHef: number
   pctRecargoNocturnoDominical: number
+  // % del día que LIP reconoce en incapacidad (13/14/15), editable -- confirmado con
+  // datos reales de Siigo (2026-09-08) que hoy paga 100%, sin importar el "50%"/"66%"
+  // del nombre de la novedad (esos son solo la clasificación legal de quién asume el
+  // día). La vista `pagonomina` lee este valor por vigencia en vez de tenerlo fijo.
+  pctPagoIncapacidad: number
 }
 
 export interface ParametrosNomina extends ParametrosLegalesBase {
@@ -47,6 +52,7 @@ export const PARAMS_NOMINA_DEFAULTS: Omit<ParametrosNomina, "anio" | "smlv" | "a
   pctHedf: 115,
   pctHef: 165,
   pctRecargoNocturnoDominical: 125,
+  pctPagoIncapacidad: 100,
 }
 
 export interface RecargosCalculados {
