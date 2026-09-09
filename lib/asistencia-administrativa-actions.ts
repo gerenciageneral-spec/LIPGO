@@ -27,7 +27,6 @@ import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { procesarNovedadRetiro } from "@/lib/retiro-actions"
 import { sincronizarBorradorAusentismo } from "@/lib/ausentismos-actions"
 import {
-  NOVEDADES_DIA,
   ESPECIALIDADES_OPTIONS,
   PUESTO_ADMINISTRATIVO,
   horasTurnoParaEspecialidad,
@@ -253,6 +252,3 @@ export async function upsertAsistenciaDia(
     return { success: false, message: e?.message || "Error al guardar la asistencia." }
   }
 }
-
-export { NOVEDADES_DIA }
-export type { NovedadDia }
