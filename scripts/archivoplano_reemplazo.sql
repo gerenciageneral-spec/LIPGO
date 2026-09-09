@@ -3,8 +3,18 @@
 --   VISTA EN VIVO sobre `pagonomina`: cualquier ajuste (horas, jornada, novedades)
 --   se refleja al instante en el archivo plano de nómina (SIIGO). Misma fuente de
 --   verdad que el IBC de Parafiscales.
---   · Excluye a los trabajadores RETIRADOS (headcount.estado = 'Inactivo'); su
---     nómina pendiente se maneja en el submódulo Liquidaciones.
+--   · RETIRADOS (headcount.estado = 'Inactivo'): sus quincenas YA CERRADAS
+--     (anteriores a la de su retiro) siguen viajando al plano normal, igual
+--     que cuando estaban activos -- SOLO se excluye su quincena de CIERRE
+--     (la nómina pendiente hasta la fecha de retiro), que se paga por el
+--     submódulo Liquidaciones, salvo que el retiro sea >= 2026-09-09
+--     (`NOMINA_PENDIENTE_EN_PLANO_DESDE` en lib/liquidaciones-actions.ts --
+--     si se mueve ese corte, mover también los 4 WHERE de este archivo).
+--     FIX 2026-09-09: antes el filtro miraba el ESTADO ACTUAL sin fecha, así
+--     que la historia COMPLETA de cualquier retirado desaparecía de esta
+--     vista (agosto incluido, para alguien retirado en septiembre) -- 8/8
+--     retirados de agosto verificados con la planilla PILA real de Siigo
+--     tenían 0 filas en archivoplano para TODO su historial.
 --   · JORNADA por FECHA (Ley 2101): las horas del recargo/dominical usan la jornada
 --     vigente en la fecha desde `parametros_legales_vigencia` — LA MISMA fuente
 --     que pagonomina (antes leía jornada_legal y podían divergir). jun-2026 →
@@ -197,9 +207,54 @@ create view public.archivoplano as
              -- en Siigo). Los otros dos JOIN a headcount de esta vista ya usan TRIM.
              LEFT JOIN headcount h ON ((TRIM(BOTH FROM h.nombre) = TRIM(BOTH FROM p.persona))))
           -- Excluir del archivo plano a los trabajadores RETIRADOS (estado
-          -- Inactivo). null/'activo' permanecen (no rompe a los legados). Su
-          -- nómina pendiente se paga desde el submódulo Liquidaciones.
-          WHERE (lower(COALESCE(h.estado, 'activo'::text)) <> 'inactivo'::text)
+          -- Inactivo) -- PERO SOLO LOS DÍAS POSTERIORES a su fecha_retiro. Antes
+          -- este filtro miraba el estado ACTUAL sin fecha: en el momento en que
+          -- alguien se marca Inactivo, TODA su historia desaparecía de esta
+          -- vista -- incluidos meses donde trabajó 100% activo (ej. agosto de
+          -- alguien retirado el 1-sep). Como la vista es EN VIVO (recalcula
+          -- siempre desde el estado actual, sin bitácora de versiones), eso
+          -- hacía imposible reconstruir/auditar qué le correspondía a esa
+          -- persona en un mes ya cerrado. Caso real: 8 de 8 retirados de
+          -- agosto-2026 verificados con la planilla PILA real de Siigo tenían
+          -- CERO filas en archivoplano para TODO su historial, incluyendo
+          -- agosto completo (ANDERSON ALBEIRO CASTAÑEDA VIRA, YAIR DE JESUS
+          -- TRUYOL CABALLERO, HALINTON MANUEL FANDIÑO SUAREZ, y otros 5).
+          --
+          -- SALVAGUARDA (falla hacia EXCLUIR, no hacia pagar, a propósito):
+          -- si no hay `fecha_retiro` registrada, se mantiene el comportamiento
+          -- viejo (excluido por completo) -- hay 14 casos reales de Inactivo
+          -- sin fecha_retiro (datos legados/incompletos) y no hay un límite
+          -- claro desde donde permitirles reaparecer en el plano.
+          --
+          -- OJO -- NO ALCANZA con "fecha <= fecha_retiro" a secas: eso metería
+          -- también la QUINCENA DE CIERRE del retiro (su nómina pendiente), que
+          -- para retiros ANTERIORES al 2026-09-09 ya se cobra por completo vía
+          -- Liquidaciones (`NOMINA_PENDIENTE_EN_PLANO_DESDE` en
+          -- lib/liquidaciones-actions.ts) -- dejarla pasar aquí TAMBIÉN la
+          -- duplicaría. El CASE de abajo replica exactamente la fórmula de
+          -- `defaultPagadoHasta()` de ese mismo archivo (si se cambia una,
+          -- cambiar la otra): última fecha de la quincena ANTERIOR a la del
+          -- retiro. Las quincenas ya cerradas de ANTES de esa fecha (ej. todo
+          -- agosto para alguien retirado el 1-sep) son historial normal, ya
+          -- facturado como nómina regular -- SIEMPRE seguro mostrarlas, sin
+          -- importar el corte.
+          WHERE (
+            lower(COALESCE(h.estado, 'activo'::text)) <> 'inactivo'::text
+            OR (
+              h.fecha_retiro IS NOT NULL
+              AND p.fecha <= h.fecha_retiro
+              AND (
+                p.fecha <= (
+                  CASE
+                    WHEN EXTRACT(day FROM h.fecha_retiro) > 15
+                      THEN make_date(EXTRACT(year FROM h.fecha_retiro)::integer, EXTRACT(month FROM h.fecha_retiro)::integer, 15)
+                    ELSE (date_trunc('month'::text, (h.fecha_retiro)::timestamp with time zone) - interval '1 day')::date
+                  END
+                )
+                OR h.fecha_retiro >= DATE '2026-09-09'
+              )
+            )
+          )
             -- AL PLANO SOLO PASA QUIEN TIENE CONTRATO CON LIP (regla del negocio).
             -- Se exige lo que Siigo necesita para poder asignar la novedad:
             --   · CÉDULA  -> identificacionempleado. Sin ella la fila viaja en
@@ -212,10 +267,11 @@ create view public.archivoplano as
             --     inactivas no lo tienen, y las 3 son casos a corregir en Head
             --     Count (dos marcadas Activo pero con fecha de retiro, y una con
             --     cédula ficticia).
-            -- Los RETIRADOS ya salen por el filtro de estado de arriba: su
-            -- nómina pendiente se paga por el submódulo Liquidaciones, no por el
-            -- plano. El trabajo de todos ellos sigue visible en pagonomina; lo
-            -- que se corta es su viaje a Siigo.
+            -- Los RETIRADOS ya salen por el filtro de arriba SOLO en su
+            -- quincena de cierre (si retiro < 2026-09-09): esa nómina
+            -- pendiente se paga por Liquidaciones, no por el plano. El resto
+            -- de su historia (quincenas ya cerradas) SÍ viaja a Siigo,
+            -- exactamente como cuando la persona seguía activa.
             AND (h.identificacion IS NOT NULL)
             AND (TRIM(BOTH FROM h.identificacion) <> ''::text)
             AND (h.contratosiigo IS NOT NULL)
@@ -256,7 +312,27 @@ create view public.archivoplano as
             sum(a.valor_ajuste) AS total_ajuste
            FROM (ajustes_proyeccion a
              LEFT JOIN headcount h ON ((TRIM(BOTH FROM h.identificacion) = TRIM(BOTH FROM a.identificacion))))
-          WHERE ((a.estado = 'aprobado'::text) AND (lower(COALESCE(h.estado, 'activo'::text)) <> 'inactivo'::text))
+          -- Mismo criterio "solo quincenas ya cerradas, antes de la de
+          -- cierre del retiro" que base_datos arriba (si se cambia una,
+          -- cambiar la otra) -- comparado contra el primer día de la
+          -- quincena en que aplica el ajuste (1 o 16 del mes_aplica).
+          WHERE ((a.estado = 'aprobado'::text) AND (
+            lower(COALESCE(h.estado, 'activo'::text)) <> 'inactivo'::text
+            OR (
+              h.fecha_retiro IS NOT NULL
+              AND make_date(a.anio_aplica::integer, a.mes_aplica::integer, CASE WHEN a.quincena_aplica = 1 THEN 1 ELSE 16 END) <= h.fecha_retiro
+              AND (
+                make_date(a.anio_aplica::integer, a.mes_aplica::integer, CASE WHEN a.quincena_aplica = 1 THEN 1 ELSE 16 END) <= (
+                  CASE
+                    WHEN EXTRACT(day FROM h.fecha_retiro) > 15
+                      THEN make_date(EXTRACT(year FROM h.fecha_retiro)::integer, EXTRACT(month FROM h.fecha_retiro)::integer, 15)
+                    ELSE (date_trunc('month'::text, (h.fecha_retiro)::timestamp with time zone) - interval '1 day')::date
+                  END
+                )
+                OR h.fecha_retiro >= DATE '2026-09-09'
+              )
+            )
+          ))
           GROUP BY a.anio_aplica, a.mes_aplica, a.quincena_aplica, TRIM(BOTH FROM a.identificacion)
         ), agrupado_quincena AS (
          -- CONSOLIDADO POR PERSONA (no por ID trabajado): se agrupa por
@@ -681,7 +757,25 @@ UNION ALL
     0 AS diasnohabiles
    FROM (bonos_nomina b
      LEFT JOIN headcount h ON ((TRIM(BOTH FROM h.identificacion) = TRIM(BOTH FROM b.identificacion))))
-  WHERE ((b.estado = 'aprobado'::text) AND (lower(COALESCE(h.estado, 'activo'::text)) <> 'inactivo'::text))
+  -- Mismo criterio "solo quincenas ya cerradas, antes de la de cierre del
+  -- retiro" que base_datos arriba (si se cambia una, cambiar las 4).
+  WHERE ((b.estado = 'aprobado'::text) AND (
+    lower(COALESCE(h.estado, 'activo'::text)) <> 'inactivo'::text
+    OR (
+      h.fecha_retiro IS NOT NULL
+      AND b.fecha <= h.fecha_retiro
+      AND (
+        b.fecha <= (
+          CASE
+            WHEN EXTRACT(day FROM h.fecha_retiro) > 15
+              THEN make_date(EXTRACT(year FROM h.fecha_retiro)::integer, EXTRACT(month FROM h.fecha_retiro)::integer, 15)
+            ELSE (date_trunc('month'::text, (h.fecha_retiro)::timestamp with time zone) - interval '1 day')::date
+          END
+        )
+        OR h.fecha_retiro >= DATE '2026-09-09'
+      )
+    )
+  ))
   GROUP BY to_char((b.fecha)::timestamp with time zone, 'MM'::text),
         CASE
             WHEN (EXTRACT(day FROM b.fecha) <= (15)::numeric) THEN 1
@@ -715,12 +809,30 @@ UNION ALL
     0 AS diasnohabiles
    FROM (solicitudes_trabajadores s
      LEFT JOIN headcount h ON (h.id = s.colaborador_id))
+  -- Mismo criterio "solo quincenas ya cerradas, antes de la de cierre del
+  -- retiro" que base_datos arriba (si se cambia una, cambiar las 4).
   WHERE (s.tipo = 'anticipo'::text
          AND s.estado = ANY (ARRAY['aprobada'::text, 'completada'::text])
          AND s.fecha_aprobacion IS NOT NULL
          AND s.monto IS NOT NULL
          AND s.monto > (0)::numeric
-         AND (lower(COALESCE(h.estado, 'activo'::text)) <> 'inactivo'::text))
+         AND (
+           lower(COALESCE(h.estado, 'activo'::text)) <> 'inactivo'::text
+           OR (
+             h.fecha_retiro IS NOT NULL
+             AND s.fecha_aprobacion::date <= h.fecha_retiro
+             AND (
+               s.fecha_aprobacion::date <= (
+                 CASE
+                   WHEN EXTRACT(day FROM h.fecha_retiro) > 15
+                     THEN make_date(EXTRACT(year FROM h.fecha_retiro)::integer, EXTRACT(month FROM h.fecha_retiro)::integer, 15)
+                   ELSE (date_trunc('month'::text, (h.fecha_retiro)::timestamp with time zone) - interval '1 day')::date
+                 END
+               )
+               OR h.fecha_retiro >= DATE '2026-09-09'
+             )
+           )
+         ))
   -- ORDER BY POSICIONAL: 1 = mes, 2 = quincena, 4 = identificacionempleado.
   -- `nombreempleado` entró en la 5, así que las posiciones 1, 2 y 4 no se
   -- movieron y este ORDER BY sigue significando lo mismo.

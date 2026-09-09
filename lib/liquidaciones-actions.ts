@@ -28,8 +28,10 @@ import { clasificarDiaCotizacion } from "@/lib/parafiscales"
 // por el usuario): los retiros YA procesados (fecha_retiro < este corte) no
 // se tocan -- su nómina pendiente sigue sumando al total de Liquidaciones,
 // exactamente como antes. El MISMO corte gobierna la vista SQL `archivoplano`
-// (ver scripts/actualizar_archivoplano_nomina_pendiente.sql) -- si se mueve
-// aquí, hay que moverlo también allá.
+// (ver scripts/archivoplano_reemplazo.sql, WHERE de `base_datos` y las otras
+// 3 ramas que unen contra headcount) -- si se mueve aquí, hay que moverlo
+// también allá (son 4 lugares en ese archivo, documentados con la misma
+// nota "si se cambia una, cambiar las 4").
 const NOMINA_PENDIENTE_EN_PLANO_DESDE = "2026-09-09"
 
 export type EstadoLiquidacion = "pendiente" | "liquidada"
