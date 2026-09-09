@@ -6,28 +6,18 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Badge } from "@/components/ui/badge"
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from "@/components/ui/dialog"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useAuth } from "@/components/auth-provider"
 import { useToast } from "@/hooks/use-toast"
 import { UserPlus, Loader2, X, Users, Package, RefreshCw } from "lucide-react"
 import {
   getOrdenesApoyoDelDia,
-  getPersonalApoyoDisponible,
-  previsualizarApoyo,
-  agregarApoyoAOrden,
   quitarApoyoDeOrden,
   type OrdenApoyo,
-  type PersonalApoyoDisponible,
-  type PreviewApoyo,
 } from "@/lib/apoyo-cargue-actions"
+// El diálogo vive aparte porque Centro de Coordinación usa EXACTAMENTE el
+// mismo: dos copias podrían mostrar repartos distintos para la misma orden.
+import { ApoyoCargueDialog, type OrdenParaApoyo } from "@/components/apoyo-cargue-dialog"
 
 function hoyColombia(): string {
   const colombiaDate = new Date().toLocaleString("en-US", { timeZone: "America/Bogota" })
@@ -45,12 +35,7 @@ export function ApoyoCargue() {
   const [ordenes, setOrdenes] = useState<OrdenApoyo[]>([])
   const [loading, setLoading] = useState(false)
 
-  const [ordenActiva, setOrdenActiva] = useState<OrdenApoyo | null>(null)
-  const [personal, setPersonal] = useState<PersonalApoyoDisponible[]>([])
-  const [seleccionados, setSeleccionados] = useState<string[]>([])
-  const [preview, setPreview] = useState<PreviewApoyo | null>(null)
-  const [busyModal, setBusyModal] = useState(false)
-  const [filtroPersonal, setFiltroPersonal] = useState("")
+  const [ordenApoyo, setOrdenApoyo] = useState<OrdenParaApoyo | null>(null)
 
   const cargarOrdenes = useCallback(async () => {
     setLoading(true)
@@ -67,54 +52,6 @@ export function ApoyoCargue() {
     cargarOrdenes()
   }, [cargarOrdenes])
 
-  const abrirModal = async (orden: OrdenApoyo) => {
-    setOrdenActiva(orden)
-    setSeleccionados([])
-    setPreview(null)
-    setFiltroPersonal("")
-    const res = await getPersonalApoyoDisponible(fecha, selectedEmpresaId)
-    if (res.success) {
-      setPersonal(res.data.filter((p) => !orden.auxiliares.some((a) => a.toUpperCase() === p.nombre.toUpperCase())))
-    } else {
-      toast({ title: "Error", description: res.message || "No se pudo cargar el personal", variant: "destructive" })
-    }
-  }
-
-  const cerrarModal = () => {
-    setOrdenActiva(null)
-    setSeleccionados([])
-    setPreview(null)
-  }
-
-  const toggleSeleccion = async (nombre: string) => {
-    const nuevaLista = seleccionados.includes(nombre)
-      ? seleccionados.filter((n) => n !== nombre)
-      : [...seleccionados, nombre]
-    setSeleccionados(nuevaLista)
-
-    if (!ordenActiva) return
-    if (nuevaLista.length === 0) {
-      setPreview(null)
-      return
-    }
-    const res = await previsualizarApoyo(ordenActiva.id, nuevaLista)
-    if (res.success && res.data) setPreview(res.data)
-  }
-
-  const confirmarApoyo = async () => {
-    if (!ordenActiva || seleccionados.length === 0) return
-    setBusyModal(true)
-    const res = await agregarApoyoAOrden(ordenActiva.id, seleccionados)
-    setBusyModal(false)
-    if (res.success) {
-      toast({ title: "Apoyo agregado", description: `${seleccionados.length} persona(s) agregada(s) a ${ordenActiva.ordendecargue}.` })
-      cerrarModal()
-      cargarOrdenes()
-    } else {
-      toast({ title: "Error", description: res.message || "No se pudo agregar el apoyo", variant: "destructive" })
-    }
-  }
-
   const quitar = async (orden: OrdenApoyo, persona: string) => {
     const res = await quitarApoyoDeOrden(orden.id, persona)
     if (res.success) {
@@ -124,8 +61,6 @@ export function ApoyoCargue() {
       toast({ title: "No se pudo quitar", description: res.message || "", variant: "destructive" })
     }
   }
-
-  const personalFiltrado = personal.filter((p) => p.nombre.toLowerCase().includes(filtroPersonal.toLowerCase()))
 
   return (
     <div className="space-y-4">
@@ -177,7 +112,17 @@ export function ApoyoCargue() {
                       <span>
                         Tarifa: <strong>{money(orden.tarifa)}</strong>
                       </span>
-                      <Button size="sm" className="gap-1" onClick={() => abrirModal(orden)}>
+                      <Button
+                        size="sm"
+                        className="gap-1"
+                        onClick={() =>
+                          setOrdenApoyo({
+                            id: orden.id,
+                            ordendecargue: orden.ordendecargue,
+                            auxiliares: orden.auxiliares,
+                          })
+                        }
+                      >
                         <UserPlus className="h-4 w-4" />
                         Agregar apoyo
                       </Button>
@@ -225,80 +170,17 @@ export function ApoyoCargue() {
         </CardContent>
       </Card>
 
-      <Dialog open={!!ordenActiva} onOpenChange={(open) => !open && cerrarModal()}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Agregar apoyo — {ordenActiva?.ordendecargue}</DialogTitle>
-            <DialogDescription>
-              Selecciona el personal presente hoy que apoyará esta orden. Se suma al reparto de toneladas, no
-              reemplaza a nadie.
-            </DialogDescription>
-          </DialogHeader>
+      {/* El MISMO diálogo que usa Centro de Coordinación. Aquí primero hay que
+          elegir la orden de la lista del día; allá ya se sabe cuál es (la del
+          muelle), pero el reparto y la previsualización son idénticos. */}
+      <ApoyoCargueDialog
+        orden={ordenApoyo}
+        fecha={fecha}
+        empresaId={selectedEmpresaId}
+        onCerrar={() => setOrdenApoyo(null)}
+        onAgregado={cargarOrdenes}
+      />
 
-          <Input
-            placeholder="Buscar persona..."
-            value={filtroPersonal}
-            onChange={(e) => setFiltroPersonal(e.target.value)}
-          />
-
-          <div className="max-h-56 overflow-y-auto border rounded-md divide-y">
-            {personalFiltrado.length === 0 ? (
-              <p className="p-3 text-sm text-muted-foreground">No hay personal disponible con ese filtro.</p>
-            ) : (
-              personalFiltrado.map((p) => (
-                <label key={p.id} className="flex items-center gap-2 p-2 text-sm cursor-pointer hover:bg-muted/50">
-                  <input
-                    type="checkbox"
-                    checked={seleccionados.includes(p.nombre)}
-                    onChange={() => toggleSeleccion(p.nombre)}
-                  />
-                  <span className="flex-1">{p.nombre}</span>
-                  {p.puesto && <span className="text-xs text-muted-foreground">{p.puesto}</span>}
-                  {p.especialidad && (
-                    <Badge variant="secondary" className="text-xs">
-                      Turno fijo
-                    </Badge>
-                  )}
-                </label>
-              ))
-            )}
-          </div>
-
-          {preview && (
-            <div className="space-y-2">
-              <p className="text-sm font-medium">Así queda el pago por persona de esta orden:</p>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Persona</TableHead>
-                    <TableHead className="text-right">Antes</TableHead>
-                    <TableHead className="text-right">Después</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {preview.personas.map((p) => (
-                    <TableRow key={p.persona}>
-                      <TableCell>{p.persona}</TableCell>
-                      <TableCell className="text-right">{p.antes == null ? "—" : money(p.antes)}</TableCell>
-                      <TableCell className="text-right font-medium">{money(p.despues)}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-
-          <DialogFooter>
-            <Button variant="outline" onClick={cerrarModal}>
-              Cancelar
-            </Button>
-            <Button onClick={confirmarApoyo} disabled={seleccionados.length === 0 || busyModal}>
-              {busyModal && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-              Confirmar apoyo ({seleccionados.length})
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }

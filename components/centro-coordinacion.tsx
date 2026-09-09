@@ -30,7 +30,15 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { LayoutGrid, Loader2, Camera, UserPlus, Play, Pause, ChevronDown, Truck, Users, AlertTriangle, ClipboardList, CheckSquare } from "lucide-react"
+import { LayoutGrid, Loader2, Camera, UserPlus, Play, Pause, ChevronDown, Truck, Users, AlertTriangle, ClipboardList, CheckSquare, HandHelping } from "lucide-react"
+import { ApoyoCargueDialog, type OrdenParaApoyo } from "@/components/apoyo-cargue-dialog"
+
+/** Hoy en Colombia (YYYY-MM-DD). El Centro de Coordinación siempre trabaja
+ *  sobre el día en curso, así que el personal de apoyo se busca entre quienes
+ *  están presentes HOY. */
+function hoyColombia(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" })
+}
 import {
   getCentroCoordinacion,
   iniciarOrdenEnMuelle,
@@ -204,6 +212,11 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
   // Desglose de la espera por lotes, orden por orden. Se abre al tocar la
   // tarjeta: el promedio dice que hay un problema, pero no CUAL orden lo tiene.
   const [verEsperaLotes, setVerEsperaLotes] = useState(false)
+
+  // Personal de APOYO: la misma función del módulo "Asignación de apoyo en
+  // cargue", pero directo sobre la orden del muelle que se está mirando, sin
+  // tener que salir a buscarla en una lista del día.
+  const [ordenApoyo, setOrdenApoyo] = useState<OrdenParaApoyo | null>(null)
 
   // Asignar personal (mismo flujo que Picking/Packing).
   const [personnelDialogOrder, setPersonnelDialogOrder] = useState<OrdenOperativa | null>(null)
@@ -831,6 +844,14 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
                         hoja={slot.orden ? hojasPorOrden.get(slot.orden.orderId) || null : null}
                         onToggle={() => slot.orden && toggleExpand(slot.orden)}
                         onAsignarPersonal={() => slot.orden && abrirPersonal(slot.orden)}
+                        onAgregarApoyo={() =>
+                          slot.orden &&
+                          setOrdenApoyo({
+                            id: slot.orden.orderId,
+                            ordendecargue: slot.orden.ordendecargue,
+                            auxiliares: slot.orden.auxiliares,
+                          })
+                        }
                         onCerrarFotos={() => slot.orden && abrirFotos(slot.orden)}
                         onPausar={() => slot.orden && togglePausa(slot.orden)}
                         onQuitar={() => slot.orden && quitarDeMuelle(slot.orden)}
@@ -1317,6 +1338,18 @@ export default function CentroCoordinacion({ onNavigate }: CentroCoordinacionPro
         </DialogContent>
       </Dialog>
 
+      {/* Personal de apoyo sobre la orden del muelle. El diálogo es el MISMO
+          que usa el módulo "Asignación de apoyo en cargue" (componente
+          compartido): si fueran dos copias, el reparto de toneladas podría
+          mostrarse distinto según por dónde se entre, y ese número es plata. */}
+      <ApoyoCargueDialog
+        orden={ordenApoyo}
+        fecha={hoyColombia()}
+        empresaId={selectedEmpresaId}
+        onCerrar={() => setOrdenApoyo(null)}
+        onAgregado={cargar}
+      />
+
       {photoOrder && (
         <PickingPhotoUploadDialog
           open={photoDialogOpen}
@@ -1338,6 +1371,7 @@ function MuelleRow({
   hoja,
   onToggle,
   onAsignarPersonal,
+  onAgregarApoyo,
   onCerrarFotos,
   onPausar,
   onQuitar,
@@ -1358,6 +1392,7 @@ function MuelleRow({
   hoja: HojaMuelle | null
   onToggle: () => void
   onAsignarPersonal: () => void
+  onAgregarApoyo: () => void
   onCerrarFotos: () => void
   onPausar: () => void
   onQuitar: () => void
@@ -1591,6 +1626,21 @@ function MuelleRow({
             {o.iniciocargue && pasoActual?.label !== "Asignar Personal" && (
               <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onAsignarPersonal}>
                 <UserPlus className="mr-1 h-3 w-3" /> {auxiliaresLabel ? "Editar personal" : "Asignar personal"}
+              </Button>
+            )}
+            {/* Personal de APOYO: gente de fuera del grupo de cargue --típicamente
+                turno fijo-- que se SUMA al reparto de toneladas de esta orden.
+                Es la misma función del módulo "Asignación de apoyo en cargue",
+                pero sin salir a buscar la orden en una lista. */}
+            {o.iniciocargue && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs"
+                onClick={onAgregarApoyo}
+                title="Sumar personal de apoyo al reparto de toneladas de esta orden"
+              >
+                <HandHelping className="mr-1 h-3 w-3" /> Agregar personal de apoyo
               </Button>
             )}
             {o.iniciocargue && (
