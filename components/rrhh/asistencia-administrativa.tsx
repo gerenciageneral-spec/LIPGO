@@ -40,6 +40,10 @@ export default function AsistenciaAdministrativa() {
   const [personas, setPersonas] = useState<PersonaAsistenciaAdmin[]>([])
   const [loadingPersonas, setLoadingPersonas] = useState(true)
   const [busqueda, setBusqueda] = useState("")
+  // Por defecto solo Administrativos: es el caso de uso más frecuente de este
+  // módulo (el personal operativo normal ya se ve en Tabla Asistencia). "Todos"
+  // sigue disponible para el backfill de operativos sin captura.
+  const [filtroTipo, setFiltroTipo] = useState<"administrativos" | "operativos" | "todos">("administrativos")
   const [seleccionada, setSeleccionada] = useState<PersonaAsistenciaAdmin | null>(null)
 
   const [historial, setHistorial] = useState<FilaHistorialAsistencia[]>([])
@@ -88,11 +92,11 @@ export default function AsistenciaAdministrativa() {
 
   const resultadosBusqueda = useMemo(() => {
     const q = busqueda.trim().toLowerCase()
-    if (!q) return []
     return personas
-      .filter((p) => p.nombre.toLowerCase().includes(q) || p.identificacion.includes(q))
-      .slice(0, 15)
-  }, [busqueda, personas])
+      .filter((p) => filtroTipo === "todos" || (filtroTipo === "administrativos" ? p.admin : !p.admin))
+      .filter((p) => !q || p.nombre.toLowerCase().includes(q) || p.identificacion.includes(q))
+      .slice(0, 50)
+  }, [busqueda, personas, filtroTipo])
 
   const handleGuardar = async () => {
     if (!seleccionada || !selectedEmpresaId || !fechaInicio) return
@@ -165,23 +169,50 @@ export default function AsistenciaAdministrativa() {
                 </Button>
               </div>
             ) : (
-              <div className="relative">
+              <div className="space-y-2">
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant={filtroTipo === "administrativos" ? "default" : "outline"}
+                    onClick={() => setFiltroTipo("administrativos")}
+                  >
+                    Administrativos
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={filtroTipo === "operativos" ? "default" : "outline"}
+                    onClick={() => setFiltroTipo("operativos")}
+                  >
+                    Operativos
+                  </Button>
+                  <Button size="sm" variant={filtroTipo === "todos" ? "default" : "outline"} onClick={() => setFiltroTipo("todos")}>
+                    Todos
+                  </Button>
+                </div>
                 <div className="relative">
                   <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                   <Input
                     className="pl-8"
-                    placeholder={loadingPersonas ? "Cargando personal..." : "Buscar por nombre o cédula..."}
+                    placeholder={loadingPersonas ? "Cargando personal..." : "Filtrar por nombre o cédula (opcional)..."}
                     value={busqueda}
                     onChange={(e) => setBusqueda(e.target.value)}
                     disabled={loadingPersonas}
                   />
                 </div>
-                {resultadosBusqueda.length > 0 && (
-                  <div className="absolute z-10 mt-1 w-full rounded-md border border-border bg-popover shadow-md max-h-64 overflow-y-auto">
-                    {resultadosBusqueda.map((p) => (
+                <div className="max-h-72 overflow-y-auto rounded-md border border-border">
+                  {loadingPersonas ? (
+                    <div className="py-6 text-center text-sm text-muted-foreground">
+                      <Loader2 className="mx-auto h-4 w-4 animate-spin" />
+                    </div>
+                  ) : resultadosBusqueda.length === 0 ? (
+                    <p className="py-6 text-center text-sm text-muted-foreground">
+                      Sin personal {filtroTipo === "administrativos" ? "administrativo" : filtroTipo === "operativos" ? "operativo" : ""} que coincida.
+                    </p>
+                  ) : (
+                    resultadosBusqueda.map((p) => (
                       <button
                         key={p.identificacion}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-muted"
+                        className="flex w-full items-center gap-2 border-b border-border px-3 py-2 text-left text-sm last:border-b-0 hover:bg-muted"
                         onClick={() => seleccionarPersona(p)}
                       >
                         <span className="flex-1">{p.nombre}</span>
@@ -189,10 +220,13 @@ export default function AsistenciaAdministrativa() {
                         <Badge variant={p.admin ? "secondary" : "outline"} className="text-xs">
                           {p.admin ? "Admin" : "Operativo"}
                         </Badge>
+                        <Badge className={`text-xs ${String(p.estado).toUpperCase() === "ACTIVO" ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-800"}`}>
+                          {p.estado || "—"}
+                        </Badge>
                       </button>
-                    ))}
-                  </div>
-                )}
+                    ))
+                  )}
+                </div>
               </div>
             )}
           </div>
