@@ -112,6 +112,10 @@ export interface UserPermissions {
   tabla_asistencia: boolean
   asignacion_horas_extra: boolean
   novedades_personal: boolean
+  // Permiso PROPIO (no comparte con novedades_personal ni visor): a
+  // diferencia de esos módulos, este puede insertar/corregir filas de MESES
+  // YA CERRADOS de nómina (retroactivo), así que se gestiona aparte.
+  asistencia_administrativa: boolean
   ausentismos: boolean
   // Recobro de Incapacidades: permiso PROPIO para que aparezca como línea
   // independiente en Gestión de Usuarios (antes compartía 'ausentismos' y el
@@ -368,6 +372,7 @@ export const MODULE_PERMISSION_MAP: Record<string, keyof UserPermissions> = {
   "Tabla Asistencia": "tabla_asistencia",
   "Asignación horas extra": "asignacion_horas_extra",
   "Novedades de personal": "novedades_personal",
+  "Asistencia Administrativa": "asistencia_administrativa",
   Ausentismos: "ausentismos",
   // Permiso propio para que sea gestionable por separado en Gestión de Usuarios.
   "Recobro de Incapacidades": "recobro_incapacidades",

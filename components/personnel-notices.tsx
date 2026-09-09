@@ -13,21 +13,7 @@ import { Badge } from "@/components/ui/badge"
 import { CalendarIcon, CheckCircle2, AlertCircle } from "lucide-react"
 import { format } from "date-fns"
 import { es } from "date-fns/locale"
-
-const NOTICE_OPTIONS = [
-  "38- Licencia no remunerada- Deducción",
-  "13- Incapacidad por enfermedad general al 100%",
-  "14- Incapacidad por enfermedad general al 50",
-  "15- Incapacidad por enfermedad general al 66%- ingreso",
-  "16- Incapacidad por enfermedad profesional",
-  "20- Licencia maternidad/paternidad",
-  "21- Licencia por luto",
-  "22- Licencia remunerada",
-  "31- Vacaciones disfrutadas",
-  "Retiro",
-  "Descanso",
-  "Descanso compensatorio domingo anterior",
-]
+import { NOVEDADES_DIA as NOTICE_OPTIONS } from "@/lib/asistencia-catalogos"
 
 interface PersonnelRecord {
   id: number

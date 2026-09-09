@@ -18,6 +18,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { useToast } from "@/hooks/use-toast"
 import { reasignarPuestoDelDia } from "@/lib/reasignacion-puesto-actions"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { OPERACIONES_OPTIONS, ESPECIALIDADES_OPTIONS } from "@/lib/asistencia-catalogos"
 import { PoliticasHorasExtra } from "@/components/attendance/politicas-horas-extra"
 
 interface AttendanceRecord {
@@ -121,34 +122,6 @@ interface ShiftAssignment {
   type: "operaciones" | "especialidades" | "novedad" | null
   puesto: string | null
 }
-
-const OPERACIONES_OPTIONS = [
-  "Cargue/Descargue",
-  "Tolva Planchador",
-  "Tolva Bulto",
-  "Distribución Externa",
-  "Auxiliar Mixto",
-
-]
-
-const ESPECIALIDADES_OPTIONS = [
-  "Pacas",
-  "Cosedor",
-  "Arrume Negro",
-  "Reempaque",
-  "Aseo",
-  "Limpieza de Estibas",
-  "Clasificacion huevos",
-  "Cargue/Descargue Huevos",
-  "Estibado PT",
-  "Salvado",
-  "Producción",
-  "Descanso",
-  "Distribución Turno",
-  "Montacargas de producción",
-  "Montacargas de cargue",
-  "Operador PT (Carrusel)",
-]
 
 /**
  * Las dos pestañas del módulo.

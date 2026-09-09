@@ -91,29 +91,7 @@ import {
   type ProgramacionExistenteRow,
 } from "@/lib/programacion-turnos-actions"
 import { getHorarioTolva, guardarHorarioTolva, type VentanaTurno } from "@/lib/horario-tolva-actions"
-
-/**
- * Opciones de novedad. Replica el catalogo usado por
- * `components/personnel-notices.tsx` con EXACTA IGUALDAD DE TEXTO
- * para que las programaciones de novedad que se guardan en
- * `registroasistencia.asistencia` coincidan bit a bit con las que
- * registra "Novedades de Personal" y los modulos aguas abajo (nomina,
- * dashboards, exportes) las reconozcan sin tratamiento adicional.
- */
-const NOTICE_OPTIONS = [
-  "38- Licencia no remunerada- Deducción",
-  "13- Incapacidad por enfermedad general al 100%",
-  "14- Incapacidad por enfermedad general al 50",
-  "15- Incapacidad por enfermedad general al 66%- ingreso",
-  "16- Incapacidad por enfermedad profesional",
-  "20- Licencia maternidad/paternidad",
-  "21- Licencia por luto",
-  "22- Licencia remunerada",
-  "31- Vacaciones disfrutadas",
-  "Retiro",
-  "Descanso",
-  "Descanso compensatorio domingo anterior",
-]
+import { NOVEDADES_DIA as NOTICE_OPTIONS } from "@/lib/asistencia-catalogos"
 
 /**
  * Puesto con doble jornada: al programar "Auxiliar Mixto" se puede

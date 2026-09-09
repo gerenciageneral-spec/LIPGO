@@ -31,6 +31,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
+import { NOVEDADES_DIA as NOTICE_OPTIONS } from "@/lib/asistencia-catalogos"
 
 interface AttendanceRecord {
   id: number
@@ -52,32 +53,6 @@ const ABSENCE_TYPES = [
   { code: "31- Vacaciones disfrutadas", label: "Vacaciones disfrutadas" },
   { code: "38- Licencia no remunerada- Deducción", label: "Licencia no remunerada - Deducción" },
   { code: "Descanso", label: "Descanso" },
-]
-
-const NOTICE_OPTIONS = [
-  "38- Licencia no remunerada- Deducción",
-  "13- Incapacidad por enfermedad general al 100%",
-  "14- Incapacidad por enfermedad general al 50",
-  // Codigo 15: misma familia de incapacidades por enfermedad general
-  // (66% - ingreso). Se mantiene la cadena exacta usada en
-  // personnel-notices.tsx para que el valor escrito en BD coincida bit
-  // a bit con los demas modulos (filtros de FNJ en nomina, dashboards,
-  // exportes, etc.).
-  "15- Incapacidad por enfermedad general al 66%- ingreso",
-  "16- Incapacidad por enfermedad profesional",
-  "20- Licencia maternidad/paternidad",
-  "21- Licencia por luto",
-  "22- Licencia remunerada",
-  "31- Vacaciones disfrutadas",
-  "Retiro",
-  "Descanso",
-  // Compensatorio del domingo anterior. Se replica con la MISMA cadena
-  // exacta que usa `personnel-notices.tsx` para que al editar una
-  // novedad desde el visor de asistencia el valor en BD quede
-  // identico al que registraria el modulo de Novedades de Personal,
-  // y los filtros aguas abajo (nomina, dashboards, exportes) la
-  // reconozcan sin tratamiento adicional.
-  "Descanso compensatorio domingo anterior",
 ]
 
 export function AttendanceViewer() {

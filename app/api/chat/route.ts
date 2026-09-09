@@ -14,27 +14,8 @@ import { REGISTRO_ACCIONES, NUCLEO_PROHIBIDO, pkDe } from "@/lib/lipbot-registry
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getCurrentEmpresaId } from "@/lib/company-filter"
 import { guiaCompactaParaLIPbot } from "@/lib/transacciones-codigo"
+import { NOVEDADES_DIA as CODIGOS_NOVEDAD } from "@/lib/asistencia-catalogos"
 import { z } from "zod"
-
-/**
- * Códigos de novedad válidos (deben coincidir EXACTAMENTE con NOTICE_OPTIONS del
- * módulo "Novedades de personal"). Es una lista blanca: la IA solo puede poner
- * uno de estos valores en la columna `asistencia` de registroasistencia.
- */
-const CODIGOS_NOVEDAD = [
-  "38- Licencia no remunerada- Deducción",
-  "13- Incapacidad por enfermedad general al 100%",
-  "14- Incapacidad por enfermedad general al 50",
-  "15- Incapacidad por enfermedad general al 66%- ingreso",
-  "16- Incapacidad por enfermedad profesional",
-  "20- Licencia maternidad/paternidad",
-  "21- Licencia por luto",
-  "22- Licencia remunerada",
-  "31- Vacaciones disfrutadas",
-  "Retiro",
-  "Descanso",
-  "Descanso compensatorio domingo anterior",
-] as const
 
 /**
  * ============================================================================

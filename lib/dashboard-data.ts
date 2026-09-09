@@ -347,6 +347,12 @@ export const groups: Group[] = [
         title: "Relaciones Laborales y Ausentismo",
         modules: [
           { name: "Novedades de personal", icon: NotebookPen, label: "Novedades de Personal" },
+          // Registra/corrige asistencia y novedades para CUALQUIER fecha
+          // (pasada o futura) -- tapa huecos de captura operativa y lleva la
+          // asistencia diaria del personal administrativo. Permiso propio
+          // (no comparte con "Novedades de personal"): puede tocar meses
+          // ya cerrados de nómina.
+          { name: "Asistencia Administrativa", icon: ClipboardList },
           // Matriz SST-MAT-06 de ausentismo laboral (EG / AT). Comparte el
           // permiso de "Novedades de personal".
           { name: "Ausentismos", icon: Activity },

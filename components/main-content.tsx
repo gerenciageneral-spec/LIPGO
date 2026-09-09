@@ -76,6 +76,7 @@ import AttendanceTable from "@/components/attendance-table" // Added import for 
 import { ExtraHoursAssignment } from "@/components/extra-hours-assignment" // Added import for extra hours assignment module
 import { ApoyoCargue } from "@/components/apoyo-cargue" // Added import for apoyo en cargue module
 import PersonnelNotices from "@/components/personnel-notices" // Added import for personnel notices module
+import AsistenciaAdministrativa from "@/components/rrhh/asistencia-administrativa"
 import GestionTurnos from "@/components/rrhh/gestion-turnos" // CRUD de turnos (tabla tarifasturnos)
 import ProgramacionTurnos from "@/components/rrhh/programacion-turnos" // Programación a futuro de personal en `registroasistencia`
 import NotificacionesPersonal from "@/components/rrhh/notificaciones-personal" // Envío de alertas/turnos por WhatsApp al celular del personal
@@ -814,6 +815,10 @@ export function MainContent({
           ) : selectedModule === "Novedades de personal" ? (
             <PermissionGuard moduleName="Novedades de personal">
               <PersonnelNotices />
+            </PermissionGuard>
+          ) : selectedModule === "Asistencia Administrativa" ? (
+            <PermissionGuard moduleName="Asistencia Administrativa">
+              <AsistenciaAdministrativa />
             </PermissionGuard>
           ) : selectedModule === "Ausentismos" ? (
             <PermissionGuard moduleName="Ausentismos">
