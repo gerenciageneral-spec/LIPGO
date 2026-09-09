@@ -28,7 +28,6 @@ import { procesarNovedadRetiro } from "@/lib/retiro-actions"
 import { sincronizarBorradorAusentismo } from "@/lib/ausentismos-actions"
 import {
   ESPECIALIDADES_OPTIONS,
-  PUESTO_ADMINISTRATIVO,
   horasTurnoParaEspecialidad,
   type NovedadDia,
 } from "@/lib/asistencia-catalogos"
@@ -179,7 +178,17 @@ export async function upsertAsistenciaDia(
     if (tipo === "NOVEDAD") {
       filaBase = { asistencia: input.novedad, puesto: null, horasturno: null, especialidad: false }
     } else if (esAdministrativo) {
-      filaBase = { asistencia: null, puesto: PUESTO_ADMINISTRATIVO, horasturno: null, especialidad: false }
+      // "Descanso" (no un puesto real) -- BUG REAL encontrado y corregido
+      // 2026-09-09: marcar el día con un `puesto` no-null (como se hacía
+      // antes con PUESTO_ADMINISTRATIVO) activa `asistio_ok`/"trabajo
+      // efectivo" en pagonomina, y en domingos/festivos eso disparaba el
+      // recargo dominical a tarifa completa (×1,9) POR ENCIMA del
+      // salario/30 -- sobrepago real confirmado en 7 personas reales de
+      // agosto-2026 antes de revertirlo. "Descanso" da exactamente
+      // valor_diario_ley (salario/30) todos los días, sin recargo
+      // dominical/festivo, y sigue clasificando como TRAB
+      // (clasificarDiaCotizacion) para parafiscales/aux. de transporte.
+      filaBase = { asistencia: "Descanso", puesto: null, horasturno: null, especialidad: false }
     } else {
       const esEspecialidad = (ESPECIALIDADES_OPTIONS as readonly string[]).includes(input.puesto!)
       filaBase = {

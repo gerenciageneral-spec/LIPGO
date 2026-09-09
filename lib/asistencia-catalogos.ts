@@ -48,12 +48,6 @@ export const ESPECIALIDADES_OPTIONS = [
   "Operador PT (Carrusel)",
 ] as const
 
-// Puesto placeholder para personal administrativo (headcount.admin=true) en
-// un día trabajado normal. No existe en `tarifasturnos` -- no dispara
-// ninguna tarifa de turno por accidente, solo activa `asistio_ok` en
-// pagonomina y cae a `valor_diario_ley` (salario/30), que es justo lo que
-// corresponde a un día normal de salario fijo.
-export const PUESTO_ADMINISTRATIVO = "Administrativo"
 
 // Duplicado intencional de app/api/attendance/register-shifts/route.ts: no
 // se centraliza esa ruta del kiosko para no tocarla sin necesidad.
