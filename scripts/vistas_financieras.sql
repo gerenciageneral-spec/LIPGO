@@ -462,9 +462,17 @@ create or replace view public.pagonomina as
                         WHEN (calculo_nomina_base.asistio_ok = 1) THEN calculo_nomina_base.valor_diario_ley
                         ELSE (0)::numeric
                     END
-                    WHEN (TRIM(BOTH FROM calculo_nomina_base.asistencia_texto) = '15- Incapacidad por enfermedad general al 66%- ingreso'::text) THEN (calculo_nomina_base.valor_diario_ley * 0.6667)
+                    -- INCAPACIDAD SIEMPRE AL 100% (2026-09-08, confirmado por el usuario +
+                    -- verificado con datos reales de Siigo): el "66%"/"50%" del nombre de la
+                    -- novedad es solo la clasificación LEGAL (quién asume el día, EPS vs
+                    -- empleador), no el peso que LIP realmente le reconoce al trabajador —
+                    -- LIP completa hasta el 100% del día siempre. Caso real: IVAN ANDRES
+                    -- CASTRO BELTRAN, novedad "Incapacidad... al 66%", Siigo le liquidó
+                    -- $408.544 por 7 días = el valor_diario_ley COMPLETO, no el 66%
+                    -- ($272.363). Antes esta vista era la única que SÍ reducía al 0.6667 —
+                    -- se quita esa reducción, "15-...66%" entra al mismo bucket que 13/14.
                     WHEN (calculo_nomina_base.es_festivo = 1) THEN calculo_nomina_base.valor_diario_ley
-                    WHEN (TRIM(BOTH FROM calculo_nomina_base.asistencia_texto) = ANY (ARRAY['13- Incapacidad por enfermedad general al 100%'::text, '31- Vacaciones disfrutadas'::text, '14- Incapacidad por enfermedad general al 50'::text, 'Descanso'::text, 'Descanso compensatorio domingo anterior'::text])) THEN calculo_nomina_base.valor_diario_ley
+                    WHEN (TRIM(BOTH FROM calculo_nomina_base.asistencia_texto) = ANY (ARRAY['13- Incapacidad por enfermedad general al 100%'::text, '31- Vacaciones disfrutadas'::text, '14- Incapacidad por enfermedad general al 50'::text, '15- Incapacidad por enfermedad general al 66%- ingreso'::text, 'Descanso'::text, 'Descanso compensatorio domingo anterior'::text])) THEN calculo_nomina_base.valor_diario_ley
                     WHEN (calculo_nomina_base.asistio_ok = 1) THEN
                     CASE
                         WHEN ((calculo_nomina_base.especialidad = true) AND (calculo_nomina_base.base_turno IS NOT NULL)) THEN calculo_nomina_base.base_turno
@@ -765,9 +773,11 @@ create or replace view public.pagonomina as
             -- en pre_calculo_valores). Va PRIMERO en sincronía con esa rama — este
             -- CASE es un duplicado histórico de aquel; si se toca uno, tocar el otro.
             WHEN (EXTRACT(day FROM fecha) = (31)::numeric) THEN valor_base_final
-            WHEN (TRIM(BOTH FROM asistencia_texto) = '15- Incapacidad por enfermedad general al 66%- ingreso'::text) THEN (valor_diario_ley * 0.6667)
+            -- INCAPACIDAD SIEMPRE AL 100% -- mismo criterio que valor_base_final arriba
+            -- (si se toca uno, tocar el otro): confirmado por el usuario y verificado con
+            -- datos reales de Siigo (caso IVAN ANDRES CASTRO BELTRAN).
             WHEN (es_festivo = 1) THEN valor_diario_ley
-            WHEN (TRIM(BOTH FROM asistencia_texto) = ANY (ARRAY['13- Incapacidad por enfermedad general al 100%'::text, '31- Vacaciones disfrutadas'::text, '14- Incapacidad por enfermedad general al 50'::text, 'Descanso'::text, 'Descanso compensatorio domingo anterior'::text])) THEN valor_diario_ley
+            WHEN (TRIM(BOTH FROM asistencia_texto) = ANY (ARRAY['13- Incapacidad por enfermedad general al 100%'::text, '31- Vacaciones disfrutadas'::text, '14- Incapacidad por enfermedad general al 50'::text, '15- Incapacidad por enfermedad general al 66%- ingreso'::text, 'Descanso'::text, 'Descanso compensatorio domingo anterior'::text])) THEN valor_diario_ley
             WHEN (especialidad = true) THEN valor_base_final
             -- NUEVO MODELO: el día de destajo YA NO se liquida al valor de sus
             -- toneladas, sino a la BASE del día (valor_base_final = salario/30). Lo que
@@ -857,7 +867,6 @@ create or replace view public.pagonomina as
                          AND (hi2.fechainicio IS NOT NULL))
     )
   ;
-
 -- ----------------------------------------------------------------------------
 -- archivoplano — novedades por quincena para el archivo plano de nómina (SIIGO).
 -- Depende de: pagonomina, headcount.

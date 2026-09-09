@@ -738,17 +738,16 @@ function armarPersona(
           })
         } else if (g.tipo === "Dias") {
           // Efecto NETO en el pago: Siigo descuenta el día y paga el concepto a su %.
+          // INCAPACIDAD SIEMPRE AL 100% (2026-09-08, confirmado por el usuario + verificado
+          // con datos reales de Siigo, caso IVAN ANDRES CASTRO BELTRAN): el "66%"/"50%" del
+          // nombre de la novedad es solo la clasificación legal, no el neto real -- mismo
+          // criterio que pagonomina_reemplazo.sql. Solo la licencia no remunerada (38) sí
+          // descuenta el día de verdad.
           let netoDia = 0
           let nota = "pagada 100% (sin efecto neto)"
           if (nom.startsWith("38")) {
             netoDia = -baseDiaSim
             nota = "no remunerada (descuenta el día)"
-          } else if (nom.startsWith("15")) {
-            netoDia = -baseDiaSim * (1 - 0.6667)
-            nota = "paga 66,67% (descuenta 33,33%)"
-          } else if (nom.startsWith("14")) {
-            netoDia = -baseDiaSim * 0.5
-            nota = "paga 50% (descuenta 50%)"
           }
           conceptos.push({
             concepto: nom,

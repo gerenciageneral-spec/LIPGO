@@ -197,9 +197,25 @@ function defaultPagadoHasta(fechaRetiro: string): string {
 // diario.
 const BONO_DESTAJO_PRESTACIONAL_DESDE = "2026-07-01"
 
-function sumaPeriodo(rows: any[], desde: string, hasta: string, salarioDia: number): { dev: number; dias: number } {
+function sumaPeriodo(
+  rows: any[],
+  desde: string,
+  hasta: string,
+  salarioDia: number,
+): { dev: number; dias: number; diasAux: number } {
   let dev = 0
   let dias = 0
+  // Días que SÍ generan auxilio de transporte -- SOLO "Sueldo" (TRAB en la
+  // clasificación de Parafiscales: vacío/Descanso/festivo/jornada normal).
+  // Confirmado con datos reales de Siigo (2026-09-08): incapacidad, vacaciones
+  // disfrutadas y licencia no remunerada NUNCA generan auxilio, aunque el día
+  // sí se pague. Caso real: IVAN ANDRES CASTRO BELTRAN (7 Sueldo + 7 Incapacidad
+  // + 1 Licencia no remunerada = 15 días de quincena) -- el auxilio de Siigo
+  // fue EXACTO a 7 días (solo Sueldo). ALBERTO JUNIOR ACOSTA FERRER (4 Sueldo +
+  // 11 Vacaciones disfrutadas) -- auxilio exacto a 4 días. Antes esta función
+  // contaba TODOS los días del período por igual, inflando el auxilio prorrateado
+  // de cualquiera con incapacidad/vacaciones/licencia en la ventana.
+  let diasAux = 0
   const bonoPorQuincena = new Map<string, number>()
   for (const r of rows) {
     const f = String(r.fecha)
@@ -210,6 +226,7 @@ function sumaPeriodo(rows: any[], desde: string, hasta: string, salarioDia: numb
         Number(r.total_liquidado_dia || 0) === 0
       dev += sinRegistroSinMotivo ? salarioDia : Number(r.total_liquidado_dia || 0)
       dias += 1
+      if (clasificarDiaCotizacion(r.novedad_reportada) === "TRAB") diasAux += 1
       if (f >= BONO_DESTAJO_PRESTACIONAL_DESDE) {
         // Ya NO se excluye especialidad=true: la vista `pagonomina` (scripts/
         // pagonomina_reemplazo.sql:659,872) ya deja `bonif_prestacional` en $0
@@ -227,7 +244,7 @@ function sumaPeriodo(rows: any[], desde: string, hasta: string, salarioDia: numb
     }
   }
   for (const v of bonoPorQuincena.values()) dev += Math.max(0, v)
-  return { dev, dias }
+  return { dev, dias, diasAux }
 }
 
 export async function getLiquidaciones(
@@ -398,8 +415,13 @@ export async function getLiquidaciones(
       // Bono de productividad de la quincena PENDIENTE (excedente de destajo neto,
       // piso 0 por quincena). Se suma al total además de las bases diarias.
       const excPendiente = new Map<string, number>()
+      // Días de la nómina pendiente que SÍ generan auxilio de transporte -- ver
+      // criterio completo en `sumaPeriodo` (solo "Sueldo"/TRAB, nunca incapacidad,
+      // vacaciones o licencia no remunerada, confirmado con datos reales de Siigo).
+      let diasAuxPendiente = 0
       for (const r of rows) {
         if (pagado_hasta && String(r.fecha) <= pagado_hasta) continue
+        if (clasificarDiaCotizacion(r.novedad_reportada) === "TRAB") diasAuxPendiente += 1
         const nov: LiquidacionNovedad = {
           fecha: r.fecha,
           actividad_registrada: r.actividad_registrada ?? null,
@@ -471,8 +493,11 @@ export async function getLiquidaciones(
         }
         const fillMonto = fillDias * salarioDia
         const diasCes = ce.dias + fillDias
+        // El relleno de enero asume un día de trabajo normal (salario básico), así
+        // que también cuenta para el auxilio -- igual criterio que `diasCes`.
+        const diasAuxCes = ce.diasAux + fillDias
 
-        const auxPropCes = (auxMensual / 30) * diasCes
+        const auxPropCes = (auxMensual / 30) * diasAuxCes
         // Base de cesantías = devengado (incluye el bono de destajo desde
         // julio-2026, ver sumaPeriodo) + relleno enero + auxilio.
         const baseCes = ce.dev + fillMonto + (pp.incluyeAux ? auxPropCes : 0)
@@ -498,7 +523,7 @@ export async function getLiquidaciones(
         const primaDesde =
           info.fechainicio && String(info.fechainicio) > primaDesdeBase ? String(info.fechainicio) : primaDesdeBase
         const pr = sumaPeriodo(rows, primaDesde, info.fecha_retiro, salarioDia)
-        prima = (pr.dev + (pp.incluyeAux ? (auxMensual / 30) * pr.dias : 0)) * (pp.pctPrima / 100)
+        prima = (pr.dev + (pp.incluyeAux ? (auxMensual / 30) * pr.diasAux : 0)) * (pp.pctPrima / 100)
 
         // Vacaciones: se ACUMULAN de forma continua durante TODO el vínculo (no se
         // reinician cada año). Días causados = pctVacaciones × días de vínculo (≈15/año,
@@ -556,7 +581,7 @@ export async function getLiquidaciones(
       // módulo. Solo bajo la regla vieja: con la nueva, el plano ya los resuelve.
       const anioNominaPendiente = info.fecha_retiro ? Number(info.fecha_retiro.slice(0, 4)) : null
       const auxMensualPendiente = anioNominaPendiente ? auxPorAnio.get(anioNominaPendiente) ?? 0 : 0
-      const auxilioTransportePendiente = nominaPagadaPorPlano ? 0 : (auxMensualPendiente / 30) * novedades.length
+      const auxilioTransportePendiente = nominaPagadaPorPlano ? 0 : (auxMensualPendiente / 30) * diasAuxPendiente
       const deduccionLeyPendiente = nominaPagadaPorPlano ? 0 : total * 0.08
 
       data.push({
