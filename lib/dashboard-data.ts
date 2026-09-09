@@ -347,12 +347,10 @@ export const groups: Group[] = [
         title: "Relaciones Laborales y Ausentismo",
         modules: [
           { name: "Novedades de personal", icon: NotebookPen, label: "Novedades de Personal" },
-          // Registra/corrige asistencia y novedades para CUALQUIER fecha
-          // (pasada o futura) -- tapa huecos de captura operativa y lleva la
-          // asistencia diaria del personal administrativo. Permiso propio
-          // (no comparte con "Novedades de personal"): puede tocar meses
-          // ya cerrados de nómina.
-          { name: "Asistencia Administrativa", icon: ClipboardList },
+          // Asistencia Administrativa se movió al grupo "Compensación" (REORG
+          // 2026-09-09, pedido explícito): ahí es donde vive todo lo que
+          // liquida/paga al colaborador, y este módulo alimenta directo esa
+          // liquidación (registra la asistencia que consume pagonomina).
           // Matriz SST-MAT-06 de ausentismo laboral (EG / AT). Comparte el
           // permiso de "Novedades de personal".
           { name: "Ausentismos", icon: Activity },
@@ -408,6 +406,13 @@ export const groups: Group[] = [
       // Reporte de Acumulados que LIPgo CONSTRUYE (mismo formato que el export
       // de Siigo), fuente de verdad hacia adelante -- ver lib/acumulados-lipgo-actions.ts.
       { name: "Acumulados LIPgo", icon: FileSpreadsheet, label: "Acumulados LIPgo" },
+      // Movido desde "Gestión Humana" (REORG 2026-09-09, pedido explícito):
+      // registra/corrige asistencia y novedades para CUALQUIER fecha (pasada
+      // o futura) -- tapa huecos de captura operativa y lleva la asistencia
+      // diaria del personal administrativo. Alimenta directo a pagonomina,
+      // por eso pertenece aquí. Permiso propio (no comparte con "Novedades
+      // de personal"): puede tocar meses ya cerrados de nómina.
+      { name: "Asistencia Administrativa", icon: ClipboardList },
     ],
   },
   {
