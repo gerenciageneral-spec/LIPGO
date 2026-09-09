@@ -53,6 +53,7 @@ import { CierreDiarioPanel, CierreDiarioTira } from "@/components/cierre-diario"
 import { FacturacionReglasHeader } from "@/components/facturacion-reglas-header"
 import { CierreFinanciero } from "@/components/cierre-financiero"
 import { GESTION_LIPGO_DESDE } from "@/lib/facturacion-constantes"
+import { esVehiculoPropioAgrupable } from "@/lib/distribucion-placas"
 
 const money = (n: number) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO")
 // Tarifas por unidad (ej. Huevo $2,95) pierden el sentido si se redondean a
@@ -743,9 +744,19 @@ export function CuadroControlFacturacion() {
     // siempre: un concepto por unidad (Huevos) nunca comparte anexo con el
     // tonelaje normal de la misma operación -- son magnitudes distintas y no
     // se pueden sumar en el mismo total (pedido explícito 2026-09-08).
+    // ID3/CEDI Funza (SOLO id3, pedido explícito -- no toca id2 ni id4): el
+    // Cargue y su clon de Distribución "+D" de LWY354 deben quedar en el
+    // MISMO anexo (madre + clon), igual que ya ocurre en Prefactura vía
+    // esVehiculoPropioAgrupable -- antes salían en 2 PDFs separados por
+    // tipo de operación porque `cubierto_por_fijo` solo aplica a id2.
     const grupos = new Map<string, { owner: string; op: string; unidad: UnidadCobro; filas: typeof data.filas }>()
     for (const f of data.filas) {
-      const op = f.cubierto_por_fijo ? "Cargue/Descargue propio" : f.tipooperacion || "(sin op)"
+      const esCargueDistribucionId3 = empresaId === 3 && esVehiculoPropioAgrupable(empresaId, f.placa, f.tipooperacion)
+      const op = f.cubierto_por_fijo
+        ? "Cargue/Descargue propio"
+        : esCargueDistribucionId3
+          ? "Cargue + Distribución (vehículo propio)"
+          : f.tipooperacion || "(sin op)"
       const k = `${f.owner}|||${op}|||${f.unidad}`
       const g = grupos.get(k) || { owner: f.owner, op, unidad: f.unidad, filas: [] as any }
       g.filas.push(f)

@@ -102,15 +102,47 @@ export function numeroOrdenDistribucion(ordenCargue: string): string {
  * Proyectos donde el vehículo PROPIO se factura ENTERO al owner del
  * proyecto, sin importar el producto que lleve (confirmado 2026-08-02 para
  * ID4/Molinos del Atlántico — LWY393 mezcla productos de Molinos y Avimol
- * pero el viaje completo es un servicio que se le vende solo a Molinos;
- * extendido 2026-08-06 a ID3/Avimol — LWY354 en Funza). El proyecto que NO
- * está aquí (Avimol id2, QHC437/QHQ434/GQV639) no tiene esta regla: su
- * vehículo propio sigue facturando por el owner real del producto, como
- * siempre — ampliarla es una decisión aparte.
+ * pero el viaje completo es un servicio que se le vende solo a Molinos).
+ * ID3/Avimol (LWY354 en CEDI Funza) tuvo esta misma regla del 2026-08-06 al
+ * 2026-09-09: se REVIRTIÓ a pedido explícito porque CEDI Funza recibe y
+ * despacha mercancía de TODOS los ID en la misma bodega, así que LWY354 no
+ * es exclusiva de Avimol — forzar el owner mal-atribuía a Avimol cualquier
+ * viaje que en realidad llevara producto de otro owner (Molinos, Indupan).
+ * En ID3 se factura de nuevo al owner real del producto, como Avimol id2
+ * (QHC437/QHQ434/GQV639) siempre ha hecho.
  */
 export const OWNER_DE_PLACA_PROPIA: Record<number, string> = {
   4: "Molinos del Atlántico",
-  3: "Avimol",
+}
+
+/**
+ * Empresas donde el Cargue y su clon de Distribución "+D" del vehículo
+ * propio (misma orden, mismo ID) se agrupan en un solo resumen/anexo de
+ * facturación ("Cargue + Distribución (vehículo propio)"), para medir sus
+ * toneladas/valor juntas en vez de repartirlas en documentos separados por
+ * operación puntual. Independiente de `OWNER_DE_PLACA_PROPIA`: agrupar el
+ * viaje y forzar el owner son decisiones separadas (ID3 agrupa pero, desde
+ * 2026-09-09, ya NO fuerza el owner — ver comentario arriba).
+ */
+export const VEHICULO_PROPIO_AGRUPA_CARGUE_DISTRIBUCION = new Set<number>([3, 4])
+
+/**
+ * ¿Esta línea es Cargue o Distribución del vehículo propio de un proyecto
+ * que agrupa ese viaje en un solo resumen/anexo? Usado tanto por Prefactura
+ * (`grupoResumen`) como por el Anexo de Facturación en PDF, para que ambos
+ * agrupen exactamente igual.
+ */
+export function esVehiculoPropioAgrupable(
+  idempresa: number | null | undefined,
+  placa: string | null | undefined,
+  tipooperacion: string | null | undefined,
+): boolean {
+  const opNorm = String(tipooperacion ?? "").trim().toLowerCase()
+  return (
+    VEHICULO_PROPIO_AGRUPA_CARGUE_DISTRIBUCION.has(Number(idempresa)) &&
+    esPlacaDistribucion(idempresa, placa) &&
+    (opNorm === "cargue" || opNorm === "distribucion")
+  )
 }
 
 /**

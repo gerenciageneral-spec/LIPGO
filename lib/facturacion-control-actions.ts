@@ -9,7 +9,7 @@
 // es el paso siguiente y NO se cruza aquí.
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
-import { esPlacaDistribucion, cargarPlacasDistribucion, ownerDeLinea, OWNER_DE_PLACA_PROPIA } from "@/lib/distribucion-placas"
+import { esPlacaDistribucion, cargarPlacasDistribucion, ownerDeLinea, esVehiculoPropioAgrupable } from "@/lib/distribucion-placas"
 import { PLACAS_EXCLUIDAS_FACTURAS } from "@/lib/facturas-exclusiones"
 import { getConciliacionAvimol } from "@/lib/conciliacion-avimol-actions"
 import {
@@ -878,16 +878,13 @@ export async function getPrefactura(
         const cantidadFacturable = porUnidad
           ? cantMap.get(`${on}|||${String(r.producto || "").trim()}`) || 0
           : num(r.toneladas)
-        // Unifica Cargue+Distribución del vehículo propio con owner forzado (hoy
-        // solo id4/LWY393) en un mismo grupo de resumen — se factura junto, a un
-        // único cliente, con su propia tarifa. Otros cargues (ej. "cliente
-        // recoge"/terceros) NO entran aquí y siguen por operación, aunque el
-        // owner del producto también sea Molinos: tienen tarifa distinta.
+        // Unifica Cargue+Distribución del vehículo propio (id3/LWY354, id4/LWY393)
+        // en un mismo grupo de resumen — se mide junto, con su propia tarifa.
+        // Otros cargues (ej. "cliente recoge"/terceros) NO entran aquí y siguen
+        // por operación. Ver esVehiculoPropioAgrupable: agrupar el viaje es
+        // independiente de a quién se factura (ese es OWNER_DE_PLACA_PROPIA).
         const opNorm = String(r.tipooperacion ?? "").trim().toLowerCase()
-        const esVehiculoPropioConRegla =
-          !!OWNER_DE_PLACA_PROPIA[idempresa] &&
-          esPlacaDistribucion(idempresa, r.placa) &&
-          (opNorm === "cargue" || opNorm === "distribucion")
+        const esVehiculoPropioConRegla = esVehiculoPropioAgrupable(idempresa, r.placa, r.tipooperacion)
         const grupoResumen = esVehiculoPropioConRegla
           ? "Cargue + Distribución (vehículo propio)"
           : r.tipooperacion || "(sin operación)"
