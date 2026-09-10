@@ -10,6 +10,7 @@
 // El archivo va al bucket "archivos", el mismo de `soportes_documentales`.
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
+import { SIG_EMPRESA_LIP } from "@/lib/sig-types"
 import { getCurrentUsuarioForInsert } from "@/lib/user-context"
 // Los tipos y constantes viven en su propio archivo: este es `"use server"` y
 // aqui SOLO se pueden exportar funciones async.
@@ -255,7 +256,11 @@ export async function getNumeralesDeDocumento(
     const ref = `doc:${documentoId}`
 
     const [covRes, reqRes, normRes] = await Promise.all([
-      admin.from("sig_documento_cobertura").select("id, requisito_id, norma_id").eq("observacion", ref),
+      admin
+        .from("sig_documento_cobertura")
+        .select("id, requisito_id, norma_id")
+        .eq("idempresa", SIG_EMPRESA_LIP)
+        .eq("observacion", ref),
       admin.from("sig_requisitos").select("id, numeral, tema"),
       admin.from("sig_normas").select("id, codigo"),
     ])

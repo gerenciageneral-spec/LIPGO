@@ -471,6 +471,11 @@ export async function vincularDocumentoAObjetivos(
         requisito_id: o.requisitoId,
         norma_id: o.normaId,
         soporte_id: null,
+        // La lectura sigue siendo por `observacion` (es la convencion que ya
+        // usa getMatrizIntegrada), pero la columna documento_id existe con su
+        // indice desde el script 04 y quedaba siempre en null. Se puebla para
+        // que la referencia este tambien en un campo tipado y consultable.
+        documento_id: documentoId,
         estado: opts?.estado ?? "cargado",
         observacion: ref, // referencia al documento (doc:<uuid>)
         actualizado_por: opts?.actualizadoPor ?? null,
