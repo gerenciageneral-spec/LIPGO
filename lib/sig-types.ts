@@ -88,7 +88,25 @@ export interface SigCobertura {
 //  - matriz:    cobertura propia del SIG (manual / documentos vinculados)
 //  - iso9001:   tomado del Centro de Evidencia ISO 9001 (iso_clausulas, auto+manual)
 //  - sst0312:   derivado del SG-SST 0312
-export type SigFuente = "matriz" | "iso9001" | "sst0312"
+//  - modulo:    sustentado por un MODULO de LIPgo (sig_requisito_modulo). No es
+//               un archivo subido sino una pantalla viva con datos: el 4.1 lo
+//               sustenta el modulo DOFA, el 6.2 el de Objetivos y Metas.
+export type SigFuente = "matriz" | "iso9001" | "sst0312" | "modulo"
+
+// Modulo de LIPgo que sustenta un numeral, con la evidencia de que esta vivo.
+export interface SigModuloCobertura {
+  id: number
+  requisito_id: number
+  norma_id: number | null
+  // Nombre visible del modulo, identico al de dashboard-data.ts. Es lo que se
+  // manda en el evento "lipgo:navigate-module" para abrirlo.
+  modulo: string
+  tabla: string | null
+  nota: string | null
+  // Registros vivos en la tabla de respaldo. null = no se pudo contar (o no
+  // hay tabla declarada); 0 = el modulo existe pero esta vacio.
+  registros: number | null
+}
 
 // Celda de la matriz: que pide una norma para un requisito + su evidencia.
 export interface SigCeldaNorma {
@@ -102,6 +120,10 @@ export interface SigCeldaNorma {
   fuente: SigFuente
   // Detalle legible de la fuente (ej. "85% (17/20)" de la metrica ISO 9001).
   valorFuente?: string | null
+  // Modulos de LIPgo que sustentan este numeral. Se llenan siempre que existan,
+  // independientemente de `fuente`: un numeral puede tener a la vez un modulo y
+  // documentos subidos, y el auditor quiere ver ambos.
+  modulos?: SigModuloCobertura[]
 }
 
 // Fila de la matriz integrada general: un numeral con sus 3 normas.

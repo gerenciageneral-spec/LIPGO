@@ -47,6 +47,8 @@ import {
   ShieldCheck,
   Link as LinkIcon,
   Link2,
+  ExternalLink,
+  Boxes,
   FileText,
   X,
   Search,
@@ -598,6 +600,54 @@ function RequisitoDetalle({
                 <EstadoBadge estado={celda.estado} />
               </div>
               {celda.texto && <p className="mt-1 text-xs text-muted-foreground">{celda.texto}</p>}
+
+              {/* Modulos de LIPgo que sustentan este numeral. No son archivos:
+                  son pantallas vivas. Se muestra cuantos registros tienen,
+                  porque un modulo declarado y vacio no es evidencia de nada. */}
+              {(celda.modulos ?? []).length > 0 && (
+                <ul className="mt-2 space-y-1">
+                  {(celda.modulos ?? []).map((m) => {
+                    const vacio = m.registros === 0
+                    const sinConteo = m.registros == null
+                    return (
+                      <li key={m.id}>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            window.dispatchEvent(
+                              new CustomEvent("lipgo:navigate-module", { detail: m.modulo }),
+                            )
+                          }
+                          title={m.nota ?? `Abrir ${m.modulo}`}
+                          className="flex w-full items-center gap-1.5 rounded border px-2 py-1 text-left text-xs transition-colors hover:bg-muted/60"
+                          style={{ borderColor: SST_TOKENS.teal }}
+                        >
+                          <Boxes className="h-3 w-3 shrink-0" style={{ color: SST_TOKENS.teal }} />
+                          <span className="min-w-0 flex-1 truncate font-medium">{m.modulo}</span>
+                          <span
+                            className="shrink-0 rounded px-1 text-[10px]"
+                            style={{
+                              background: vacio || sinConteo ? "#f4f4f5" : SST_TOKENS.teal,
+                              color: vacio || sinConteo ? SST_TOKENS.warn : "#fff",
+                            }}
+                          >
+                            {sinConteo
+                              ? "sin conteo"
+                              : `${m.registros} registro${m.registros === 1 ? "" : "s"}`}
+                          </span>
+                          <ExternalLink className="h-3 w-3 shrink-0 opacity-50" />
+                        </button>
+                        {vacio && (
+                          <p className="mt-0.5 pl-2 text-[10px]" style={{ color: SST_TOKENS.warn }}>
+                            El modulo esta declarado pero no tiene registros: el numeral sigue pendiente.
+                          </p>
+                        )}
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+
               {celda.fuente === "iso9001" ? (
                 <p className="mt-2 flex items-center gap-1 text-xs" style={{ color: SST_TOKENS.teal }}>
                   <LinkIcon className="h-3 w-3" />
@@ -606,6 +656,13 @@ function RequisitoDetalle({
                 </p>
               ) : (
                 <div className="mt-2 flex flex-wrap gap-1.5">
+                  {celda.fuente === "modulo" && (
+                    <p className="mb-1 w-full text-[11px]" style={{ color: SST_TOKENS.teal }}>
+                      Estado tomado del modulo de LIPgo
+                      {celda.valorFuente ? ` · ${celda.valorFuente}` : ""}. Se puede aprobar a mano
+                      si la evidencia lo respalda.
+                    </p>
+                  )}
                   {estados.map((e) => {
                     const key = `${requisito.id}:${n.id}:${e}`
                     const active = celda.estado === e

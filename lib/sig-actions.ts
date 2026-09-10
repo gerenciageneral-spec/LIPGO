@@ -24,6 +24,7 @@ import type {
   SigCobertura,
   SigCeldaNorma,
   SigMatrizRow,
+  SigModuloCobertura,
   SigAvanceNorma,
   SigEstadoCobertura,
   SigObjetivoCobertura,
@@ -131,6 +132,61 @@ export async function getMatrizIntegrada(
         .eq("idempresa", empresaId),
     ])
 
+    // Modulos de LIPgo que sustentan numerales (script 59). Si la tabla aun no
+    // existe, la matriz sigue funcionando exactamente como antes: es la misma
+    // degradacion suave que se aplica al Centro de Evidencia ISO 9001.
+    const modulosPorReq = new Map<number, SigModuloCobertura[]>()
+    try {
+      const { data: mods } = await supabase
+        .from("sig_requisito_modulo")
+        .select("id, requisito_id, norma_id, modulo, tabla, nota")
+        .eq("idempresa", empresaId)
+        .eq("activo", true)
+
+      if (mods?.length) {
+        // Conteo de registros vivos por tabla, en paralelo y una sola vez por
+        // tabla aunque la sustente en varios numerales. Mismo patron que
+        // lib/sst-auditoria-actions.ts para la Resolucion 0312.
+        //
+        // `head: true` no trae filas, solo el conteo: no importa que la tabla
+        // tenga datos sensibles ni cuantas filas tenga.
+        const tablas = Array.from(
+          new Set((mods as any[]).map((m) => m.tabla).filter((t: any): t is string => !!t)),
+        )
+        const conteo = new Map<string, number | null>()
+        await Promise.all(
+          tablas.map(async (tabla) => {
+            try {
+              const { count, error } = await supabase
+                .from(tabla)
+                .select("*", { count: "exact", head: true })
+              // null (no 0) cuando falla: "no se pudo contar" y "esta vacio"
+              // son cosas distintas y la UI las muestra distinto.
+              conteo.set(tabla, error ? null : count ?? 0)
+            } catch {
+              conteo.set(tabla, null)
+            }
+          }),
+        )
+
+        for (const m of mods as any[]) {
+          const arr = modulosPorReq.get(m.requisito_id) ?? []
+          arr.push({
+            id: Number(m.id),
+            requisito_id: Number(m.requisito_id),
+            norma_id: m.norma_id == null ? null : Number(m.norma_id),
+            modulo: m.modulo,
+            tabla: m.tabla ?? null,
+            nota: m.nota ?? null,
+            registros: m.tabla ? conteo.get(m.tabla) ?? null : null,
+          })
+          modulosPorReq.set(m.requisito_id, arr)
+        }
+      }
+    } catch (e) {
+      console.error("[v0] getMatrizIntegrada: no se pudieron leer los modulos:", (e as any)?.message)
+    }
+
     const firstErr = normasRes.error || reqRes.error || rnRes.error || covRes.error
     if (firstErr) return { success: false, normas: [], rows: [], error: firstErr.message }
 
@@ -192,6 +248,20 @@ export async function getMatrizIntegrada(
         const aplica = detalle ? detalle.aplica : false
         const coberturas = covByReqNorma.get(`${req.id}:${n.id}`) ?? []
 
+        // Modulos que sustentan este numeral EN ESTA NORMA: los que declaran
+        // esta norma explicitamente y los comodin (norma_id null), que aplican
+        // a todas. Se adjuntan siempre, incluso cuando la fuente termina siendo
+        // otra: el auditor quiere ver el modulo aunque el estado venga de ISO.
+        const modulos = (modulosPorReq.get(req.id) ?? []).filter(
+          (m) => m.norma_id == null || m.norma_id === n.id,
+        )
+
+        // PRECEDENCIA DE FUENTES (explicita, no accidental):
+        //   1. iso9001  — el Centro de Evidencia ya calcula contra datos reales
+        //                 del ERP; es la medicion mas fuerte que existe.
+        //   2. modulo   — hay un modulo declarado que sustenta el numeral.
+        //   3. matriz   — cobertura propia: documentos subidos + estado manual.
+        //
         // Si es la columna ISO 9001 y existe la clausula en el Centro de
         // Evidencia para este numeral, el estado proviene de alli (real).
         const iso = n.id === normaIso9001Id ? isoPorNumeral.get(req.numeral.trim()) : undefined
@@ -202,9 +272,52 @@ export async function getMatrizIntegrada(
             texto: detalle?.texto ?? null,
             aplica,
             coberturas,
+            modulos,
             estado: isoEstadoASig(iso.estado),
             fuente: "iso9001" as const,
             valorFuente: iso.valor,
+          }
+        }
+
+        // Sustentado por un modulo de LIPgo.
+        if (modulos.length > 0 && aplica) {
+          // Un modulo DECLARADO pero VACIO no es evidencia: ante un auditor no
+          // sirve decir "existe la pantalla" si no tiene un solo registro. Por
+          // eso solo cuenta como cargado cuando hay registros vivos.
+          //
+          // Cuando no se pudo contar (registros null, p. ej. la tabla no
+          // existe) tampoco se afirma cobertura: se prefiere quedar corto antes
+          // que reportar un cumplimiento que nadie verifico.
+          const vivos = modulos.reduce((acc, m) => acc + (m.registros ?? 0), 0)
+          const conConteo = modulos.some((m) => m.registros != null)
+          const porModulo: SigEstadoCobertura = vivos > 0 ? "cargado" : "pendiente"
+
+          // Declarar un modulo NUNCA puede restar evidencia ya existente: si la
+          // celda ya tenia un documento aprobado --o cargado, y el modulo esta
+          // vacio-- ese estado se conserva. Se toma el mas fuerte de los dos,
+          // no el del modulo. Sin esto, mapear un modulo vacio a un numeral que
+          // ya tenia soportes lo bajaria a pendiente y borraria trabajo hecho.
+          const propio = estadoAgregado(aplica, coberturas)
+          const RANGO: Record<SigEstadoCobertura, number> = {
+            no_aplica: 0,
+            pendiente: 1,
+            cargado: 2,
+            aprobado: 3,
+          }
+          const estado = RANGO[propio] >= RANGO[porModulo] ? propio : porModulo
+
+          return {
+            norma_id: n.id,
+            codigo: n.codigo,
+            texto: detalle?.texto ?? null,
+            aplica,
+            coberturas,
+            modulos,
+            estado,
+            fuente: "modulo" as const,
+            valorFuente: conConteo
+              ? `${vivos} registro${vivos === 1 ? "" : "s"}`
+              : "sin conteo disponible",
           }
         }
 
@@ -214,6 +327,7 @@ export async function getMatrizIntegrada(
           texto: detalle?.texto ?? null,
           aplica,
           coberturas,
+          modulos,
           estado: estadoAgregado(aplica, coberturas),
           fuente: "matriz" as const,
         }
