@@ -639,6 +639,18 @@ function RequisitoDetalle({
                             {c.documento?.codigo ? `${c.documento.codigo} — ` : ""}
                             {c.documento?.nombre ?? "Documento"}
                           </span>
+                          {/* A qué proceso del Mapa de Procesos pertenece. Es la
+                              otra mitad de la conexión: desde el mapa se ve el
+                              numeral, y desde aquí, el proceso. */}
+                          {c.documento?.proceso_id && (
+                            <span
+                              className="shrink-0 rounded bg-background px-1 font-mono text-[10px]"
+                              style={{ color: SST_TOKENS.navy }}
+                              title={`Mapa de Procesos · ${c.documento.proceso_id}`}
+                            >
+                              {c.documento.proceso_id}
+                            </span>
+                          )}
                         </span>
                         <button
                           type="button"

@@ -354,7 +354,7 @@ export function MapaProcesos() {
           />
           <aside
             className="fixed bottom-0 right-0 top-0 z-50 overflow-auto bg-white"
-            style={{ width: "min(460px, 94vw)", boxShadow: "-18px 0 50px rgba(8, 30, 30, 0.22)" }}
+            style={{ width: "min(820px, 96vw)", boxShadow: "-18px 0 50px rgba(8, 30, 30, 0.22)" }}
           >
             <div
               className="flex items-start gap-4 px-6 pb-5 pt-5"

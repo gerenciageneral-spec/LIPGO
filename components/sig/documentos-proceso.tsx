@@ -26,17 +26,21 @@ import {
   Download,
   ExternalLink,
   FileText,
+  Link2,
   Loader2,
   Pencil,
   Plus,
   Trash2,
   Upload,
 } from "lucide-react"
+import { NumeralesDocumento } from "@/components/sig/numerales-documento"
 import {
   eliminarDocumentoProceso,
   getDocumentosDeProceso,
+  getNumeralesDeDocumento,
   guardarDocumentoProceso,
   subirArchivoDocumento,
+  type NumeralVinculado,
 } from "@/lib/mapa-procesos-actions"
 import {
   CATEGORIAS,
@@ -85,13 +89,26 @@ export function DocumentosProceso({
   const [subiendo, setSubiendo] = useState(false)
   const [porEliminar, setPorEliminar] = useState<DocumentoProceso | null>(null)
   const [motivo, setMotivo] = useState("")
+  // Numerales de la Matriz Integrada a los que está asociado cada documento.
+  // Se cargan de una sola vez para toda la lista: son pocos por proceso y así
+  // cada tarjeta puede mostrarlos sin una consulta propia.
+  const [numerales, setNumerales] = useState<Record<string, NumeralVinculado[]>>({})
+  const [vinculando, setVinculando] = useState<DocumentoProceso | null>(null)
 
   const cargar = useCallback(async () => {
     setCargando(true)
     setError(null)
     const res = await getDocumentosDeProceso(procesoId)
-    if (res.success && res.data) setDocs(res.data)
-    else setError(res.message ?? "No se pudieron leer los documentos.")
+    if (res.success && res.data) {
+      setDocs(res.data)
+      // Los numerales van en paralelo: si uno falla, la lista igual se ve.
+      const pares = await Promise.all(
+        res.data.map(async (d) => [d.id, (await getNumeralesDeDocumento(d.id)).data ?? []] as const),
+      )
+      setNumerales(Object.fromEntries(pares))
+    } else {
+      setError(res.message ?? "No se pudieron leer los documentos.")
+    }
     setCargando(false)
   }, [procesoId])
 
@@ -226,8 +243,40 @@ export function DocumentosProceso({
                         ) : (
                           <p className="mt-1 text-[11px] text-muted-foreground">Sin archivo adjunto.</p>
                         )}
+
+                        {/* A qué numerales de la Matriz Integrada responde este
+                            documento. Es la mitad visible de la conexión: la
+                            otra mitad es la celda del numeral en la Matriz, que
+                            lee la misma tabla. */}
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                          {(numerales[d.id] ?? []).length === 0 ? (
+                            <span className="text-[11px] text-muted-foreground">
+                              Sin numeral asociado
+                            </span>
+                          ) : (
+                            (numerales[d.id] ?? []).map((n) => (
+                              <span
+                                key={n.coberturaId}
+                                title={`${n.normaCodigo} · ${n.tituloRequisito ?? ""}`}
+                                className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]"
+                              >
+                                {n.numeral}
+                                <span className="opacity-60">{n.normaCodigo}</span>
+                              </span>
+                            ))
+                          )}
+                        </div>
                       </div>
                       <div className="flex flex-none gap-1">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7"
+                          title="Asociar a numerales de la norma"
+                          onClick={() => setVinculando(d)}
+                        >
+                          <Link2 className="h-3.5 w-3.5" />
+                        </Button>
                         <Button
                           size="icon"
                           variant="ghost"
@@ -268,6 +317,16 @@ export function DocumentosProceso({
           </TabsContent>
         ))}
       </Tabs>
+
+      {vinculando && (
+        <NumeralesDocumento
+          documentoId={vinculando.id}
+          documentoNombre={`${vinculando.codigo} · ${vinculando.nombre}`}
+          abierto
+          onCerrar={() => setVinculando(null)}
+          onCambio={cargar}
+        />
+      )}
 
       {/* Alta y edición */}
       <Dialog open={!!editando} onOpenChange={(o) => !o && setEditando(null)}>

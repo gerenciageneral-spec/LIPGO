@@ -149,7 +149,7 @@ export async function getMatrizIntegrada(
     if (docIds.length > 0) {
       const { data: docs } = await supabase
         .from("sig_documentos")
-        .select("id, codigo, nombre, tipo, proceso, version, estado, soporte")
+        .select("id, codigo, nombre, tipo, proceso, version, estado, soporte, proceso_id, categoria")
         .in("id", docIds)
       const docMap = new Map<string, SigDocumento>()
       for (const d of (docs ?? []) as SigDocumento[]) docMap.set(d.id, d)
@@ -422,7 +422,7 @@ export async function getDocumentos(
     const supabase: any = await getSupabaseAdmin()
     let query = supabase
       .from("sig_documentos")
-      .select("id, codigo, nombre, tipo, proceso, version, estado, soporte")
+      .select("id, codigo, nombre, tipo, proceso, version, estado, soporte, proceso_id, categoria")
       .order("codigo", { ascending: true })
     if (filtro && filtro.trim()) {
       const f = filtro.trim().replace(/[%,]/g, "")
@@ -526,7 +526,7 @@ export async function getDocumentosPorNorma(
     const docIds = Array.from(new Set(rows.map((r: any) => r.docId)))
     const reqIds = Array.from(new Set(rows.map((r: any) => r.reqId)))
     const [docsRes, reqsRes] = await Promise.all([
-      supabase.from("sig_documentos").select("id, codigo, nombre, tipo, proceso, version, estado, soporte").in("id", docIds),
+      supabase.from("sig_documentos").select("id, codigo, nombre, tipo, proceso, version, estado, soporte, proceso_id, categoria").in("id", docIds),
       supabase.from("sig_requisitos").select("id, numeral").in("id", reqIds),
     ])
     const docMap = new Map<string, SigDocumento>((docsRes.data ?? []).map((d: any) => [d.id, d]))
@@ -570,7 +570,7 @@ export async function getListadoMaestro(empresaIdFromClient?: number | null): Pr
     const empresaId = await resolveEmpresaId(empresaIdFromClient)
 
     const [docsRes, normasRes, reqRes, covRes, verRes] = await Promise.all([
-      supabase.from("sig_documentos").select("id, codigo, nombre, tipo, proceso, version, estado, soporte"),
+      supabase.from("sig_documentos").select("id, codigo, nombre, tipo, proceso, version, estado, soporte, proceso_id, categoria"),
       supabase.from("sig_normas").select("id, codigo"),
       supabase.from("sig_requisitos").select("id, numeral"),
       supabase

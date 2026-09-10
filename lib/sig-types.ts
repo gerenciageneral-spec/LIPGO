@@ -57,6 +57,11 @@ export interface SigDocumento {
   version: string | null
   estado: string | null
   soporte: string | null // medio del documento (Word, LIPgo, etc.)
+  // Enlace con el Mapa de Procesos (script 58). Opcionales porque las columnas
+  // solo existen despues de esa migracion, y porque los documentos cargados
+  // antes del mapa no tienen proceso asignado.
+  proceso_id?: string | null
+  categoria?: string | null
 }
 
 export interface SigCobertura {

@@ -220,6 +220,151 @@ export async function guardarDocumentoProceso(
   }
 }
 
+/* =========================================================================
+ * ENLACE CON LA MATRIZ INTEGRADA
+ *
+ * Un documento del mapa se asocia a uno o varios numerales de la norma. El
+ * enlace NO se inventa aquí: se reutiliza `sig_documento_cobertura`, que es la
+ * misma tabla que ya usa la Matriz Integrada para saber qué documento cubre
+ * cada requisito.
+ *
+ * Por eso la conexión funciona en los dos sentidos sin trabajo extra: al
+ * vincular desde el mapa, la Matriz Integrada muestra ese documento en la celda
+ * del numeral, porque lee la misma fila.
+ * ========================================================================= */
+
+export interface NumeralVinculado {
+  /** id de la fila de cobertura, para poder desvincular. */
+  coberturaId: number
+  requisitoId: number
+  normaId: number
+  numeral: string
+  normaCodigo: string
+  tituloRequisito: string | null
+}
+
+/** A qué numerales de la matriz está asociado un documento. */
+export async function getNumeralesDeDocumento(
+  documentoId: string,
+): Promise<Resultado<NumeralVinculado[]>> {
+  if (!documentoId) return { success: false, message: "No se indicó el documento." }
+  try {
+    const admin: any = await getSupabaseAdmin()
+    // La referencia al documento viaja en `observacion` con prefijo "doc:".
+    // Es la convención que ya usa vincularDocumentoAObjetivos en sig-actions.
+    const ref = `doc:${documentoId}`
+
+    const [covRes, reqRes, normRes] = await Promise.all([
+      admin.from("sig_documento_cobertura").select("id, requisito_id, norma_id").eq("observacion", ref),
+      admin.from("sig_requisitos").select("id, numeral, tema"),
+      admin.from("sig_normas").select("id, codigo"),
+    ])
+
+    if (covRes.error) {
+      console.error("[v0] getNumeralesDeDocumento:", covRes.error.message)
+      return { success: false, message: covRes.error.message }
+    }
+
+    const reqMap = new Map<number, { numeral: string; tema: string | null }>(
+      (reqRes.data ?? []).map((r: any) => [r.id, { numeral: r.numeral, tema: r.tema ?? null }]),
+    )
+    const normMap = new Map<number, string>((normRes.data ?? []).map((n: any) => [n.id, n.codigo]))
+
+    const out: NumeralVinculado[] = (covRes.data ?? []).map((c: any) => {
+      const r = reqMap.get(c.requisito_id)
+      return {
+        coberturaId: Number(c.id),
+        requisitoId: Number(c.requisito_id),
+        normaId: Number(c.norma_id),
+        numeral: r?.numeral ?? String(c.requisito_id),
+        normaCodigo: normMap.get(c.norma_id) ?? "",
+        tituloRequisito: r?.tema ?? null,
+      }
+    })
+
+    // Por numeral y luego por norma: así el mismo requisito de tres normas
+    // queda junto en la lista.
+    out.sort((a, b) => a.numeral.localeCompare(b.numeral, "es", { numeric: true }) || a.normaCodigo.localeCompare(b.normaCodigo))
+    return { success: true, data: out }
+  } catch (e: any) {
+    console.error("[v0] getNumeralesDeDocumento excepción:", e?.message ?? e)
+    return { success: false, message: e?.message || "No se pudieron leer los numerales." }
+  }
+}
+
+export interface OpcionNumeral {
+  requisitoId: number
+  normaId: number
+  numeral: string
+  normaCodigo: string
+  titulo: string | null
+}
+
+/**
+ * Numerales disponibles para asociar: los que APLICAN en cada norma.
+ *
+ * Se ofrece el par (requisito, norma) y no solo el numeral porque un mismo
+ * requisito puede aplicar en las tres normas y el documento puede cubrir una,
+ * dos o las tres. Es la misma unidad con la que trabaja la Matriz Integrada.
+ */
+export async function getNumeralesDisponibles(): Promise<Resultado<OpcionNumeral[]>> {
+  try {
+    const admin: any = await getSupabaseAdmin()
+    const [reqRes, normRes, rnRes] = await Promise.all([
+      admin.from("sig_requisitos").select("id, numeral, tema"),
+      admin.from("sig_normas").select("id, codigo"),
+      admin.from("sig_requisito_norma").select("requisito_id, norma_id, aplica"),
+    ])
+
+    if (reqRes.error || normRes.error || rnRes.error) {
+      const msg = (reqRes.error || normRes.error || rnRes.error)?.message
+      console.error("[v0] getNumeralesDisponibles:", msg)
+      return { success: false, message: msg }
+    }
+
+    const reqMap = new Map<number, { numeral: string; tema: string | null }>(
+      (reqRes.data ?? []).map((r: any) => [r.id, { numeral: r.numeral, tema: r.tema ?? null }]),
+    )
+    const normMap = new Map<number, string>((normRes.data ?? []).map((n: any) => [n.id, n.codigo]))
+
+    const out: OpcionNumeral[] = []
+    for (const rn of rnRes.data ?? []) {
+      if (rn.aplica === false) continue
+      const r = reqMap.get(rn.requisito_id)
+      if (!r) continue
+      out.push({
+        requisitoId: Number(rn.requisito_id),
+        normaId: Number(rn.norma_id),
+        numeral: r.numeral,
+        normaCodigo: normMap.get(rn.norma_id) ?? "",
+        titulo: r.tema,
+      })
+    }
+
+    out.sort((a, b) => a.numeral.localeCompare(b.numeral, "es", { numeric: true }) || a.normaCodigo.localeCompare(b.normaCodigo))
+    return { success: true, data: out }
+  } catch (e: any) {
+    console.error("[v0] getNumeralesDisponibles excepción:", e?.message ?? e)
+    return { success: false, message: e?.message || "No se pudieron leer los numerales." }
+  }
+}
+
+/** Quita la asociación entre un documento y un numeral. */
+export async function desvincularNumeral(coberturaId: number): Promise<Resultado> {
+  if (!coberturaId) return { success: false, message: "No se indicó qué asociación quitar." }
+  try {
+    const admin: any = await getSupabaseAdmin()
+    const { error } = await admin.from("sig_documento_cobertura").delete().eq("id", coberturaId)
+    if (error) {
+      console.error("[v0] desvincularNumeral:", error.message)
+      return { success: false, message: error.message }
+    }
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "No se pudo quitar la asociación." }
+  }
+}
+
 /**
  * Retira un documento del listado. NO lo borra.
  *
