@@ -93,6 +93,7 @@ export function AttendanceDailyDashboard() {
   const [last7Data, setLast7Data] = useState<MiniRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [todayDate, setTodayDate] = useState("")
+  const [headcountTotal, setHeadcountTotal] = useState(0)
   const [selectedDate, setSelectedDate] = useState("")
   const [realtimeOk, setRealtimeOk] = useState(false)
   const [verAnalisis, setVerAnalisis] = useState(false)
@@ -121,6 +122,7 @@ export function AttendanceDailyDashboard() {
         setData(json.data || [])
         setLast7Data(json.last7Data || [])
         setTodayDate(json.date || "")
+        setHeadcountTotal(json.headcountTotal || 0)
       } catch (e) {
         console.error("Error loading daily dashboard:", e)
       } finally {
@@ -292,9 +294,10 @@ export function AttendanceDailyDashboard() {
       })
     }
     if (stats.ausentismo > 0) {
+      const pctHc = headcountTotal > 0 ? Math.round((stats.ausentismo / headcountTotal) * 100) : null
       notas.push({
         tono: "warn",
-        texto: `${stats.ausentismo} ausentismo(s) justificado(s) hoy — ya sincronizados con Ausentismos.`,
+        texto: `${stats.ausentismo} ausentismo(s) justificado(s) hoy${pctHc !== null ? ` (${stats.ausentismo} de ${headcountTotal} en Head Count, ${pctHc}%)` : ""} — ya sincronizados con Ausentismos.`,
       })
     }
     notas.push({
@@ -302,7 +305,7 @@ export function AttendanceDailyDashboard() {
       texto: "Las horas fuera del puesto asignado no generan hora extra sin aprobación previa (regla vigente en pagonomina).",
     })
     return notas
-  }, [stats])
+  }, [stats, headcountTotal])
 
   if (loading && data.length === 0) {
     return (
@@ -345,6 +348,21 @@ export function AttendanceDailyDashboard() {
       <p className="text-xs text-muted-foreground -mt-3">
         Vista operativa — el personal administrativo se gestiona en <strong>Asistencia Administrativa</strong> (Compensación) y no
         aparece aquí.
+        {headcountTotal > 0 && (
+          <>
+            {" "}
+            · Head Count activo de este proyecto: <strong className="tabular-nums">{headcountTotal}</strong>
+            {stats.ausentismo > 0 && (
+              <>
+                {" "}
+                · Ausentismo:{" "}
+                <strong className="tabular-nums">
+                  {stats.ausentismo} de {headcountTotal} ({Math.round((stats.ausentismo / headcountTotal) * 100)}%)
+                </strong>
+              </>
+            )}
+          </>
+        )}
       </p>
 
       {isToday && stats.sinReportar > 0 && (

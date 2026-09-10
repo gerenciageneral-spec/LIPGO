@@ -35,7 +35,7 @@ export async function GET(request: Request) {
         "id, fecha, nombre, identificacion, puesto, asistencia, hed, hedf, hen, hef, hn, especialidad, horaingreso, horaentradaprogramada"
 
       // Fetch current and previous day in parallel
-      const [currentRes, prevRes, last7Res, adminRes] = await Promise.all([
+      const [currentRes, prevRes, last7Res, adminRes, headcountRes] = await Promise.all([
         supabaseAdmin.from("registroasistencia").select(COLS).eq("idempresa", empresaId).eq("fecha", colombiaDate),
         supabaseAdmin.from("registroasistencia").select(COLS).eq("idempresa", empresaId).eq("fecha", prevDate),
         // Last 7 days for sparkline mini-trend
@@ -61,6 +61,10 @@ export async function GET(request: Request) {
           .select("identificacion")
           .eq("admin", true)
           .or(`idempresa.eq.${empresaId},idempresa.is.null`),
+        // Head Count real operativo de ESTE proyecto (activo, sin admin, sin
+        // cuentas de prueba) -- para comparar el ausentismo del día contra el
+        // total real de personal, no solo contra quien tiene fila hoy.
+        supabaseAdmin.from("headcount").select("identificacion, nombre, admin").eq("idempresa", empresaId).eq("estado", "Activo"),
       ])
 
       if (currentRes.error) {
@@ -76,12 +80,17 @@ export async function GET(request: Request) {
       const soloOperativos = (rows: any[] | null) =>
         (rows || []).filter((r) => !adminIds.has(String(r.identificacion).trim()) && !/prueba/i.test(String(r.nombre || "")))
 
+      const headcountTotal = (headcountRes.data || []).filter(
+        (h: any) => !h.admin && !/prueba/i.test(String(h.nombre || "")),
+      ).length
+
       return NextResponse.json({
         data: soloOperativos(currentRes.data),
         prevData: soloOperativos(prevRes.data),
         last7Data: soloOperativos(last7Res.data),
         date: colombiaDate,
         prevDate,
+        headcountTotal,
       })
     }
 
