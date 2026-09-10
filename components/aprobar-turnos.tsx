@@ -502,14 +502,6 @@ export function AprobarTurnos() {
       
       const doc = new jsPDF()
       const now = new Date()
-      const fechaAprobacion = now.toLocaleDateString("es-CO", { 
-        timeZone: "America/Bogota",
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit"
-      })
 
       // Header
       doc.setFontSize(16)
@@ -523,21 +515,29 @@ export function AprobarTurnos() {
       doc.text(`NIT: ${empresaData.nit || ""}`, 105, 27, { align: "center" })
       doc.text(empresaData.direccion || "", 105, 33, { align: "center" })
 
+      // Titulo dinamico segun el tipo real de las solicitudes aprobadas en
+      // este lote -- evita que una aprobacion de Horas Extra diga "TURNOS"
+      // (pedido explicito: el PDF debe reflejar la solicitud tal como se hizo).
+      const tiposEnLote = new Set(aprobadas.map((s) => (esTipoTurnos(s) ? "turnos" : "horas_extra")))
+      const tituloAprobacion =
+        tiposEnLote.size > 1
+          ? "APROBACIÓN DE TURNOS Y HORAS EXTRAS"
+          : tiposEnLote.has("horas_extra")
+            ? "APROBACIÓN HORAS EXTRAS"
+            : "APROBACIÓN DE TURNOS"
+
       doc.setFontSize(14)
       doc.setFont(undefined as unknown as string, "bold")
-      doc.text("APROBACIÓN DE TURNOS", 105, 45, { align: "center" })
-
-      doc.setFontSize(10)
-      doc.setFont(undefined as unknown as string, "normal")
-      doc.text(`Fecha de aprobación: ${fechaAprobacion}`, 105, 53, { align: "center" })
+      doc.text(tituloAprobacion, 105, 45, { align: "center" })
 
       // Solicitante info
       const solicitante = aprobadas[0]?.nombresolicitante || ""
       const firmasolicitanteUrl = aprobadas[0]?.firmasolicitante
-      
+
       doc.setFontSize(11)
-      doc.text(`Solicitante: ${solicitante}`, 20, 65)
-      doc.text(`Aprobado por: ${profile?.nombre || ""}`, 20, 72)
+      doc.setFont(undefined as unknown as string, "normal")
+      doc.text(`Solicitante: ${solicitante}`, 20, 58)
+      doc.text(`Aprobado por: ${profile?.nombre || ""}`, 20, 65)
 
       // Table with details
       const tableData = aprobadas.map(s => [
@@ -547,8 +547,8 @@ export function AprobarTurnos() {
       ])
 
       autoTable(doc, {
-        startY: 80,
-        head: [["Puesto", "Fecha Requerida", "Cantidad"]],
+        startY: 73,
+        head: [["Puesto", "Fecha de Servicio", "Cantidad"]],
         body: tableData,
         theme: "striped",
         headStyles: { fillColor: [44, 82, 130] },
@@ -557,10 +557,17 @@ export function AprobarTurnos() {
 
       let currentY = (doc as any).lastAutoTable.finalY + 10
 
-      // Total
+      // Total -- misma logica que el titulo: el label tambien debe reflejar
+      // el tipo real de lo aprobado, no siempre decir "turnos".
       const totalCantidad = aprobadas.reduce((sum, s) => sum + Number(s.cantidad), 0)
+      const labelTotal =
+        tiposEnLote.size > 1
+          ? "Total de solicitudes aprobadas"
+          : tiposEnLote.has("horas_extra")
+            ? "Total de horas extra aprobadas"
+            : "Total de turnos aprobados"
       doc.setFont(undefined as unknown as string, "bold")
-      doc.text(`Total de turnos aprobados: ${totalCantidad}`, 20, currentY)
+      doc.text(`${labelTotal}: ${totalCantidad}`, 20, currentY)
 
       // Personnel section
       if (personnel.length > 0) {
