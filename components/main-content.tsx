@@ -140,6 +140,7 @@ import { PanelOperacionLIP } from "@/components/sst/panel-operacion-lip"
 import ControlToneladas from "@/components/control-toneladas"
 import CentroCoordinacion from "@/components/centro-coordinacion"
 import { MapaInteraccionProceso } from "@/components/sst/mapa-interaccion-proceso"
+import { MapaProcesos } from "@/components/sig/mapa-procesos"
 import { PanelInventarioLIP } from "@/components/sst/panel-inventario-lip"
 import { CuadreInventario } from "@/components/sst/cuadre-inventario"
 import { PanelGestionHumanaLIP } from "@/components/sst/panel-gestion-humana-lip"
@@ -964,6 +965,10 @@ export function MainContent({
           ) : selectedModule === "Centro de Coordinación" ? (
             <PermissionGuard moduleName="Centro de Coordinación">
               <CentroCoordinacion onNavigate={onNavigateModule} />
+            </PermissionGuard>
+          ) : selectedModule === "Mapa de Procesos" ? (
+            <PermissionGuard moduleName="Mapa de Procesos">
+              <MapaProcesos />
             </PermissionGuard>
           ) : selectedModule === "Mapa de Interacción del Proceso" ? (
             <PermissionGuard moduleName="Mapa de Interacción del Proceso">
