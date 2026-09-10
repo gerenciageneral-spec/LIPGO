@@ -195,6 +195,8 @@ export function MainContent({
   const [editingOrderId, setEditingOrderId] = React.useState<number | null>(null)
   const [basculaOrderId, setBasculaOrderId] = React.useState<number | null>(null) // Added state to store initial order ID for Báscula module
   const [sanitaryRegistryVehicleId, setSanitaryRegistryVehicleId] = React.useState<number | null>(null) // Added state to store initial vehicle ID for Sanitary Registry module
+  // Identificación a preseleccionar al saltar desde "Ausentismo acumulado" (Visor de Asistencia) hasta Ausentismos.
+  const [ausentismosInitialSearch, setAusentismosInitialSearch] = React.useState<string | null>(null)
 
   // Saludo del hero: personalizado por hora del día + nombre + empresa. Se
   // calcula en useEffect para no romper la hidratación (hora del server ≠ cliente).
@@ -314,12 +316,20 @@ export function MainContent({
       onSelectModule("Registro sanitario")
     }
 
+    const handleVerAusentismosPersona = (event: Event) => {
+      const customEvent = event as CustomEvent<{ identificacion: string }>
+      setAusentismosInitialSearch(customEvent.detail.identificacion)
+      onSelectModule("Ausentismos")
+    }
+
     window.addEventListener("navigate-to-bascula", handleNavigateToBascula)
     window.addEventListener("navigate-to-sanitary-registry", handleNavigateToSanitaryRegistry)
+    window.addEventListener("lipgo:ver-ausentismos-persona", handleVerAusentismosPersona)
 
     return () => {
       window.removeEventListener("navigate-to-bascula", handleNavigateToBascula)
       window.removeEventListener("navigate-to-sanitary-registry", handleNavigateToSanitaryRegistry)
+      window.removeEventListener("lipgo:ver-ausentismos-persona", handleVerAusentismosPersona)
     }
   }, [onSelectModule])
 
@@ -822,7 +832,10 @@ export function MainContent({
             </PermissionGuard>
           ) : selectedModule === "Ausentismos" ? (
             <PermissionGuard moduleName="Ausentismos">
-              <Ausentismos />
+              <Ausentismos
+                initialSearch={ausentismosInitialSearch ?? undefined}
+                onInitialSearchApplied={() => setAusentismosInitialSearch(null)}
+              />
             </PermissionGuard>
           ) : selectedModule === "Recobro de Incapacidades" ? (
             <PermissionGuard moduleName="Recobro de Incapacidades">

@@ -123,7 +123,14 @@ const toNum = (v: string) => {
   return Number.isNaN(n) ? 0 : n
 }
 
-export default function Ausentismos() {
+interface AusentismosProps {
+  /** Cédula a preseleccionar en el buscador al montar (ej. desde "Ausentismo
+   *  acumulado" del Visor de Asistencia). Se aplica una sola vez. */
+  initialSearch?: string
+  onInitialSearchApplied?: () => void
+}
+
+export default function Ausentismos({ initialSearch, onInitialSearchApplied }: AusentismosProps = {}) {
   const { selectedEmpresaId } = useAuth()
   const { toast } = useToast()
   // Publica el filtro año/mes a la tira de KPIs del módulo (tarjetas de arriba),
@@ -150,6 +157,16 @@ export default function Ausentismos() {
   const [mesFiltro, setMesFiltro] = useState<string>("todos")
   // Filtro por estado del colaborador (ACTIVO / RETIRADO).
   const [estadoFiltro, setEstadoFiltro] = useState<string>("todos")
+
+  // Preselección al llegar desde otro módulo (ej. "Ausentismo acumulado" del
+  // Visor de Asistencia) -- se consume una sola vez, luego el buscador queda
+  // libre para que el usuario siga filtrando normalmente.
+  useEffect(() => {
+    if (!initialSearch) return
+    setSearch(initialSearch)
+    onInitialSearchApplied?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialSearch])
 
   // Publicar el filtro año/mes a la tira de KPIs superior (reacciona al mes/año).
   useEffect(() => {

@@ -10,28 +10,10 @@ import { Loader2, Search, Pencil, LayoutDashboard, CalendarDays, TableProperties
 import { useAuth } from "@/components/auth-provider"
 import { createClient } from "@/lib/supabase-client"
 import { fetchAllRows } from "@/lib/fetch-all-rows"
-import { procesarNovedadRetiro } from "@/lib/retiro-actions"
-import { sincronizarBorradorAusentismo } from "@/lib/ausentismos-actions"
 import { AttendanceDailyDashboard } from "@/components/attendance-daily-dashboard"
 import { AttendanceHistoricalDashboard } from "@/components/attendance-historical-dashboard"
 import VisorUbicaciones from "@/components/visor-ubicaciones"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { useToast } from "@/hooks/use-toast"
-import { NOVEDADES_DIA as NOTICE_OPTIONS } from "@/lib/asistencia-catalogos"
+import { EditNovedadDialog, type RegistroParaEditarNovedad } from "@/components/attendance/edit-novedad-dialog"
 
 interface AttendanceRecord {
   id: number
@@ -57,14 +39,10 @@ const ABSENCE_TYPES = [
 
 export function AttendanceViewer() {
   const { selectedEmpresaId } = useAuth()
-  const { toast } = useToast()
   const [records, setRecords] = useState<AttendanceRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [filteredRecords, setFilteredRecords] = useState<AttendanceRecord[]>([])
-  const [editDialogOpen, setEditDialogOpen] = useState(false)
-  const [editingRecord, setEditingRecord] = useState<AttendanceRecord | null>(null)
-  const [editingNotice, setEditingNotice] = useState<string | null>(null)
-  const [editingSaving, setEditingSaving] = useState(false)
+  const [editing, setEditing] = useState<RegistroParaEditarNovedad | null>(null)
   const [activeView, setActiveView] = useState<"table" | "daily" | "historical" | "tracking">("table")
   
   // Filters
@@ -184,82 +162,13 @@ export function AttendanceViewer() {
   }, [filterStartDate, filterEndDate, filterName])
 
   const handleEditNotice = (record: AttendanceRecord) => {
-    setEditingRecord(record)
-    setEditingNotice(record.asistencia || "")
-    setEditDialogOpen(true)
-  }
-
-  const handleSaveNotice = async () => {
-    if (!editingRecord || editingNotice === null) return
-
-    setEditingSaving(true)
-    try {
-      const supabase = await createClient()
-      const { error } = await supabase
-        .from("registroasistencia")
-        .update({ asistencia: editingNotice || null })
-        .eq("id", editingRecord.id)
-
-      if (error) {
-        console.error("[v0] Error updating notice:", error)
-        toast({
-          title: "Error",
-          description: "No se pudo actualizar la novedad",
-          variant: "destructive",
-        })
-        return
-      }
-
-      // Update local records
-      const updatedRecords = records.map((r) =>
-        r.id === editingRecord.id ? { ...r, asistencia: editingNotice } : r
-      )
-      setRecords(updatedRecords)
-      applyFilters(updatedRecords)
-
-      // Efecto automático: si la novedad es "Retiro", dar de baja al trabajador
-      // (Inactivo + fecha de retiro + fuera del plano). No bloquea el guardado.
-      let bajaAplicada = false
-      if (String(editingNotice || "").toLowerCase().includes("retiro")) {
-        const r = await procesarNovedadRetiro({
-          identificacion: editingRecord.identificacion,
-          fecha: editingRecord.fecha,
-          asistencia: editingNotice,
-        })
-        bajaAplicada = !!r.aplicado
-      }
-
-      // Puente automático: reconcilia el borrador de ausentismo de esta persona
-      // (incapacidad EG/AT o licencia → crea/actualiza borrador; si la novedad se
-      // cambió a algo que no es ausentismo, limpia el borrador huérfano). No bloquea.
-      if (selectedEmpresaId && editingRecord.identificacion && editingRecord.fecha) {
-        try {
-          await sincronizarBorradorAusentismo(selectedEmpresaId, editingRecord.identificacion, editingRecord.fecha)
-        } catch (e) {
-          console.error("[v0] sincronizarBorradorAusentismo:", e)
-        }
-      }
-
-      toast({
-        title: "Éxito",
-        description: bajaAplicada
-          ? "Retiro registrado: trabajador dado de baja (Inactivo) y retirado del plano."
-          : "Novedad actualizada correctamente",
-      })
-
-      setEditDialogOpen(false)
-      setEditingRecord(null)
-      setEditingNotice(null)
-    } catch (error) {
-      console.error("[v0] Error saving notice:", error)
-      toast({
-        title: "Error",
-        description: "Ocurrió un error al guardar",
-        variant: "destructive",
-      })
-    } finally {
-      setEditingSaving(false)
-    }
+    setEditing({
+      id: record.id,
+      identificacion: record.identificacion,
+      fecha: record.fecha,
+      nombre: record.nombre,
+      asistencia: record.asistencia,
+    })
   }
 
   return (
@@ -473,53 +382,12 @@ export function AttendanceViewer() {
 
       </>}
 
-      {/* Edit Notice Dialog */}
-      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-        <DialogContent className="sm:max-w-[425px]">
-          <DialogHeader>
-            <DialogTitle>Editar Novedad</DialogTitle>
-            <DialogDescription>
-              {editingRecord && `${editingRecord.nombre} - ${editingRecord.fecha}`}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Novedad</label>
-              <Select value={editingNotice || ""} onValueChange={setEditingNotice}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Seleccionar novedad..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {NOTICE_OPTIONS.map((option) => (
-                    <SelectItem key={option} value={option}>
-                      {option}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setEditDialogOpen(false)}
-              disabled={editingSaving}
-            >
-              Cancelar
-            </Button>
-            <Button
-              onClick={handleSaveNotice}
-              disabled={editingSaving}
-              className="gap-1"
-            >
-              {editingSaving && <Loader2 className="h-4 w-4 animate-spin" />}
-              {editingSaving ? "Guardando..." : "Guardar"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <EditNovedadDialog
+        empresaId={selectedEmpresaId}
+        registro={editing}
+        onOpenChange={(open) => !open && setEditing(null)}
+        onSaved={() => loadData()}
+      />
     </div>
   )
 }

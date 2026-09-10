@@ -2,12 +2,13 @@
 
 import { useEffect, useState, useMemo, useCallback } from "react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
-import { Loader2, RefreshCw, CalendarDays, ChevronDown, ChevronUp } from "lucide-react"
+import { Loader2, RefreshCw, CalendarDays, ChevronDown, ChevronUp, Pencil, AlertTriangle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { DatePickerField } from "@/components/ui/date-picker-field"
 import { useAuth } from "@/components/auth-provider"
 import { supabase } from "@/lib/supabase"
 import { isLate } from "@/lib/asistencia-catalogos"
+import { EditNovedadDialog, type RegistroParaEditarNovedad } from "@/components/attendance/edit-novedad-dialog"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts"
 
 interface DashboardRecord {
@@ -44,6 +45,14 @@ const ESTADO_TXT: Record<Estado, { label: string; text: string; bg: string; dot:
   sin_reportar: { label: "No presentado", text: "text-rose-600", bg: "bg-rose-500", dot: "bg-rose-500" },
 }
 
+const ESTADO_FILTROS: { value: "todos" | Estado; label: string }[] = [
+  { value: "todos", label: "Todos" },
+  { value: "a_tiempo", label: "A tiempo" },
+  { value: "tarde", label: "Tarde" },
+  { value: "ausentismo", label: "Ausentismo" },
+  { value: "sin_reportar", label: "No presentado" },
+]
+
 const iniciales = (nombre: string) =>
   nombre
     .trim()
@@ -69,6 +78,8 @@ export function AttendanceDailyDashboard() {
   const [selectedDate, setSelectedDate] = useState("")
   const [realtimeOk, setRealtimeOk] = useState(false)
   const [verAnalisis, setVerAnalisis] = useState(false)
+  const [filtroEstado, setFiltroEstado] = useState<"todos" | Estado>("todos")
+  const [editing, setEditing] = useState<RegistroParaEditarNovedad | null>(null)
 
   const getTodayColombia = () =>
     new Date()
@@ -166,6 +177,11 @@ export function AttendanceDailyDashboard() {
       })
   }, [data])
 
+  const marcacionesFiltradas = useMemo(
+    () => (filtroEstado === "todos" ? marcaciones : marcaciones.filter((r) => r.estado === filtroEstado)),
+    [marcaciones, filtroEstado],
+  )
+
   const porPuesto = useMemo(() => {
     const map: Record<string, { puesto: string; aTiempo: number; tarde: number }> = {}
     for (const r of data) {
@@ -184,11 +200,11 @@ export function AttendanceDailyDashboard() {
   }, [data])
 
   const ausentismoAcumulado = useMemo(() => {
-    const map: Record<string, { nombre: string; faltas: number; motivos: Set<string> }> = {}
+    const map: Record<string, { identificacion: string; nombre: string; faltas: number; motivos: Set<string> }> = {}
     for (const r of last7Data) {
       if (!r.asistencia) continue
       const k = r.identificacion
-      if (!map[k]) map[k] = { nombre: r.nombre, faltas: 0, motivos: new Set() }
+      if (!map[k]) map[k] = { identificacion: k, nombre: r.nombre, faltas: 0, motivos: new Set() }
       map[k].faltas++
       map[k].motivos.add(r.asistencia)
     }
@@ -303,6 +319,16 @@ export function AttendanceDailyDashboard() {
         aparece aquí.
       </p>
 
+      {isToday && stats.sinReportar > 0 && (
+        <div className="flex items-center gap-2.5 rounded-lg border border-rose-500/30 bg-rose-500/[0.06] px-4 py-2.5">
+          <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0" />
+          <p className="text-[13px] text-rose-700 dark:text-rose-400">
+            <strong>{stats.sinReportar}</strong> {stats.sinReportar === 1 ? "persona programada no ha marcado" : "personas programadas no han marcado"}{" "}
+            hoy — revisa "Marcaciones de hoy" (filtro "No presentado").
+          </p>
+        </div>
+      )}
+
       {/* KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Card>
@@ -343,15 +369,32 @@ export function AttendanceDailyDashboard() {
         {/* Columna izquierda */}
         <div className="space-y-4">
           <Card>
-            <CardHeader className="pb-2 flex-row items-center justify-between space-y-0">
+            <CardHeader className="pb-2 space-y-2">
               <CardTitle className="text-sm">Marcaciones de hoy</CardTitle>
+              <div className="flex flex-wrap gap-1.5">
+                {ESTADO_FILTROS.map((f) => (
+                  <button
+                    key={f.value}
+                    onClick={() => setFiltroEstado(f.value)}
+                    className={`text-[11px] font-medium px-2.5 py-1 rounded-full border transition-colors ${
+                      filtroEstado === f.value
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "bg-transparent text-muted-foreground border-border hover:bg-muted"
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
             </CardHeader>
             <CardContent className="p-0">
               <div className="max-h-[420px] overflow-y-auto divide-y divide-border">
-                {marcaciones.length === 0 ? (
-                  <div className="py-10 text-center text-sm text-muted-foreground">No hay turnos programados para esta fecha.</div>
+                {marcacionesFiltradas.length === 0 ? (
+                  <div className="py-10 text-center text-sm text-muted-foreground">
+                    {marcaciones.length === 0 ? "No hay turnos programados para esta fecha." : "Nadie en este estado."}
+                  </div>
                 ) : (
-                  marcaciones.map((r) => {
+                  marcacionesFiltradas.map((r) => {
                     const e = ESTADO_TXT[r.estado]
                     return (
                       <div key={r.id} className="flex items-center gap-3 px-4 py-2.5">
@@ -368,6 +411,17 @@ export function AttendanceDailyDashboard() {
                           <p className="text-[13px] font-semibold tabular-nums">{r.horaingreso ? r.horaingreso.slice(0, 5) : "—"}</p>
                           <p className={`text-[11px] font-bold ${e.text}`}>{e.label}</p>
                         </div>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7 shrink-0"
+                          title="Registrar novedad"
+                          onClick={() =>
+                            setEditing({ id: r.id, identificacion: r.identificacion, fecha: r.fecha, nombre: r.nombre, asistencia: r.asistencia })
+                          }
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
                       </div>
                     )
                   })
@@ -385,7 +439,16 @@ export function AttendanceDailyDashboard() {
               <CardContent className="p-0">
                 <div className="divide-y divide-border">
                   {ausentismoAcumulado.map((p, i) => (
-                    <div key={i} className="flex items-center gap-3 px-4 py-2">
+                    <button
+                      key={i}
+                      onClick={() =>
+                        window.dispatchEvent(
+                          new CustomEvent("lipgo:ver-ausentismos-persona", { detail: { identificacion: p.identificacion } }),
+                        )
+                      }
+                      className="flex w-full items-center gap-3 px-4 py-2 text-left hover:bg-muted/50 transition-colors"
+                      title="Ver en Ausentismos"
+                    >
                       <div className="h-5 w-5 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center shrink-0">
                         {i + 1}
                       </div>
@@ -396,7 +459,7 @@ export function AttendanceDailyDashboard() {
                       <span className="text-[10.5px] font-bold text-rose-600 bg-rose-500/10 px-2 py-0.5 rounded-full shrink-0">
                         {p.faltas}
                       </span>
-                    </div>
+                    </button>
                   ))}
                 </div>
               </CardContent>
@@ -541,6 +604,13 @@ export function AttendanceDailyDashboard() {
           </Card>
         )}
       </div>
+
+      <EditNovedadDialog
+        empresaId={selectedEmpresaId}
+        registro={editing}
+        onOpenChange={(open) => !open && setEditing(null)}
+        onSaved={() => loadData()}
+      />
     </div>
   )
 }
