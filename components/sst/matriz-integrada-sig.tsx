@@ -27,7 +27,12 @@ import {
   vincularDocumentoAObjetivos,
   eliminarCobertura,
   getAvance0312,
+  getModulosDeRequisito,
+  getTablasModuloPermitidas,
+  vincularModuloARequisito,
+  desvincularModuloDeRequisito,
 } from "@/lib/sig-actions"
+import { groups } from "@/lib/dashboard-data"
 import type {
   SigNorma,
   SigMatrizRow,
@@ -35,6 +40,7 @@ import type {
   SigEstadoCobertura,
   SigEsComun,
   SigDocumento,
+  SigModuloCobertura,
 } from "@/lib/sig-types"
 import {
   Loader2,
@@ -571,6 +577,9 @@ function RequisitoDetalle({
           </div>
         </div>
         <DocumentoVincular row={row} normas={normas} empresaId={empresaId} onLinked={onUploaded} />
+        {/* La otra clase de evidencia: un modulo de LIPgo que ya funciona, en
+            vez de un archivo. Ver scripts/sig/59_requisito_modulo.sql. */}
+        <ModuloVincular row={row} normas={normas} onLinked={onUploaded} />
       </div>
 
       {/* Derecha: estado de cobertura por norma */}
@@ -733,6 +742,247 @@ function RequisitoDetalle({
 // Selector para vincular un documento real del maestro (sig_documentos)
 // a uno o varios numerales/normas (documento compartido).
 // ---------------------------------------------------------------------------
+
+/**
+ * Declara que un MODULO de LIPgo sustenta este numeral.
+ *
+ * A diferencia de un documento, un modulo no se sube: ya existe y funciona. Lo
+ * que se declara aqui es la relacion, y la Matriz la usa para mostrar el modulo
+ * con sus registros vivos. Ver scripts/sig/59_requisito_modulo.sql.
+ */
+function ModuloVincular({
+  row,
+  normas,
+  onLinked,
+}: {
+  row: SigMatrizRow
+  normas: SigNorma[]
+  onLinked: () => void
+}) {
+  const { toast } = useToast()
+  const [open, setOpen] = useState(false)
+  const [cargando, setCargando] = useState(false)
+  const [guardando, setGuardando] = useState(false)
+  const [actuales, setActuales] = useState<SigModuloCobertura[]>([])
+  const [tablas, setTablas] = useState<string[]>([])
+  const [buscar, setBuscar] = useState("")
+  const [modulo, setModulo] = useState<string | null>(null)
+  const [tabla, setTabla] = useState<string>("")
+  const [normaId, setNormaId] = useState<number | null>(null)
+
+  // Catalogo canonico de modulos: se deriva de `groups`, que es el mismo
+  // registro que usan el sidebar, el ruteo y los permisos. Derivarlo evita
+  // mantener una segunda lista que se desincronizaria.
+  const modulosDisponibles = useMemo(() => {
+    const out: string[] = []
+    for (const g of groups) {
+      for (const m of g.modules ?? []) out.push(m.name)
+      for (const sg of g.subgroups ?? []) for (const m of sg.modules) out.push(m.name)
+    }
+    return Array.from(new Set(out)).sort((a, b) => a.localeCompare(b, "es"))
+  }, [])
+
+  const filtrados = useMemo(() => {
+    const t = buscar.trim().toLowerCase()
+    const yaPuestos = new Set(actuales.map((a) => a.modulo))
+    return modulosDisponibles
+      .filter((m) => !yaPuestos.has(m))
+      .filter((m) => !t || m.toLowerCase().includes(t))
+      .slice(0, 60)
+  }, [modulosDisponibles, actuales, buscar])
+
+  async function abrir() {
+    setOpen(true)
+    setCargando(true)
+    const [res, tbs] = await Promise.all([
+      getModulosDeRequisito(row.requisito.id),
+      getTablasModuloPermitidas(),
+    ])
+    if (res.success) setActuales(res.data)
+    setTablas(tbs)
+    setCargando(false)
+  }
+
+  async function guardar() {
+    if (!modulo) return
+    setGuardando(true)
+    const res = await vincularModuloARequisito({
+      requisitoId: row.requisito.id,
+      normaId,
+      modulo,
+      tabla: tabla || null,
+    })
+    setGuardando(false)
+    if (!res.success) {
+      toast({ title: "No se pudo vincular", description: res.error, variant: "destructive" })
+      return
+    }
+    toast({
+      title: "Modulo vinculado",
+      description: tabla
+        ? `${modulo} sustenta el numeral ${row.requisito.numeral}.`
+        : `${modulo} vinculado. Sin tabla de conteo no se muestra cuantos registros tiene.`,
+    })
+    setModulo(null)
+    setTabla("")
+    setBuscar("")
+    const r = await getModulosDeRequisito(row.requisito.id)
+    if (r.success) setActuales(r.data)
+    onLinked()
+  }
+
+  async function quitar(id: number, nombre: string) {
+    const res = await desvincularModuloDeRequisito(id)
+    if (!res.success) {
+      toast({ title: "No se pudo quitar", description: res.error, variant: "destructive" })
+      return
+    }
+    toast({ title: "Modulo desvinculado", description: nombre })
+    setActuales((prev) => prev.filter((a) => a.id !== id))
+    onLinked()
+  }
+
+  if (!open) {
+    return (
+      <Button variant="outline" size="sm" className="w-full" onClick={abrir}>
+        <Boxes className="mr-2 h-4 w-4" />
+        Vincular un modulo de LIPgo
+      </Button>
+    )
+  }
+
+  return (
+    <div className="rounded-md border p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-sm font-medium">Modulos que sustentan {row.requisito.numeral}</span>
+        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setOpen(false)}>
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
+
+      {cargando ? (
+        <p className="py-3 text-center text-xs text-muted-foreground">Cargando...</p>
+      ) : (
+        <>
+          {actuales.length > 0 && (
+            <ul className="mb-3 space-y-1">
+              {actuales.map((a) => (
+                <li
+                  key={a.id}
+                  className="flex items-center gap-2 rounded bg-muted/50 px-2 py-1 text-xs"
+                >
+                  <Boxes className="h-3 w-3 shrink-0" style={{ color: SST_TOKENS.teal }} />
+                  <span className="min-w-0 flex-1 truncate">{a.modulo}</span>
+                  {a.tabla ? (
+                    <span className="shrink-0 font-mono text-[10px] opacity-60">{a.tabla}</span>
+                  ) : (
+                    <span className="shrink-0 text-[10px]" style={{ color: SST_TOKENS.warn }}>
+                      sin conteo
+                    </span>
+                  )}
+                  {a.norma_id == null && (
+                    <span className="shrink-0 rounded bg-background px-1 text-[10px]">
+                      todas las normas
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => quitar(a.id, a.modulo)}
+                    aria-label={`Quitar ${a.modulo}`}
+                    className="shrink-0 rounded p-0.5 hover:bg-background"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <Input
+            placeholder="Buscar un modulo..."
+            value={buscar}
+            onChange={(e) => setBuscar(e.target.value)}
+            className="mb-2 h-8 text-xs"
+          />
+
+          <div className="max-h-40 divide-y overflow-y-auto rounded border">
+            {filtrados.length === 0 ? (
+              <p className="p-3 text-center text-xs text-muted-foreground">
+                No hay modulos que coincidan.
+              </p>
+            ) : (
+              filtrados.map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setModulo(m)}
+                  className={`flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-muted/50 ${
+                    modulo === m ? "bg-muted" : ""
+                  }`}
+                >
+                  <Boxes className="h-3 w-3 shrink-0 opacity-50" />
+                  <span className="min-w-0 flex-1 truncate">{m}</span>
+                  {modulo === m && <CheckCircle2 className="h-3 w-3 shrink-0" />}
+                </button>
+              ))
+            )}
+          </div>
+
+          {modulo && (
+            <div className="mt-2 space-y-2 rounded border p-2">
+              <p className="text-xs">
+                <span className="font-medium">{modulo}</span> sustenta el numeral{" "}
+                {row.requisito.numeral}
+              </p>
+
+              <div>
+                <label className="mb-1 block text-[11px] text-muted-foreground">
+                  Tabla para contar registros (opcional)
+                </label>
+                <select
+                  value={tabla}
+                  onChange={(e) => setTabla(e.target.value)}
+                  className="w-full rounded border bg-background px-2 py-1 text-xs"
+                >
+                  <option value="">Sin conteo — solo enlace al modulo</option>
+                  {tablas.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[10px] text-muted-foreground">
+                  Sin tabla no se puede saber si el modulo tiene datos, y el numeral no contara
+                  como cubierto.
+                </p>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[11px] text-muted-foreground">Alcance</label>
+                <select
+                  value={normaId ?? ""}
+                  onChange={(e) => setNormaId(e.target.value ? Number(e.target.value) : null)}
+                  className="w-full rounded border bg-background px-2 py-1 text-xs"
+                >
+                  <option value="">Todas las normas donde aplique</option>
+                  {normas.map((n) => (
+                    <option key={n.id} value={n.id}>
+                      Solo {n.codigo}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <Button size="sm" className="w-full" disabled={guardando} onClick={guardar}>
+                {guardando ? "Vinculando..." : "Vincular modulo"}
+              </Button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
 
 function DocumentoVincular({
   row,

@@ -411,6 +411,159 @@ export async function getAvancePorNorma(
  * Inserta o actualiza una cobertura (requisito x norma) para la empresa.
  * Clave natural: (idempresa, requisito_id, norma_id, soporte_id).
  */
+/* =========================================================================
+ * MODULOS QUE SUSTENTAN NUMERALES (script 59)
+ *
+ * Un numeral puede estar cubierto por un MODULO de LIPgo en vez de un archivo.
+ * Ver el encabezado de scripts/sig/59_requisito_modulo.sql.
+ * ========================================================================= */
+
+/**
+ * Tablas de respaldo permitidas para contar registros vivos.
+ *
+ * ES UNA LISTA CERRADA A PROPOSITO. El nombre de tabla se usa para construir
+ * una consulta, asi que aceptarlo desde el cliente dejaria que cualquiera
+ * apuntara el conteo a `usuarios`, `pagonomina` o cualquier tabla con datos
+ * personales. El conteo solo devuelve un numero, pero ese numero ya es
+ * informacion que nadie pidio exponer.
+ *
+ * Para habilitar una tabla nueva se agrega aqui, revisando que sea del SIG.
+ */
+const TABLAS_MODULO_PERMITIDAS = new Set<string>([
+  "sig_contexto_dofa",
+  "sig_objetivos",
+  "sig_no_conformidades",
+  "sig_indicadores",
+  "sig_aspectos_ambientales",
+  "sig_requisitos_legales",
+  "sig_satisfaccion",
+  "sig_pqrsf",
+  "sig_documentos",
+  "sst_ipevr",
+  "sst_incidentes",
+  "sst_gestion_cambio",
+  "sst_plan_mejora",
+  "sst_indicadores",
+  "sst_autoevaluaciones",
+  "sst_perfil_sociodemografico",
+  "sst_comunicaciones",
+  "sst_autorreportes",
+  "sst_pqrsf",
+])
+
+/** Tablas que la interfaz puede ofrecer, ordenadas. */
+export async function getTablasModuloPermitidas(): Promise<string[]> {
+  return Array.from(TABLAS_MODULO_PERMITIDAS).sort()
+}
+
+/** Modulos declarados para un requisito (todas las normas). */
+export async function getModulosDeRequisito(
+  requisitoId: number,
+): Promise<{ success: boolean; data: SigModuloCobertura[]; error?: string }> {
+  if (!requisitoId) return { success: false, data: [], error: "Falta el requisito." }
+  try {
+    const supabase: any = await getSupabaseAdmin()
+    const { data, error } = await supabase
+      .from("sig_requisito_modulo")
+      .select("id, requisito_id, norma_id, modulo, tabla, nota")
+      .eq("idempresa", SIG_EMPRESA_LIP)
+      .eq("requisito_id", requisitoId)
+      .eq("activo", true)
+      .order("modulo", { ascending: true })
+    if (error) return { success: false, data: [], error: error.message }
+    const filas: SigModuloCobertura[] = (data ?? []).map((m: any) => ({
+      id: Number(m.id),
+      requisito_id: Number(m.requisito_id),
+      norma_id: m.norma_id == null ? null : Number(m.norma_id),
+      modulo: m.modulo,
+      tabla: m.tabla ?? null,
+      nota: m.nota ?? null,
+      registros: null, // el conteo lo hace getMatrizIntegrada; aqui no hace falta
+    }))
+    return { success: true, data: filas }
+  } catch (e: any) {
+    return { success: false, data: [], error: e?.message || "No se pudieron leer los modulos." }
+  }
+}
+
+/**
+ * Declara que un modulo sustenta un numeral.
+ *
+ * `normaId` en null = aplica a todas las normas donde el requisito aplique,
+ * que es lo habitual: el modulo DOFA sustenta el 4.1 de las tres normas.
+ */
+export async function vincularModuloARequisito(payload: {
+  requisitoId: number
+  normaId?: number | null
+  modulo: string
+  tabla?: string | null
+  nota?: string | null
+  actualizadoPor?: string | null
+}): Promise<{ success: boolean; id?: number; error?: string }> {
+  try {
+    const modulo = payload.modulo?.trim()
+    if (!payload.requisitoId) return { success: false, error: "Falta el requisito." }
+    if (!modulo) return { success: false, error: "Falta el modulo." }
+
+    // La tabla se valida contra la lista cerrada: nunca se confia en el cliente.
+    const tabla = payload.tabla?.trim() || null
+    if (tabla && !TABLAS_MODULO_PERMITIDAS.has(tabla)) {
+      return { success: false, error: `La tabla "${tabla}" no esta habilitada para conteo.` }
+    }
+
+    const supabase: any = await getSupabaseAdmin()
+
+    // Evita duplicar el mismo modulo en el mismo (requisito, norma). Se hace en
+    // codigo ademas de los indices unicos parciales del script 59 para poder
+    // devolver un mensaje claro en vez de un error de constraint.
+    let q = supabase
+      .from("sig_requisito_modulo")
+      .select("id")
+      .eq("idempresa", SIG_EMPRESA_LIP)
+      .eq("requisito_id", payload.requisitoId)
+      .eq("modulo", modulo)
+    // Postgres: NULL <> NULL, asi que un .eq(null) no encuentra las filas
+    // comodin. Hay que usar .is() para esas.
+    q = payload.normaId == null ? q.is("norma_id", null) : q.eq("norma_id", payload.normaId)
+    const { data: ya } = await q.maybeSingle()
+    if (ya?.id) return { success: true, id: Number(ya.id) }
+
+    const { data, error } = await supabase
+      .from("sig_requisito_modulo")
+      .insert({
+        idempresa: SIG_EMPRESA_LIP,
+        requisito_id: payload.requisitoId,
+        norma_id: payload.normaId ?? null,
+        modulo,
+        tabla,
+        nota: payload.nota?.trim() || null,
+        actualizado_por: payload.actualizadoPor ?? null,
+        updated_at: new Date().toISOString(),
+      })
+      .select("id")
+      .single()
+    if (error) return { success: false, error: error.message }
+    return { success: true, id: Number(data.id) }
+  } catch (e: any) {
+    return { success: false, error: e?.message || "No se pudo vincular el modulo." }
+  }
+}
+
+/** Quita la declaracion de que un modulo sustenta un numeral. */
+export async function desvincularModuloDeRequisito(
+  id: number,
+): Promise<{ success: boolean; error?: string }> {
+  if (!id) return { success: false, error: "Falta el registro." }
+  try {
+    const supabase: any = await getSupabaseAdmin()
+    const { error } = await supabase.from("sig_requisito_modulo").delete().eq("id", id)
+    if (error) return { success: false, error: error.message }
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, error: e?.message || "No se pudo quitar el modulo." }
+  }
+}
+
 export async function upsertCobertura(
   payload: {
     requisitoId: number
