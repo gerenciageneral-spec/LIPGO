@@ -16,6 +16,8 @@ import { useToast } from "@/hooks/use-toast"
 import { ChevronLeft, DollarSign, Weight, ChevronRight, Download, Clock } from "lucide-react"
 import * as XLSX from "xlsx"
 import { useAuth } from "@/components/auth-provider"
+import { getConciliacionAvimol } from "@/lib/conciliacion-avimol-actions"
+import { calcularServiciosAdicionalesIndupan } from "@/lib/servicios-adicionales-indupan-actions"
 
 interface FacturacionRecord {
   fechaorden: string
@@ -140,6 +142,54 @@ export function FacturacionProyectos() {
       fetchTurnosData()
     }
   }, [activeTab, selectedEmpresaId])
+
+  // Comparación lado a lado (pedido explícito): "Facturación de turnos" (arriba)
+  // lee la vista legacy `facturacionturnos`, que factura por EJECUCIÓN. En
+  // Avimol e Indupan lo que se factura REALMENTE es lo SOLICITADO Y APROBADO
+  // (Servicios Adicionales) -- mismo motor que la Prefactura, para que ambas
+  // cifras salgan comparables sin tocar la tabla/columnas de arriba.
+  const [facturadoSolicitud, setFacturadoSolicitud] = useState<{ valor: number; registros: number } | null>(null)
+  const [facturadoSolicitudLoading, setFacturadoSolicitudLoading] = useState(false)
+  useEffect(() => {
+    if (activeTab !== "turnos" || (selectedEmpresaId !== 1 && selectedEmpresaId !== 2)) {
+      setFacturadoSolicitud(null)
+      return
+    }
+    if (!turnosFilters.fechaDesde || !turnosFilters.fechaHasta) {
+      setFacturadoSolicitud(null)
+      return
+    }
+    let cancelado = false
+    setFacturadoSolicitudLoading(true)
+    ;(async () => {
+      try {
+        if (selectedEmpresaId === 2) {
+          const res = await getConciliacionAvimol(turnosFilters.fechaDesde, turnosFilters.fechaHasta)
+          if (!cancelado && res.success && res.data) {
+            setFacturadoSolicitud({
+              valor: res.data.resumen.cobroTurnos + res.data.resumen.cobroHorasExtra,
+              registros: res.data.resumen.turnosCobrados,
+            })
+          }
+        } else {
+          const res = await calcularServiciosAdicionalesIndupan(turnosFilters.fechaDesde, turnosFilters.fechaHasta)
+          if (!cancelado) {
+            setFacturadoSolicitud({
+              valor: res.conceptos.reduce((sum, c) => sum + c.valor, 0),
+              registros: res.soporte.length,
+            })
+          }
+        }
+      } catch (error) {
+        console.error("[v0] Error cargando Servicios Adicionales (facturado por solicitud):", error)
+      } finally {
+        if (!cancelado) setFacturadoSolicitudLoading(false)
+      }
+    })()
+    return () => {
+      cancelado = true
+    }
+  }, [activeTab, selectedEmpresaId, turnosFilters.fechaDesde, turnosFilters.fechaHasta])
 
   // `empresaIdOverride` permite que el filtro "Empresa" del panel (independiente
   // del selector global) dispare una recarga real para ese proyecto — antes
@@ -959,13 +1009,23 @@ export function FacturacionProyectos() {
         </TabsContent>
 
         <TabsContent value="turnos" className="space-y-4 mt-4">
+          {(selectedEmpresaId === 1 || selectedEmpresaId === 2) && (
+            <div className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:border-blue-900 dark:bg-blue-950/20 dark:text-blue-200">
+              <p>
+                Esta tabla factura por <strong>EJECUCIÓN</strong> (turno/hora extra trabajado). En este proyecto, lo que
+                REALMENTE se factura al cliente es lo <strong>SOLICITADO Y APROBADO</strong> en Servicios Adicionales
+                (mismo motor que la Prefactura) -- compara con la tarjeta "Facturado por Solicitud" abajo. Selecciona un
+                rango Desde/Hasta para calcularla.
+              </p>
+            </div>
+          )}
           {/* Turnos Summary Cards */}
           <div className="grid gap-4 md:grid-cols-3">
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="flex items-center gap-2 text-sm">
                   <DollarSign className="h-4 w-4" />
-                  Valor Total Facturación
+                  Valor Total Facturación (por ejecución)
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -998,6 +1058,36 @@ export function FacturacionProyectos() {
               </CardContent>
             </Card>
           </div>
+
+          {(selectedEmpresaId === 1 || selectedEmpresaId === 2) && (
+            <div className="grid gap-4 md:grid-cols-1">
+              <Card className="border-primary/30">
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center gap-2 text-sm">
+                    <DollarSign className="h-4 w-4" />
+                    Facturado por Solicitud (Servicios Adicionales -- lo REAL)
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {!turnosFilters.fechaDesde || !turnosFilters.fechaHasta ? (
+                    <p className="text-xs text-muted-foreground">Selecciona un rango Desde/Hasta abajo para calcularlo.</p>
+                  ) : facturadoSolicitudLoading ? (
+                    <p className="text-xs text-muted-foreground">Calculando…</p>
+                  ) : (
+                    <>
+                      <p className="text-2xl font-bold text-primary">
+                        ${Number(facturadoSolicitud?.valor ?? 0).toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {facturadoSolicitud?.registros ?? 0} línea(s) solicitadas y aprobadas -- turnos/horas extra
+                        solicitados en Operación LIP, cruzados contra el maestro de tarifas.
+                      </p>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          )}
 
           {/* Turnos Filters Card */}
           <Card>

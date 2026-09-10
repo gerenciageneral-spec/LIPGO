@@ -35,7 +35,8 @@ import { getValoresNetosOrden } from "@/lib/facturacion-control-actions"
 import { getConciliacionAvimol } from "@/lib/conciliacion-avimol-actions"
 import { getAccessibleEmpresesFromPermisos } from "@/lib/orders-actions"
 import { medioPagoEsperado, medioPagoEsperadoSinAmbiguedad, medioPagoInconsistente } from "@/lib/facturacion-medio-pago"
-import { produccionDelProyecto } from "@/lib/facturacion-produccion-conceptos"
+import { produccionDelProyecto, serviciosAdicionalesDelProyecto } from "@/lib/facturacion-produccion-conceptos"
+import { calcularServiciosAdicionalesIndupan } from "@/lib/servicios-adicionales-indupan-actions"
 import {
   ETIQUETA_PROCESO,
   ORDEN_PROCESOS,
@@ -175,6 +176,7 @@ export interface AlertaCierre {
     | "orden_en_cero"
     | "fuera_del_plano"
     | "conciliacion_avimol"
+    | "servicios_adicionales_indupan"
   nivel: "rojo" | "ambar"
   titulo: string
   valor: number
@@ -468,12 +470,42 @@ async function cierreDeProyecto(
     } else {
       notas.push(`No se pudo calcular la producción de la conciliación: ${conc.message || "error desconocido"}.`)
     }
+  } else if (serviciosAdicionalesDelProyecto(idempresa)) {
+    // SERVICIOS ADICIONALES (Turnos/Horas Extra aprobados) de un proyecto sin
+    // el circuito de conciliación de Avimol -- hoy solo Indupan. Mismo motor
+    // que la Prefactura (calcularServiciosAdicionalesIndupan), para que el
+    // Cierre Financiero no diverja de lo realmente facturado. Reemplaza la
+    // vista legacy `facturacionturnos` (que factura por EJECUCIÓN) para este
+    // proyecto -- no se leen las dos, o el cobro quedaría duplicado/desfasado.
+    const servAd = await calcularServiciosAdicionalesIndupan(desde, fecha)
+    for (const l of servAd.soporte) {
+      if (!l.fecha || l.valor <= 0) continue
+      const esDia = l.fecha === fecha
+      const bucketNombre = l.servicio === "Turno" ? "turnos" : "horas_extra"
+      const b = bucket(bucketNombre)
+      b.cobroMes += l.valor
+      if (esDia) b.cobroDia += l.valor
+      alDetalleMes(detalleDe(b, l.operacion), esDia, l.valor)
+      punto(l.fecha).cobro += l.valor
+    }
+    if (servAd.alertas.length) {
+      alertas.push({
+        tipo: "servicios_adicionales_indupan",
+        nivel: "ambar",
+        titulo: "Avisos de Servicios Adicionales (turnos/horas extra aprobados)",
+        valor: 0,
+        cantidad: servAd.alertas.length,
+        detalle: servAd.alertas.slice(0, 40),
+      })
+    }
   } else {
-    // TURNOS ADICIONALES fuera de Avimol (Indupan, Funza, Medellín): se
-    // facturan por la vista `facturacionturnos` (Distribución Turno, etc.),
-    // no por conciliación — esa es exclusiva de Avimol. Sin este bloque el
-    // costo del turno se veía en la nómina y su cobro nunca se buscaba: el
-    // proceso salía pagando sin facturar nada.
+    // TURNOS ADICIONALES fuera de Avimol y de proyectos con Servicios
+    // Adicionales propio (Funza, Medellín): se facturan por la vista
+    // `facturacionturnos` (Distribución Turno, etc.), no por solicitud
+    // aprobada -- ahí todavía no hay forma de resolver a qué Owner facturar
+    // (ver lib/facturacion-produccion-conceptos.ts). Sin este bloque el costo
+    // del turno se veía en la nómina y su cobro nunca se buscaba: el proceso
+    // salía pagando sin facturar nada.
     let filasHT: Array<{ fecha: string; puesto: string; total: number }> = []
     for (let off = 0; ; off += 1000) {
       const { data, error } = await sb

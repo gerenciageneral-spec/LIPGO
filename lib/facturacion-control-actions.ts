@@ -16,10 +16,12 @@ import {
   produccionDelProyecto,
   vigenciaProduccion,
   separarFiltroOperaciones,
+  serviciosAdicionalesDelProyecto,
   CONCEPTO_HORA_EXTRA,
   CONCEPTO_TURNO,
   OP_PRODUCCION,
 } from "@/lib/facturacion-produccion-conceptos"
+import { calcularServiciosAdicionalesIndupan } from "@/lib/servicios-adicionales-indupan-actions"
 import {
   medioPagoEsperado,
   medioPagoInconsistente,
@@ -482,6 +484,13 @@ export interface SoporteLinea {
   /** Tiquete de báscula. Ausente en producción (no nace de una orden) y en
    *  soportes guardados antes de agregarse este campo. */
   tiquete?: string | null
+  /** Bucket del ANEXO, separado de `operacion` (que sigue siendo la clave del
+   *  resumen/factura, granular por puesto). Cuando está presente, el anexo
+   *  (pantalla/Excel/PDF) agrupa por este valor en vez de por `operacion` --
+   *  así "Turno · Pacas" y "Hora extra · Cosedor" caen en un solo bloque
+   *  "Servicios Adicionales" sin fusionar sus tarifas en el resumen. Ausente
+   *  = se agrupa por `operacion` como siempre (tonelaje, Huevos, Empaque MP). */
+  grupoAnexo?: string
 }
 export interface PrefacturaGuardada {
   id: number
@@ -592,7 +601,7 @@ export async function eliminarPrefactura(id: number): Promise<{ success: boolean
  * No reimplementa el cálculo: consume `getConciliacionAvimol`, que ya está
  * validado contra el negocio y resuelve festivos, vigencias y horas extra.
  */
-interface ConceptoProduccion {
+export interface ConceptoProduccion {
   concepto: string
   unidad: UnidadCobro
   cantidad: number
@@ -657,6 +666,12 @@ async function calcularProduccion(
         tarifa: h.tarifa,
         valor: Math.round(h.cobro),
         unidad: "h",
+        // Anexo consolidado (pedido explícito 2026-09-10): todos los puestos
+        // de Turno/Hora Extra caen en UN solo bloque "Servicios Adicionales"
+        // en vez de uno por puesto. `operacion` (arriba) sigue granular por
+        // puesto para el resumen/factura -- esto solo cambia cómo se agrupa
+        // el anexo visual/Excel/PDF.
+        grupoAnexo: "Servicios Adicionales",
       })
     }
     // TURNOS solicitados y aprobados. Solo los que se pudieron valorizar: los
@@ -683,6 +698,7 @@ async function calcularProduccion(
         tarifa: tr.tarifa,
         valor: Math.round(tr.cobro),
         unidad: "turno",
+        grupoAnexo: "Servicios Adicionales",
       })
     }
   }
@@ -1117,6 +1133,53 @@ export async function getPrefactura(
         }
       }
       resumen.sort((a, b) => a.owner.localeCompare(b.owner) || a.operacion.localeCompare(b.operacion))
+    }
+
+    // Caso C — SERVICIOS ADICIONALES (Turnos/Horas Extra aprobados) de un
+    // proyecto que no tiene el circuito de "conciliación" de Avimol. Mismo
+    // contrato SoporteLinea/ConceptoProduccion, mismo anti-doble-cobro. Ver
+    // lib/servicios-adicionales-indupan-actions.ts y
+    // lib/facturacion-produccion-conceptos.ts (SERVICIOS_ADICIONALES_POR_PROYECTO).
+    const cfgServAd = serviciosAdicionalesDelProyecto(idempresa)
+    if (cfgServAd) {
+      if (!filtros.desde || !filtros.hasta) {
+        produccionAlertas.push(
+          "Define el rango Desde/Hasta y vuelve a generar: sin período no se pueden calcular los Servicios " +
+            "Adicionales (turnos/horas extra aprobados), y la prefactura quedaría solo con las órdenes de cargue.",
+        )
+      } else {
+        const servAd = await calcularServiciosAdicionalesIndupan(filtros.desde, filtros.hasta)
+        soporteProduccion.push(...servAd.soporte)
+        produccionAlertas.push(...servAd.alertas)
+        const yaEnOrdenes = new Set(resumen.map((r) => `${ownerKey(r.owner)}|||${ownerKey(r.operacion)}`))
+        for (const c of servAd.conceptos) {
+          if (yaEnOrdenes.has(`${ownerKey(cfgServAd.owner)}|||${ownerKey(c.concepto)}`)) {
+            produccionAlertas.push(
+              `"${c.concepto}" ya viene como operación de órdenes de cargue: NO se sumó aparte para no cobrarlo dos veces.`,
+            )
+            continue
+          }
+          resumen.push({
+            owner: cfgServAd.owner,
+            operacion: c.concepto,
+            toneladas: c.cantidad,
+            tarifa: c.tarifa,
+            valor: c.valor,
+            tonPorFacturar: c.cantidad,
+            valorPorFacturar: c.valor,
+            tonEnProceso: 0,
+            valorEnProceso: 0,
+            tonFacturado: 0,
+            valorFacturado: 0,
+            fuente: "produccion",
+            bloque: "produccion",
+            unidad: c.unidad,
+          })
+          totalValor += c.valor
+          if (c.unidad === "t") totalToneladas += c.cantidad
+        }
+        resumen.sort((a, b) => a.owner.localeCompare(b.owner) || a.operacion.localeCompare(b.operacion))
+      }
     }
 
     // Nota de a quién se le factura cada línea. Ya no hace falta reportar un
@@ -1601,6 +1664,45 @@ export async function getControlFacturacion(
             t.val_produccion += c.valor
             if (c.unidad === "t") t.toneladas += c.cantidad
           }
+        }
+      }
+    }
+
+    // SERVICIOS ADICIONALES (Turnos/Horas Extra aprobados) de un proyecto que
+    // no tiene el circuito de "conciliación" de Avimol -- mismo patrón que el
+    // bloque de arriba, independiente de `cfg`/`cfgFiltro` (un proyecto puede
+    // tener producción-por-orden Y servicios adicionales a la vez).
+    const cfgServAd = serviciosAdicionalesDelProyecto(idempresa)
+    if (cfgServAd) {
+      if (!filtros.desde || !filtros.hasta) {
+        produccionAviso =
+          (produccionAviso ? `${produccionAviso} ` : "") +
+          "Los Servicios Adicionales (turnos/horas extra aprobados) NO están incluidos todavía: se calculan por " +
+          "período. Pon un rango en Desde/Hasta y dale Aplicar para verlos aquí."
+      } else {
+        const servAd = await calcularServiciosAdicionalesIndupan(filtros.desde, filtros.hasta)
+        produccionAlertas.push(...servAd.alertas)
+        const yaEnOrdenes = new Set(porOwnerBase.map((o) => `${ownerKey(o.owner)}|||${ownerKey(o.operacion)}`))
+        for (const c of servAd.conceptos) {
+          if (yaEnOrdenes.has(`${ownerKey(cfgServAd.owner)}|||${ownerKey(c.concepto)}`)) continue
+          porOwnerBase.push({
+            owner: cfgServAd.owner,
+            operacion: c.concepto,
+            ordenes: 0,
+            toneladas: c.cantidad,
+            valor_a_facturar: c.valor,
+            val_facturado: 0,
+            val_en_proceso: 0,
+            val_sin_gestionar: 0,
+            bloque: "produccion",
+            unidad: c.unidad,
+            transporte: null,
+            medioPagoEsperado: null,
+            ordenesInconsistentes: 0,
+          })
+          t.valor_a_facturar += c.valor
+          t.val_produccion += c.valor
+          if (c.unidad === "t") t.toneladas += c.cantidad
         }
       }
     }

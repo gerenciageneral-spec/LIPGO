@@ -131,7 +131,11 @@ interface SoporteGrupo {
 function agruparSoporte(lineas: SoporteLinea[]): { grupos: SoporteGrupo[]; totalTon: number; totalVal: number } {
   const map = new Map<string, SoporteGrupo>()
   for (const l of lineas) {
-    const op = l.operacion || "(sin operación)"
+    // `grupoAnexo` (si viene) agrupa el anexo visual por un bucket fijo (ej.
+    // "Servicios Adicionales") en vez de por `operacion` granular -- así
+    // "Turno · Pacas" y "Hora extra · Cosedor" caen en un solo bloque sin
+    // fusionar sus tarifas en el resumen/factura (que sigue leyendo `operacion`).
+    const op = l.grupoAnexo || l.operacion || "(sin operación)"
     const unidad = l.unidad || "t"
     const k = `${l.owner}|||${op}|||${unidad}`
     const g = map.get(k) || { owner: l.owner, operacion: op, unidad, lineas: [], ton: 0, valor: 0 }
@@ -721,6 +725,18 @@ export function CuadroControlFacturacion() {
 
   const proyectoNombre = empresas.find((e) => e.id === empresaId)?.nombre || `Empresa ${empresaId}`
 
+  // Pestaña "Servicios Adicionales": solo se ofrece en los proyectos que
+  // facturan turnos/horas extra aprobados -- Avimol (PRODUCCION_POR_PROYECTO,
+  // fuente "conciliacion") e Indupan (SERVICIOS_ADICIONALES_POR_PROYECTO). En
+  // los CEDI (Funza/Medellín) no hay nada que mostrar: se oculta.
+  const mostrarServiciosAdicionales = empresaId === 2 || empresaId === 1
+
+  // Líneas de soporte de Servicios Adicionales del período aplicado (Turnos +
+  // Horas Extra, cualquier puesto) -- independiente de la selección interactiva
+  // de la Prefactura (`prefSel`): es una vista de todo el período, no un
+  // borrador de factura.
+  const soporteServiciosAdicionales = (pref?.soporteProduccion || []).filter((l) => l.grupoAnexo === "Servicios Adicionales")
+
   // Anexos por OWNER × TIPO DE OPERACIÓN: un PDF por cada combinación (grupo),
   // con el logo de LIP -- reemplaza el Excel multi-hoja anterior (pedido
   // explícito: mismo agrupamiento, ahora un documento por grupo en vez de una
@@ -1040,6 +1056,7 @@ export function CuadroControlFacturacion() {
             <TabsTrigger value="owner">Resumen por owner</TabsTrigger>
             <TabsTrigger value="detalle">Detalle por orden</TabsTrigger>
             <TabsTrigger value="prefactura">Prefactura</TabsTrigger>
+            {mostrarServiciosAdicionales && <TabsTrigger value="servicios-adicionales">Servicios Adicionales</TabsTrigger>}
             <TabsTrigger value="cierre">Cierre de facturación</TabsTrigger>
             <TabsTrigger value="financiero">Cierre Financiero</TabsTrigger>
           </TabsList>
@@ -1137,6 +1154,7 @@ export function CuadroControlFacturacion() {
               <TabsTrigger value="owner">Resumen por owner</TabsTrigger>
               <TabsTrigger value="detalle">Detalle por orden</TabsTrigger>
               <TabsTrigger value="prefactura">Prefactura</TabsTrigger>
+              {mostrarServiciosAdicionales && <TabsTrigger value="servicios-adicionales">Servicios Adicionales</TabsTrigger>}
               <TabsTrigger value="cierre">Cierre de facturación</TabsTrigger>
               <TabsTrigger value="financiero">Cierre Financiero</TabsTrigger>
             </TabsList>
@@ -1878,6 +1896,54 @@ export function CuadroControlFacturacion() {
                 </Card>
               )}
             </TabsContent>
+
+            {mostrarServiciosAdicionales && (
+              <TabsContent value="servicios-adicionales" className="mt-4">
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+                    <div>
+                      <CardTitle className="text-sm">Servicios Adicionales (Turnos y Horas Extra aprobados)</CardTitle>
+                      <p className="text-xs text-muted-foreground">
+                        Solicitudes aprobadas en Operación LIP → Aprobar Turnos, facturadas aparte del movimiento de
+                        órdenes de cargue/descargue -- no se mezclan con el tonelaje normal.
+                      </p>
+                    </div>
+                    {soporteServiciosAdicionales.length > 0 && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => exportarSoporteExcel(soporteServiciosAdicionales, `ServiciosAdicionales_${proyectoNombre}`)}
+                      >
+                        <Download className="mr-2 h-4 w-4" /> Excel
+                      </Button>
+                    )}
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {!pref ? (
+                      <div className="py-6 text-center text-xs text-muted-foreground">
+                        Define un rango Desde/Hasta y dale Aplicar para calcular los Servicios Adicionales del período.
+                      </div>
+                    ) : (
+                      <>
+                        {pref.produccionAlertas.length > 0 && (
+                          <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200">
+                            <div className="mb-1 flex items-center gap-1.5 font-semibold">
+                              <AlertTriangle className="h-3.5 w-3.5" /> Revisar ({pref.produccionAlertas.length})
+                            </div>
+                            <ul className="ml-4 list-disc space-y-0.5">
+                              {pref.produccionAlertas.slice(0, 15).map((a, i) => (
+                                <li key={i}>{a}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        <SoporteAnexo lineas={soporteServiciosAdicionales} />
+                      </>
+                    )}
+                  </CardContent>
+                </Card>
+              </TabsContent>
+            )}
           </Tabs>
         </>
       )}

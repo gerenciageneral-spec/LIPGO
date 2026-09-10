@@ -114,6 +114,16 @@ export default function SeccionIngresos({
                     isLoading={isLoading}
                   />
                 )}
+                {(isLoading || (data?.turnosServiciosAdicionales ?? 0) > 0 || (data?.conteoServiciosAdicionales ?? 0) > 0) && (
+                  <FilaConcepto
+                    label="Servicios Adicionales — Indupan"
+                    hint="calcularServiciosAdicionalesIndupan · turnos y horas extra solicitados y aprobados (mismo motor de la Prefactura)"
+                    registros={data?.conteoServiciosAdicionales}
+                    valor={data?.turnosServiciosAdicionales}
+                    detalle={data?.detalleServiciosAdicionales}
+                    isLoading={isLoading}
+                  />
+                )}
                 <FilaConcepto
                   label="Cargos fijos"
                   hint="cargos_fijos_generados · $2M Manejo de Inventario (id1/id3), 600 ton fijas Avimol, alquiler de montacargas facturado"

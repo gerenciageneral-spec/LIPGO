@@ -87,6 +87,33 @@ export function produccionDelProyecto(idempresa: number | null | undefined): Pro
   return PRODUCCION_POR_PROYECTO[Number(idempresa)] ?? null
 }
 
+/**
+ * SERVICIOS ADICIONALES (Turnos/Horas Extra aprobados en Operación LIP >
+ * Aprobar Turnos) que se facturan al Owner. Es un concepto DISTINTO de
+ * `PRODUCCION_POR_PROYECTO`: un proyecto puede tener producción-por-orden
+ * (Indupan: Tolva) Y servicios adicionales a la vez -- por eso vive en su
+ * propio mapa en vez de forzarlo dentro de una sola `fuente`.
+ *
+ * Avimol (idempresa=2) NO está aquí a propósito: su servicio adicional ya se
+ * factura por su propio camino (`PRODUCCION_POR_PROYECTO[2]`, fuente
+ * "conciliacion", que ya incluye turnos + horas extra) -- agregarlo aquí
+ * duplicaría el cómputo. Este mapa es solo para proyectos que aún NO tienen
+ * ese circuito armado.
+ *
+ * Alcance (2026-09-10, pedido explícito): solo proyectos con Owner 1:1 con el
+ * proyecto. En los CEDI (Funza/Medellín) un mismo sitio recibe/despacha
+ * mercancía de varios Owners a la vez y hoy no hay ningún dato que diga a
+ * cuál facturar una solicitud -- quedan fuera hasta que se resuelva eso.
+ */
+export const SERVICIOS_ADICIONALES_POR_PROYECTO: Record<number, { owner: string }> = {
+  1: { owner: "Harinera Indupan" },
+}
+
+export function serviciosAdicionalesDelProyecto(idempresa: number | null | undefined): { owner: string } | null {
+  if (!idempresa) return null
+  return SERVICIOS_ADICIONALES_POR_PROYECTO[Number(idempresa)] ?? null
+}
+
 /** Prefijo con el que se nombra cada concepto de hora extra en el documento. */
 export const CONCEPTO_HORA_EXTRA = "Hora extra"
 /** Prefijo de los turnos solicitados y aprobados que se facturan. */
