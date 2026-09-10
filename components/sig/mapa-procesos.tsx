@@ -7,25 +7,18 @@
 // SVG, con la entrada de requerimientos a la izquierda y la salida de
 // satisfacción a la derecha.
 //
-// CADA BOTÓN ABRE SU FICHA. Los once procesos --nueve más entrada y salida-- son
-// clicables y despliegan un panel lateral con los campos de la ficha. El
-// contenido de cada campo todavía está por definir: se muestra "Por definir",
-// igual que en el diseño original, hasta que el SIG lo complete.
+// CADA BOTÓN ABRE SUS DOCUMENTOS. Los once procesos --nueve más entrada y
+// salida-- son clicables y despliegan un panel lateral con tres listas:
+// FORMATOS, INFORMACIÓN DOCUMENTADA y REGISTROS. En cada una se cargan
+// documentos con su código, nombre, versión y archivo adjunto.
+//
+// Los documentos van a `sig_documentos`, el MISMO maestro que alimenta el
+// Listado Maestro del Dashboard SIG: lo que se carga acá también sale allá.
 
-import { useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { X } from "lucide-react"
-
-/** Campos de la ficha de proceso, en el orden del formato. */
-const CAMPOS = [
-  "Objetivo",
-  "Alcance",
-  "Líder del proceso",
-  "Entradas",
-  "Actividades clave",
-  "Salidas",
-  "Indicadores",
-  "Documentos asociados",
-] as const
+import { DocumentosProceso } from "@/components/sig/documentos-proceso"
+import { getConteoDocumentosPorProceso } from "@/lib/mapa-procesos-actions"
 
 type TipoProceso = "Estratégico" | "Misional" | "Apoyo" | "Interfaz"
 
@@ -99,6 +92,18 @@ const PROCESOS = construirProcesos()
 
 export function MapaProcesos() {
   const [activoId, setActivoId] = useState<string | null>(null)
+  // Cuántos documentos tiene cada proceso, para que se vea desde el mapa sin
+  // tener que abrirlos uno por uno.
+  const [conteos, setConteos] = useState<Record<string, number>>({})
+
+  const cargarConteos = useCallback(async () => {
+    const res = await getConteoDocumentosPorProceso()
+    if (res.success && res.data) setConteos(res.data)
+  }, [])
+
+  useEffect(() => {
+    cargarConteos()
+  }, [cargarConteos])
   // Los códigos (E-01, M-02…) se ocultan por defecto: en el mapa impreso son
   // ruido, pero sirven al auditor. Se muestran con el interruptor.
   const [mostrarCodigos, setMostrarCodigos] = useState(false)
@@ -138,7 +143,11 @@ export function MapaProcesos() {
           {proc.nombre}
         </span>
         <span className="text-[11px] uppercase tracking-wide" style={{ color: p.meta }}>
-          {seleccionado ? "Ficha abierta" : "Ver ficha →"}
+          {seleccionado
+            ? "Abierto"
+            : conteos[proc.id]
+              ? `${conteos[proc.id]} documento(s) →`
+              : "Ver documentos →"}
         </span>
       </button>
     )
@@ -371,39 +380,15 @@ export function MapaProcesos() {
               </button>
             </div>
 
-            <div className="flex flex-col gap-0.5 px-6 pb-9 pt-5">
-              {CAMPOS.map((etiqueta) => (
-                <div
-                  key={etiqueta}
-                  className="grid items-start gap-3.5 border-b py-3"
-                  style={{ gridTemplateColumns: "minmax(0, 150px) minmax(0, 1fr)", borderColor: "#e6ecec" }}
-                >
-                  <span
-                    className="pt-0.5 font-mono text-[10px] uppercase tracking-[0.14em]"
-                    style={{ color: "#14606f" }}
-                  >
-                    {etiqueta}
-                  </span>
-                  <span className="text-sm leading-relaxed" style={{ color: "#4a5c5c" }}>
-                    Por definir
-                  </span>
-                </div>
-              ))}
-
-              {/* El diseño original lo trae así: la ficha existe, su contenido
-                  todavía no. Se deja visible para que se note que falta
-                  completarlo, en vez de mostrar campos vacíos sin explicación. */}
-              <div
-                className="mt-4 rounded-lg border border-dashed px-4 py-3.5"
-                style={{ borderColor: "#b9c9c9", background: "#f7fafa" }}
-              >
-                <span
-                  className="font-mono text-[10.5px] uppercase tracking-[0.1em]"
-                  style={{ color: "#66797a" }}
-                >
-                  Contenido pendiente de implementar
-                </span>
-              </div>
+            {/* Las tres listas del proceso: formatos, información
+                documentada y registros. Escriben en `sig_documentos`, el mismo
+                maestro del Listado Maestro del Dashboard SIG. */}
+            <div className="px-5 pb-9 pt-4">
+              <DocumentosProceso
+                procesoId={activo.id}
+                procesoNombre={activo.nombre}
+                onCambio={cargarConteos}
+              />
             </div>
           </aside>
         </>
