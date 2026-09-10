@@ -69,8 +69,12 @@ export async function GET(request: Request) {
       }
 
       const adminIds = new Set((adminRes.data || []).map((r: any) => String(r.identificacion).trim()))
+      // Cuentas de prueba ("AUXILIAR PRUEBA AVIMOL 1", etc.) quedan activas en
+      // headcount para pruebas manuales -- mismo criterio que ya usa
+      // getPersonasAsistenciaAdministrativa/getParafiscales, filtrado por
+      // nombre (no hace falta join: registroasistencia.nombre ya lo trae).
       const soloOperativos = (rows: any[] | null) =>
-        (rows || []).filter((r) => !adminIds.has(String(r.identificacion).trim()))
+        (rows || []).filter((r) => !adminIds.has(String(r.identificacion).trim()) && !/prueba/i.test(String(r.nombre || "")))
 
       return NextResponse.json({
         data: soloOperativos(currentRes.data),
@@ -112,7 +116,9 @@ export async function GET(request: Request) {
       }
 
       const adminIds = new Set((adminRes.data || []).map((r: any) => String(r.identificacion).trim()))
-      const data = (monthRes.data || []).filter((r: any) => !adminIds.has(String(r.identificacion).trim()))
+      const data = (monthRes.data || []).filter(
+        (r: any) => !adminIds.has(String(r.identificacion).trim()) && !/prueba/i.test(String(r.nombre || "")),
+      )
 
       return NextResponse.json({ data, startDate, endDate, month: targetMonth })
     }

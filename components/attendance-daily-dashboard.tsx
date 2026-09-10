@@ -8,6 +8,7 @@ import { DatePickerField } from "@/components/ui/date-picker-field"
 import { useAuth } from "@/components/auth-provider"
 import { supabase } from "@/lib/supabase"
 import { isLate } from "@/lib/asistencia-catalogos"
+import { clasificarDiaCotizacion } from "@/lib/parafiscales"
 import { EditNovedadDialog, type RegistroParaEditarNovedad } from "@/components/attendance/edit-novedad-dialog"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts"
 
@@ -36,12 +37,15 @@ interface MiniRecord {
   nombre: string
 }
 
-type Estado = "a_tiempo" | "tarde" | "ausentismo" | "sin_reportar"
+type Estado = "a_tiempo" | "tarde" | "ausentismo" | "vacaciones" | "descanso" | "retiro" | "sin_reportar"
 
 const ESTADO_TXT: Record<Estado, { label: string; text: string; bg: string; dot: string }> = {
   a_tiempo: { label: "A tiempo", text: "text-emerald-600", bg: "bg-emerald-500", dot: "bg-emerald-500" },
   tarde: { label: "Tarde", text: "text-amber-600", bg: "bg-amber-500", dot: "bg-amber-500" },
   ausentismo: { label: "Ausentismo", text: "text-violet-600", bg: "bg-violet-500", dot: "bg-violet-500" },
+  vacaciones: { label: "Vacaciones", text: "text-sky-600", bg: "bg-sky-500", dot: "bg-sky-500" },
+  descanso: { label: "Descanso", text: "text-slate-500", bg: "bg-slate-400", dot: "bg-slate-400" },
+  retiro: { label: "Retiro", text: "text-zinc-600", bg: "bg-zinc-500", dot: "bg-zinc-500" },
   sin_reportar: { label: "No presentado", text: "text-rose-600", bg: "bg-rose-500", dot: "bg-rose-500" },
 }
 
@@ -50,6 +54,9 @@ const ESTADO_FILTROS: { value: "todos" | Estado; label: string }[] = [
   { value: "a_tiempo", label: "A tiempo" },
   { value: "tarde", label: "Tarde" },
   { value: "ausentismo", label: "Ausentismo" },
+  { value: "vacaciones", label: "Vacaciones" },
+  { value: "descanso", label: "Descanso" },
+  { value: "retiro", label: "Retiro" },
   { value: "sin_reportar", label: "No presentado" },
 ]
 
@@ -63,8 +70,19 @@ const iniciales = (nombre: string) =>
     .join("")
     .toUpperCase()
 
+// Ausentismo REAL = incapacidad/licencia (mismo criterio que clasificarDiaCotizacion,
+// la fuente única de verdad para nómina/parafiscales). Vacaciones y Retiro son
+// estados propios (no "faltas"); "Descanso"/"Descanso compensatorio domingo
+// anterior" clasifican como TRAB (día normal, no una ausencia) -- pedido
+// explícito: no deben contarse ni aparecer como ausentismo.
 const clasificar = (r: DashboardRecord): Estado => {
-  if (r.asistencia) return "ausentismo"
+  if (r.asistencia) {
+    const tipo = clasificarDiaCotizacion(r.asistencia)
+    if (tipo === "VAC") return "vacaciones"
+    if (tipo === "RETIRO") return "retiro"
+    if (tipo === "INCAP" || tipo === "AUS" || tipo === "LICR") return "ausentismo"
+    return "descanso" // TRAB con novedad: Descanso / Descanso compensatorio domingo anterior
+  }
   if (r.puesto === null) return "sin_reportar"
   return isLate(r.horaingreso, r.horaentradaprogramada) ? "tarde" : "a_tiempo"
 }
@@ -153,17 +171,23 @@ export function AttendanceDailyDashboard() {
     let aTiempo = 0
     let tarde = 0
     let ausentismo = 0
+    let vacaciones = 0
+    let descanso = 0
+    let retiro = 0
     let sinReportar = 0
     for (const r of data) {
       const c = clasificar(r)
       if (c === "a_tiempo") aTiempo++
       else if (c === "tarde") tarde++
       else if (c === "ausentismo") ausentismo++
+      else if (c === "vacaciones") vacaciones++
+      else if (c === "descanso") descanso++
+      else if (c === "retiro") retiro++
       else sinReportar++
     }
     const cerradas = aTiempo + tarde
     const pctCumplimiento = cerradas > 0 ? Math.round((aTiempo / cerradas) * 100) : 0
-    return { total: data.length, aTiempo, tarde, ausentismo, sinReportar, pctCumplimiento }
+    return { total: data.length, aTiempo, tarde, ausentismo, vacaciones, descanso, retiro, sinReportar, pctCumplimiento }
   }, [data])
 
   const marcaciones = useMemo(() => {
@@ -203,6 +227,10 @@ export function AttendanceDailyDashboard() {
     const map: Record<string, { identificacion: string; nombre: string; faltas: number; motivos: Set<string> }> = {}
     for (const r of last7Data) {
       if (!r.asistencia) continue
+      // Solo ausentismo REAL (incapacidad/licencia) -- vacaciones, retiro y
+      // "Descanso"/"Descanso compensatorio" no son faltas.
+      const tipo = clasificarDiaCotizacion(r.asistencia)
+      if (tipo !== "INCAP" && tipo !== "AUS" && tipo !== "LICR") continue
       const k = r.identificacion
       if (!map[k]) map[k] = { identificacion: k, nombre: r.nombre, faltas: 0, motivos: new Set() }
       map[k].faltas++
@@ -404,7 +432,7 @@ export function AttendanceDailyDashboard() {
                         <div className="flex-1 min-w-0">
                           <p className="text-[13px] font-medium truncate">{r.nombre}</p>
                           <p className="text-[11px] text-muted-foreground truncate">
-                            {r.estado === "ausentismo" ? r.asistencia : r.puesto || "Sin puesto hoy"}
+                            {r.asistencia || r.puesto || "Sin puesto hoy"}
                           </p>
                         </div>
                         <div className="text-right shrink-0">
