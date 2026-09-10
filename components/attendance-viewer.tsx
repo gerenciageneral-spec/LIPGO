@@ -14,6 +14,7 @@ import { AttendanceDailyDashboard } from "@/components/attendance-daily-dashboar
 import { AttendanceHistoricalDashboard } from "@/components/attendance-historical-dashboard"
 import VisorUbicaciones from "@/components/visor-ubicaciones"
 import { EditNovedadDialog, type RegistroParaEditarNovedad } from "@/components/attendance/edit-novedad-dialog"
+import { categoriaDeNovedad } from "@/lib/ausentismo-categorias"
 
 interface AttendanceRecord {
   id: number
@@ -24,6 +25,9 @@ interface AttendanceRecord {
   asistencia: string | null
 }
 
+// Solo tipos que SÍ son ausentismo real (lib/ausentismo-categorias.ts):
+// incapacidad (EG/AT) + licencia no remunerada. Vacaciones/Descanso NO son
+// ausentismo -- se sacaron de esta lista (antes se mezclaban aquí).
 const ABSENCE_TYPES = [
   { code: "13- Incapacidad por enfermedad general al 100%", label: "Incapacidad por enfermedad general al 100%" },
   { code: "14- Incapacidad por enfermedad general al 50", label: "Incapacidad por enfermedad general al 50%" },
@@ -32,9 +36,8 @@ const ABSENCE_TYPES = [
   // `personnel-notices.tsx` para que el valor escrito en BD coincida
   // bit a bit y los filtros del resto del sistema lo reconozcan.
   { code: "15- Incapacidad por enfermedad general al 66%- ingreso", label: "Incapacidad por enfermedad general al 66% - Ingreso" },
-  { code: "31- Vacaciones disfrutadas", label: "Vacaciones disfrutadas" },
+  { code: "16- Incapacidad por enfermedad profesional", label: "Incapacidad por enfermedad profesional (AT)" },
   { code: "38- Licencia no remunerada- Deducción", label: "Licencia no remunerada - Deducción" },
-  { code: "Descanso", label: "Descanso" },
 ]
 
 export function AttendanceViewer() {
@@ -128,7 +131,10 @@ export function AttendanceViewer() {
   const calculateStatistics = (dataToAnalyze: AttendanceRecord[]) => {
     const total = dataToAnalyze.length
     const withPosition = dataToAnalyze.filter((r) => r.puesto !== null).length
-    const withAbsence = dataToAnalyze.filter((r) => r.asistencia !== null).length
+    // Ausentismo real = incapacidad (EG/AT) + licencia no remunerada
+    // (lib/ausentismo-categorias.ts), sin cuentas de prueba.
+    const analizables = dataToAnalyze.filter((r) => !/prueba/i.test(String(r.nombre || "")))
+    const withAbsence = analizables.filter((r) => !!categoriaDeNovedad(r.asistencia)).length
     const unreported = dataToAnalyze.filter((r) => r.puesto === null && r.asistencia === null).length
 
     setTotalTurns(total)
@@ -138,7 +144,7 @@ export function AttendanceViewer() {
     // Calculate absence details
     const absenceCount: Record<string, number> = {}
     ABSENCE_TYPES.forEach((type) => {
-      absenceCount[type.code] = dataToAnalyze.filter((r) => r.asistencia === type.code).length
+      absenceCount[type.code] = analizables.filter((r) => r.asistencia === type.code).length
     })
 
     const details = [

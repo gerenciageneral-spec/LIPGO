@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState, useMemo } from "react"
+import { categoriaDeNovedad } from "@/lib/ausentismo-categorias"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Loader2, TrendingUp, TrendingDown, Minus, CalendarDays, RefreshCw, ChevronLeft, ChevronRight, AlertTriangle, Award } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -134,7 +135,9 @@ export function AttendanceHistoricalDashboard() {
   const summary = useMemo(() => {
     const total = data.length
     const asistencias = data.filter((r) => r.puesto !== null && !r.asistencia).length
-    const ausentismos = data.filter((r) => r.asistencia !== null).length
+    // Ausentismo real = incapacidad (EG/AT) + licencia no remunerada -- misma
+    // regla de negocio que lib/ausentismo-categorias.ts (módulo Ausentismos).
+    const ausentismos = data.filter((r) => !!categoriaDeNovedad(r.asistencia)).length
     const sinReportar = data.filter((r) => r.puesto === null && !r.asistencia).length
     const pctAsistencia = total > 0 ? Math.round((asistencias / total) * 100) : 0
     const uniquePersons = new Set(data.map((r) => r.identificacion)).size
@@ -151,7 +154,7 @@ export function AttendanceHistoricalDashboard() {
   const prevSummary = useMemo(() => {
     const total = prevMonthData.length
     const asistencias = prevMonthData.filter((r) => r.puesto !== null && !r.asistencia).length
-    const ausentismos = prevMonthData.filter((r) => r.asistencia !== null).length
+    const ausentismos = prevMonthData.filter((r) => !!categoriaDeNovedad(r.asistencia)).length
     const pctAsistencia = total > 0 ? Math.round((asistencias / total) * 100) : 0
     const uniquePersons = new Set(prevMonthData.map((r) => r.identificacion)).size
     const totalHE = prevMonthData.reduce((s, r) => s + (r.hed || 0) + (r.hedf || 0) + (r.hen || 0) + (r.hef || 0) + (r.hn || 0), 0)
@@ -168,11 +171,11 @@ export function AttendanceHistoricalDashboard() {
   const topAbsentees = useMemo(() => {
     const map: Record<string, { nombre: string; faltas: number; motivos: string[] }> = {}
     data.forEach((r) => {
-      if (r.asistencia) {
+      if (categoriaDeNovedad(r.asistencia)) {
         const key = r.identificacion || r.nombre
         if (!map[key]) map[key] = { nombre: r.nombre, faltas: 0, motivos: [] }
         map[key].faltas += 1
-        if (!map[key].motivos.includes(r.asistencia)) map[key].motivos.push(r.asistencia)
+        if (r.asistencia && !map[key].motivos.includes(r.asistencia)) map[key].motivos.push(r.asistencia)
       }
     })
     return Object.values(map).sort((a, b) => b.faltas - a.faltas).slice(0, 5)
@@ -200,7 +203,7 @@ export function AttendanceHistoricalDashboard() {
       if (!map[d]) map[d] = { date: d, turnos: 0, asistencias: 0, ausentismos: 0 }
       map[d].turnos += 1
       if (r.puesto !== null && !r.asistencia) map[d].asistencias += 1
-      if (r.asistencia !== null) map[d].ausentismos += 1
+      if (categoriaDeNovedad(r.asistencia)) map[d].ausentismos += 1
     })
     return Object.values(map)
       .sort((a, b) => a.date.localeCompare(b.date))
@@ -240,7 +243,7 @@ export function AttendanceHistoricalDashboard() {
   const absenceTypes = useMemo(() => {
     const map: Record<string, number> = {}
     data.forEach((r) => {
-      if (r.asistencia) {
+      if (r.asistencia && categoriaDeNovedad(r.asistencia)) {
         const label = r.asistencia.length > 35 ? r.asistencia.substring(0, 35) + "..." : r.asistencia
         map[label] = (map[label] || 0) + 1
       }

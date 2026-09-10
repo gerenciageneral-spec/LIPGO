@@ -56,6 +56,7 @@ import { getMetaDiaForEmpresa } from "@/lib/empresa-meta-dia"
 import { getSlaCargueMin, esNombreSubproducto, PLANTA_ACORDADA, factorTiempoSitio } from "@/lib/sla-acordados"
 import { esCodigoTrasladoNetoCero, nombreMovimientoPorCodigo } from "@/lib/transacciones-codigo"
 import { excluirNoFacturable } from "@/lib/facturas-exclusiones"
+import { categoriaDeNovedad } from "@/lib/ausentismo-categorias"
 
 // Mapea el estado del Centro de Evidencia ISO 9001 al estado de la matriz SIG.
 function isoEstadoASig(e: EstadoISO): SigEstadoCobertura {
@@ -2093,11 +2094,15 @@ async function _computeIndicadoresValores(
 
     // --- Ausentismo (registroasistencia): control diario por proyecto ---
     // Ausentismo = turnos con incapacidad o licencia no remunerada / turnos
-    // programados. Excluye vacaciones, descansos, licencias remuneradas y retiros.
+    // programados. Excluye vacaciones, descansos, licencias remuneradas y
+    // retiros -- misma regla de negocio ya definida en
+    // lib/ausentismo-categorias.ts (la fuente única, la usa también el
+    // módulo Ausentismos/Recobro). Cuentas de prueba ("PRUEBA" en el
+    // nombre, activas en headcount para pruebas manuales) se excluyen.
     const asisRows: any[] = []
     let aFrom = 0
     while (true) {
-      let qa = supabase.from("registroasistencia").select("fecha,puesto,asistencia").in("idempresa", clientes).range(aFrom, aFrom + 999)
+      let qa = supabase.from("registroasistencia").select("fecha,puesto,asistencia,nombre").in("idempresa", clientes).range(aFrom, aFrom + 999)
       if (desde) qa = qa.gte("fecha", desde)
       if (hasta) qa = qa.lte("fecha", hasta)
       const { data } = await qa
@@ -2106,12 +2111,9 @@ async function _computeIndicadoresValores(
       aFrom += 1000
       if (aFrom > 120000) break
     }
-    const esAusentismo = (a: any) => {
-      const s = String(a || "").toLowerCase()
-      return s.includes("incapacidad") || s.includes("no remunerada")
-    }
-    const turnosProgramados = asisRows.filter((r) => r.puesto !== null || r.asistencia !== null).length
-    const turnosAusencia = asisRows.filter((r) => esAusentismo(r.asistencia)).length
+    const asisRowsReales = asisRows.filter((r) => !/prueba/i.test(String(r.nombre || "")))
+    const turnosProgramados = asisRowsReales.filter((r) => r.puesto !== null || r.asistencia !== null).length
+    const turnosAusencia = asisRowsReales.filter((r) => !!categoriaDeNovedad(r.asistencia)).length
     const ghAusentismo = turnosProgramados > 0 ? Math.round((turnosAusencia / turnosProgramados) * 1000) / 10 : 0
 
     // --- Recobro de incapacidades (ausentismosst): % de recuperación ---
@@ -4282,7 +4284,7 @@ export async function getPanelGestionHumanaLIP(
     const asisAll: any[] = []
     let aFrom = 0
     while (true) {
-      let q = supabase.from("registroasistencia").select("fecha,puesto,asistencia,identificacion").in("idempresa", clientes).range(aFrom, aFrom + 999)
+      let q = supabase.from("registroasistencia").select("fecha,puesto,asistencia,identificacion,nombre").in("idempresa", clientes).range(aFrom, aFrom + 999)
       if (rDesde && rHasta) q = q.gte("fecha", rDesde).lte("fecha", rHasta)
       const { data } = await q
       asisAll.push(...(data ?? []))
@@ -4291,11 +4293,14 @@ export async function getPanelGestionHumanaLIP(
       if (aFrom > 120000) break
     }
     // Filtro de período en memoria (cubre mes/día aunque no haya rango de consulta).
-    const asisRows = asisAll.filter((r) => enPeriodo(r.fecha))
-    const esAusentismo = (a: any) => String(a || "").toLowerCase().includes("incapacidad") // ausentismo médico (incapacidades)
+    // Excluye cuentas de prueba ("PRUEBA" en el nombre, activas en headcount
+    // para pruebas manuales). Ausentismo = incapacidad (EG/AT) + licencia no
+    // remunerada -- lib/ausentismo-categorias.ts, la misma regla del módulo
+    // Ausentismos/Recobro (antes esta vista solo contaba "incapacidad").
+    const asisRows = asisAll.filter((r) => enPeriodo(r.fecha) && !/prueba/i.test(String(r.nombre || "")))
     const asisProgramados = asisRows.filter((r) => r.puesto !== null || r.asistencia !== null).length
     const asisPresentes = asisRows.filter((r) => r.asistencia === null && r.puesto !== null).length
-    const asisAusencias = asisRows.filter((r) => esAusentismo(r.asistencia)).length
+    const asisAusencias = asisRows.filter((r) => !!categoriaDeNovedad(r.asistencia)).length
     // Retiros = PERSONAS distintas con novedad "Retiro" (incluye apoyo de picos,
     // no solo salidas definitivas). Se reporta como conteo, no como % de rotación.
     const retiros = new Set(asisRows.filter((r) => String(r.asistencia || "").toLowerCase().includes("retiro")).map((r) => r.identificacion)).size
@@ -4593,9 +4598,15 @@ export async function getPanelOperacionLIP(
     const activos = await headCount((qq: any) => qq.ilike("estado", "activo"))
     const inactivos = await headCount((qq: any) => qq.not("estado", "ilike", "activo"))
 
-    // Asistencia del periodo (cumplimiento de jornada): asistencia NULL = presente
+    // Asistencia del periodo (cumplimiento de jornada): asistencia NULL = presente.
+    // Excluye cuentas de prueba ("PRUEBA" en el nombre, activas en headcount
+    // para pruebas manuales) de TODO lo que cuenta con asisCount.
     const asisCount = async (build: (q: any) => any): Promise<number> => {
-      let qq = supabase.from("registroasistencia").select("*", { count: "exact", head: true }).in("idempresa", clientes)
+      let qq = supabase
+        .from("registroasistencia")
+        .select("*", { count: "exact", head: true })
+        .in("idempresa", clientes)
+        .not("nombre", "ilike", "%prueba%")
       if (desde) qq = qq.gte("fecha", desde)
       if (hasta) qq = qq.lte("fecha", hasta)
       qq = build(qq)
@@ -4701,8 +4712,13 @@ export async function getPanelOperacionLIP(
     for (const id of clientes) plantaAcordada += PLANTA_ACORDADA[id]?.total || 0
     const coberturaPlanta = plantaAcordada > 0 ? pct(activos, plantaAcordada) : 0
 
-    // Ausentismo médico del equipo (incapacidad / turnos del periodo).
-    const ausIncap = await asisCount((qq: any) => qq.ilike("asistencia", "%incapacidad%"))
+    // Ausentismo del equipo (incapacidad EG/AT + licencia no remunerada) /
+    // turnos del periodo -- mismas 2 categorías que lib/ausentismo-categorias.ts
+    // (categoriaDeNovedad), la fuente única de verdad ya usada por el módulo
+    // Ausentismos/Recobro. Si esa regla cambia, este `.or()` debe seguirla.
+    const ausIncap = await asisCount((qq: any) =>
+      qq.or("asistencia.ilike.%incapacidad%,asistencia.ilike.%no remunerada%"),
+    )
     const ausentismo = pct(ausIncap, asisTotal)
 
     // --- Facturación PENDIENTE POR SOLICITAR (responsabilidad del coordinador) ---
