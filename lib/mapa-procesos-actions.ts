@@ -377,6 +377,128 @@ export async function desvincularNumeral(coberturaId: number): Promise<Resultado
  * de un sistema que se audita, y un documento que desaparece sin explicación es
  * peor que uno retirado con su motivo escrito.
  */
+/* =========================================================================
+ * DOCUMENTOS SIN CLASIFICAR
+ *
+ * El script 58 agregó `proceso_id` y `categoria` a `sig_documentos`, pero
+ * DELIBERADAMENTE dejó en null los documentos que ya existían: adivinar a qué
+ * proceso pertenece cada uno por coincidencia de texto sería inventar
+ * clasificación documental, y en una auditoría eso no se sostiene.
+ *
+ * La consecuencia es que hoy esos documentos no aparecen en ningún proceso del
+ * mapa. Siguen visibles en el Listado Maestro --no se perdió nada-- pero el
+ * mapa se ve vacío aunque el SGI tenga documentos. Esto permite asignarlos
+ * desde la pantalla, que es donde una persona puede decidirlo.
+ * ========================================================================= */
+
+export interface DocumentoSinClasificar {
+  id: string
+  codigo: string
+  nombre: string
+  version: string
+  tipo: string | null
+  /** El campo `proceso` de texto libre que ya traía el documento. Es la mejor
+   *  pista para saber a qué proceso del mapa pertenece, pero NO se usa para
+   *  asignar automáticamente: solo se muestra como ayuda. */
+  procesoTexto: string | null
+}
+
+/** Documentos que todavía no están asignados a ningún proceso del mapa. */
+export async function getDocumentosSinClasificar(): Promise<Resultado<DocumentoSinClasificar[]>> {
+  try {
+    const admin: any = await getSupabaseAdmin()
+    const { data, error } = await admin
+      .from("sig_documentos")
+      .select("id, codigo, nombre, version, tipo, proceso, proceso_id, eliminado")
+      // En Postgres NULL <> NULL: .eq("proceso_id", null) NO encontraría nada.
+      // Tiene que ser .is(), que es justo el caso mayoritario acá.
+      .is("proceso_id", null)
+      .order("codigo", { ascending: true })
+
+    if (error) {
+      console.error("[v0] getDocumentosSinClasificar:", error.message)
+      return { success: false, message: faltaMigracion(error.message) ? MSG_FALTA_MIGRACION : error.message }
+    }
+
+    const vivos = (data ?? []).filter((r: any) => r.eliminado !== true)
+    return {
+      success: true,
+      data: vivos.map((r: any) => ({
+        id: String(r.id),
+        codigo: r.codigo ?? "",
+        nombre: r.nombre ?? "",
+        version: r.version ?? "",
+        tipo: r.tipo ?? null,
+        procesoTexto: r.proceso ?? null,
+      })),
+    }
+  } catch (e: any) {
+    console.error("[v0] getDocumentosSinClasificar excepción:", e?.message ?? e)
+    return { success: false, message: e?.message || "No se pudieron leer los documentos." }
+  }
+}
+
+/**
+ * Asigna documentos existentes a un proceso del mapa y a una de las tres
+ * listas. No los mueve ni los copia: solo los clasifica, así que siguen siendo
+ * los mismos documentos del Listado Maestro.
+ */
+export async function clasificarDocumentos(
+  documentoIds: string[],
+  procesoId: string,
+  categoria: CategoriaDoc,
+): Promise<Resultado<number>> {
+  if (!documentoIds?.length) return { success: false, message: "No se seleccionó ningún documento." }
+  if (!procesoId) return { success: false, message: "No se indicó el proceso." }
+  if (!["formato", "informacion", "registro"].includes(categoria)) {
+    return { success: false, message: "Categoría no válida." }
+  }
+  try {
+    const admin: any = await getSupabaseAdmin()
+    const usuario = await getCurrentUsuarioForInsert()
+    const { error } = await admin
+      .from("sig_documentos")
+      .update({
+        proceso_id: procesoId,
+        categoria,
+        subido_por: usuario,
+        actualizado_at: new Date().toISOString(),
+      })
+      .in("id", documentoIds)
+
+    if (error) {
+      console.error("[v0] clasificarDocumentos:", error.message)
+      return { success: false, message: faltaMigracion(error.message) ? MSG_FALTA_MIGRACION : error.message }
+    }
+    return { success: true, data: documentoIds.length }
+  } catch (e: any) {
+    console.error("[v0] clasificarDocumentos excepción:", e?.message ?? e)
+    return { success: false, message: e?.message || "No se pudieron clasificar los documentos." }
+  }
+}
+
+/**
+ * Saca un documento del mapa sin borrarlo: vuelve a quedar sin clasificar.
+ *
+ * Es distinto de eliminarDocumentoProceso, que lo retira del SGI con motivo.
+ * Acá el documento sigue vivo y visible en el Listado Maestro; solo deja de
+ * estar colgado de ese proceso.
+ */
+export async function desclasificarDocumento(documentoId: string): Promise<Resultado> {
+  if (!documentoId) return { success: false, message: "No se indicó el documento." }
+  try {
+    const admin: any = await getSupabaseAdmin()
+    const { error } = await admin
+      .from("sig_documentos")
+      .update({ proceso_id: null, categoria: null, actualizado_at: new Date().toISOString() })
+      .eq("id", documentoId)
+    if (error) return { success: false, message: error.message }
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "No se pudo quitar del proceso." }
+  }
+}
+
 export async function eliminarDocumentoProceso(
   id: string,
   motivo: string,

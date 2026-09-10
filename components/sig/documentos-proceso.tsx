@@ -26,6 +26,8 @@ import {
   Download,
   ExternalLink,
   FileText,
+  FolderInput,
+  FolderMinus,
   Link2,
   Loader2,
   Pencil,
@@ -34,12 +36,14 @@ import {
   Upload,
 } from "lucide-react"
 import { NumeralesDocumento } from "@/components/sig/numerales-documento"
+import { DocumentosSinClasificar } from "@/components/sig/documentos-sin-clasificar"
 import {
   eliminarDocumentoProceso,
   getDocumentosDeProceso,
   getNumeralesDeDocumento,
   guardarDocumentoProceso,
   subirArchivoDocumento,
+  desclasificarDocumento,
   type NumeralVinculado,
 } from "@/lib/mapa-procesos-actions"
 import {
@@ -94,6 +98,7 @@ export function DocumentosProceso({
   // cada tarjeta puede mostrarlos sin una consulta propia.
   const [numerales, setNumerales] = useState<Record<string, NumeralVinculado[]>>({})
   const [vinculando, setVinculando] = useState<DocumentoProceso | null>(null)
+  const [trayendo, setTrayendo] = useState(false)
 
   const cargar = useCallback(async () => {
     setCargando(true)
@@ -203,10 +208,25 @@ export function DocumentosProceso({
           <TabsContent key={c.id} value={c.id} className="space-y-2 pt-2">
             <p className="text-xs text-muted-foreground">{c.ayuda}</p>
 
-            <Button size="sm" className="w-full gap-1.5" onClick={() => setEditando(nuevoBorrador(c.id))}>
-              <Plus className="h-3.5 w-3.5" />
-              Agregar {c.label.toLowerCase()}
-            </Button>
+            <div className="flex gap-1.5">
+              <Button size="sm" className="flex-1 gap-1.5" onClick={() => setEditando(nuevoBorrador(c.id))}>
+                <Plus className="h-3.5 w-3.5" />
+                Agregar {c.label.toLowerCase()}
+              </Button>
+              {/* Los documentos que ya estaban en el SGI antes del mapa quedaron
+                  sin proceso a proposito (script 58: no se adivina). Esto los
+                  trae sin duplicarlos: son los mismos del Listado Maestro. */}
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                title="Traer documentos que ya existen en el SGI"
+                onClick={() => setTrayendo(true)}
+              >
+                <FolderInput className="h-3.5 w-3.5" />
+                Traer existentes
+              </Button>
+            </div>
 
             {cargando ? (
               <div className="flex justify-center py-8">
@@ -296,6 +316,34 @@ export function DocumentosProceso({
                         >
                           <Pencil className="h-3.5 w-3.5" />
                         </Button>
+                        {/* Sacarlo de ESTE proceso. Distinto de "Quitar del
+                            listado", que lo retira del SGI: aca el documento
+                            sigue vivo, solo vuelve a quedar sin clasificar. */}
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7"
+                          title="Sacar de este proceso (el documento no se borra)"
+                          onClick={async () => {
+                            const res = await desclasificarDocumento(d.id)
+                            if (!res.success) {
+                              toast({
+                                title: "No se pudo sacar",
+                                description: res.message,
+                                variant: "destructive",
+                              })
+                              return
+                            }
+                            toast({
+                              title: "Documento sacado del proceso",
+                              description: `${d.codigo} vuelve a quedar sin clasificar.`,
+                            })
+                            cargar()
+                            onCambio?.()
+                          }}
+                        >
+                          <FolderMinus className="h-3.5 w-3.5" />
+                        </Button>
                         <Button
                           size="icon"
                           variant="ghost"
@@ -325,6 +373,19 @@ export function DocumentosProceso({
           abierto
           onCerrar={() => setVinculando(null)}
           onCambio={cargar}
+        />
+      )}
+
+      {trayendo && (
+        <DocumentosSinClasificar
+          procesoId={procesoId}
+          procesoNombre={procesoNombre}
+          abierto
+          onCerrar={() => setTrayendo(false)}
+          onCambio={() => {
+            cargar()
+            onCambio?.()
+          }}
         />
       )}
 
