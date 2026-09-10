@@ -14,6 +14,7 @@ import { Loader2, CheckCircle, XCircle, Pen, Eraser, FileText, Download, History
 import { useAuth } from "@/components/auth-provider"
 import { getSolicitudesPendientes, aprobarSolicitudes, rechazarSolicitudes, getEmpresaData, getSolicitudesAprobadas, updatePdfUrl } from "@/lib/solicitud-turnos-actions"
 import { Badge } from "@/components/ui/badge"
+import { esTipoTurnos, construirPdfAprobacionTurnos } from "@/lib/aprobacion-turnos-pdf"
 
 interface SolicitudTurno {
   id: number
@@ -286,11 +287,6 @@ export function AprobarTurnos() {
     !selectedPersonnel.includes(p.nombre)
   )
 
-  // Una solicitud es de tipo "Turnos" cuando su campo `tipo` es "Turnos"
-  // (o está vacío, ya que ese es el valor por defecto en la UI).
-  const esTipoTurnos = (s: SolicitudTurno) =>
-    (s.tipo || "Turnos").trim().toLowerCase() === "turnos"
-
   // Solicitudes seleccionadas que son de tipo "Turnos" y la cantidad
   // total de personas que requieren. Para este tipo, el personal
   // asignado debe coincidir exactamente con la cantidad solicitada.
@@ -496,148 +492,21 @@ export function AprobarTurnos() {
         return null
       }
 
-      // Dynamic import to avoid build issues with fflate/Worker
-      const { default: jsPDF } = await import("jspdf")
-      const { default: autoTable } = await import("jspdf-autotable")
-      
-      const doc = new jsPDF()
-      const now = new Date()
-
-      // Header
-      doc.setFontSize(16)
-      doc.setTextColor(200, 16, 46)
-      doc.setFont(undefined as unknown as string, "bold")
-      doc.text(empresaData.nombre, 105, 20, { align: "center" })
-
-      doc.setFontSize(10)
-      doc.setTextColor(0, 0, 0)
-      doc.setFont(undefined as unknown as string, "normal")
-      doc.text(`NIT: ${empresaData.nit || ""}`, 105, 27, { align: "center" })
-      doc.text(empresaData.direccion || "", 105, 33, { align: "center" })
-
-      // Titulo dinamico segun el tipo real de las solicitudes aprobadas en
-      // este lote -- evita que una aprobacion de Horas Extra diga "TURNOS"
-      // (pedido explicito: el PDF debe reflejar la solicitud tal como se hizo).
-      const tiposEnLote = new Set(aprobadas.map((s) => (esTipoTurnos(s) ? "turnos" : "horas_extra")))
-      const tituloAprobacion =
-        tiposEnLote.size > 1
-          ? "APROBACIÓN DE TURNOS Y HORAS EXTRAS"
-          : tiposEnLote.has("horas_extra")
-            ? "APROBACIÓN HORAS EXTRAS"
-            : "APROBACIÓN DE TURNOS"
-
-      doc.setFontSize(14)
-      doc.setFont(undefined as unknown as string, "bold")
-      doc.text(tituloAprobacion, 105, 45, { align: "center" })
-
-      // Solicitante info
-      const solicitante = aprobadas[0]?.nombresolicitante || ""
-      const firmasolicitanteUrl = aprobadas[0]?.firmasolicitante
-
-      doc.setFontSize(11)
-      doc.setFont(undefined as unknown as string, "normal")
-      doc.text(`Solicitante: ${solicitante}`, 20, 58)
-      doc.text(`Aprobado por: ${profile?.nombre || ""}`, 20, 65)
-
-      // Table with details
-      const tableData = aprobadas.map(s => [
-        s.puesto,
-        s.fecharequerida,
-        s.cantidad.toString()
-      ])
-
-      autoTable(doc, {
-        startY: 73,
-        head: [["Puesto", "Fecha de Servicio", "Cantidad"]],
-        body: tableData,
-        theme: "striped",
-        headStyles: { fillColor: [44, 82, 130] },
-        styles: { fontSize: 10 },
+      // Contenido del PDF: lógica compartida con el script de corrección
+      // retroactiva (lib/aprobacion-turnos-pdf.ts) -- una sola fuente de
+      // verdad para el formato del documento. `nombreAprobador` ya viene
+      // validado no-vacío por handleAprobar antes de llegar aquí.
+      const buffer = await construirPdfAprobacionTurnos({
+        empresaData,
+        aprobadas,
+        nombreAprobador: (nombreAprobador && nombreAprobador.trim()) || profile?.nombre || "",
+        firmaAprobadorUrl,
+        personnel,
+        cargarImagenDataUri: loadImage,
       })
 
-      let currentY = (doc as any).lastAutoTable.finalY + 10
-
-      // Total -- misma logica que el titulo: el label tambien debe reflejar
-      // el tipo real de lo aprobado, no siempre decir "turnos".
-      const totalCantidad = aprobadas.reduce((sum, s) => sum + Number(s.cantidad), 0)
-      const labelTotal =
-        tiposEnLote.size > 1
-          ? "Total de solicitudes aprobadas"
-          : tiposEnLote.has("horas_extra")
-            ? "Total de horas extra aprobadas"
-            : "Total de turnos aprobados"
-      doc.setFont(undefined as unknown as string, "bold")
-      doc.text(`${labelTotal}: ${totalCantidad}`, 20, currentY)
-
-      // Personnel section
-      if (personnel.length > 0) {
-        currentY += 15
-        doc.setFontSize(12)
-        doc.setFont(undefined as unknown as string, "bold")
-        doc.text("PERSONAL PROGRAMADO", 20, currentY)
-        
-        currentY += 5
-        const personnelTableData = personnel.map((nombre, index) => [(index + 1).toString(), nombre])
-        
-        autoTable(doc, {
-          startY: currentY,
-          head: [["#", "Nombre"]],
-          body: personnelTableData,
-          theme: "striped",
-          headStyles: { fillColor: [44, 82, 130] },
-          styles: { fontSize: 10 },
-          columnStyles: {
-            0: { cellWidth: 15 },
-            1: { cellWidth: 'auto' }
-          }
-        })
-
-        currentY = (doc as any).lastAutoTable.finalY + 10
-      }
-
-      const finalY = currentY
-
-      // Signatures section
-      let sigY = finalY + 20
-      doc.setFont(undefined as unknown as string, "normal")
-      
-      // Firma solicitante
-      doc.text("Firma Solicitante:", 30, sigY)
-      if (firmasolicitanteUrl) {
-        try {
-          const imgSolicitante = await loadImage(firmasolicitanteUrl)
-          doc.addImage(imgSolicitante, "PNG", 30, sigY + 5, 60, 30)
-        } catch (e) {
-          doc.text("[Firma no disponible]", 30, sigY + 15)
-        }
-      }
-      doc.text(solicitante, 30, sigY + 40)
-      doc.line(30, sigY + 37, 90, sigY + 37)
-
-      // Firma aprobador
-      doc.text("Firma Aprobador:", 120, sigY)
-      if (firmaAprobadorUrl) {
-        try {
-          const imgAprobador = await loadImage(firmaAprobadorUrl)
-          doc.addImage(imgAprobador, "PNG", 120, sigY + 5, 60, 30)
-        } catch (e) {
-          doc.text("[Firma no disponible]", 120, sigY + 15)
-        }
-      }
-      // Linea de firma + nombre del aprobador debajo. Priorizamos
-      // `nombreAprobador` (lo que el aprobador escribio en el formulario
-      // justo antes de firmar) porque corresponde 1:1 con quien firma
-      // este PDF. Si por algun motivo viene vacio, usamos el `profile`
-      // del usuario autenticado como fallback para no dejar el espacio
-      // en blanco.
-      doc.line(120, sigY + 37, 180, sigY + 37)
-      const nombreFirmaAprobador =
-        (nombreAprobador && nombreAprobador.trim()) || profile?.nombre || ""
-      doc.text(nombreFirmaAprobador, 120, sigY + 42)
-
-      // Return PDF blob instead of downloading
-      const pdfBlob = doc.output("blob")
-      const filename = `aprobacion_turnos_${now.toISOString().split("T")[0]}_${Date.now()}.pdf`
+      const pdfBlob = new Blob([buffer], { type: "application/pdf" })
+      const filename = `aprobacion_turnos_${new Date().toISOString().split("T")[0]}_${Date.now()}.pdf`
       return { blob: pdfBlob, filename }
     } catch (error) {
       console.error("[v0] Error generating PDF:", error)
