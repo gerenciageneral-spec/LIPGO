@@ -31,18 +31,13 @@ export async function GET(request: Request) {
       currentDateObj.setDate(currentDateObj.getDate() - 1)
       const prevDate = currentDateObj.toISOString().split("T")[0]
 
+      const COLS =
+        "id, fecha, nombre, identificacion, puesto, asistencia, hed, hedf, hen, hef, hn, especialidad, horaingreso, horaentradaprogramada"
+
       // Fetch current and previous day in parallel
-      const [currentRes, prevRes, last7Res] = await Promise.all([
-        supabaseAdmin
-          .from("registroasistencia")
-          .select("id, fecha, nombre, identificacion, puesto, asistencia, hed, hedf, hen, hef, hn, especialidad")
-          .eq("idempresa", empresaId)
-          .eq("fecha", colombiaDate),
-        supabaseAdmin
-          .from("registroasistencia")
-          .select("id, fecha, nombre, identificacion, puesto, asistencia, hed, hedf, hen, hef, hn, especialidad")
-          .eq("idempresa", empresaId)
-          .eq("fecha", prevDate),
+      const [currentRes, prevRes, last7Res, adminRes] = await Promise.all([
+        supabaseAdmin.from("registroasistencia").select(COLS).eq("idempresa", empresaId).eq("fecha", colombiaDate),
+        supabaseAdmin.from("registroasistencia").select(COLS).eq("idempresa", empresaId).eq("fecha", prevDate),
         // Last 7 days for sparkline mini-trend
         (() => {
           const d7 = new Date(colombiaDate + "T12:00:00")
@@ -50,12 +45,22 @@ export async function GET(request: Request) {
           const from7 = d7.toISOString().split("T")[0]
           return supabaseAdmin
             .from("registroasistencia")
-            .select("fecha, puesto, asistencia")
+            .select("fecha, puesto, asistencia, identificacion, nombre")
             .eq("idempresa", empresaId)
             .gte("fecha", from7)
             .lte("fecha", colombiaDate)
             .order("fecha", { ascending: true })
         })(),
+        // Personal administrativo (headcount.admin=true) de este proyecto o
+        // sin proyecto asignado (mismo criterio que getPersonasAsistenciaAdministrativa):
+        // el Dashboard Diario es una vista OPERATIVA -- el administrativo ya
+        // tiene su propio módulo (Asistencia Administrativa) y no debe contarse
+        // aquí en ningún KPI/lista/panel, ni siquiera vía su novedad "Descanso".
+        supabaseAdmin
+          .from("headcount")
+          .select("identificacion")
+          .eq("admin", true)
+          .or(`idempresa.eq.${empresaId},idempresa.is.null`),
       ])
 
       if (currentRes.error) {
@@ -63,10 +68,14 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: currentRes.error.message }, { status: 500 })
       }
 
+      const adminIds = new Set((adminRes.data || []).map((r: any) => String(r.identificacion).trim()))
+      const soloOperativos = (rows: any[] | null) =>
+        (rows || []).filter((r) => !adminIds.has(String(r.identificacion).trim()))
+
       return NextResponse.json({
-        data: currentRes.data || [],
-        prevData: prevRes.data || [],
-        last7Data: last7Res.data || [],
+        data: soloOperativos(currentRes.data),
+        prevData: soloOperativos(prevRes.data),
+        last7Data: soloOperativos(last7Res.data),
         date: colombiaDate,
         prevDate,
       })
@@ -81,20 +90,31 @@ export async function GET(request: Request) {
       const lastDay = new Date(year, mon, 0).getDate()
       const endDate = `${year}-${String(mon).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`
 
-      const { data, error } = await supabaseAdmin
-        .from("registroasistencia")
-        .select("id, fecha, nombre, identificacion, puesto, asistencia, hed, hedf, hen, hef, hn, especialidad")
-        .eq("idempresa", empresaId)
-        .gte("fecha", startDate)
-        .lte("fecha", endDate)
-        .order("fecha", { ascending: true })
+      const [monthRes, adminRes] = await Promise.all([
+        supabaseAdmin
+          .from("registroasistencia")
+          .select("id, fecha, nombre, identificacion, puesto, asistencia, hed, hedf, hen, hef, hn, especialidad")
+          .eq("idempresa", empresaId)
+          .gte("fecha", startDate)
+          .lte("fecha", endDate)
+          .order("fecha", { ascending: true }),
+        // Mismo criterio que en "daily": el administrativo no cuenta aquí.
+        supabaseAdmin
+          .from("headcount")
+          .select("identificacion")
+          .eq("admin", true)
+          .or(`idempresa.eq.${empresaId},idempresa.is.null`),
+      ])
 
-      if (error) {
-        console.error("[v0] Dashboard monthly error:", error)
-        return NextResponse.json({ error: error.message }, { status: 500 })
+      if (monthRes.error) {
+        console.error("[v0] Dashboard monthly error:", monthRes.error)
+        return NextResponse.json({ error: monthRes.error.message }, { status: 500 })
       }
 
-      return NextResponse.json({ data: data || [], startDate, endDate, month: targetMonth })
+      const adminIds = new Set((adminRes.data || []).map((r: any) => String(r.identificacion).trim()))
+      const data = (monthRes.data || []).filter((r: any) => !adminIds.has(String(r.identificacion).trim()))
+
+      return NextResponse.json({ data, startDate, endDate, month: targetMonth })
     }
 
     return NextResponse.json({ error: "Invalid mode" }, { status: 400 })

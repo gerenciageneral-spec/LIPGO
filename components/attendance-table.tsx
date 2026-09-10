@@ -18,7 +18,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { useToast } from "@/hooks/use-toast"
 import { reasignarPuestoDelDia } from "@/lib/reasignacion-puesto-actions"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { OPERACIONES_OPTIONS, ESPECIALIDADES_OPTIONS } from "@/lib/asistencia-catalogos"
+import { OPERACIONES_OPTIONS, ESPECIALIDADES_OPTIONS, isLate, timeToMinutes } from "@/lib/asistencia-catalogos"
 import { PoliticasHorasExtra } from "@/components/attendance/politicas-horas-extra"
 
 interface AttendanceRecord {
@@ -46,38 +46,6 @@ interface AttendanceRecord {
   // horafinauto) porque la persona no marcó salida ese día — no es una
   // marcación real.
   horaFinAuto: boolean
-}
-
-/**
- * Convierte "HH:MM" o "HH:MM:SS" a minutos desde medianoche. Devuelve
- * NaN si el string no tiene formato valido — el caller debe filtrarlo
- * antes de comparar para evitar comparaciones contra NaN (que siempre
- * son false y enmascararian la regla de "Llegada tarde").
- */
-function timeToMinutes(t: string | null | undefined): number {
-  if (!t) return Number.NaN
-  const parts = t.split(":")
-  if (parts.length < 2) return Number.NaN
-  const h = Number(parts[0])
-  const m = Number(parts[1])
-  if (!Number.isFinite(h) || !Number.isFinite(m)) return Number.NaN
-  return h * 60 + m
-}
-
-/**
- * `true` si la persona llego tarde respecto a su hora programada.
- * Reglas: ambos valores deben existir y parsear a numeros validos. Si
- * no hay hora programada (sin turno) no se considera tardanza, aunque
- * haya llegado: la columna mostrara solo "-".
- */
-function isLate(
-  horaLlegada: string | null,
-  horaProgramada: string | null,
-): boolean {
-  const llegada = timeToMinutes(horaLlegada)
-  const programada = timeToMinutes(horaProgramada)
-  if (!Number.isFinite(llegada) || !Number.isFinite(programada)) return false
-  return llegada > programada
 }
 
 /**
