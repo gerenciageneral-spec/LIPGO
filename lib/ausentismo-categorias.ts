@@ -28,10 +28,15 @@ export function tipoEventoDeCategoria(cat: string | null | undefined): "EG" | "A
 
 // Rótulo de novedad → categoría de ausentismo, o null si NO es ausentismo.
 export function categoriaDeNovedad(asistencia: string | null | undefined): CategoriaAusentismo | null {
-  const s = String(asistencia || "").toLowerCase()
+  const s = String(asistencia || "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
   if (!s) return null
   if (s.includes("incapacidad")) return s.includes("profesional") ? "ACCIDENTE_LABORAL" : "ENFERMEDAD_GENERAL"
-  if (s.includes("no remunerada")) return "NO_REMUNERADA"
+  // "Suspensión temporal de Contrato" comparte el mismo código PILA y trato que la
+  // licencia no remunerada (ver lib/asistencia-catalogos.ts) -- misma categoría aquí.
+  if (s.includes("no remunerada") || s.includes("suspension")) return "NO_REMUNERADA"
   return null // otras licencias, vacaciones, descanso, retiro → NO son ausentismo
 }
 

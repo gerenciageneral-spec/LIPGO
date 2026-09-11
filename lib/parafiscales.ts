@@ -331,15 +331,21 @@ export function calcularAportes(e: EntradaAportes, p: ParametrosParafiscales): A
   //   · Pensión (empleador 12%): TODOS los días (trab + vac + incap + ausencia + licencia rem.).
   //   · Pensión (trabajador 4%): trab + vac + incap + licencia rem. — el ausentismo lo cotiza
   //     SOLO el empleador (no se le descuenta al trabajador por un día no laborado).
-  //   · Salud: trab + VACACIONES + incap + licencia rem. (solo ausentismo NO cotiza salud
-  //     -- confirmado con la planilla real de julio-2026, tarifa 0.04 no-cero en días de
-  //     vacaciones; el comentario anterior lo daba por excluido y era un error).
+  //   · Salud (empleador 8.5%): trab + VACACIONES + licencia rem. -- la INCAPACIDAD queda
+  //     EXCLUIDA de esta base (regla confirmada por el usuario 2026-09-11: en incapacidad
+  //     la EPS solo cobra el 4% de EMPLEADO, el empleador no paga su 8.5% porque durante
+  //     la incapacidad es la EPS/ARL quien asume el pago, no el empleador).
+  //   · Salud (empleado 4%): trab + vacaciones + INCAPACIDAD + licencia rem. -- el 4% del
+  //     trabajador SÍ se causa en incapacidad (confirmado con la planilla real de
+  //     julio-2026, tarifa 0.04 no-cero en días de vacaciones; el comentario anterior lo
+  //     daba por excluido y era un error).
   //   · ARL: SOLO días trabajados. Cualquier novedad que impida asistir a trabajar
   //     (vacaciones, incapacidad, licencia rem. o no rem., ausentismo) NO causa ARL.
   //   · Caja/SENA/ICBF: trab + vacaciones + licencia rem. (+ auxilio de transporte).
   const auxilio = Math.max(0, Number(e.auxilio) || 0)
   const ibcPension = ibcTrab + ibcVac + ibcIncap + ibcAus + ibcLicr
   const ibcPensionEmpleado = ibcTrab + ibcVac + ibcIncap + ibcLicr
+  const ibcSaludEmpleador = ibcTrab + ibcVac + ibcLicr
   const ibcSalud = ibcTrab + ibcVac + ibcIncap + ibcLicr
   const ibcArl = ibcTrab
   const ibcCaja = ibcTrab + ibcVac + ibcLicr
@@ -349,7 +355,7 @@ export function calcularAportes(e: EntradaAportes, p: ParametrosParafiscales): A
   const tarifaArl = pctArl(claseArl)
 
   const pensionEmpleador = ibcPension * (p.pctPensionEmpleador / 100)
-  const saludEmpleador = exonerado ? 0 : ibcSalud * (p.pctSaludEmpleador / 100)
+  const saludEmpleador = exonerado ? 0 : ibcSaludEmpleador * (p.pctSaludEmpleador / 100)
   const arl = ibcArl * (tarifaArl / 100)
   const caja = baseParafiscales * (p.pctCaja / 100) // sin exención, nunca
   const sena = exonerado ? 0 : baseParafiscales * (p.pctSena / 100)
@@ -403,8 +409,11 @@ export function calcularAportes(e: EntradaAportes, p: ParametrosParafiscales): A
 // novedad que impida al trabajador presentarse (vacaciones, incapacidad, licencia
 // remunerada o no, ausentismo) NO paga ARL.
 //   · VAC     → vacaciones: cotiza pensión + salud + caja (no ARL).
-//   · INCAP   → incapacidad EG/AT: cotiza pensión + salud (no caja, no ARL).
-//   · AUS     → ausentismo / licencia NO remunerada: solo 12% de pensión (empleador).
+//   · INCAP   → incapacidad EG/AT: cotiza 12%+4% pensión (empleador+empleado) + 4% salud
+//               EMPLEADO (la EPS/ARL asume el pago, el empleador NO paga su 8.5%); no
+//               causa ARL ni Caja de Compensación.
+//   · AUS     → ausentismo / licencia NO remunerada / suspensión temporal de contrato:
+//               solo 12% de pensión (empleador); no causa salud, ARL ni caja.
 //   · LICR    → licencia REMUNERADA (luto, maternidad, paternidad…): pensión + salud +
 //               caja, SIN ARL (día pagado pero sin exposición a riesgo laboral).
 //   · RETIRO  → día de baja: NO cotiza (se descarta).
@@ -417,7 +426,9 @@ export function clasificarDiaCotizacion(novedad: string | null | undefined): Tip
     .toLowerCase()
   if (s.includes("vacacion")) return "VAC"
   if (s.includes("incapacidad")) return "INCAP"
-  if (s.includes("no remunerada")) return "AUS" // debe ir ANTES de "licencia"
+  // "no remunerada" y "suspension" (temporal de contrato) comparten el mismo código PILA
+  // (SLN) y el mismo tratamiento de aportes -- confirmado por el usuario 2026-09-11.
+  if (s.includes("no remunerada") || s.includes("suspension")) return "AUS" // debe ir ANTES de "licencia"
   if (s.includes("licencia")) return "LICR" // luto, maternidad, paternidad, etc. (remuneradas)
   if (s.includes("retiro")) return "RETIRO"
   return "TRAB" // vacío, "Descanso", festivo o jornada normal

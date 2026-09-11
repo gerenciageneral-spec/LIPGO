@@ -13,9 +13,19 @@
 //   · TRAB  -> cotiza TODO (pensión 0.16, salud 0.04/0.125, ARL, caja 0.04).
 //   · VAC   -> cotiza pensión + SALUD + caja (NO ARL). (parafiscales.ts tenía
 //     esto mal -- excluía salud -- corregido el mismo día con este hallazgo).
-//   · INCAP -> cotiza pensión + salud (NO ARL, NO caja).
-//   · AUS   -> pensión SOLO empleador (tarifa 0.12) -- NO salud, NO ARL, NO caja.
+//   · INCAP -> pensión 0.16 (12% empleador + 4% empleado) + salud SOLO 0.04
+//     (el 4% del empleado; el 8.5% patronal NO se causa -- lo asume la
+//     EPS/ARL, confirmado por el usuario 2026-09-11). NO ARL, NO caja.
+//   · AUS   -> pensión SOLO empleador (tarifa 0.12) -- NO salud, NO ARL, NO
+//     caja. Incluye tanto "Licencia no remunerada" como la nueva novedad
+//     "Suspensión temporal de Contrato" (mismo código PILA SLN, mismo trato).
 //   · LICR  -> igual que TRAB menos ARL (pensión + salud + caja).
+//   · pensionTarifa/saludTarifa NO son constantes -- se calculan como
+//     valor/IBC de cada fila (ver más abajo), porque varían según el tipo de
+//     segmento (16%/12% en pensión, 12.5%|4%|4% en salud).
+//   · Vacaciones PAGADAS EN LIQUIDACIÓN de retiro (dinero, no días) suman su
+//     valor SOLO al IBC/valor de Caja del segmento de cierre del mes del
+//     retiro -- ver `vacLiqPorCedula` más abajo.
 //   · Las columnas "Días" de los 4 conceptos SIEMPRE muestran el mismo conteo
 //     del tramo (el concepto que no aplica se ve en la TARIFA/VALOR en $0, no
 //     en el conteo de días).
@@ -29,6 +39,7 @@
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { calcularAportes, PARAFISCALES_DEFAULT, clasificarDiaCotizacion, type TipoDiaCotizacion } from "@/lib/parafiscales"
+import { getLiquidaciones } from "@/lib/liquidaciones-actions"
 import * as XLSX from "xlsx"
 
 const PLANTILLA_STORAGE_PATH = "parafiscales/plantilla-carga-pila.xlsx"
@@ -85,11 +96,19 @@ export async function generarArchivoCargaPila(
 
     const { data: personal } = await admin
       .from("headcount")
-      .select("identificacion, nombre, admin, salario, contratosiigo, fecha_retiro, fechainicio, estado")
+      .select("identificacion, nombre, admin, salario, idempresa, contratosiigo, fecha_retiro, fechainicio, estado")
       .not("nombre", "ilike", "%prueba%")
     const info = new Map<
       string,
-      { identificacion: string; esAdmin: boolean; salario: number; fechaRetiro: string | null; fechaInicio: string | null; esActivo: boolean }
+      {
+        identificacion: string
+        esAdmin: boolean
+        salario: number
+        idempresa: number | null
+        fechaRetiro: string | null
+        fechaInicio: string | null
+        esActivo: boolean
+      }
     >()
     for (const h of personal || []) {
       const nombre = String(h.nombre || "").trim()
@@ -100,6 +119,7 @@ export async function generarArchivoCargaPila(
         identificacion: String(h.identificacion || "").trim() || prev?.identificacion || "",
         esAdmin: h.admin === true || prev?.esAdmin || false,
         salario: Number(h.salario) || prev?.salario || 0,
+        idempresa: h.idempresa ?? prev?.idempresa ?? null,
         fechaRetiro: h.fecha_retiro ? String(h.fecha_retiro).slice(0, 10) : (prev?.fechaRetiro ?? null),
         fechaInicio: h.fechainicio ? String(h.fechainicio).slice(0, 10) : (prev?.fechaInicio ?? null),
         esActivo: (prev?.esActivo ?? false) || esActivoFila,
@@ -108,6 +128,26 @@ export async function generarArchivoCargaPila(
 
     const desde = `${anio}-${String(mes).padStart(2, "0")}-01`
     const hasta = finDeMes(anio, mes)
+
+    // Vacaciones pagadas en la LIQUIDACIÓN de retiro -> suman al IBC de Caja de
+    // Compensación del segmento de cierre, en el mes del retiro. Misma fuente y
+    // mismo criterio que getParafiscales() (lib/parafiscales-actions.ts) -- ver
+    // comentario ahí. Solo se consulta si hay retiros este mes.
+    const vacLiqPorCedula = new Map<string, number>()
+    const idsEmpresaConRetiro = new Set(
+      Array.from(info.values())
+        .filter((i) => i.fechaRetiro && i.fechaRetiro >= desde && i.fechaRetiro <= hasta && i.idempresa != null)
+        .map((i) => i.idempresa as number),
+    )
+    for (const idEmp of idsEmpresaConRetiro) {
+      const liq = await getLiquidaciones(idEmp)
+      if (!liq.success) continue
+      for (const lp of liq.data) {
+        if (lp.fecha_retiro && lp.fecha_retiro >= desde && lp.fecha_retiro <= hasta && lp.vacaciones > 0) {
+          vacLiqPorCedula.set(lp.identificacion, lp.vacaciones)
+        }
+      }
+    }
     const nombres = Array.from(info.keys())
     let filas: any[] = []
     const pageSize = 1000
@@ -234,6 +274,20 @@ export async function generarArchivoCargaPila(
         const fIni = `${anio}-${String(mes).padStart(2, "0")}-${String(seg.diaIni).padStart(2, "0")}`
         const fFin = `${anio}-${String(mes).padStart(2, "0")}-${String(seg.diaFin).padStart(2, "0")}`
         const llevaBono = seg.tipo === "TRAB" && ((seg.diaIni <= 15 && bonoQ1 > 0) || (seg.diaFin > 15 && bonoQ2 > 0))
+        // Vacaciones de liquidación de retiro: se suman SOLO al segmento de
+        // CIERRE (el que lleva `retFecha`), y SOLO al IBC/valor de Caja -- ver
+        // comentario junto a `vacLiqPorCedula` más arriba.
+        const esSegmentoCierre = retEsteMes && seg === segmentos[segmentos.length - 1]
+        const vacLiqAplicada = esSegmentoCierre ? vacLiqPorCedula.get(ficha.identificacion) || 0 : 0
+        const cajaIbcFila = ap.ibcCaja + vacLiqAplicada
+        const cajaValorFila = ap.caja + vacLiqAplicada * (PARAFISCALES_DEFAULT.pctCaja / 100)
+        // Tarifa combinada (empleador+empleado) calculada del valor real sobre el
+        // IBC -- ya NO se puede hardcodear un único % fijo: pensión da 16% en
+        // días normales pero 12% en ausentismo/suspensión (solo empleador), y
+        // salud da 12.5%/4%(exonerado) en días normales pero 4% siempre en
+        // incapacidad (el 8.5% patronal no se causa, ver lib/parafiscales.ts).
+        const pensionTarifa = ap.ibcPension > 0 ? (ap.pensionEmpleador + ap.pensionEmpleado) / ap.ibcPension : 0
+        const saludTarifa = ap.ibcSalud > 0 ? (ap.saludEmpleador + ap.saludEmpleado) / ap.ibcSalud : 0
         filasSalida.push({
           no: noCounter, tipoId: "CC", noId: ficha.identificacion,
           proyecto: est.proyecto, apellido1: est.apellido1 || "", apellido2: est.apellido2 || "", nombre1: est.nombre1 || "", nombre2: est.nombre2 || "",
@@ -244,11 +298,11 @@ export async function generarArchivoCargaPila(
           retFecha: retEsteMes && seg === segmentos[segmentos.length - 1] ? ficha.fechaRetiro : null,
           tipoSegmento: seg.tipo, fechaIniSerial: serialExcel(fIni), fechaFinSerial: serialExcel(fFin),
           salarioMensual: ficha.salario,
-          pensionAdmin: est.administradora_pension, pensionDias: seg.dias, pensionIbc: ap.ibcPension, pensionTarifa: 0.16, pensionValor: ap.pensionEmpleador + ap.pensionEmpleado,
-          saludAdmin: est.administradora_salud, saludDias: seg.dias, saludIbc: ap.ibcSalud, saludTarifa: ap.ibcSalud > 0 ? (ap.exonerado ? 0.04 : 0.125) : 0, saludValor: ap.saludEmpleador + ap.saludEmpleado,
+          pensionAdmin: est.administradora_pension, pensionDias: seg.dias, pensionIbc: ap.ibcPension, pensionTarifa, pensionValor: ap.pensionEmpleador + ap.pensionEmpleado,
+          saludAdmin: est.administradora_salud, saludDias: seg.dias, saludIbc: ap.ibcSalud, saludTarifa, saludValor: ap.saludEmpleador + ap.saludEmpleado,
           arlAdmin: est.administradora_arl, arlDias: seg.dias, arlIbc: ap.ibcArl, arlTarifa: ap.ibcArl > 0 ? ap.pctArl / 100 : 0, arlValor: ap.arl,
           claseRiesgo: est.clase_riesgo, centroTrabajo: est.centro_trabajo, actividadEconomica: est.actividad_economica,
-          cajaAdmin: est.administradora_caja, cajaDias: seg.dias, cajaIbc: ap.ibcCaja, cajaTarifa: ap.ibcCaja > 0 ? 0.04 : 0, cajaValor: ap.caja,
+          cajaAdmin: est.administradora_caja, cajaDias: seg.dias, cajaIbc: cajaIbcFila, cajaTarifa: cajaIbcFila > 0 ? PARAFISCALES_DEFAULT.pctCaja / 100 : 0, cajaValor: cajaValorFila,
           senaValor: ap.sena, icbfValor: ap.icbf, exonerado: ap.exonerado ? "SI" : "NO",
         })
       }

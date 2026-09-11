@@ -128,7 +128,7 @@ create or replace view public.pagonomina as
                  THEN COALESCE(registroasistencia.hn, (0)::numeric) ELSE (0)::numeric END AS cant_hn,
                 CASE
                     WHEN ((registroasistencia.asistencia IS NULL) OR (TRIM(BOTH FROM registroasistencia.asistencia) = ''::text)) THEN 0
-                    WHEN (TRIM(BOTH FROM registroasistencia.asistencia) = ANY (ARRAY['13- Incapacidad por enfermedad general al 100%'::text, '31- Vacaciones disfrutadas'::text, '15- Incapacidad por enfermedad general al 66%- ingreso'::text, '14- Incapacidad por enfermedad general al 50'::text, 'Descanso'::text, 'Descanso compensatorio domingo anterior'::text, '38- Licencia no remunerada- Deducción'::text, 'Retiro'::text])) THEN 0
+                    WHEN (TRIM(BOTH FROM registroasistencia.asistencia) = ANY (ARRAY['13- Incapacidad por enfermedad general al 100%'::text, '31- Vacaciones disfrutadas'::text, '15- Incapacidad por enfermedad general al 66%- ingreso'::text, '14- Incapacidad por enfermedad general al 50'::text, 'Descanso'::text, 'Descanso compensatorio domingo anterior'::text, '38- Licencia no remunerada- Deducción'::text, '38- Suspensión temporal de Contrato- Deducción'::text, 'Retiro'::text])) THEN 0
                     ELSE 1
                 END AS es_falta_penalizable,
                 -- Novedades que BLOQUEAN el pago del descanso dominical SIGUIENTE.
@@ -138,7 +138,7 @@ create or replace view public.pagonomina as
                 -- que se trabajó), pero NO debe quitarle su descanso dominical al
                 -- domingo SIGUIENTE (la semana con compensatorio es semana completa).
                 CASE
-                    WHEN (TRIM(BOTH FROM registroasistencia.asistencia) = ANY (ARRAY['Descanso'::text, '38- Licencia no remunerada- Deducción'::text, 'Retiro'::text])) THEN 1
+                    WHEN (TRIM(BOTH FROM registroasistencia.asistencia) = ANY (ARRAY['Descanso'::text, '38- Licencia no remunerada- Deducción'::text, '38- Suspensión temporal de Contrato- Deducción'::text, 'Retiro'::text])) THEN 1
                     ELSE 0
                 END AS bloquea_domingo
            FROM registroasistencia
@@ -325,7 +325,7 @@ create or replace view public.pagonomina as
                 -- 'Retiro' sigue sin contar: quien se retira no "descansó", dejó de
                 -- estar vinculado.
                 CASE
-                    WHEN (TRIM(BOTH FROM COALESCE(a.asistencia, ''::text)) = ANY (ARRAY['Descanso'::text, 'Descanso compensatorio domingo anterior'::text, '38- Licencia no remunerada- Deducción'::text])) THEN 1
+                    WHEN (TRIM(BOTH FROM COALESCE(a.asistencia, ''::text)) = ANY (ARRAY['Descanso'::text, 'Descanso compensatorio domingo anterior'::text, '38- Licencia no remunerada- Deducción'::text, '38- Suspensión temporal de Contrato- Deducción'::text])) THEN 1
                     ELSE 0
                 END AS es_descanso,
                 CASE
@@ -396,7 +396,7 @@ create or replace view public.pagonomina as
             sum(consolidado_completo.bloquea_domingo) OVER (PARTITION BY consolidado_completo.persona ORDER BY consolidado_completo.fecha ROWS BETWEEN 6 PRECEDING AND 1 PRECEDING) AS novedades_semana_anterior,
             max(
                 CASE
-                    WHEN (TRIM(BOTH FROM consolidado_completo.asistencia_texto) = '38- Licencia no remunerada- Deducción'::text) THEN 1
+                    WHEN (TRIM(BOTH FROM consolidado_completo.asistencia_texto) = ANY (ARRAY['38- Licencia no remunerada- Deducción'::text, '38- Suspensión temporal de Contrato- Deducción'::text])) THEN 1
                     ELSE 0
                 END) OVER (PARTITION BY consolidado_completo.persona ORDER BY consolidado_completo.fecha ROWS BETWEEN 6 PRECEDING AND 1 PRECEDING) AS tuvo_licencia_no_rem_semana,
             max(

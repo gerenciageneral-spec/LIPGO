@@ -3,8 +3,14 @@
 // Visor de asistencia, LIPbot, Programación de turnos) -- cualquier cambio
 // tenía que replicarse a mano en los 4 sin garantía de que quedaran iguales.
 
+// "38- Suspensión temporal de Contrato" REUSA el código 38 (mismo trato de
+// nómina/PILA que Licencia no remunerada -- la ley las agrupa bajo el mismo
+// código PILA "SLN"), pero es un texto distinto para dejar auditable CUÁL de
+// las dos ocurrió. `clasificarDiaCotizacion` (lib/parafiscales.ts) y las
+// vistas `pagonomina`/`vistas_financieras.sql` tratan ambos textos igual.
 export const NOVEDADES_DIA = [
   "38- Licencia no remunerada- Deducción",
+  "38- Suspensión temporal de Contrato- Deducción",
   "13- Incapacidad por enfermedad general al 100%",
   "14- Incapacidad por enfermedad general al 50",
   "15- Incapacidad por enfermedad general al 66%- ingreso",

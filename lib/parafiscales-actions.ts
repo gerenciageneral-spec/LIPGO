@@ -20,11 +20,17 @@
 //     cerrar sus proyecciones — no debería afectar meses ya cerrados, pero vigilar si
 //     se usa para el mes en curso.
 //   · Vacaciones → IBC = salario/día. Cotiza pensión + salud + caja (no ARL).
-//   · Incapacidad→ IBC = salario/día (día completo). Cotiza pensión + salud (no ARL).
-//   · Ausentismo → licencia no remunerada: solo 12% de pensión (empleador).
+//   · Incapacidad→ IBC = salario/día (día completo). Cotiza 12%+4% pensión + 4% salud
+//     EMPLEADO (el 8.5% patronal de salud NO se causa: lo asume la EPS/ARL). No caja, no ARL.
+//   · Ausentismo → licencia no remunerada / suspensión temporal de contrato: solo 12%
+//     de pensión (empleador). Mismo código PILA (SLN), mismo tratamiento.
 //   · Licencia remunerada (luto/maternidad/paternidad) → pensión + salud + caja, SIN ARL.
 //   · Retiro / día posterior a `headcount.fecha_retiro` → NO cotiza.
 //   REGLA: ninguna novedad que impida asistir a trabajar causa ARL (solo los días trabajados).
+//   · Vacaciones PAGADAS EN LIQUIDACIÓN de retiro (no disfrutadas, pago en dinero al
+//     salir) → suman su valor al IBC de CAJA únicamente, en el mes del retiro. Fuente:
+//     `getLiquidaciones()` (lib/liquidaciones-actions.ts), mismo valor que ve el
+//     submódulo Liquidaciones.
 //   · Auxilio de transporte → `parametros_legales_anio.auxilio_transporte`,
 //     proporcional a los días trabajados y solo para quien devenga hasta 2 SMMLV.
 //   · admin (clase de riesgo ARL), salario y fecha_retiro → `headcount`.
@@ -41,6 +47,7 @@ import {
   type ClaseRiesgo,
   type ParametrosParafiscales,
 } from "@/lib/parafiscales"
+import { getLiquidaciones } from "@/lib/liquidaciones-actions"
 
 export interface ParafiscalPersona extends Aportes {
   persona: string
@@ -53,6 +60,9 @@ export interface ParafiscalPersona extends Aportes {
   ibcReal: number | null
   /** true si `ibc` viene del valor real guardado (no de la fórmula en vivo). */
   tieneValorReal: boolean
+  /** Vacaciones pagadas en la liquidación de retiro (si se retiró este mes), ya
+   *  incluidas en `ibcCaja`/`caja`/`totalEmpresa` -- ver comentario en getParafiscales(). */
+  vacacionesLiquidacion: number
 }
 
 export interface ResumenParafiscales {
@@ -370,6 +380,30 @@ export async function getParafiscales(
       acum.set(nombre, a)
     }
 
+    // Vacaciones pagadas en la LIQUIDACIÓN de retiro: la ley las suma al IBC de
+    // Caja de Compensación del MES DEL RETIRO (no cotizan pensión/salud/ARL --
+    // es un pago único de prestaciones, no un día trabajado). Confirmado por el
+    // usuario 2026-09-11. Fuente: getLiquidaciones() -- MISMO cálculo (y el
+    // mismo override manual `vacaciones_real`) que usa el submódulo
+    // Liquidaciones, para no mantener una segunda fórmula que pueda divergir.
+    // Solo se consulta si hay al menos un retiro este mes (la llamada es
+    // pesada -- recalcula TODAS las prestaciones históricas de la empresa).
+    const vacLiqPorCedula = new Map<string, number>()
+    const idsEmpresaConRetiro = new Set(
+      Array.from(infoPorNombre.values())
+        .filter((i) => i.fechaRetiro && i.fechaRetiro >= desde && i.fechaRetiro <= hasta && i.idempresa != null)
+        .map((i) => i.idempresa as number),
+    )
+    for (const idEmp of idsEmpresaConRetiro) {
+      const liq = await getLiquidaciones(idEmp)
+      if (!liq.success) continue
+      for (const lp of liq.data) {
+        if (lp.fecha_retiro && lp.fecha_retiro >= desde && lp.fecha_retiro <= hasta && lp.vacaciones > 0) {
+          vacLiqPorCedula.set(lp.identificacion, lp.vacaciones)
+        }
+      }
+    }
+
     const data: ParafiscalPersona[] = []
     for (const [nombre, a] of acum) {
       const diasCotizados = a.diasTrab + a.diasVac + a.diasIncap + a.diasAus + a.diasLicr
@@ -407,8 +441,15 @@ export async function getParafiscales(
         },
         params,
       )
+      const vacLiq = vacLiqPorCedula.get(info.identificacion) || 0
+      const cajaVacLiq = vacLiq * (params.pctCaja / 100)
       data.push({
         ...ap,
+        ibcCaja: ap.ibcCaja + vacLiq,
+        baseParafiscales: ap.baseParafiscales + vacLiq,
+        caja: ap.caja + cajaVacLiq,
+        totalEmpresa: ap.totalEmpresa + cajaVacLiq,
+        totalPila: ap.totalPila + cajaVacLiq,
         persona: nombre,
         identificacion: info.identificacion,
         idempresa: info.idempresa,
@@ -417,6 +458,7 @@ export async function getParafiscales(
         devengado: ap.ibc,
         ibcReal,
         tieneValorReal: ibcReal != null,
+        vacacionesLiquidacion: vacLiq,
       })
     }
 

@@ -747,7 +747,7 @@ function armarPersona(
           let nota = "pagada 100% (sin efecto neto)"
           if (nom.startsWith("38")) {
             netoDia = -baseDiaSim
-            nota = "no remunerada (descuenta el día)"
+            nota = nom.includes("Suspensión") ? "suspensión temporal de contrato (descuenta el día)" : "no remunerada (descuenta el día)"
           }
           conceptos.push({
             concepto: nom,

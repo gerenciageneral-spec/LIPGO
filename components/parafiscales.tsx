@@ -772,13 +772,16 @@ export default function Parafiscales() {
                     <TableHead className="text-right">IBC ARL</TableHead>
                     <TableHead className="text-right">Auxilio</TableHead>
                     <TableHead className="text-center">ARL</TableHead>
-                    <TableHead className="text-right">Pensión</TableHead>
-                    <TableHead className="text-right">Salud</TableHead>
+                    <TableHead className="text-right">Pensión (empresa)</TableHead>
+                    <TableHead className="text-right">Salud (empresa)</TableHead>
                     <TableHead className="text-right">ARL $</TableHead>
                     <TableHead className="text-right">Caja</TableHead>
                     <TableHead className="text-right">SENA</TableHead>
                     <TableHead className="text-right">ICBF</TableHead>
                     <TableHead className="text-right">Total empresa</TableHead>
+                    <TableHead className="text-right">Pensión (retenido)</TableHead>
+                    <TableHead className="text-right">Salud (retenido)</TableHead>
+                    <TableHead className="text-right">Total retenido</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -812,6 +815,14 @@ export default function Parafiscales() {
                           {!p.exonerado && (
                             <span className="rounded bg-rose-500/15 px-1 py-0.5 text-[10px] text-rose-600 dark:text-rose-400">
                               ≥ 10 SMMLV
+                            </span>
+                          )}
+                          {p.vacacionesLiquidacion > 0 && (
+                            <span
+                              className="rounded bg-teal-500/15 px-1 py-0.5 text-[10px] text-teal-600 dark:text-teal-400"
+                              title="Vacaciones pagadas en la liquidación de retiro -- suman al IBC de Caja de este mes"
+                            >
+                              +Vac. liquidación {money(p.vacacionesLiquidacion)}
                             </span>
                           )}
                         </div>
@@ -909,6 +920,11 @@ export default function Parafiscales() {
                         {p.icbf === 0 ? <span className="text-muted-foreground">—</span> : money(p.icbf)}
                       </TableCell>
                       <TableCell className="text-right font-semibold tabular-nums">{money(p.totalEmpresa)}</TableCell>
+                      <TableCell className="text-right tabular-nums text-muted-foreground">{money(p.pensionEmpleado)}</TableCell>
+                      <TableCell className="text-right tabular-nums text-muted-foreground">
+                        {p.saludEmpleado === 0 ? <span className="text-muted-foreground">—</span> : money(p.saludEmpleado)}
+                      </TableCell>
+                      <TableCell className="text-right font-semibold tabular-nums">{money(p.totalEmpleado)}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -917,18 +933,22 @@ export default function Parafiscales() {
                 <p>
                   <strong>Días</strong>: t = trabajados · v = vacaciones · i = incapacidad · a = ausentismo ·
                   l = licencia remunerada. Cada día cotiza según la norma:{" "}
-                  <strong>vacaciones</strong> → pensión + caja (no salud, no ARL);{" "}
-                  <strong>incapacidad</strong> → pensión + salud (no caja, no ARL);{" "}
+                  <strong>vacaciones</strong> → pensión + salud + caja (no ARL);{" "}
+                  <strong>incapacidad</strong> → pensión (12% empresa + 4% trabajador) + SOLO el 4% de salud del
+                  trabajador — la empresa no paga su 8.5% (lo asume la EPS/ARL); no causa caja ni ARL;{" "}
                   <strong>licencia remunerada</strong> (luto/maternidad/paternidad) → pensión + salud + caja;{" "}
-                  <strong>ausentismo / licencia no remunerada</strong> → solo el 12% de pensión (empleador). La{" "}
+                  <strong>ausentismo</strong> (licencia no remunerada / suspensión temporal de contrato) → solo el
+                  12% de pensión (empleador). La{" "}
                   <strong>ARL solo se causa sobre los días trabajados</strong>: cualquier novedad que impida asistir a
                   trabajar no paga ARL (por eso “IBC ARL” suele ser menor que el IBC total). No se liquidan días
                   posteriores a la fecha de retiro.
                 </p>
                 <p>
                   “—” = no se causa: por la exoneración del art. 114-1 del E.T. (devenga menos de{" "}
-                  {params.umbralExoneracionSmlv} SMMLV) o porque ese concepto no aplica a los días del mes. La{" "}
-                  <strong>Caja de Compensación</strong> nunca se exonera.
+                  {params.umbralExoneracionSmlv} SMMLV), porque ese concepto no aplica a los días del mes, o porque
+                  la novedad es incapacidad (salud empresa). La <strong>Caja de Compensación</strong> nunca se
+                  exonera. Las <strong>vacaciones pagadas en una liquidación de retiro</strong> (badge “+Vac.
+                  liquidación”) suman su valor solo al IBC de Caja del mes del retiro.
                 </p>
                 <p>
                   <BadgeCheck className="inline h-3 w-3 text-emerald-600" /> junto al IBC = se guardó el valor{" "}
