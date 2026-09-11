@@ -131,6 +131,11 @@ export async function listarCicloFacturacion(filtros?: {
   idempresa?: number | null
   estado_ciclo?: EstadoCiclo | null
   estado_cobro?: EstadoCobro | null
+  // Histórico real (igual que Cuadro de Control de Facturación): sin rango,
+  // trae TODO lo accesible; con rango, solo las prefacturas cuyo período
+  // toca ese rango (comparación de solapamiento, no de igualdad exacta).
+  periodo_desde?: string | null
+  periodo_hasta?: string | null
 }): Promise<{ success: boolean; data: PrefacturaCiclo[]; message?: string }> {
   try {
     const sb: any = await getSupabaseAdmin()
@@ -150,6 +155,8 @@ export async function listarCicloFacturacion(filtros?: {
     if (filtros?.idempresa) query = query.eq("idempresa", filtros.idempresa)
     if (filtros?.estado_ciclo) query = query.eq("estado_ciclo", filtros.estado_ciclo)
     if (filtros?.estado_cobro) query = query.eq("estado_cobro", filtros.estado_cobro)
+    if (filtros?.periodo_desde) query = query.gte("periodo_hasta", filtros.periodo_desde)
+    if (filtros?.periodo_hasta) query = query.lte("periodo_desde", filtros.periodo_hasta)
 
     const { data, error } = await query
     if (error) return { success: false, data: [], message: error.message }

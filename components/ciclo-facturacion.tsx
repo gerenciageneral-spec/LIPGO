@@ -12,12 +12,13 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Checkbox } from "@/components/ui/checkbox"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { DatePickerField } from "@/components/ui/date-picker-field"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/components/auth-provider"
 import { getUserPermissions } from "@/lib/permissions-actions"
@@ -42,10 +43,11 @@ import {
   type CondicionEnvioAnexo,
 } from "@/lib/ciclo-facturacion-actions"
 import { DIAS_SEMANA_LABEL } from "@/lib/ciclo-facturacion-shared"
+import { getAccessibleEmpresesFromPermisos } from "@/lib/orders-actions"
 import { AdjuntosUploader } from "@/components/ciclo-facturacion/adjuntos-uploader"
 import { SoporteAnexo } from "@/components/cuadro-control-facturacion"
 import type { SoporteLinea } from "@/lib/facturacion-control-actions"
-import { AlertTriangle, Check, ChevronDown, ChevronUp, Clock, FileClock, Loader2, Settings2, Wallet } from "lucide-react"
+import { AlertTriangle, Check, ChevronDown, ChevronUp, Clock, FileClock, Inbox, Loader2, Settings2, Wallet } from "lucide-react"
 
 const money = (v: number) => `$${Math.round(v).toLocaleString("es-CO")}`
 
@@ -148,40 +150,114 @@ export default function CicloFacturacion() {
 
   const [data, setData] = useState<PrefacturaCiclo[]>([])
   const [loading, setLoading] = useState(true)
-  const [filtroProyecto, setFiltroProyecto] = useState<string>("")
+
+  // Proyecto por ID + período con carga de histórico -- MISMO patrón que
+  // Cuadro de Control de Facturación (pending/aplicado, no en vivo): cambiar
+  // las fechas no dispara nada hasta apretar "Cargar", así una persona puede
+  // armar el rango completo (proyecto + desde + hasta) antes de golpear el
+  // servidor, y "histórico" es un gesto explícito, no un filtro que se puede
+  // dejar puesto por accidente.
+  const [empresas, setEmpresas] = useState<Array<{ id: number; nombre: string }>>([])
+  useEffect(() => {
+    getAccessibleEmpresesFromPermisos()
+      .then(setEmpresas)
+      .catch(() => setEmpresas([]))
+  }, [])
+
+  interface FiltrosCiclo {
+    empresaId: number | null
+    periodoDesde: string
+    periodoHasta: string
+  }
+  const FILTROS_VACIOS: FiltrosCiclo = { empresaId: null, periodoDesde: "", periodoHasta: "" }
+  const [pending, setPending] = useState<FiltrosCiclo>(FILTROS_VACIOS)
+  const [filtros, setFiltros] = useState<FiltrosCiclo>(FILTROS_VACIOS)
+
   const [filtroEstadoCiclo, setFiltroEstadoCiclo] = useState<string>("")
   const [filtroEstadoCobro, setFiltroEstadoCobro] = useState<string>("")
-  const [soloMisPendientes, setSoloMisPendientes] = useState(false)
+
+  // Bandeja: separa "todas" de la vista propia de cada rol -- lo que pedía
+  // el negocio ("que al coordinador le llegue lo que envía el jefe y
+  // viceversa", en vez de una sola tabla revuelta con un checkbox). Arranca
+  // en la bandeja del único rol que tenga la persona; si tiene los dos (o
+  // ninguno) arranca en "Todas".
+  type Vista = "todas" | "jefe" | "coordinador" | "cartera"
+  const [vista, setVista] = useState<Vista>("todas")
+  useEffect(() => {
+    if (permisos.jefe && !permisos.coordinador) setVista("jefe")
+    else if (permisos.coordinador && !permisos.jefe) setVista("coordinador")
+  }, [permisos.jefe, permisos.coordinador])
 
   const cargar = useCallback(async () => {
     setLoading(true)
     const r = await listarCicloFacturacion({
-      estado_ciclo: (filtroEstadoCiclo as EstadoCiclo) || null,
-      estado_cobro: (filtroEstadoCobro as any) || null,
+      idempresa: filtros.empresaId,
+      periodo_desde: filtros.periodoDesde || null,
+      periodo_hasta: filtros.periodoHasta || null,
     })
     if (r.success) setData(r.data)
     else toast({ title: "Error", description: r.message, variant: "destructive" })
     setLoading(false)
-  }, [filtroEstadoCiclo, filtroEstadoCobro, toast])
+  }, [filtros, toast])
 
   useEffect(() => {
     cargar()
   }, [cargar])
 
-  const proyectos = useMemo(() => Array.from(new Set(data.map((d) => d.proyecto).filter(Boolean))) as string[], [data])
+  const cargarHistorico = () => setFiltros(pending)
+  const verMesActual = () => {
+    const hoy = new Date()
+    const p = (n: number) => String(n).padStart(2, "0")
+    const desde = `${hoy.getFullYear()}-${p(hoy.getMonth() + 1)}-01`
+    const hasta = `${hoy.getFullYear()}-${p(hoy.getMonth() + 1)}-${p(new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0).getDate())}`
+    const nuevo = { ...pending, periodoDesde: desde, periodoHasta: hasta }
+    setPending(nuevo)
+    setFiltros(nuevo)
+  }
+  const verTodoElHistorico = () => {
+    const nuevo = { ...pending, periodoDesde: "", periodoHasta: "" }
+    setPending(nuevo)
+    setFiltros(nuevo)
+  }
+  const pendienteSinAplicar = pending.empresaId !== filtros.empresaId || pending.periodoDesde !== filtros.periodoDesde || pending.periodoHasta !== filtros.periodoHasta
+
+  const limpiarFiltros = () => {
+    setFiltroEstadoCiclo("")
+    setFiltroEstadoCobro("")
+    setPending(FILTROS_VACIOS)
+    setFiltros(FILTROS_VACIOS)
+  }
+  const hayFiltrosExtra = !!(filtros.empresaId || filtros.periodoDesde || filtros.periodoHasta || filtroEstadoCiclo || filtroEstadoCobro)
+
+  // Contadores por bandeja -- sobre TODA la data (sin los filtros extra),
+  // para que el número en cada pestaña sea estable mientras se filtra dentro
+  // de ella.
+  const contadores = useMemo(() => {
+    const enProceso = data.filter((d) => d.estado_ciclo !== "cerrado")
+    return {
+      todas: data.length,
+      jefe: enProceso.filter((d) => PASOS[IDX_ESTADO[d.estado_ciclo]]?.rol === "jefe").length,
+      coordinador: enProceso.filter((d) => PASOS[IDX_ESTADO[d.estado_ciclo]]?.rol === "coordinador").length,
+      cartera: data.filter((d) => d.estado_ciclo === "cerrado").length,
+    }
+  }, [data])
 
   const filtrados = useMemo(() => {
     return data.filter((d) => {
-      if (filtroProyecto && d.proyecto !== filtroProyecto) return false
-      if (soloMisPendientes) {
-        const rolPaso = PASOS[IDX_ESTADO[d.estado_ciclo]]?.rol
-        const esMio = (rolPaso === "jefe" && permisos.jefe) || (rolPaso === "coordinador" && permisos.coordinador)
-        if (d.estado_ciclo !== "cerrado" && !esMio) return false
-        if (d.estado_ciclo === "cerrado" && d.estado_cobro === "pagada") return false
+
+      if (vista === "jefe") return d.estado_ciclo !== "cerrado" && PASOS[IDX_ESTADO[d.estado_ciclo]]?.rol === "jefe"
+      if (vista === "coordinador") return d.estado_ciclo !== "cerrado" && PASOS[IDX_ESTADO[d.estado_ciclo]]?.rol === "coordinador"
+      if (vista === "cartera") {
+        if (d.estado_ciclo !== "cerrado") return false
+        if (filtroEstadoCobro && d.estado_cobro !== filtroEstadoCobro) return false
+        return true
       }
+      // "todas"
+      if (filtroEstadoCiclo && d.estado_ciclo !== filtroEstadoCiclo) return false
+      if (filtroEstadoCobro && d.estado_ciclo === "cerrado" && d.estado_cobro !== filtroEstadoCobro) return false
       return true
     })
-  }, [data, filtroProyecto, soloMisPendientes, permisos])
+  }, [data, filtroEstadoCiclo, filtroEstadoCobro, vista])
 
   const [seleccionId, setSeleccionId] = useState<number | null>(null)
 
@@ -251,43 +327,123 @@ export default function CicloFacturacion() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <Select value={filtroProyecto || "todos"} onValueChange={(v) => setFiltroProyecto(v === "todos" ? "" : v)}>
-              <SelectTrigger className="h-8 w-[200px] text-xs"><SelectValue placeholder="Proyecto" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="todos">Todos los proyectos</SelectItem>
-                {proyectos.map((p) => (
-                  <SelectItem key={p} value={p}>{p}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={filtroEstadoCiclo || "todos"} onValueChange={(v) => setFiltroEstadoCiclo(v === "todos" ? "" : v)}>
-              <SelectTrigger className="h-8 w-[180px] text-xs"><SelectValue placeholder="Etapa" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="todos">Todas las etapas</SelectItem>
-                {PASOS.map((p) => <SelectItem key={p.key} value={p.key}>{p.label}</SelectItem>)}
-                <SelectItem value="cerrado">Cerrado</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={filtroEstadoCobro || "todos"} onValueChange={(v) => setFiltroEstadoCobro(v === "todos" ? "" : v)}>
-              <SelectTrigger className="h-8 w-[160px] text-xs"><SelectValue placeholder="Cobro" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="todos">Cualquier cobro</SelectItem>
-                <SelectItem value="pendiente">Pendiente</SelectItem>
-                <SelectItem value="parcial">Parcial</SelectItem>
-                <SelectItem value="pagada">Pagada</SelectItem>
-              </SelectContent>
-            </Select>
-            <label className="flex items-center gap-1.5 text-xs">
-              <Checkbox checked={soloMisPendientes} onCheckedChange={(v) => setSoloMisPendientes(!!v)} />
-              Mis pendientes
-            </label>
+          {/* Bandeja por rol -- separa lo que le toca al Jefe de lo que le
+              toca al Coordinador, en vez de una sola tabla con un checkbox. */}
+          <Tabs value={vista} onValueChange={(v) => setVista(v as Vista)}>
+            <TabsList className="h-auto flex-wrap">
+              <TabsTrigger value="todas" className="gap-1.5 text-xs">
+                <Inbox className="h-3.5 w-3.5" /> Todas <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">{contadores.todas}</Badge>
+              </TabsTrigger>
+              {permisos.jefe && (
+                <TabsTrigger value="jefe" className="gap-1.5 text-xs">
+                  Bandeja del Jefe <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">{contadores.jefe}</Badge>
+                </TabsTrigger>
+              )}
+              {permisos.coordinador && (
+                <TabsTrigger value="coordinador" className="gap-1.5 text-xs">
+                  Bandeja del Coordinador <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">{contadores.coordinador}</Badge>
+                </TabsTrigger>
+              )}
+              <TabsTrigger value="cartera" className="gap-1.5 text-xs">
+                <Wallet className="h-3.5 w-3.5" /> Cartera <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">{contadores.cartera}</Badge>
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+
+          <div className="space-y-2 rounded-lg border bg-muted/30 p-2.5">
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="flex flex-col gap-1">
+                <Label className="text-[10px] text-muted-foreground">Proyecto</Label>
+                <select
+                  className="h-8 w-[210px] rounded-md border border-input bg-background px-2 text-xs font-medium"
+                  value={pending.empresaId ?? ""}
+                  onChange={(e) => setPending((p) => ({ ...p, empresaId: e.target.value ? Number(e.target.value) : null }))}
+                >
+                  <option value="">Todos los proyectos</option>
+                  {empresas.map((em) => (
+                    <option key={em.id} value={em.id}>
+                      {em.nombre} (ID {em.id})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label className="text-[10px] text-muted-foreground">Período desde</Label>
+                <DatePickerField value={pending.periodoDesde} onChange={(v) => setPending((p) => ({ ...p, periodoDesde: v }))} className="h-8 w-[150px] text-xs" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label className="text-[10px] text-muted-foreground">Período hasta</Label>
+                <DatePickerField value={pending.periodoHasta} onChange={(v) => setPending((p) => ({ ...p, periodoHasta: v }))} className="h-8 w-[150px] text-xs" />
+              </div>
+              <Button size="sm" className="h-8 text-xs" onClick={cargarHistorico} disabled={!pendienteSinAplicar}>
+                Cargar histórico
+              </Button>
+              <Button size="sm" variant="outline" className="h-8 text-xs" onClick={verMesActual}>
+                Ver mes actual
+              </Button>
+              {(filtros.periodoDesde || filtros.periodoHasta) && (
+                <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={verTodoElHistorico}>
+                  Ver todo el histórico
+                </Button>
+              )}
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              Sin período seleccionado se trae todo lo accesible. Elige un rango y presiona "Cargar histórico" para revisar cualquier ciclo pasado.
+            </p>
+            {(vista === "todas" || vista === "cartera" || hayFiltrosExtra) && (
+              <div className="flex flex-wrap items-end gap-2 border-t pt-2">
+                {vista === "todas" && (
+                  <div className="flex flex-col gap-1">
+                    <Label className="text-[10px] text-muted-foreground">Etapa</Label>
+                    <Select value={filtroEstadoCiclo || "todos"} onValueChange={(v) => setFiltroEstadoCiclo(v === "todos" ? "" : v)}>
+                      <SelectTrigger className="h-8 w-[170px] text-xs"><SelectValue placeholder="Etapa" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="todos">Todas las etapas</SelectItem>
+                        {PASOS.map((p) => <SelectItem key={p.key} value={p.key}>{p.label}</SelectItem>)}
+                        <SelectItem value="cerrado">Cerrado</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {(vista === "todas" || vista === "cartera") && (
+                  <div className="flex flex-col gap-1">
+                    <Label className="text-[10px] text-muted-foreground">Cobro</Label>
+                    <Select value={filtroEstadoCobro || "todos"} onValueChange={(v) => setFiltroEstadoCobro(v === "todos" ? "" : v)}>
+                      <SelectTrigger className="h-8 w-[150px] text-xs"><SelectValue placeholder="Cobro" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="todos">Cualquier cobro</SelectItem>
+                        <SelectItem value="pendiente">Pendiente</SelectItem>
+                        <SelectItem value="parcial">Parcial</SelectItem>
+                        <SelectItem value="pagada">Pagada</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {hayFiltrosExtra && (
+                  <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={limpiarFiltros}>Limpiar todos los filtros</Button>
+                )}
+              </div>
+            )}
           </div>
 
           {loading ? (
             <div className="py-8 text-center text-xs text-muted-foreground">Cargando…</div>
+          ) : data.length === 0 ? (
+            <div className="flex flex-col items-center gap-2 py-12 text-center">
+              <FileClock className="h-9 w-9 text-muted-foreground/40" />
+              <p className="text-sm font-medium">Todavía no hay ninguna prefactura en el ciclo</p>
+              <p className="max-w-md text-xs text-muted-foreground">
+                Este panel se llena solo: apenas se aprueba una prefactura en <strong>Cuadro de Control de Facturación</strong> o{" "}
+                <strong>Prefactura de Producción</strong>, aparece aquí en "Anexo enviado" para que el Jefe de Facturación empiece el ciclo.
+              </p>
+            </div>
           ) : filtrados.length === 0 ? (
-            <div className="py-8 text-center text-xs text-muted-foreground">No hay prefacturas aprobadas con estos filtros.</div>
+            <div className="py-8 text-center text-xs text-muted-foreground">
+              Ninguna prefactura coincide con estos filtros.
+              {hayFiltrosExtra && (
+                <Button variant="link" size="sm" className="h-auto p-0 pl-1 text-xs" onClick={limpiarFiltros}>Limpiar filtros</Button>
+              )}
+            </div>
           ) : (
             <div className="space-y-2">
               {filtrados.map((p) => (
@@ -327,8 +483,10 @@ function FilaCiclo({
   usuario: string
   onCambio: () => void
 }) {
+  const rolPaso = p.estado_ciclo !== "cerrado" ? PASOS[IDX_ESTADO[p.estado_ciclo]]?.rol : null
+  const necesitaMiAccion = (rolPaso === "jefe" && permisos.jefe) || (rolPaso === "coordinador" && permisos.coordinador)
   return (
-    <div className="rounded-md border">
+    <div className={"rounded-md border " + (necesitaMiAccion ? "border-amber-300 bg-amber-50/50 dark:border-amber-800 dark:bg-amber-950/10" : "")}>
       <button
         type="button"
         onClick={onToggle}
@@ -337,6 +495,11 @@ function FilaCiclo({
         <div className="min-w-0">
           <div className="text-sm font-medium">
             {p.owner} <span className="text-xs font-normal text-muted-foreground">· {p.proyecto}</span>
+            {necesitaMiAccion && (
+              <span className="ml-1.5 inline-flex items-center gap-1 rounded bg-amber-500 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                Te toca a ti
+              </span>
+            )}
             {p.ownerMezclado && (
               <span className="ml-1.5 inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-950/50 dark:text-amber-300">
                 <AlertTriangle className="h-3 w-3" /> mezcla varios owners
@@ -378,6 +541,7 @@ function DetalleCiclo({
   const [cerrando, setCerrando] = useState(false)
   const [correccionAbierta, setCorreccionAbierta] = useState(false)
   const [pagoAbierto, setPagoAbierto] = useState(false)
+  const [archivoAVer, setArchivoAVer] = useState<{ url: string; nombre: string } | null>(null)
 
   const recargarDetalle = useCallback(async () => {
     const [ev, pg] = await Promise.all([
@@ -409,6 +573,12 @@ function DetalleCiclo({
   const rolActual = pasoActual?.rol
   const puedoActuar = rolActual === "jefe" ? permisos.jefe : rolActual === "coordinador" ? permisos.coordinador : false
 
+  // Último documento recibido (el archivo del paso anterior -- por eso el
+  // que ve el paso actual puede revisarlo antes de actuar). Se busca de
+  // atrás hacia adelante porque `eventos` viene ordenado ascendente.
+  const ultimoDocumento = [...eventos].reverse().find((e) => e.archivo_url)
+  const esAutomatico = (u: string) => u.toLowerCase().includes("sistema")
+
   const cerrar = async () => {
     setCerrando(true)
     const r = await marcarCierre(prefactura.id, usuario)
@@ -421,6 +591,41 @@ function DetalleCiclo({
 
   return (
     <div className="space-y-4 border-t bg-muted/20 p-3">
+      {/* Último documento recibido -- lo que mandó la otra persona (o el
+          cron) para llegar al paso actual. Con badge Automático/Manual para
+          que el Jefe pueda revisar lo que el cron envió solo, y el
+          Coordinador vea de una el anexo/factura que le llegó a firmar. */}
+      {ultimoDocumento && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-background p-3">
+          <div className="text-xs">
+            <span className="font-semibold">{LABEL_EVENTO[ultimoDocumento.evento] || ultimoDocumento.evento}</span>
+            {" "}
+            <Badge
+              variant="secondary"
+              className={
+                "align-middle text-[10px] " +
+                (esAutomatico(ultimoDocumento.usuario)
+                  ? "bg-blue-100 text-blue-800 dark:bg-blue-950/50 dark:text-blue-300"
+                  : "")
+              }
+            >
+              {esAutomatico(ultimoDocumento.usuario) ? "Automático" : "Manual"}
+            </Badge>
+            <div className="text-muted-foreground">
+              {new Date(ultimoDocumento.created_at).toLocaleString("es-CO")} · {ultimoDocumento.usuario}
+            </div>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs"
+            onClick={() => setArchivoAVer({ url: ultimoDocumento.archivo_url!, nombre: ultimoDocumento.archivo_nombre || "documento.pdf" })}
+          >
+            Ver documento
+          </Button>
+        </div>
+      )}
+
       {/* Acción del paso actual */}
       {prefactura.estado_ciclo !== "cerrado" && (
         <div className="rounded-md border bg-background p-3">
@@ -552,6 +757,24 @@ function DetalleCiclo({
           }}
         />
       )}
+
+      <Dialog open={!!archivoAVer} onOpenChange={(v) => !v && setArchivoAVer(null)}>
+        <DialogContent className="sm:max-w-4xl h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>{archivoAVer?.nombre}</DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 overflow-hidden rounded-lg border bg-muted">
+            {archivoAVer && <iframe src={archivoAVer.url} title={archivoAVer.nombre} className="h-full w-full" />}
+          </div>
+          <DialogFooter>
+            {archivoAVer && (
+              <Button variant="outline" onClick={() => window.open(archivoAVer.url, "_blank", "noopener,noreferrer")}>
+                Abrir en pestaña nueva
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -692,7 +915,7 @@ function ModalPago({
 
 function FrecuenciaEnvioAnexoPanel() {
   const { toast } = useToast()
-  const [abierto, setAbierto] = useState(false)
+  const [abierto, setAbierto] = useState(true)
   const [condiciones, setCondiciones] = useState<CondicionEnvioAnexo[]>([])
   const [guardando, setGuardando] = useState<number | null>(null)
 
@@ -719,8 +942,9 @@ function FrecuenciaEnvioAnexoPanel() {
   return (
     <Card>
       <CardHeader className="cursor-pointer pb-2" onClick={() => setAbierto((v) => !v)}>
-        <CardTitle className="flex items-center gap-2 text-sm">
-          <Clock className="h-4 w-4" /> Frecuencia de envío de anexos por Proyecto
+        <CardTitle className="flex items-center justify-between gap-2 text-sm">
+          <span className="flex items-center gap-2"><Clock className="h-4 w-4" /> Automatización: envío de anexos por Proyecto</span>
+          {abierto ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
         </CardTitle>
         <CardDescription className="text-xs">
           Cada proyecto puede tener su propio ritmo de facturación -- el cron corre a diario, pero solo envía el anexo de un proyecto cuando le toca según esta configuración.
@@ -762,7 +986,7 @@ function FrecuenciaEnvioAnexoPanel() {
 
 function CondicionesPagoPanel() {
   const { toast } = useToast()
-  const [abierto, setAbierto] = useState(false)
+  const [abierto, setAbierto] = useState(true)
   const [condiciones, setCondiciones] = useState<{ owner: string; dias_plazo: number }[]>([])
   const [editando, setEditando] = useState<Record<string, number>>({})
 
@@ -787,8 +1011,9 @@ function CondicionesPagoPanel() {
   return (
     <Card>
       <CardHeader className="cursor-pointer pb-2" onClick={() => setAbierto((v) => !v)}>
-        <CardTitle className="flex items-center gap-2 text-sm">
-          <Settings2 className="h-4 w-4" /> Condición de pago por Owner
+        <CardTitle className="flex items-center justify-between gap-2 text-sm">
+          <span className="flex items-center gap-2"><Settings2 className="h-4 w-4" /> Condición de pago por Owner</span>
+          {abierto ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
         </CardTitle>
       </CardHeader>
       {abierto && (
