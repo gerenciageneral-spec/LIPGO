@@ -68,6 +68,18 @@ export function SolicitudTurnos() {
   // rango, permitiendo filtros abiertos ("desde X" o "hasta Y").
   const [filterFechaDesde, setFilterFechaDesde] = useState("")
   const [filterFechaHasta, setFilterFechaHasta] = useState("")
+  // Filtros del resto de columnas del historial -- uno por columna,
+  // para poder acotar la tabla por cualquiera de ellas de forma
+  // independiente (se combinan todos con AND).
+  const [filterSolicitante, setFilterSolicitante] = useState("")
+  const [filterTipo, setFilterTipo] = useState("")
+  const [filterPuesto, setFilterPuesto] = useState("")
+  const [filterServicioDesde, setFilterServicioDesde] = useState("")
+  const [filterServicioHasta, setFilterServicioHasta] = useState("")
+  const [filterCantidadMin, setFilterCantidadMin] = useState("")
+  const [filterEstado, setFilterEstado] = useState("")
+  const [filterAprobadoPor, setFilterAprobadoPor] = useState("")
+  const [filterSoloConPdf, setFilterSoloConPdf] = useState(false)
   // Visor inline para el PDF de aprobacion. Mostramos el archivo en
   // un <iframe> dentro de un Dialog para no obligar al usuario a
   // abrir una pestaña externa (mejor experiencia en pantallas TV).
@@ -142,6 +154,15 @@ export function SolicitudTurnos() {
     if (!fecha) return false
     if (filterFechaDesde && fecha < filterFechaDesde) return false
     if (filterFechaHasta && fecha > filterFechaHasta) return false
+    if (filterSolicitante && !s.nombresolicitante?.toLowerCase().includes(filterSolicitante.toLowerCase())) return false
+    if (filterTipo && (s.tipo || "Turnos") !== filterTipo) return false
+    if (filterPuesto && s.puesto !== filterPuesto) return false
+    if (filterServicioDesde && (!s.fecharequerida || s.fecharequerida < filterServicioDesde)) return false
+    if (filterServicioHasta && (!s.fecharequerida || s.fecharequerida > filterServicioHasta)) return false
+    if (filterCantidadMin && s.cantidad < Number(filterCantidadMin)) return false
+    if (filterEstado && s.estado?.toLowerCase() !== filterEstado.toLowerCase()) return false
+    if (filterAprobadoPor && !(s.nombreaprobo || "").toLowerCase().includes(filterAprobadoPor.toLowerCase())) return false
+    if (filterSoloConPdf && !s.pdfaprobacion) return false
     return true
   })
 
@@ -163,7 +184,7 @@ export function SolicitudTurnos() {
       Solicitante: s.nombresolicitante,
       Tipo: s.tipo || "Turnos",
       Puesto: s.puesto,
-      "Fecha Requerida": s.fecharequerida,
+      "Fecha de Servicio": s.fecharequerida,
       Cantidad: s.cantidad,
       Estado: s.estado,
       "Aprobado Por": s.nombreaprobo || "",
@@ -184,7 +205,21 @@ export function SolicitudTurnos() {
   const clearFilters = () => {
     setFilterFechaDesde("")
     setFilterFechaHasta("")
+    setFilterSolicitante("")
+    setFilterTipo("")
+    setFilterPuesto("")
+    setFilterServicioDesde("")
+    setFilterServicioHasta("")
+    setFilterCantidadMin("")
+    setFilterEstado("")
+    setFilterAprobadoPor("")
+    setFilterSoloConPdf(false)
   }
+
+  const hayFiltrosActivos =
+    !!filterFechaDesde || !!filterFechaHasta || !!filterSolicitante || !!filterTipo || !!filterPuesto ||
+    !!filterServicioDesde || !!filterServicioHasta || !!filterCantidadMin || !!filterEstado || !!filterAprobadoPor ||
+    filterSoloConPdf
 
   const getEstadoBadge = (estado: string) => {
     switch (estado?.toLowerCase()) {
@@ -448,7 +483,7 @@ export function SolicitudTurnos() {
                   <TableRow>
                     <TableHead className="w-[25%]">Tipo de Servicio</TableHead>
                     <TableHead className="w-[30%]">Puesto</TableHead>
-                    <TableHead className="w-[20%]">Fecha Requerida</TableHead>
+                    <TableHead className="w-[20%]">Fecha de Servicio</TableHead>
                     <TableHead className="w-[15%]">Cantidad</TableHead>
                     <TableHead className="w-[10%]"></TableHead>
                   </TableRow>
@@ -585,58 +620,171 @@ export function SolicitudTurnos() {
           ) : (
             /* History View */
             <div className="space-y-4">
-              {/* Barra de filtros y exportacion. Diseño en flex para
-                  apilar inputs y boton de descarga en mobile y
-                  alinearlos en una sola fila en desktop. */}
-              <div className="flex flex-wrap items-end gap-3 rounded-lg border bg-muted/30 p-3">
-                <div className="flex flex-col gap-1">
-                  <Label htmlFor="filter-fecha-desde" className="text-xs">
-                    Fecha solicitud desde
-                  </Label>
-                  <DatePickerField
-                    id="filter-fecha-desde"
-                    value={filterFechaDesde}
-                    onChange={setFilterFechaDesde}
-                    className="h-9 w-[170px]"
-                  />
+              {/* Barra de filtros y exportacion -- un control por columna
+                  del historial, todos combinados con AND. Grid responsivo
+                  para no desbordar con 9 controles. */}
+              <div className="rounded-lg border bg-muted/30 p-3 space-y-3">
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                  <div className="flex flex-col gap-1">
+                    <Label htmlFor="filter-fecha-desde" className="text-xs">
+                      Fecha solicitud desde
+                    </Label>
+                    <DatePickerField
+                      id="filter-fecha-desde"
+                      value={filterFechaDesde}
+                      onChange={setFilterFechaDesde}
+                      className="h-9"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <Label htmlFor="filter-fecha-hasta" className="text-xs">
+                      Fecha solicitud hasta
+                    </Label>
+                    <DatePickerField
+                      id="filter-fecha-hasta"
+                      value={filterFechaHasta}
+                      onChange={setFilterFechaHasta}
+                      className="h-9"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <Label htmlFor="filter-solicitante" className="text-xs">
+                      Solicitante
+                    </Label>
+                    <Input
+                      id="filter-solicitante"
+                      value={filterSolicitante}
+                      onChange={(e) => setFilterSolicitante(e.target.value)}
+                      placeholder="Buscar solicitante"
+                      className="h-9"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <Label className="text-xs">Tipo</Label>
+                    <Select value={filterTipo || "todos"} onValueChange={(v) => setFilterTipo(v === "todos" ? "" : v)}>
+                      <SelectTrigger className="h-9">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="todos">Todos los tipos</SelectItem>
+                        <SelectItem value="Turnos">Turnos</SelectItem>
+                        <SelectItem value="Horas Extra">Horas Extra</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <Label className="text-xs">Puesto</Label>
+                    <Select value={filterPuesto || "todos"} onValueChange={(v) => setFilterPuesto(v === "todos" ? "" : v)}>
+                      <SelectTrigger className="h-9">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="todos">Todos los puestos</SelectItem>
+                        {puestos.map((p) => (
+                          <SelectItem key={p} value={p}>
+                            {p}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <Label htmlFor="filter-servicio-desde" className="text-xs">
+                      Fecha de servicio desde
+                    </Label>
+                    <DatePickerField
+                      id="filter-servicio-desde"
+                      value={filterServicioDesde}
+                      onChange={setFilterServicioDesde}
+                      className="h-9"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <Label htmlFor="filter-servicio-hasta" className="text-xs">
+                      Fecha de servicio hasta
+                    </Label>
+                    <DatePickerField
+                      id="filter-servicio-hasta"
+                      value={filterServicioHasta}
+                      onChange={setFilterServicioHasta}
+                      className="h-9"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <Label htmlFor="filter-cantidad-min" className="text-xs">
+                      Cantidad mínima
+                    </Label>
+                    <Input
+                      id="filter-cantidad-min"
+                      type="number"
+                      min={0}
+                      value={filterCantidadMin}
+                      onChange={(e) => setFilterCantidadMin(e.target.value)}
+                      placeholder="Ej: 5"
+                      className="h-9"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <Label className="text-xs">Estado</Label>
+                    <Select value={filterEstado || "todos"} onValueChange={(v) => setFilterEstado(v === "todos" ? "" : v)}>
+                      <SelectTrigger className="h-9">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="todos">Todos los estados</SelectItem>
+                        <SelectItem value="pendiente">Pendiente</SelectItem>
+                        <SelectItem value="aprobado">Aprobado</SelectItem>
+                        <SelectItem value="rechazado">Rechazado</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <Label htmlFor="filter-aprobado-por" className="text-xs">
+                      Aprobado por
+                    </Label>
+                    <Input
+                      id="filter-aprobado-por"
+                      value={filterAprobadoPor}
+                      onChange={(e) => setFilterAprobadoPor(e.target.value)}
+                      placeholder="Buscar aprobador"
+                      className="h-9"
+                    />
+                  </div>
+                  <div className="flex flex-col justify-end gap-1 pb-1.5">
+                    <label className="flex items-center gap-2 text-xs cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={filterSoloConPdf}
+                        onChange={(e) => setFilterSoloConPdf(e.target.checked)}
+                        className="h-4 w-4 rounded border-gray-300"
+                      />
+                      Solo con PDF de aprobación
+                    </label>
+                  </div>
                 </div>
-                <div className="flex flex-col gap-1">
-                  <Label htmlFor="filter-fecha-hasta" className="text-xs">
-                    Fecha solicitud hasta
-                  </Label>
-                  <DatePickerField
-                    id="filter-fecha-hasta"
-                    value={filterFechaHasta}
-                    onChange={setFilterFechaHasta}
-                    className="h-9 w-[170px]"
-                  />
-                </div>
-                {(filterFechaDesde || filterFechaHasta) && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={clearFilters}
-                    className="h-9"
-                  >
-                    <X className="h-4 w-4 mr-1" />
-                    Limpiar filtros
-                  </Button>
-                )}
-                <div className="ml-auto flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground">
-                    {filteredHistorial.length} de {historial.length} solicitudes
-                  </span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={handleDownloadExcel}
-                    disabled={filteredHistorial.length === 0}
-                  >
-                    <FileSpreadsheet className="h-4 w-4 mr-1" />
-                    Descargar Excel
-                  </Button>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  {hayFiltrosActivos && (
+                    <Button type="button" variant="ghost" size="sm" onClick={clearFilters} className="h-9">
+                      <X className="h-4 w-4 mr-1" />
+                      Limpiar filtros
+                    </Button>
+                  )}
+                  <div className="ml-auto flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground">
+                      {filteredHistorial.length} de {historial.length} solicitudes
+                    </span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleDownloadExcel}
+                      disabled={filteredHistorial.length === 0}
+                    >
+                      <FileSpreadsheet className="h-4 w-4 mr-1" />
+                      Descargar Excel
+                    </Button>
+                  </div>
                 </div>
               </div>
 
@@ -651,7 +799,7 @@ export function SolicitudTurnos() {
                 </div>
               ) : filteredHistorial.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
-                  No hay solicitudes en el rango de fechas seleccionado
+                  No hay solicitudes con los filtros seleccionados
                 </div>
               ) : (
                 <div className="border rounded-lg overflow-hidden">
@@ -662,7 +810,7 @@ export function SolicitudTurnos() {
                         <TableHead>Solicitante</TableHead>
                         <TableHead>Tipo</TableHead>
                         <TableHead>Puesto</TableHead>
-                        <TableHead>Fecha Requerida</TableHead>
+                        <TableHead>Fecha de Servicio</TableHead>
                         <TableHead>Cantidad</TableHead>
                         <TableHead>Estado</TableHead>
                         <TableHead>Aprobado Por</TableHead>
