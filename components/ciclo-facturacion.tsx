@@ -156,12 +156,11 @@ export default function CicloFacturacion() {
   const [data, setData] = useState<PrefacturaCiclo[]>([])
   const [loading, setLoading] = useState(true)
 
-  // Proyecto por ID + período con carga de histórico -- MISMO patrón que
-  // Cuadro de Control de Facturación (pending/aplicado, no en vivo): cambiar
-  // las fechas no dispara nada hasta apretar "Cargar", así una persona puede
-  // armar el rango completo (proyecto + desde + hasta) antes de golpear el
-  // servidor, y "histórico" es un gesto explícito, no un filtro que se puede
-  // dejar puesto por accidente.
+  // Proyecto por ID + período -- aplica EN VIVO apenas cambia cualquier campo
+  // (antes era un patrón pending/aplicado calcado de Cuadro de Control,
+  // requería apretar "Cargar histórico" para que la fecha tuviera efecto --
+  // el usuario reportó 2026-09-11 que esto confundía: escribía una fecha y
+  // seguía viendo el filtro anterior porque nunca apretaba ese botón).
   const [empresas, setEmpresas] = useState<Array<{ id: number; nombre: string }>>([])
   useEffect(() => {
     getAccessibleEmpresesFromPermisos()
@@ -175,7 +174,6 @@ export default function CicloFacturacion() {
     periodoHasta: string
   }
   const FILTROS_VACIOS: FiltrosCiclo = { empresaId: null, periodoDesde: "", periodoHasta: "" }
-  const [pending, setPending] = useState<FiltrosCiclo>(FILTROS_VACIOS)
   const [filtros, setFiltros] = useState<FiltrosCiclo>(FILTROS_VACIOS)
 
   const [filtroEstadoCiclo, setFiltroEstadoCiclo] = useState<string>("")
@@ -216,27 +214,20 @@ export default function CicloFacturacion() {
     cargar()
   }, [cargar])
 
-  const cargarHistorico = () => setFiltros(pending)
   const verMesActual = () => {
     const hoy = new Date()
     const p = (n: number) => String(n).padStart(2, "0")
     const desde = `${hoy.getFullYear()}-${p(hoy.getMonth() + 1)}-01`
     const hasta = `${hoy.getFullYear()}-${p(hoy.getMonth() + 1)}-${p(new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0).getDate())}`
-    const nuevo = { ...pending, periodoDesde: desde, periodoHasta: hasta }
-    setPending(nuevo)
-    setFiltros(nuevo)
+    setFiltros((f) => ({ ...f, periodoDesde: desde, periodoHasta: hasta }))
   }
   const verTodoElHistorico = () => {
-    const nuevo = { ...pending, periodoDesde: "", periodoHasta: "" }
-    setPending(nuevo)
-    setFiltros(nuevo)
+    setFiltros((f) => ({ ...f, periodoDesde: "", periodoHasta: "" }))
   }
-  const pendienteSinAplicar = pending.empresaId !== filtros.empresaId || pending.periodoDesde !== filtros.periodoDesde || pending.periodoHasta !== filtros.periodoHasta
 
   const limpiarFiltros = () => {
     setFiltroEstadoCiclo("")
     setFiltroEstadoCobro("")
-    setPending(FILTROS_VACIOS)
     setFiltros(FILTROS_VACIOS)
   }
   const hayFiltrosExtra = !!(filtros.empresaId || filtros.periodoDesde || filtros.periodoHasta || filtroEstadoCiclo || filtroEstadoCobro)
@@ -368,8 +359,8 @@ export default function CicloFacturacion() {
                 <Label className="text-[10px] text-muted-foreground">Proyecto</Label>
                 <select
                   className="h-8 w-[210px] rounded-md border border-input bg-background px-2 text-xs font-medium"
-                  value={pending.empresaId ?? ""}
-                  onChange={(e) => setPending((p) => ({ ...p, empresaId: e.target.value ? Number(e.target.value) : null }))}
+                  value={filtros.empresaId ?? ""}
+                  onChange={(e) => setFiltros((f) => ({ ...f, empresaId: e.target.value ? Number(e.target.value) : null }))}
                 >
                   <option value="">Todos los proyectos</option>
                   {empresas.map((em) => (
@@ -381,15 +372,12 @@ export default function CicloFacturacion() {
               </div>
               <div className="flex flex-col gap-1">
                 <Label className="text-[10px] text-muted-foreground">Período desde</Label>
-                <DatePickerField value={pending.periodoDesde} onChange={(v) => setPending((p) => ({ ...p, periodoDesde: v }))} className="h-8 w-[150px] text-xs" />
+                <DatePickerField value={filtros.periodoDesde} onChange={(v) => setFiltros((f) => ({ ...f, periodoDesde: v }))} className="h-8 w-[150px] text-xs" />
               </div>
               <div className="flex flex-col gap-1">
                 <Label className="text-[10px] text-muted-foreground">Período hasta</Label>
-                <DatePickerField value={pending.periodoHasta} onChange={(v) => setPending((p) => ({ ...p, periodoHasta: v }))} className="h-8 w-[150px] text-xs" />
+                <DatePickerField value={filtros.periodoHasta} onChange={(v) => setFiltros((f) => ({ ...f, periodoHasta: v }))} className="h-8 w-[150px] text-xs" />
               </div>
-              <Button size="sm" className="h-8 text-xs" onClick={cargarHistorico} disabled={!pendienteSinAplicar}>
-                Cargar histórico
-              </Button>
               <Button size="sm" variant="outline" className="h-8 text-xs" onClick={verMesActual}>
                 Ver mes actual
               </Button>
@@ -400,7 +388,7 @@ export default function CicloFacturacion() {
               )}
             </div>
             <p className="text-[10px] text-muted-foreground">
-              Sin período seleccionado se trae todo lo accesible. Elige un rango y presiona "Cargar histórico" para revisar cualquier ciclo pasado.
+              Sin período seleccionado se trae todo lo accesible. El filtro aplica apenas cambias cualquier campo.
             </p>
             {(vista === "todas" || vista === "cartera" || hayFiltrosExtra) && (
               <div className="flex flex-wrap items-end gap-2 border-t pt-2">
