@@ -267,12 +267,28 @@ export async function generarArchivoCargaPila(
     const plantillaBuf = Buffer.from(await plantillaBlob.arrayBuffer())
     const wb = XLSX.read(plantillaBuf, { type: "buffer" })
     const filasJulio = XLSX.utils.sheet_to_json(wb.Sheets[PLANTILLA_SHEET], { header: 1, defval: "" }) as any[][]
-    const encabezado = filasJulio.slice(0, 18)
+    // FIX 2026-09-11: el portal quitó la columna "Proyecto" (índice 3) de su
+    // formato de exportación entre julio y agosto -- confirmado columna por
+    // columna contra la planilla real de agosto (`addin ss 202608.xlsx`):
+    // TODO lo demás coincide exacto una vez se quita esa única columna, en
+    // las 99 columnas y en las 18 filas de encabezado por igual (no solo en
+    // la tabla de empleados). La plantilla guardada (julio) todavía la
+    // tiene, así que se quita aquí al clonar el encabezado -- ver el mismo
+    // ajuste más abajo en `row.splice(3, 1)` para las filas de datos.
+    const encabezado = filasJulio.slice(0, 18).map((fila) => {
+      const f = [...fila]
+      f.splice(3, 1)
+      return f
+    })
 
     const NO = "NO"
     const ESPACIOS15 = "               "
     const nuevasFilas: any[][] = []
     for (const f of filasSalida) {
+      // Se sigue construyendo con los mismos 99 índices de siempre (para no
+      // tener que re-numerar cada asignación de abajo) y se quita la columna
+      // "Proyecto" (índice 3) al final con splice -- ver el comentario junto
+      // a `encabezado` más arriba.
       const row = new Array(99).fill("")
       row[0] = f.no; row[1] = f.tipoId; row[2] = f.noId; row[3] = f.proyecto
       row[4] = f.apellido1; row[5] = f.apellido2; row[6] = f.nombre1; row[7] = f.nombre2
@@ -318,6 +334,7 @@ export async function generarArchivoCargaPila(
       row[92] = 0; row[93] = 0; row[94] = 0; row[95] = 0
       row[96] = f.exonerado
       row[97] = ""; row[98] = ""
+      row.splice(3, 1) // quitar "Proyecto" -- el portal ya no la trae (ver FIX 2026-09-11 arriba)
       nuevasFilas.push(row)
     }
 
