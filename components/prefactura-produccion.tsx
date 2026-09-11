@@ -172,7 +172,7 @@ export default function PrefacturaProduccion({ idempresaFija }: { idempresaFija?
       })
       setGuardando(false)
       if (r.success) {
-        toast({ title: `Borrador #${r.id} guardado`, description: "Queda en borrador hasta que se apruebe." })
+        toast({ title: `Prefactura #${r.id} generada`, description: "Ya arrancó el Ciclo de Facturación." })
         setObservacion("")
         cargarGuardadas()
       } else if (!confirmarSolape && r.message?.includes("APROBADA")) {

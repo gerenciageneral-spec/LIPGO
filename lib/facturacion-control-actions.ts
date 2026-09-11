@@ -535,7 +535,18 @@ export async function guardarPrefactura(payload: {
         soporte: payload.soporte ?? [],
         total: payload.total,
         toneladas: payload.toneladas,
-        estado: "borrador",
+        // Se crea YA APROBADA: no existe un paso interno de "aprobar la
+        // prefactura" en el negocio -- generarla (con la fecha/periodo)
+        // ya construye el anexo y arranca el Ciclo de Facturación. La
+        // única aprobación real del proceso es la del CLIENTE firmando el
+        // anexo (evento "anexo_firmado" del ciclo), no un clic interno de
+        // LIPGO. "borrador"/"Reabrir" siguen existiendo solo como vía de
+        // corrección si algo quedó mal, no como paso obligatorio.
+        estado: "aprobada",
+        aprobado_por: payload.usuario ?? null,
+        aprobado_en: new Date().toISOString(),
+        estado_ciclo: "pendiente_anexo",
+        ciclo_actualizado_en: new Date().toISOString(),
         usuario: payload.usuario ?? null,
         observacion: payload.observacion ?? null,
         updated_at: new Date().toISOString(),

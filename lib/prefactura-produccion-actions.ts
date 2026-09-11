@@ -490,7 +490,18 @@ export async function guardarPrefacturaProduccion(payload: {
         soporte: (payload.soporte ?? []).filter((l) => l.valor > 0),
         total: payload.total,
         toneladas: payload.toneladas,
-        estado: "borrador", // nunca se crea aprobada
+        // Se crea YA APROBADA (antes: "borrador", nunca se creaba aprobada).
+        // No existe un paso interno de "aprobar la prefactura" en el negocio
+        // -- generarla con el periodo ya construye el anexo y arranca el
+        // Ciclo de Facturación. La única aprobación real es la del CLIENTE
+        // firmando el anexo (evento "anexo_firmado"), no un clic interno de
+        // LIPGO. `buscarSolapes` sigue funcionando igual (y ahora atrapa el
+        // doble cobro DESDE la creación, no solo al aprobar a mano).
+        estado: "aprobada",
+        aprobado_por: usuario,
+        aprobado_en: new Date().toISOString(),
+        estado_ciclo: "pendiente_anexo",
+        ciclo_actualizado_en: new Date().toISOString(),
         usuario,
         observacion: payload.observacion ?? null,
         updated_at: new Date().toISOString(),

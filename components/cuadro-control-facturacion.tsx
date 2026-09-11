@@ -686,7 +686,7 @@ export function CuadroControlFacturacion() {
     })
     setGuardando(false)
     if (r.success) {
-      toast({ title: "Prefactura guardada", description: `Borrador #${r.id} guardado.` })
+      toast({ title: "Prefactura generada", description: `Prefactura #${r.id} lista -- ya arrancó el Ciclo de Facturación.` })
       setObs("")
       cargarGuardadas()
     } else {
