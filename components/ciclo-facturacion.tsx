@@ -962,7 +962,7 @@ function FrecuenciaGeneracionPrefacturaPanel() {
 
   const guardar = async (c: CondicionGeneracionPrefactura) => {
     setGuardando(c.idempresa)
-    const r = await actualizarCondicionGeneracionPrefactura(c.idempresa, c.frecuencia, c.dia_semana, c.activo)
+    const r = await actualizarCondicionGeneracionPrefactura(c.idempresa, c.frecuencia, c.dia_semana, c.activo, c.fecha_inicio)
     setGuardando(null)
     if (r.success) toast({ title: "Guardado" })
     else toast({ title: "Error", description: r.message, variant: "destructive" })
@@ -978,7 +978,8 @@ function FrecuenciaGeneracionPrefacturaPanel() {
         <CardDescription className="text-xs">
           Sin activar, la prefactura la sigue generando una persona a mano en Cuadro de Control / Prefactura de Producción -- ese sigue siendo el default.
           Al activarla, el cron genera solo el período siguiente (desde el día después de la última prefactura aprobada, hasta ayer) y, si encuentra
-advertencias (sin tarifa vigente, pago que no cuadra), igual la genera y te avisa aquí para que la revises después.
+          advertencias (sin tarifa vigente, pago que no cuadra), igual la genera y te avisa aquí para que la revises después. Si el proyecto NUNCA ha
+          tenido una prefactura, no hay de dónde partir -- escribe la "Fecha de inicio" una sola vez para que arranque; de ahí en adelante sigue solo.
         </CardDescription>
       </CardHeader>
       {abierto && (
@@ -1010,6 +1011,15 @@ advertencias (sin tarifa vigente, pago que no cuadra), igual la genera y te avis
                   </SelectContent>
                 </Select>
               )}
+              <div className="flex items-center gap-1.5">
+                <Label className="text-[10px] text-muted-foreground whitespace-nowrap">Fecha de inicio (si nunca ha facturado)</Label>
+                <DatePickerField
+                  value={c.fecha_inicio || ""}
+                  onChange={(v) => actualizarLocal(c.idempresa, { fecha_inicio: v || null })}
+                  className="h-7 w-36 text-xs"
+                  disabled={!c.activo}
+                />
+              </div>
               <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => guardar(c)} disabled={guardando === c.idempresa}>
                 {guardando === c.idempresa && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
                 Guardar

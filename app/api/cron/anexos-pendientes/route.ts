@@ -16,12 +16,14 @@ import { getPrefacturaProduccion, guardarPrefacturaProduccion } from "@/lib/pref
  * ahora, si el proyecto lo pide, el propio cron calcula el período contiguo
  * (desde el día siguiente a la última prefactura aprobada, hasta ayer) y lo
  * genera solo -- decisión del negocio: "generar igual y avisar después", así
- * que si hay advertencias (sin tarifa/sin gestionar/pago no cuadra/avisos de
+ * que si hay advertencias (sin tarifa vigente/pago no cuadra/avisos de
  * producción) igual se genera, pero quedan guardadas en `prefacturas.advertencias`
  * para que el Jefe las revise (alerta en el top-bar) y corrija si hace falta
  * con "Solicitar corrección". Nunca se adivina una fecha de arranque: si un
- * proyecto no tiene ninguna prefactura previa, se omite (requiere la primera
- * a mano, una sola vez). Tampoco se fuerza nunca un solape de período.
+ * proyecto no tiene ninguna prefactura previa, usa `fecha_inicio` (la que el
+ * Jefe escribió a mano en el panel, una sola vez); sin esa fecha tampoco, se
+ * omite -- nunca inventa un punto de partida. Tampoco se fuerza nunca un
+ * solape de período.
  *
  * FASE B -- envía automáticamente el anexo (evento `anexo_enviado`) de las
  * prefacturas YA APROBADAS (por una persona o por la Fase A de arriba) que
@@ -98,14 +100,17 @@ async function generarPrefacturasAutomaticas(sb: any, hoy: number) {
         .limit(1)
         .maybeSingle()
 
-      // Nunca se adivina una fecha de arranque: la primera prefactura de un
-      // proyecto la sigue generando una persona, a mano, una sola vez.
-      if (!ultima?.periodo_hasta) {
+      // Nunca se adivina una fecha de arranque: si el proyecto no tiene
+      // ninguna prefactura previa, el ÚNICO arranque válido es el que el
+      // Jefe escribió a mano en `fecha_inicio` (panel de Ciclo de
+      // Facturación) -- sin eso, se omite (no genera nada) hasta que alguien
+      // decida esa fecha, explícito, una sola vez por proyecto.
+      const desde = ultima?.periodo_hasta ? diaSiguiente(ultima.periodo_hasta) : cond.fecha_inicio
+      if (!desde) {
         resultado.omitidas++
         continue
       }
 
-      const desde = diaSiguiente(ultima.periodo_hasta)
       const hasta = fechaAyerColombia()
       if (desde > hasta) {
         // ya está al día -- no ha pasado un día nuevo por facturar
