@@ -43,6 +43,17 @@ export interface HeadcountPerson {
   // Fecha de retiro (baja). Se setea automáticamente al marcar la novedad
   // "Retiro"; también editable en el formulario. String date (YYYY-MM-DD).
   fecha_retiro?: string | null
+  // Datos de Seguridad Social (PILA) -- capturados al contratar, no en una
+  // ficha aparte (ver scripts/add_pila_fields_headcount.sql). Los lee
+  // lib/parafiscales-exportador-actions.ts para armar el archivo plano.
+  ciudad?: string | null
+  administradora_pension?: string | null // AFP, nombre libre -- ver lib/pila-codigos-oficiales.ts
+  administradora_salud?: string | null // EPS, nombre libre -- ver lib/pila-codigos-oficiales.ts
+  administradora_caja?: string | null // Caja de Compensación, código directo (ej. "CCF24")
+  tipo_cotizante?: string | null
+  subtipo_cotizante?: string | null
+  centro_trabajo?: string | null
+  actividad_economica?: string | null // código CIIU
 }
 
 // Colaborador "liviano" para AUTOCOMPLETAR expediente (Hojas de Vida / Antecedentes)

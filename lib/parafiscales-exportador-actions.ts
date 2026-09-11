@@ -61,6 +61,21 @@ function codigoCotizante(texto: string | null | undefined): string {
 
 const CLASE_RIESGO_DIGITO: Record<ClaseRiesgo, string> = { I: "1", II: "2", III: "3", IV: "4", V: "5" }
 
+// Head Count solo guarda el nombre completo (una sola columna); el archivo
+// plano exige nombres/apellidos por separado. Se derivan por posición --
+// mismo criterio ya usado y verificado en el backfill de la ficha PILA
+// (ej. "DEIVID DANIEL PARRA OSSA" -> nombre1 DEIVID, nombre2 DANIEL,
+// apellido1 PARRA, apellido2 OSSA).
+function derivarNombres(nombreCompleto: string): { nombre1: string; nombre2: string; apellido1: string; apellido2: string } {
+  const partes = nombreCompleto.trim().split(/\s+/)
+  if (partes.length >= 4) {
+    return { nombre1: partes[0], nombre2: partes[1], apellido1: partes.slice(2, -1).join(" "), apellido2: partes[partes.length - 1] }
+  }
+  if (partes.length === 3) return { nombre1: partes[0], nombre2: "", apellido1: partes[1], apellido2: partes[2] }
+  if (partes.length === 2) return { nombre1: partes[0], nombre2: "", apellido1: partes[1], apellido2: "" }
+  return { nombre1: partes[0] || "", nombre2: "", apellido1: "", apellido2: "" }
+}
+
 interface Segmento {
   tipo: TipoDiaCotizacion
   diaIni: number
@@ -97,13 +112,21 @@ export async function generarArchivoCargaPila(
     const smlv = Number(pa?.smlv || 0)
     if (!smlv) return { success: false, message: `No hay parámetros legales cargados para el año ${anio}.` }
 
-    const { data: estaticos } = await admin.from("parafiscales_estatico").select("*")
-    const plantilla = new Map<string, any>()
-    for (const e of estaticos || []) plantilla.set(String(e.identificacion).trim(), e)
-
+    // Datos de Seguridad Social (PILA: EPS/AFP/CCF/ciudad/etc.) -- se leen
+    // de Head Count (columnas agregadas por scripts/add_pila_fields_
+    // headcount.sql), NO de una ficha aparte. Antes vivían en
+    // `parafiscales_estatico`, una tabla separada que nadie llenaba al
+    // contratar gente nueva -- 3 casos reales de agosto-2026 (WILLIAM
+    // SEGUNDO GUTIERREZ BARROS, CRISTIAN DAVID MENDEZ BERNAL, EDILSON RAMON
+    // RODRIGUEZ GARCIA) quedaron fuera del plano por esto. Pedido del
+    // usuario 2026-09-11: una sola fuente, capturada donde el dato nace (al
+    // contratar), no en una pantalla aparte de Nómina/Compensación.
     const { data: personal } = await admin
       .from("headcount")
-      .select("identificacion, nombre, admin, salario, idempresa, contratosiigo, fecha_retiro, fechainicio, estado")
+      .select(
+        "identificacion, nombre, admin, salario, idempresa, contratosiigo, fecha_retiro, fechainicio, estado, " +
+          "ciudad, administradora_pension, administradora_salud, administradora_caja, tipo_cotizante, subtipo_cotizante, centro_trabajo, actividad_economica",
+      )
       .not("nombre", "ilike", "%prueba%")
     const info = new Map<
       string,
@@ -115,6 +138,14 @@ export async function generarArchivoCargaPila(
         fechaRetiro: string | null
         fechaInicio: string | null
         esActivo: boolean
+        ciudad: string | null
+        administradoraPension: string | null
+        administradoraSalud: string | null
+        administradoraCaja: string | null
+        tipoCotizante: string | null
+        subtipoCotizante: string | null
+        centroTrabajo: string | null
+        actividadEconomica: string | null
       }
     >()
     for (const h of personal || []) {
@@ -130,6 +161,14 @@ export async function generarArchivoCargaPila(
         fechaRetiro: h.fecha_retiro ? String(h.fecha_retiro).slice(0, 10) : (prev?.fechaRetiro ?? null),
         fechaInicio: h.fechainicio ? String(h.fechainicio).slice(0, 10) : (prev?.fechaInicio ?? null),
         esActivo: (prev?.esActivo ?? false) || esActivoFila,
+        ciudad: h.ciudad ?? prev?.ciudad ?? null,
+        administradoraPension: h.administradora_pension ?? prev?.administradoraPension ?? null,
+        administradoraSalud: h.administradora_salud ?? prev?.administradoraSalud ?? null,
+        administradoraCaja: h.administradora_caja ?? prev?.administradoraCaja ?? null,
+        tipoCotizante: h.tipo_cotizante ?? prev?.tipoCotizante ?? null,
+        subtipoCotizante: h.subtipo_cotizante ?? prev?.subtipoCotizante ?? null,
+        centroTrabajo: h.centro_trabajo ?? prev?.centroTrabajo ?? null,
+        actividadEconomica: h.actividad_economica ?? prev?.actividadEconomica ?? null,
       })
     }
 
@@ -223,10 +262,18 @@ export async function generarArchivoCargaPila(
 
     for (const [nombre, dias] of porPersona) {
       const ficha = info.get(nombre)!
-      const est = plantilla.get(ficha.identificacion)
-      if (!est) {
-        excepciones.push({ persona: `${nombre} (${ficha.identificacion})`, motivo: "Sin ficha estática (proyecto/EPS/AFP/CCF) -- agrégala en Parafiscales antes de exportar." })
-        continue
+      // Si faltan TODOS los datos de Seguridad Social en Head Count, la fila
+      // igual se genera (los días/IBC son reales y no hay razón para
+      // excluir a alguien que sí trabajó) pero se avisa como excepción --
+      // antes esto SALTABA a la persona por completo (ver el bug real de
+      // agosto-2026: 3 personas con nómina real quedaron en $0 en el plano
+      // por falta de esta ficha). Los códigos AFP/EPS faltantes también se
+      // avisan más abajo, campo por campo.
+      if (!ficha.administradoraPension && !ficha.administradoraSalud && !ficha.ciudad) {
+        excepciones.push({
+          persona: `${nombre} (${ficha.identificacion})`,
+          motivo: "Sin datos de Seguridad Social en Head Count (EPS/AFP/ciudad) -- complétalos en la ficha de la persona antes de radicar.",
+        })
       }
       dias.sort((a, b) => a.fecha.localeCompare(b.fecha))
 
@@ -365,25 +412,26 @@ export async function generarArchivoCargaPila(
         const pensionTarifaPct = (ap.ibcPension > 0 ? (ap.pensionEmpleador + ap.pensionEmpleado) / ap.ibcPension : 0) * 100
         const saludTarifaPct = (ap.ibcSalud > 0 ? (ap.saludEmpleador + ap.saludEmpleado) / ap.ibcSalud : 0) * 100
 
-        const codAfp = codigoAfp(est.administradora_pension)
-        const codEps = codigoEps(est.administradora_salud)
+        const codAfp = codigoAfp(ficha.administradoraPension)
+        const codEps = codigoEps(ficha.administradoraSalud)
         if (!codAfp || !codEps) {
           excepciones.push({
             persona: `${nombre} (${ficha.identificacion})`,
-            motivo: `Administradora sin código oficial mapeado: ${!codAfp ? `pensión "${est.administradora_pension}"` : ""}${!codAfp && !codEps ? " y " : ""}${!codEps ? `salud "${est.administradora_salud}"` : ""} -- agrégala en lib/pila-codigos-oficiales.ts.`,
+            motivo: `Administradora sin código oficial mapeado: ${!codAfp ? `pensión "${ficha.administradoraPension}"` : ""}${!codAfp && !codEps ? " y " : ""}${!codEps ? `salud "${ficha.administradoraSalud}"` : ""} -- revísalo en Head Count o agrega el nombre a lib/pila-codigos-oficiales.ts.`,
           })
         }
-        const [divipolaDepto, divipolaMunicipio] = codigoDivipola(est.ciudad).split("-")
-        const centroTrabajoNum = Number(String(est.centro_trabajo || "").match(/(\d+)$/)?.[1] || 0)
+        const [divipolaDepto, divipolaMunicipio] = codigoDivipola(ficha.ciudad).split("-")
+        const centroTrabajoNum = Number(String(ficha.centroTrabajo || "").match(/(\d+)$/)?.[1] || 0)
+        const { nombre1, nombre2, apellido1, apellido2 } = derivarNombres(nombre)
 
         valorTotalNomina += cajaIbcFila
         registrosDetalle.push({
           secuencia: noCounter,
           identificacion: ficha.identificacion,
-          tipoCotizante: codigoCotizante(est.tipo_cotizante),
-          subtipoCotizante: codigoCotizante(est.subtipo_cotizante),
+          tipoCotizante: codigoCotizante(ficha.tipoCotizante),
+          subtipoCotizante: codigoCotizante(ficha.subtipoCotizante),
           divipolaDepto, divipolaMunicipio,
-          apellido1: est.apellido1 || "", apellido2: est.apellido2 || "", nombre1: est.nombre1 || "", nombre2: est.nombre2 || "",
+          apellido1, apellido2, nombre1, nombre2,
           ing: ingEsteMes && esPrimerSegmento ? "X" : "",
           ret: retEsteMes && esSegmentoCierre ? "X" : "",
           vst: llevaBono ? "X" : "",
@@ -391,7 +439,7 @@ export async function generarArchivoCargaPila(
           ige: seg.tipo === "INCAP" ? "X" : "",
           lma: "",
           vacLr: seg.tipo === "VAC" ? "X" : seg.tipo === "LICR" ? "L" : "",
-          codAfp, codEps, codCcf: est.administradora_caja || null,
+          codAfp, codEps, codCcf: ficha.administradoraCaja || null,
           diasPension: seg.dias, diasSalud: seg.dias, diasArl: seg.dias, diasCcf: seg.dias,
           salario: ficha.salario,
           tipoSalario: tieneSalarioVariable ? "V" : "F",
@@ -421,7 +469,7 @@ export async function generarArchivoCargaPila(
           fechaFinVacLr: seg.tipo === "VAC" || seg.tipo === "LICR" ? fFin : null,
           ibcOtrosParafiscales: ap.baseParafiscales,
           horasLaboradas: seg.tipo === "TRAB" ? seg.dias * 7 : 0,
-          actividadEconomica: est.actividad_economica || "",
+          actividadEconomica: ficha.actividadEconomica || "",
         })
       }
     }
@@ -441,130 +489,8 @@ export async function generarArchivoCargaPila(
   }
 }
 
-/** Backfill/edición manual de la ficha estática de una persona (proyecto, EPS, AFP, ARL, CCF, etc). */
-export async function guardarFichaEstaticaParafiscal(payload: {
-  identificacion: string
-  proyecto?: string | null
-  departamento?: string | null
-  ciudad?: string | null
-  tipo_cotizante?: string | null
-  subtipo_cotizante?: string | null
-  administradora_pension?: string | null
-  administradora_salud?: string | null
-  administradora_arl?: string | null
-  administradora_caja?: string | null
-  clase_riesgo?: string | null
-  centro_trabajo?: string | null
-  actividad_economica?: string | null
-  apellido1?: string | null
-  apellido2?: string | null
-  nombre1?: string | null
-  nombre2?: string | null
-}): Promise<{ success: boolean; message?: string }> {
-  if (!payload?.identificacion) return { success: false, message: "Falta la identificación." }
-  try {
-    const admin: any = await getSupabaseAdmin()
-    const { error } = await admin
-      .from("parafiscales_estatico")
-      .upsert({ ...payload, updated_at: new Date().toISOString() }, { onConflict: "identificacion" })
-    if (error) return { success: false, message: error.message }
-    return { success: true }
-  } catch (e: any) {
-    return { success: false, message: e?.message || "Error al guardar la ficha." }
-  }
-}
-
-export async function getFichaEstaticaParafiscal(identificacion: string): Promise<{ success: boolean; data?: any; message?: string }> {
-  try {
-    const admin: any = await getSupabaseAdmin()
-    const { data, error } = await admin.from("parafiscales_estatico").select("*").eq("identificacion", identificacion).maybeSingle()
-    if (error) return { success: false, message: error.message }
-    return { success: true, data }
-  } catch (e: any) {
-    return { success: false, message: e?.message || "Error al leer la ficha." }
-  }
-}
-
-export interface FilaFichaEstatica {
-  identificacion: string
-  nombre: string
-  idempresa: number | null
-  tieneFicha: boolean
-  proyecto: string | null
-  departamento: string | null
-  ciudad: string | null
-  tipo_cotizante: string | null
-  subtipo_cotizante: string | null
-  administradora_pension: string | null
-  administradora_salud: string | null
-  administradora_arl: string | null
-  administradora_caja: string | null
-  clase_riesgo: string | null
-  centro_trabajo: string | null
-  actividad_economica: string | null
-  apellido1: string | null
-  apellido2: string | null
-  nombre1: string | null
-  nombre2: string | null
-}
-
-/**
- * Headcount activo (con contrato SIIGO) cruzado con `parafiscales_estatico`,
- * para la pantalla de mantenimiento de la ficha -- así se ve, de un vistazo,
- * quién todavía no tiene ficha (necesaria para el archivo plano PILA) en vez
- * de tener que ir a buscarlo a mano en la base de datos.
- */
-export async function listarFichasEstaticas(): Promise<{ success: boolean; data: FilaFichaEstatica[]; message?: string }> {
-  try {
-    const admin: any = await getSupabaseAdmin()
-    const { data: personal, error: hErr } = await admin
-      .from("headcount")
-      .select("identificacion, nombre, idempresa, estado, contratosiigo")
-      .not("nombre", "ilike", "%prueba%")
-      .order("nombre", { ascending: true })
-    if (hErr) return { success: false, data: [], message: hErr.message }
-    const { data: fichas, error: fErr } = await admin.from("parafiscales_estatico").select("*")
-    if (fErr) return { success: false, data: [], message: fErr.message }
-    const fichaPorCedula = new Map<string, any>()
-    for (const f of fichas || []) fichaPorCedula.set(String(f.identificacion).trim(), f)
-
-    const vistos = new Set<string>()
-    const out: FilaFichaEstatica[] = []
-    for (const h of personal || []) {
-      const nombre = String(h.nombre || "").trim()
-      const identificacion = String(h.identificacion || "").trim()
-      if (!nombre || !identificacion || !String(h.contratosiigo || "").trim()) continue
-      if (String(h.estado || "").trim().toUpperCase() !== "ACTIVO") continue
-      if (vistos.has(identificacion)) continue
-      vistos.add(identificacion)
-      const f = fichaPorCedula.get(identificacion)
-      out.push({
-        identificacion,
-        nombre,
-        idempresa: h.idempresa ?? null,
-        tieneFicha: !!f,
-        proyecto: f?.proyecto ?? null,
-        departamento: f?.departamento ?? null,
-        ciudad: f?.ciudad ?? null,
-        tipo_cotizante: f?.tipo_cotizante ?? null,
-        subtipo_cotizante: f?.subtipo_cotizante ?? null,
-        administradora_pension: f?.administradora_pension ?? null,
-        administradora_salud: f?.administradora_salud ?? null,
-        administradora_arl: f?.administradora_arl ?? null,
-        administradora_caja: f?.administradora_caja ?? null,
-        clase_riesgo: f?.clase_riesgo ?? null,
-        centro_trabajo: f?.centro_trabajo ?? null,
-        actividad_economica: f?.actividad_economica ?? null,
-        apellido1: f?.apellido1 ?? null,
-        apellido2: f?.apellido2 ?? null,
-        nombre1: f?.nombre1 ?? null,
-        nombre2: f?.nombre2 ?? null,
-      })
-    }
-    // Sin ficha primero -- son las que urge completar.
-    out.sort((a, b) => Number(a.tieneFicha) - Number(b.tieneFicha) || a.nombre.localeCompare(b.nombre))
-    return { success: true, data: out }
-  } catch (e: any) {
-    return { success: false, data: [], message: e?.message || "Error al listar las fichas." }
-  }
-}
+// La ficha PILA separada (`parafiscales_estatico`, editada desde un diálogo
+// en Parafiscales) se retiró 2026-09-11: esos datos ahora se capturan en
+// Head Count al contratar (ver scripts/add_pila_fields_headcount.sql y el
+// formulario de components/headcount-management.tsx). La tabla vieja NO se
+// borró (queda de respaldo histórico), pero ya nada la lee ni la escribe.

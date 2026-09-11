@@ -29,6 +29,7 @@ import type { HeadcountPerson } from "@/lib/headcount-actions"
 import { Upload, Trash2, Eye, Plus, Edit, ShieldCheck, ArrowRight, Users, Briefcase, Search } from "lucide-react"
 import { useAuth } from "@/components/auth-provider"
 import { CARGOS_HEADCOUNT } from "@/lib/headcount-cargos"
+import { CODIGOS_AFP, CODIGOS_EPS } from "@/lib/pila-codigos-oficiales"
 
 // Listado fijo de cargos para Headcount. Vive en lib/headcount-cargos.ts
 // porque los server actions que sincronizan desde otros modulos tambien lo
@@ -83,6 +84,17 @@ export default function HeadcountManagement() {
     aplicaplano: false,
     // Marca de personal administrativo (columna `admin`).
     admin: false,
+    // Datos de Seguridad Social (PILA) -- capturados aquí, al contratar,
+    // en vez de en una ficha aparte que nadie llenaba (ver
+    // scripts/add_pila_fields_headcount.sql). Los lee el exportador PILA.
+    ciudad: "",
+    administradora_pension: "",
+    administradora_salud: "",
+    administradora_caja: "",
+    tipo_cotizante: "",
+    subtipo_cotizante: "",
+    centro_trabajo: "",
+    actividad_economica: "",
   })
   const [statusDialogOpen, setStatusDialogOpen] = useState(false)
   const [statusPassword, setStatusPassword] = useState("")
@@ -187,6 +199,14 @@ export default function HeadcountManagement() {
       aplicaplano: false,
       // En la pestaña administrativa, todo nuevo registro queda como admin=true.
       admin: activeTab === "administrativo",
+      ciudad: "",
+      administradora_pension: "",
+      administradora_salud: "",
+      administradora_caja: "",
+      tipo_cotizante: "",
+      subtipo_cotizante: "",
+      centro_trabajo: "",
+      actividad_economica: "",
     })
   }
 
@@ -362,6 +382,14 @@ export default function HeadcountManagement() {
       // null/undefined -> false en UI: el checkbox no soporta tristate.
       aplicaplano: !!person.aplicaplano,
       admin: !!person.admin,
+      ciudad: person.ciudad || "",
+      administradora_pension: person.administradora_pension || "",
+      administradora_salud: person.administradora_salud || "",
+      administradora_caja: person.administradora_caja || "",
+      tipo_cotizante: person.tipo_cotizante || "",
+      subtipo_cotizante: person.subtipo_cotizante || "",
+      centro_trabajo: person.centro_trabajo || "",
+      actividad_economica: person.actividad_economica || "",
     })
     setDialogOpen(true)
   }
@@ -789,6 +817,122 @@ export default function HeadcountManagement() {
                 value={formData.fecha_retiro}
                 onChange={(value) => setFormData({ ...formData, fecha_retiro: value })}
               />
+            </div>
+
+            {/* Datos de Seguridad Social (PILA): se capturan aquí, al
+                contratar, porque es la única fuente que lee el exportador
+                del archivo plano (lib/parafiscales-exportador-actions.ts) --
+                ver scripts/add_pila_fields_headcount.sql. */}
+            <div className="space-y-3 rounded-md border p-3">
+              <p className="text-sm font-medium">Seguridad Social (PILA)</p>
+
+              <div className="space-y-2">
+                <Label htmlFor="ciudad">Ciudad</Label>
+                <Input
+                  id="ciudad"
+                  value={formData.ciudad}
+                  onChange={(e) => setFormData({ ...formData, ciudad: e.target.value })}
+                  placeholder="Ej. BOGOTA"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="administradora_pension">AFP (Fondo de Pensión)</Label>
+                <Select
+                  value={formData.administradora_pension || undefined}
+                  onValueChange={(v) => setFormData({ ...formData, administradora_pension: v })}
+                >
+                  <SelectTrigger id="administradora_pension">
+                    <SelectValue placeholder="Selecciona la AFP" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {formData.administradora_pension && !(Object.keys(CODIGOS_AFP)).includes(formData.administradora_pension) ? (
+                      <SelectItem value={formData.administradora_pension}>
+                        {formData.administradora_pension} (valor actual)
+                      </SelectItem>
+                    ) : null}
+                    {Object.keys(CODIGOS_AFP).map((n) => (
+                      <SelectItem key={n} value={n}>
+                        {n}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="administradora_salud">EPS</Label>
+                <Select
+                  value={formData.administradora_salud || undefined}
+                  onValueChange={(v) => setFormData({ ...formData, administradora_salud: v })}
+                >
+                  <SelectTrigger id="administradora_salud">
+                    <SelectValue placeholder="Selecciona la EPS" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {formData.administradora_salud && !(Object.keys(CODIGOS_EPS)).includes(formData.administradora_salud) ? (
+                      <SelectItem value={formData.administradora_salud}>
+                        {formData.administradora_salud} (valor actual)
+                      </SelectItem>
+                    ) : null}
+                    {Object.keys(CODIGOS_EPS).map((n) => (
+                      <SelectItem key={n} value={n}>
+                        {n}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="administradora_caja">Caja de Compensación (código)</Label>
+                <Input
+                  id="administradora_caja"
+                  value={formData.administradora_caja}
+                  onChange={(e) => setFormData({ ...formData, administradora_caja: e.target.value })}
+                  placeholder="Ej. CCF24"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-2">
+                  <Label htmlFor="tipo_cotizante">Tipo de cotizante</Label>
+                  <Input
+                    id="tipo_cotizante"
+                    value={formData.tipo_cotizante}
+                    onChange={(e) => setFormData({ ...formData, tipo_cotizante: e.target.value })}
+                    placeholder="Ej. 1. DEPENDIENTE"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="subtipo_cotizante">Subtipo de cotizante</Label>
+                  <Input
+                    id="subtipo_cotizante"
+                    value={formData.subtipo_cotizante}
+                    onChange={(e) => setFormData({ ...formData, subtipo_cotizante: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-2">
+                  <Label htmlFor="centro_trabajo">Centro de trabajo</Label>
+                  <Input
+                    id="centro_trabajo"
+                    value={formData.centro_trabajo}
+                    onChange={(e) => setFormData({ ...formData, centro_trabajo: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="actividad_economica">Actividad económica (CIIU)</Label>
+                  <Input
+                    id="actividad_economica"
+                    value={formData.actividad_economica}
+                    onChange={(e) => setFormData({ ...formData, actividad_economica: e.target.value })}
+                    placeholder="Ej. 5222901"
+                  />
+                </div>
+              </div>
             </div>
           </div>
 

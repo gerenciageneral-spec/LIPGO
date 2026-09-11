@@ -67,14 +67,31 @@ export function codigoDivipola(ciudad: string | null | undefined): string {
   return String(ciudad || "").trim().toUpperCase() === "BOGOTA" ? "11-001" : "20-001"
 }
 
-export function codigoAfp(nombre: string | null | undefined): string | null {
-  const n = String(nombre || "").trim()
-  return CODIGOS_AFP[n] ?? null
+const CODIGOS_AFP_VALIDOS = new Set(Object.values(CODIGOS_AFP))
+// "CCFC55" es el 4o código real visto para "SALUD TOTAL" en el archivo de
+// agosto-2026 (ver nota arriba: EPS002 46x, EPS037 7x, CCFC55 4x, ESSC07 4x,
+// ESSC24 1x) -- no tiene un nombre propio claro en el diccionario, pero es
+// un código real confirmado (ROBERTO ENRIQUE HOYOS VIDEZ), no un error.
+const CODIGOS_EPS_VALIDOS = new Set([...Object.values(CODIGOS_EPS), "CCFC55"])
+
+// Acepta tanto el NOMBRE libre (lo que guarda Head Count al elegir del
+// desplegable) como el CÓDIGO oficial ya resuelto (lo que trae, por
+// persona, el archivo plano real ya radicado -- más confiable que el
+// nombre porque no sufre la ambigüedad de "SALUD TOTAL" documentada
+// arriba). Backfill 2026-09-11: se importaron los códigos reales de
+// agosto-2026 directo al campo, sin pasar por el diccionario de nombres.
+export function codigoAfp(valor: string | null | undefined): string | null {
+  const v = String(valor || "").trim()
+  if (!v) return null
+  if (CODIGOS_AFP_VALIDOS.has(v)) return v
+  return CODIGOS_AFP[v] ?? null
 }
 
-export function codigoEps(nombre: string | null | undefined): string | null {
-  const n = String(nombre || "").trim()
-  return CODIGOS_EPS[n] ?? null
+export function codigoEps(valor: string | null | undefined): string | null {
+  const v = String(valor || "").trim()
+  if (!v) return null
+  if (CODIGOS_EPS_VALIDOS.has(v)) return v
+  return CODIGOS_EPS[v] ?? null
 }
 
 // "Código de la ARL" (posición 507-512 del registro tipo 02, y también el

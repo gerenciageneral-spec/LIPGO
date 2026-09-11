@@ -31,6 +31,15 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         // Coercion estricta a boolean (mismo patron que el POST).
         aplicaplano: !!body.aplicaplano,
         admin: !!body.admin,
+        // Seguridad Social (PILA) -- ver scripts/add_pila_fields_headcount.sql.
+        ciudad: body.ciudad || null,
+        administradora_pension: body.administradora_pension || null,
+        administradora_salud: body.administradora_salud || null,
+        administradora_caja: body.administradora_caja || null,
+        tipo_cotizante: body.tipo_cotizante || null,
+        subtipo_cotizante: body.subtipo_cotizante || null,
+        centro_trabajo: body.centro_trabajo || null,
+        actividad_economica: body.actividad_economica || null,
       }
     }
 

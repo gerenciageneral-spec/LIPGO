@@ -85,6 +85,15 @@ export async function POST(request: NextRequest) {
         admin: !!body.admin,
         idempresa: empresaId,
         estado: "Inactivo",
+        // Seguridad Social (PILA) -- ver scripts/add_pila_fields_headcount.sql.
+        ciudad: body.ciudad || null,
+        administradora_pension: body.administradora_pension || null,
+        administradora_salud: body.administradora_salud || null,
+        administradora_caja: body.administradora_caja || null,
+        tipo_cotizante: body.tipo_cotizante || null,
+        subtipo_cotizante: body.subtipo_cotizante || null,
+        centro_trabajo: body.centro_trabajo || null,
+        actividad_economica: body.actividad_economica || null,
       })
       .select()
       .single()
