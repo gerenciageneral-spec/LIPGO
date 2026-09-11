@@ -290,7 +290,7 @@ export async function getParafiscales(
       const { data, error } = await admin
         .from("pagonomina")
         .select(
-          "persona, fecha, total_liquidado_dia, novedad_reportada, especialidad, bonif_prestacional, bonif_no_prestacional",
+          "persona, fecha, total_liquidado_dia, novedad_reportada, especialidad, bonif_no_prestacional",
         )
         .in("persona", nombres)
         .gte("fecha", desde)
@@ -318,8 +318,6 @@ export async function getParafiscales(
         diasLicr: number
         // Excedente de destajo acumulado CON SIGNO por quincena (se netea y se aplica
         // MAX(0,·) por quincena al final — igual que el archivo plano de Siigo).
-        excQ1: number
-        excQ2: number
       }
     >()
     for (const r of filas) {
@@ -345,7 +343,7 @@ export async function getParafiscales(
       const esDia31 = diaMes === 31
       const a =
         acum.get(nombre) ||
-        { ibcTrab: 0, diasTrab: 0, diasVac: 0, diasIncap: 0, diasAus: 0, diasLicr: 0, excQ1: 0, excQ2: 0 }
+        { ibcTrab: 0, diasTrab: 0, diasVac: 0, diasIncap: 0, diasAus: 0, diasLicr: 0 }
       switch (clasificarDiaCotizacion(r.novedad_reportada)) {
         case "VAC":
           if (!esDia31) a.diasVac += 1
@@ -364,16 +362,10 @@ export async function getParafiscales(
         default: {
           // TRAB. Cada día trabajado ya liquida su BASE del día (`total_liquidado_dia`
           // = salario/30 + recargos de turno + dominical; el destajo ya NO se paga por
-          // día). El excedente de producción se NETEA por QUINCENA y se paga como
-          // bonificación por productividad, TODA prestacional (cotiza al IBC, sin
-          // tope). Se acumula con signo aquí (`bonif_prestacional` ya viene con signo
-          // desde pagonomina) y se aplica MAX(0,·) por quincena más abajo — validado
-          // contra la planilla real de julio-2026 (ver comentario arriba).
+          // día). El bono de productividad (excedente de destajo neteado por quincena)
+          // se lee de `archivoplano` más abajo, NO se re-suma aquí -- ver comentario
+          // junto a `bonoRealPorCedulaQuincena`.
           a.ibcTrab += Number(r.total_liquidado_dia || 0)
-          if (fecha >= BONO_DESTAJO_IBC_DESDE) {
-            if (diaMes <= 15) a.excQ1 += Number(r.bonif_prestacional || 0)
-            else a.excQ2 += Number(r.bonif_prestacional || 0)
-          }
           if (!esDia31) a.diasTrab += 1
         }
       }
@@ -404,6 +396,49 @@ export async function getParafiscales(
       }
     }
 
+    // Bono de productividad REAL: se lee directo de `archivoplano` (la ÚNICA
+    // fuente que de verdad se envía a Siigo) en vez de re-derivarlo sumando
+    // `bonif_prestacional` por quincena aquí -- confirmado por el usuario
+    // 2026-09-11 tras encontrar que las dos formas NO daban lo mismo (caso
+    // real DEIVID PARRA OSSA: $312.218 re-derivados vs $204.299 reales en
+    // archivoplano, porque esa vista excluye el día de cierre de la quincena
+    // y funde el Ajuste Nómina Anterior). Mismo query que usa el exportador
+    // PILA (lib/parafiscales-exportador-actions.ts) -- un solo punto de
+    // cálculo para el mismo número. `archivoplano.anio` es columna nueva
+    // (scripts/archivoplano_reemplazo.sql) para no mezclar años al filtrar
+    // por mes. Se respeta `BONO_DESTAJO_IBC_DESDE`: antes de esa fecha el
+    // bono no entra al IBC aunque archivoplano sí lo tenga (decisión de
+    // negocio ya confirmada, ver comentario de cabecera del archivo).
+    const bonoRealPorCedulaQuincena = new Map<string, number>()
+    if (desde >= BONO_DESTAJO_IBC_DESDE) {
+      const identificaciones = Array.from(infoPorNombre.values()).map((i) => i.identificacion).filter(Boolean)
+      if (identificaciones.length > 0) {
+        const { data: bonoRows, error: bonoErr } = await admin
+          .from("archivoplano")
+          .select("identificacionempleado, quincena, cantidadvalor")
+          .in("identificacionempleado", identificaciones)
+          .eq("anio", anio)
+          .eq("mes", String(mes).padStart(2, "0"))
+          .eq("tiponovedad", "Valor")
+          .or("nombrenovedad.ilike.%Por Productividad%,nombrenovedad.ilike.%Ajuste Toneladas%")
+        // Fallar RUIDOSO si la columna `anio` todavía no existe (falta correr
+        // scripts/archivoplano_reemplazo.sql en Supabase) -- nunca seguir en
+        // silencio con bono $0 para todo el mundo, eso sería peor que el bug
+        // que se está corrigiendo.
+        if (bonoErr) {
+          return {
+            success: false,
+            data: [],
+            message: `No se pudo leer el bono real de archivoplano (${bonoErr.message}). Probablemente falta correr scripts/archivoplano_reemplazo.sql en Supabase.`,
+          }
+        }
+        for (const b of bonoRows || []) {
+          const clave = `${String(b.identificacionempleado).trim()}-${b.quincena}`
+          bonoRealPorCedulaQuincena.set(clave, (bonoRealPorCedulaQuincena.get(clave) || 0) + Number(b.cantidadvalor || 0))
+        }
+      }
+    }
+
     const data: ParafiscalPersona[] = []
     for (const [nombre, a] of acum) {
       const diasCotizados = a.diasTrab + a.diasVac + a.diasIncap + a.diasAus + a.diasLicr
@@ -413,11 +448,11 @@ export async function getParafiscales(
       // proporcional a los días TRABAJADOS del mes (no se causa en vac/incap/ausencia/licencia).
       const salarioRef = info.salario || smlv
       const auxilio = salarioRef <= smlv * 2 ? (auxilioMes / 30) * Math.min(a.diasTrab, 30) : 0
-      // Bonificación por productividad = excedente NETO de cada quincena con piso 0
-      // (los días bajos netean con los altos DENTRO de la quincena; nunca baja la base).
-      // TODA prestacional → entra al IBC. Es exactamente el "52-Bonificación Por
-      // Productividad" del archivo plano.
-      const bonoProductividad = Math.max(0, a.excQ1) + Math.max(0, a.excQ2)
+      // Bonificación por productividad -- ya viene con el piso 0 de
+      // `archivoplano` (esa vista solo emite la fila si `bono_final > 0`).
+      const bonoProductividad =
+        (bonoRealPorCedulaQuincena.get(`${info.identificacion}-1`) || 0) +
+        (bonoRealPorCedulaQuincena.get(`${info.identificacion}-2`) || 0)
       // Si hay valor REAL guardado para esta persona-mes, se ajusta el IBC de
       // días trabajados para que el total (`ap.ibc`) dé EXACTO el valor real
       // radicado (el resto de bases -- vacaciones/incapacidad/etc -- no cambian,

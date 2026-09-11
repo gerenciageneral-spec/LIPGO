@@ -446,7 +446,14 @@ create view public.archivoplano as
     round(COALESCE(nivelacion.salario_ref, (1750905)::numeric) / (2)::numeric)::integer AS nominaproyectada, -- quincenal por trabajador (antes fijo 875452); ::integer para no cambiar el tipo de la columna existente
     NULL::text AS fechainicio,
     NULL::text AS fechafin,
-    0 AS diasnohabiles
+    0 AS diasnohabiles,
+    -- AÑO REAL (2026-09-11, fix): antes esta vista no exponía el año -- un
+    -- consumidor que filtrara solo por `mes` (ej. Parafiscales, para leer el
+    -- bono real ya calculado aquí en vez de re-derivarlo con otra fórmula)
+    -- podía mezclar el mismo mes de años distintos. Solo esta rama (la del
+    -- bono de productividad) lo calcula real; las demás ramas lo dejan en
+    -- NULL a propósito -- nadie las consulta filtrando por año todavía.
+    nivelacion.anio_num::integer AS anio
    FROM nivelacion
   WHERE (nivelacion.bono_final > (0)::numeric)
 UNION ALL
@@ -462,7 +469,8 @@ UNION ALL
     0 AS nominaproyectada,
     base_datos.fecha_evento AS fechainicio,
     base_datos.fecha_evento AS fechafin,
-    0 AS diasnohabiles
+    0 AS diasnohabiles,
+    NULL::integer AS anio -- ver nota en la rama del bono más arriba
    FROM base_datos
   WHERE ((base_datos.novedad_reportada IS NOT NULL) AND (TRIM(BOTH FROM base_datos.novedad_reportada) <> ''::text) AND (TRIM(BOTH FROM base_datos.novedad_reportada) <> 'Descanso'::text) AND (TRIM(BOTH FROM base_datos.novedad_reportada) <> 'Descanso compensatorio domingo anterior'::text) AND (TRIM(BOTH FROM base_datos.novedad_reportada) <> 'Retiro'::text)
          -- DÍA 31: las novedades de DÍAS no se reportan. Siigo procesa toda
@@ -504,7 +512,8 @@ UNION ALL
     0 AS nominaproyectada,
     NULL::text AS fechainicio,
     NULL::text AS fechafin,
-    0 AS diasnohabiles
+    0 AS diasnohabiles,
+    NULL::integer AS anio -- ver nota en la rama del bono más arriba
    FROM base_datos
   WHERE (base_datos.horas_hed > (0)::numeric)
   GROUP BY to_char((base_datos.fecha_efectiva_turno)::timestamp with time zone, 'MM'::text),
@@ -532,7 +541,8 @@ UNION ALL
     0 AS nominaproyectada,
     NULL::text AS fechainicio,
     NULL::text AS fechafin,
-    0 AS diasnohabiles
+    0 AS diasnohabiles,
+    NULL::integer AS anio -- ver nota en la rama del bono más arriba
    FROM base_datos
   WHERE (base_datos.horas_hedf > (0)::numeric)
   GROUP BY to_char((base_datos.fecha_efectiva_turno)::timestamp with time zone, 'MM'::text),
@@ -559,7 +569,8 @@ UNION ALL
     0 AS nominaproyectada,
     NULL::text AS fechainicio,
     NULL::text AS fechafin,
-    0 AS diasnohabiles
+    0 AS diasnohabiles,
+    NULL::integer AS anio -- ver nota en la rama del bono más arriba
    FROM base_datos
   WHERE (base_datos.horas_hen > (0)::numeric)
   GROUP BY to_char((base_datos.fecha_efectiva_turno)::timestamp with time zone, 'MM'::text),
@@ -586,7 +597,8 @@ UNION ALL
     0 AS nominaproyectada,
     NULL::text AS fechainicio,
     NULL::text AS fechafin,
-    0 AS diasnohabiles
+    0 AS diasnohabiles,
+    NULL::integer AS anio -- ver nota en la rama del bono más arriba
    FROM base_datos
   WHERE (base_datos.horas_hef > (0)::numeric)
   GROUP BY to_char((base_datos.fecha_efectiva_turno)::timestamp with time zone, 'MM'::text),
@@ -613,7 +625,8 @@ UNION ALL
     0 AS nominaproyectada,
     NULL::text AS fechainicio,
     NULL::text AS fechafin,
-    0 AS diasnohabiles
+    0 AS diasnohabiles,
+    NULL::integer AS anio -- ver nota en la rama del bono más arriba
    FROM base_datos
   WHERE (base_datos.horas_hn > (0)::numeric)
   GROUP BY to_char((base_datos.fecha_efectiva_turno)::timestamp with time zone, 'MM'::text),
@@ -642,7 +655,8 @@ UNION ALL
     0 AS nominaproyectada,
     NULL::text AS fechainicio,
     NULL::text AS fechafin,
-    0 AS diasnohabiles
+    0 AS diasnohabiles,
+    NULL::integer AS anio -- ver nota en la rama del bono más arriba
    FROM base_datos
   -- 08 = tarifa COMPLETA (1 + pct, ej. 1,90): domingo O FESTIVO trabajado SIN
   -- descanso previo ni compensatorio posterior.
@@ -707,7 +721,8 @@ UNION ALL
     0 AS nominaproyectada,
     NULL::text AS fechainicio,
     NULL::text AS fechafin,
-    0 AS diasnohabiles
+    0 AS diasnohabiles,
+    NULL::integer AS anio -- ver nota en la rama del bono más arriba
    FROM base_datos
   -- 25 = SOLO el recargo (pct, ej. 0,90): domingo O FESTIVO trabajado CON
   -- descanso previo o compensatorio posterior — mismo criterio que decide la
@@ -754,7 +769,8 @@ UNION ALL
     round(COALESCE(max(h.salario), (1750905)::numeric) / (2)::numeric)::integer AS nominaproyectada,
     NULL::text AS fechainicio,
     NULL::text AS fechafin,
-    0 AS diasnohabiles
+    0 AS diasnohabiles,
+    NULL::integer AS anio -- ver nota en la rama del bono más arriba
    FROM (bonos_nomina b
      LEFT JOIN headcount h ON ((TRIM(BOTH FROM h.identificacion) = TRIM(BOTH FROM b.identificacion))))
   -- Mismo criterio "solo quincenas ya cerradas, antes de la de cierre del
@@ -806,7 +822,8 @@ UNION ALL
     round(COALESCE(h.salario, (1750905)::numeric) / (2)::numeric)::integer AS nominaproyectada,
     NULL::text AS fechainicio,
     NULL::text AS fechafin,
-    0 AS diasnohabiles
+    0 AS diasnohabiles,
+    NULL::integer AS anio -- ver nota en la rama del bono más arriba
    FROM (solicitudes_trabajadores s
      LEFT JOIN headcount h ON (h.id = s.colaborador_id))
   -- Mismo criterio "solo quincenas ya cerradas, antes de la de cierre del

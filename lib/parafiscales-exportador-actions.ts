@@ -161,7 +161,7 @@ export async function generarArchivoCargaPila(
     for (let offset = 0; ; offset += pageSize) {
       const { data } = await admin
         .from("pagonomina")
-        .select("persona, fecha, total_liquidado_dia, novedad_reportada, bonif_prestacional")
+        .select("persona, fecha, total_liquidado_dia, novedad_reportada")
         .in("persona", nombres)
         .gte("fecha", desde)
         .lte("fecha", hasta)
@@ -180,6 +180,42 @@ export async function generarArchivoCargaPila(
       porPersona.set(nombre, arr)
     }
 
+    // Bono de productividad REAL: se lee directo de `archivoplano` (la ÚNICA
+    // fuente que de verdad se envía a Siigo) en vez de re-derivarlo aquí con
+    // otra fórmula -- confirmado por el usuario 2026-09-11 tras encontrar que
+    // las dos formas NO daban lo mismo (caso real DEIVID PARRA OSSA: $312.218
+    // re-derivados aquí vs $204.299 reales en archivoplano, porque esa vista
+    // excluye el día de cierre de la quincena y funde el Ajuste Nómina
+    // Anterior -- lógica que este archivo no debe duplicar NUNCA: un solo
+    // punto de cálculo para el mismo número). `archivoplano.anio` es NUEVO
+    // (scripts/archivoplano_reemplazo.sql, columna agregada el mismo día)
+    // para poder filtrar el mes sin mezclar años distintos.
+    const identificaciones = Array.from(info.values()).map((i) => i.identificacion).filter(Boolean)
+    const bonoRealPorCedulaQuincena = new Map<string, number>()
+    if (identificaciones.length > 0) {
+      const { data: bonoRows, error: bonoErr } = await admin
+        .from("archivoplano")
+        .select("identificacionempleado, quincena, cantidadvalor")
+        .in("identificacionempleado", identificaciones)
+        .eq("anio", anio)
+        .eq("mes", String(mes).padStart(2, "0"))
+        .eq("tiponovedad", "Valor")
+        .or("nombrenovedad.ilike.%Por Productividad%,nombrenovedad.ilike.%Ajuste Toneladas%")
+      // Fallar RUIDOSO si la columna `anio` todavía no existe (falta correr
+      // scripts/archivoplano_reemplazo.sql en Supabase) -- nunca generar un
+      // archivo plano con bono $0 para todo el mundo en silencio.
+      if (bonoErr) {
+        return {
+          success: false,
+          message: `No se pudo leer el bono real de archivoplano (${bonoErr.message}). Probablemente falta correr scripts/archivoplano_reemplazo.sql en Supabase.`,
+        }
+      }
+      for (const b of bonoRows || []) {
+        const clave = `${String(b.identificacionempleado).trim()}-${b.quincena}`
+        bonoRealPorCedulaQuincena.set(clave, (bonoRealPorCedulaQuincena.get(clave) || 0) + Number(b.cantidadvalor || 0))
+      }
+    }
+
     const excepciones: ExcepcionExportador[] = []
     const registrosDetalle: DatosDetallePila02[] = []
     let noCounter = 0
@@ -194,15 +230,11 @@ export async function generarArchivoCargaPila(
       }
       dias.sort((a, b) => a.fecha.localeCompare(b.fecha))
 
-      let excQ1 = 0, excQ2 = 0
-      for (const r of dias) {
-        const diaMes = Number(r.fecha.slice(8, 10))
-        if (clasificarDiaCotizacion(r.novedad_reportada) !== "TRAB") continue
-        if (diaMes <= 15) excQ1 += Number(r.bonif_prestacional || 0)
-        else excQ2 += Number(r.bonif_prestacional || 0)
-      }
-      const bonoQ1 = Math.max(0, excQ1)
-      const bonoQ2 = Math.max(0, excQ2)
+      // Bono real ya calculado por `archivoplano` -- ver comentario arriba de
+      // `bonoRealPorCedulaQuincena`. Ya viene con el piso 0 aplicado (la vista
+      // solo emite la fila si `bono_final > 0`), así que no hay que repetirlo.
+      const bonoQ1 = bonoRealPorCedulaQuincena.get(`${ficha.identificacion}-1`) || 0
+      const bonoQ2 = bonoRealPorCedulaQuincena.get(`${ficha.identificacion}-2`) || 0
 
       // TRAB se consolida en UN SOLO segmento para todo el mes, sin importar
       // cuántas veces se interrumpa por otra novedad (incapacidad, suspensión,
