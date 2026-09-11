@@ -535,11 +535,18 @@ export async function guardarPrefactura(payload: {
   if (!payload.lineas?.length) return { success: false, message: "La prefactura no tiene líneas seleccionadas." }
   try {
     const sb: any = await getSupabaseAdmin()
+    const owners = Array.from(new Set(payload.lineas.map((l) => String(l?.owner || "").trim()).filter(Boolean)))
     const { data, error } = await sb
       .from("prefacturas")
       .insert({
         idempresa: payload.idempresa,
         proyecto: payload.proyecto ?? null,
+        // Solo se guarda si es un ÚNICO owner -- si la prefactura mezcla
+        // varios (caso manual, "ownerMezclado"), se deja NULL en vez de
+        // guardar el primero cualquiera: un NULL avisa "no consultable por
+        // owner", un valor guardado a medias sería peor (parecería de un
+        // solo cliente sin serlo). Ver scripts/add_owner_prefacturas.sql.
+        owner: owners.length === 1 ? owners[0] : null,
         periodo_desde: payload.periodo_desde || null,
         periodo_hasta: payload.periodo_hasta || null,
         lineas: payload.lineas,
@@ -577,15 +584,22 @@ export async function guardarPrefactura(payload: {
  *  Cuadro de Control siempre generaba a mano, con una persona mirando la
  *  pantalla que naturalmente no repetía un período ya facturado. La
  *  generación automática no tiene ese ojo humano, así que necesita su
- *  propia verificación antes de guardar. */
-export async function buscarSolapesCuadroControl(idempresa: number, desde: string, hasta: string) {
+ *  propia verificación antes de guardar.
+ *
+ *  `owner`: un mismo proyecto factura a varios clientes reales que
+ *  comparten el sitio (ej. Indupan: INDUPAN/AVIMOL/Molinos del Atlántico)
+ *  -- el solape es POR OWNER, no por proyecto completo (2 owners distintos
+ *  SÍ pueden tener períodos que se crucen, cada uno con su propio anexo). */
+export async function buscarSolapesCuadroControl(idempresa: number, desde: string, hasta: string, owner?: string) {
   const sb: any = await getSupabaseAdmin()
-  const { data } = await sb
+  let query = sb
     .from("prefacturas")
     .select("id, periodo_desde, periodo_hasta, total, aprobado_por")
     .eq("idempresa", idempresa)
     .eq("origen", "cuadro_control")
     .eq("estado", "aprobada")
+  if (owner) query = query.eq("owner", owner)
+  const { data } = await query
   return (data || [])
     .filter((p: any) => {
       const d = String(p.periodo_desde || "").slice(0, 10)

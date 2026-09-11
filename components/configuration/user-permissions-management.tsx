@@ -112,6 +112,14 @@ const EXTRA_PERMS_POR_SUBGRUPO: Record<string, PermItem[]> = {
     { key: "sig_iso14001", label: "— Pestaña ISO 14001:2015" },
     { key: "sig_iso45001", label: "— Pestaña ISO 45001:2018" },
   ],
+  // Roles DENTRO de Ciclo de Facturación -- `ciclo_facturacion` (arriba, auto-
+  // derivado del menú) solo da acceso a VER el módulo; sin estos 2, nadie
+  // podía dar de alta un Jefe o un Coordinador reales (no existía el checkbox
+  // -- bug real encontrado 2026-09-11, ver lib/permissions-map.ts:358-361).
+  Facturación: [
+    { key: "ciclo_facturacion_jefe", label: "— Ciclo de Facturación: rol Jefe (enviar anexo/factura, cerrar)" },
+    { key: "ciclo_facturacion_coordinador", label: "— Ciclo de Facturación: rol Coordinador (subir firmado por el cliente)" },
+  ],
 }
 
 const PERMISSION_TREE: PermGroup[] = groups

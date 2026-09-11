@@ -72,10 +72,20 @@ async function generarPrefacturasAutomaticas(hoy: number) {
       continue
     }
 
+    // Una llamada puede generar VARIAS prefacturas -- una por owner real del
+    // proyecto (ver generarPrefacturaAhora). Se cuenta por owner, no por
+    // proyecto, para que el resumen del cron refleje lo que de verdad pasó.
     const r = await generarPrefacturaAhora(cond.idempresa, USUARIO_CRON)
-    if (r.estado === "generada") resultado.generadas++
-    else if (!r.success) resultado.errores.push({ idempresa: cond.idempresa, error: r.mensaje })
-    else resultado.omitidas++ // al_dia / nada_que_facturar: resultado esperado, no un error
+    if (r.resultados.length === 0) {
+      if (!r.success) resultado.errores.push({ idempresa: cond.idempresa, error: r.mensaje })
+      else resultado.omitidas++ // sin_pendientes / sin_fecha_inicio: resultado esperado, no un error
+      continue
+    }
+    for (const ro of r.resultados) {
+      if (ro.estado === "generada") resultado.generadas++
+      else if (!ro.success) resultado.errores.push({ idempresa: cond.idempresa, error: `${ro.owner}: ${ro.mensaje}` })
+      else resultado.omitidas++ // al_dia / nada_que_facturar para ese owner: esperado, no un error
+    }
   }
 
   return resultado

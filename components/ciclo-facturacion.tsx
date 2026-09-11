@@ -973,18 +973,20 @@ function FrecuenciaGeneracionPrefacturaPanel() {
   }
 
   const generarAhora = async (c: CondicionGeneracionPrefactura) => {
-    if (!confirm(`¿Generar la prefactura de ${c.proyecto} ahora mismo? Esto crea un documento real (mismo efecto que si corriera el cron hoy).`)) return
+    if (!confirm(`¿Generar la(s) prefactura(s) pendiente(s) de ${c.proyecto} ahora mismo? Esto crea documentos reales -- uno por cada cliente (owner) con actividad pendiente (mismo efecto que si corriera el cron hoy).`)) return
     setGenerando(c.idempresa)
     const r = await generarPrefacturaAhora(c.idempresa, usuario)
     setGenerando(null)
-    if (r.estado === "generada") {
-      toast({ title: "Prefactura generada", description: r.mensaje })
-    } else if (r.success) {
-      // al_dia / nada_que_facturar -- no es un error, solo no había nada que generar todavía.
-      toast({ title: "Nada que generar", description: r.mensaje })
-    } else {
-      toast({ title: "No se generó", description: r.mensaje, variant: "destructive" })
+    if (r.resultados.length === 0) {
+      toast({ title: r.success ? "Nada que generar" : "No se generó", description: r.mensaje, variant: r.success ? "default" : "destructive" })
+      return
     }
+    const detalle = r.resultados.map((ro) => `${ro.owner}: ${ro.estado === "generada" ? "generada" : ro.estado} -- ${ro.mensaje}`).join("\n")
+    toast({
+      title: r.estado === "generada" ? "Prefactura(s) generada(s)" : r.estado === "parcial" ? "Generado con avisos" : "Sin novedad",
+      description: detalle,
+      variant: r.success ? "default" : "destructive",
+    })
   }
 
   return (

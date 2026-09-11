@@ -3,9 +3,13 @@
 /**
  * CICLO DE FACTURACIÓN (Gestión Financiera › Facturación).
  *
- * Flujo documental que arranca en los anexos que ya genera la Prefactura
- * (Cuadro de Control / Prefactura de Producción, tabla `prefacturas`, ambos
- * orígenes `cuadro_control`/`produccion`):
+ * Flujo documental que arranca en los anexos que ya genera la Prefactura de
+ * Cuadro de Control (tabla `prefacturas`, origen `cuadro_control` -- ÚNICA
+ * fuente de anexos para los 4 proyectos, confirmado por el usuario
+ * 2026-09-11: ya incluye la tolva de Indupan/Avimol como una fila más del
+ * resumen, agrupada por owner igual que Cargue/Descargue. El origen
+ * `produccion`, viejo, solo queda para el historial ya guardado con ese
+ * origen -- la generación (manual o automática) ya no lo usa):
  *
  *   pendiente_anexo -> pendiente_firma_anexo -> pendiente_factura ->
  *   pendiente_firma_factura -> pendiente_cierre -> cerrado
@@ -34,7 +38,6 @@ import {
   type SoporteLinea,
   type UnidadCobro,
 } from "@/lib/facturacion-control-actions"
-import { getPrefacturaProduccion, guardarPrefacturaProduccion } from "@/lib/prefactura-produccion-actions"
 import { ownerDePrefactura } from "@/lib/ciclo-facturacion-shared"
 
 export type EstadoCiclo =
@@ -621,7 +624,6 @@ export async function actualizarCondicionGeneracionPrefactura(
   }
 }
 
-const IDS_PRODUCCION = new Set([1, 2]) // Indupan, Avimol -> Prefactura de Producción; 3/4 -> Cuadro de Control
 const esTon = (u?: UnidadCobro) => u !== "h" && u !== "turno" && u !== "u"
 
 function diaSiguienteISO(fechaISO: string): string {
@@ -643,13 +645,21 @@ function fechaAyerColombiaISO(): string {
   return `${y}-${m}-${d}`
 }
 
-export interface ResultadoGeneracionManual {
+export interface ResultadoGeneracionOwner {
+  owner: string
   success: boolean
-  /** "generada" = se creó una prefactura real; el resto son razones de por qué NO se creó nada (no son errores del sistema, son el resultado esperado de la regla de negocio). */
-  estado: "generada" | "sin_fecha_inicio" | "al_dia" | "nada_que_facturar" | "solape" | "error"
+  /** "generada" = se creó una prefactura real; el resto son razones de por qué NO se creó nada para ESE owner (no son errores del sistema, son el resultado esperado de la regla de negocio). */
+  estado: "generada" | "al_dia" | "nada_que_facturar" | "solape" | "error"
   mensaje: string
   prefacturaId?: number
   periodo?: { desde: string; hasta: string }
+}
+
+export interface ResultadoGeneracionManual {
+  success: boolean
+  estado: "generada" | "parcial" | "sin_fecha_inicio" | "sin_pendientes" | "error"
+  mensaje: string
+  resultados: ResultadoGeneracionOwner[]
 }
 
 /**
@@ -661,6 +671,24 @@ export interface ResultadoGeneracionManual {
  * automatización de un proyecto (botón "Generar ahora" en el panel) y ver el
  * resultado al instante, en vez de configurar algo a ciegas y no tener forma
  * de saber si funcionó.
+ *
+ * SIEMPRE por Cuadro de Control (`getPrefactura`) -- confirmado por el
+ * usuario 2026-09-11: "todo se factura con los anexos que salen de Cuadro de
+ * Control de Facturación". Ya no existe una rama aparte para Indupan/Avimol
+ * ("Prefactura de Producción"): el resumen de Cuadro de Control YA incluye la
+ * tolva de Indupan y la de Avimol como una fila más (bloque="produccion"),
+ * agrupada por owner igual que Cargue/Descargue -- usar dos fuentes para lo
+ * mismo era exactamente el bug que dejaba el Cargue de Indupan fuera del
+ * ciclo (solo entraba la tolva vía la rama vieja).
+ *
+ * UN MISMO proyecto (idempresa) puede facturar a VARIOS clientes reales que
+ * comparten el sitio físico (ej. Indupan: INDUPAN, AVIMOL, Molinos del
+ * Atlántico) -- cada owner necesita su PROPIO anexo/firma/factura/cierre,
+ * nunca mezclados en un solo documento. Por eso esta función arma UNA
+ * prefactura POR OWNER (columna `owner` en `prefacturas`, ver
+ * scripts/add_owner_prefacturas.sql), cada una con su propio período
+ * contiguo independiente -- el owner A puede llevar facturado hasta el 5 y
+ * el B hasta el 8, no tiene sentido compartir una sola fecha "desde".
  *
  * A propósito NO exige `condiciones_generacion_prefactura.activo=true` ni el
  * día de la semana configurado -- esas dos reglas son solo para decidir SI el
@@ -678,148 +706,166 @@ export async function generarPrefacturaAhora(idempresa: number, usuario: string)
       .select("fecha_inicio")
       .eq("idempresa", idempresa)
       .maybeSingle()
+    const fechaInicioProyecto: string | null = cond?.fecha_inicio || null
+    const hasta = fechaAyerColombiaISO()
 
-    const origen = IDS_PRODUCCION.has(idempresa) ? "produccion" : "cuadro_control"
-    const { data: ultima } = await sb
+    // Última prefactura POR OWNER (no por proyecto) -- cada owner sigue su
+    // propio período contiguo. Un owner sin prefactura previa arranca en
+    // `fecha_inicio` (compartida a nivel de proyecto: sirve para el primer
+    // arranque de TODOS sus owners reales, que en la práctica siempre
+    // arrancan juntos la primera vez que se activa la automatización).
+    const { data: previas } = await sb
       .from("prefacturas")
-      .select("periodo_hasta, proyecto")
+      .select("owner, periodo_hasta")
       .eq("idempresa", idempresa)
-      .eq("origen", origen)
+      .eq("origen", "cuadro_control")
       .eq("estado", "aprobada")
+      .not("owner", "is", null)
       .order("periodo_hasta", { ascending: false })
-      .limit(1)
-      .maybeSingle()
+    const ultimaPorOwner = new Map<string, string>()
+    for (const p of previas || []) {
+      if (!ultimaPorOwner.has(p.owner)) ultimaPorOwner.set(p.owner, p.periodo_hasta) // primera vista = la más reciente (ya viene ordenado desc)
+    }
 
-    const desde = ultima?.periodo_hasta ? diaSiguienteISO(ultima.periodo_hasta) : cond?.fecha_inicio || null
-    if (!desde) {
+    // Descubrir TODOS los owners con algo pendiente: ventana amplia desde el
+    // arranque más temprano posible (el owner más atrasado) hasta ayer. Si
+    // ni un solo owner tiene historial NI hay fecha_inicio, no hay desde
+    // dónde partir -- nunca se inventa un arranque.
+    const desdeMasAntiguo =
+      previas && previas.length > 0
+        ? [...ultimaPorOwner.values()].map(diaSiguienteISO).sort()[0]
+        : fechaInicioProyecto
+    if (!desdeMasAntiguo) {
       return {
         success: false,
         estado: "sin_fecha_inicio",
         mensaje:
           "Este proyecto nunca ha tenido una prefactura y no tiene 'Fecha de inicio' guardada -- escríbela arriba y guarda antes de generar (es la única forma de decidir desde cuándo arranca, nunca se inventa una fecha).",
+        resultados: [],
       }
     }
-
-    const hasta = fechaAyerColombiaISO()
-    if (desde > hasta) {
-      return {
-        success: true,
-        estado: "al_dia",
-        mensaje: `Ya está al día -- el período pendiente empezaría en ${desde}, y todavía no ha pasado un día completo por facturar (hasta ayer, ${hasta}).`,
-      }
+    if (desdeMasAntiguo > hasta) {
+      return { success: true, estado: "sin_pendientes", mensaje: `Ya está al día -- no ha pasado un día completo por facturar (hasta ayer, ${hasta}).`, resultados: [] }
     }
 
-    if (IDS_PRODUCCION.has(idempresa)) {
-      const prev = await getPrefacturaProduccion(idempresa, desde, hasta)
-      if (!prev.success || !prev.data) {
-        return { success: false, estado: "error", mensaje: prev.message || "No se pudo calcular la prefactura de producción." }
+    const descubrir = await getPrefactura(idempresa, { desde: desdeMasAntiguo, hasta })
+    if (!descubrir.success || !descubrir.data) {
+      return { success: false, estado: "error", mensaje: descubrir.message || "No se pudo calcular la prefactura.", resultados: [] }
+    }
+    const ownersConPendiente = Array.from(new Set(descubrir.data.resumen.filter((r) => r.valorPorFacturar > 0).map((r) => r.owner))).sort()
+    if (ownersConPendiente.length === 0) {
+      return { success: true, estado: "sin_pendientes", mensaje: `No hay nada por facturar entre ${desdeMasAntiguo} y ${hasta}.`, resultados: [] }
+    }
+
+    const resultados: ResultadoGeneracionOwner[] = []
+    for (const owner of ownersConPendiente) {
+      const desdeOwner = ultimaPorOwner.has(owner) ? diaSiguienteISO(ultimaPorOwner.get(owner)!) : fechaInicioProyecto
+      if (!desdeOwner) {
+        // Owner nuevo, sin historial Y sin fecha_inicio -- no debería pasar
+        // (fecha_inicio ya se validó arriba), pero por si acaso no se inventa nada.
+        resultados.push({ owner, success: false, estado: "error", mensaje: "Sin fecha de arranque para este owner nuevo." })
+        continue
       }
-      const data = prev.data
-      if (!(data.total > 0)) {
-        return { success: true, estado: "nada_que_facturar", mensaje: `No hay nada por facturar entre ${desde} y ${hasta}.`, periodo: { desde, hasta } }
+      if (desdeOwner > hasta) {
+        resultados.push({ owner, success: true, estado: "al_dia", mensaje: `Ya está al día (próximo período empezaría en ${desdeOwner}).` })
+        continue
       }
-      const todasLasLineas = [...data.produccion, ...data.horasExtra]
-      const advertencias: Advertencia[] = [
-        ...data.alertas.map((a) => ({ tipo: a.tipo, detalle: a.detalle })),
-        ...todasLasLineas.filter((l) => l.sinTarifa).map((l) => ({ tipo: "sin_tarifa", detalle: `${l.concepto}: sin tarifa vigente (se cobró $0)` })),
-      ]
-      const r = await guardarPrefacturaProduccion({
+
+      const solapes = await buscarSolapesCuadroControl(idempresa, desdeOwner, hasta, owner)
+      if (solapes.length > 0) {
+        resultados.push({
+          owner,
+          success: false,
+          estado: "solape",
+          mensaje: `Ya hay prefactura(s) aprobada(s) que se cruzan con este período: ${solapes.map((s: any) => `#${s.id} ${s.periodo}`).join(", ")} -- no se generó para evitar cobrar dos veces.`,
+        })
+        continue
+      }
+
+      const [prefR, ctrlR] = await Promise.all([
+        getPrefactura(idempresa, { desde: desdeOwner, hasta }),
+        getControlFacturacion(idempresa, { desde: desdeOwner, hasta }),
+      ])
+      if (!prefR.success || !prefR.data) {
+        resultados.push({ owner, success: false, estado: "error", mensaje: prefR.message || "No se pudo calcular la prefactura." })
+        continue
+      }
+      const pref = prefR.data
+      const lineas = pref.resumen
+        .filter((r) => r.owner === owner && r.valorPorFacturar > 0)
+        .map((r) => ({
+          owner: r.owner,
+          servicio: r.operacion,
+          toneladas: Number(r.tonPorFacturar.toFixed(3)),
+          tarifa: r.tarifa,
+          total: Math.round(r.valorPorFacturar),
+          fuente: r.fuente,
+          unidad: r.unidad,
+        }))
+      if (lineas.length === 0) {
+        resultados.push({ owner, success: true, estado: "nada_que_facturar", mensaje: `No hay nada por facturar entre ${desdeOwner} y ${hasta}.`, periodo: { desde: desdeOwner, hasta } })
+        continue
+      }
+      const soporte = [
+        ...pref.origen
+          .filter((l) => l.owner === owner && l.categoria !== "facturado")
+          .map((l) => ({
+            owner: l.owner,
+            operacion: l.grupoResumen || "",
+            servicio: l.servicio,
+            fecha: l.fechacargue,
+            numeroorden: l.numeroorden,
+            placa: l.placa,
+            cliente: l.cliente,
+            producto: l.producto,
+            toneladas: Number((l.toneladas || 0).toFixed(3)),
+            tarifa: l.tarifaServicio,
+            valor: Math.round(l.valorServicio),
+            unidad: l.unidad,
+            tiquete: l.tiquete,
+          })),
+        ...(pref.soporteProduccion || []).filter((l) => l.owner === owner),
+      ].filter((l) => l.valor > 0)
+      const total = Math.round(lineas.reduce((s, l) => s + l.total, 0))
+      const toneladas = Number(lineas.reduce((s, l) => s + (esTon(l.unidad) ? l.toneladas : 0), 0).toFixed(3))
+      const advertencias: Advertencia[] = []
+      if (ctrlR.success && ctrlR.data) {
+        const t = ctrlR.data.totales
+        if (t.ordenes_sin_tarifa > 0) advertencias.push({ tipo: "sin_tarifa", detalle: `${t.ordenes_sin_tarifa} orden(es) sin tarifa vigente (se cobraron $0) -- todo el proyecto, revisar cuáles son de ${owner}` })
+        if (t.ordenes_medio_pago > 0) advertencias.push({ tipo: "pago_no_cuadra", detalle: `${t.ordenes_medio_pago} orden(es) con medio de pago inconsistente -- todo el proyecto` })
+        if (ctrlR.data.produccionAviso) advertencias.push({ tipo: "produccion_aviso", detalle: ctrlR.data.produccionAviso })
+        for (const al of ctrlR.data.produccionAlertas || []) advertencias.push({ tipo: "produccion_alerta", detalle: al })
+      }
+      const r = await guardarPrefactura({
         idempresa,
-        proyecto: data.proyecto,
-        periodo_desde: desde,
+        proyecto: owner,
+        periodo_desde: desdeOwner,
         periodo_hasta: hasta,
-        lineas: todasLasLineas,
-        soporte: data.soporte,
-        total: data.total,
-        toneladas: data.totalToneladas,
-        usuarioOverride: usuario,
+        lineas,
+        soporte,
+        total,
+        toneladas,
+        usuario,
         advertencias,
       })
       if (!r.success || !r.id) {
-        return { success: false, estado: "error", mensaje: r.message || "No se pudo guardar la prefactura de producción." }
+        resultados.push({ owner, success: false, estado: "error", mensaje: r.message || "No se pudo guardar la prefactura." })
+        continue
       }
-      return { success: true, estado: "generada", mensaje: `Prefactura generada para ${desde} a ${hasta}.`, prefacturaId: r.id, periodo: { desde, hasta } }
+      resultados.push({ owner, success: true, estado: "generada", mensaje: `Prefactura de ${owner} generada para ${desdeOwner} a ${hasta}.`, prefacturaId: r.id, periodo: { desde: desdeOwner, hasta } })
     }
 
-    // -------- Cedi Funza (3) / Cedi Medellín (4) --------
-    const solapes = await buscarSolapesCuadroControl(idempresa, desde, hasta)
-    if (solapes.length > 0) {
-      return {
-        success: false,
-        estado: "solape",
-        mensaje: `Ya hay prefactura(s) aprobada(s) que se cruzan con este período: ${solapes.map((s: any) => `#${s.id} ${s.periodo}`).join(", ")} -- no se generó para evitar cobrar dos veces.`,
-      }
+    const generadas = resultados.filter((r) => r.estado === "generada").length
+    const errores = resultados.filter((r) => !r.success).length
+    const estadoGeneral: ResultadoGeneracionManual["estado"] = generadas > 0 ? (errores > 0 ? "parcial" : "generada") : errores > 0 ? "parcial" : "sin_pendientes"
+    return {
+      success: errores === 0,
+      estado: estadoGeneral,
+      mensaje: `${generadas} prefactura(s) generada(s) de ${resultados.length} owner(s) con actividad.`,
+      resultados,
     }
-    const [prefR, ctrlR] = await Promise.all([
-      getPrefactura(idempresa, { desde, hasta }),
-      getControlFacturacion(idempresa, { desde, hasta }),
-    ])
-    if (!prefR.success || !prefR.data) {
-      return { success: false, estado: "error", mensaje: prefR.message || "No se pudo calcular la prefactura." }
-    }
-    const pref = prefR.data
-    const lineas = pref.resumen
-      .filter((r) => r.valorPorFacturar > 0)
-      .map((r) => ({
-        owner: r.owner,
-        servicio: r.operacion,
-        toneladas: Number(r.tonPorFacturar.toFixed(3)),
-        tarifa: r.tarifa,
-        total: Math.round(r.valorPorFacturar),
-        fuente: r.fuente,
-        unidad: r.unidad,
-      }))
-    if (lineas.length === 0) {
-      return { success: true, estado: "nada_que_facturar", mensaje: `No hay nada por facturar entre ${desde} y ${hasta}.`, periodo: { desde, hasta } }
-    }
-    const soporte = [
-      ...pref.origen
-        .filter((l) => l.categoria !== "facturado")
-        .map((l) => ({
-          owner: l.owner,
-          operacion: l.grupoResumen || "",
-          servicio: l.servicio,
-          fecha: l.fechacargue,
-          numeroorden: l.numeroorden,
-          placa: l.placa,
-          cliente: l.cliente,
-          producto: l.producto,
-          toneladas: Number((l.toneladas || 0).toFixed(3)),
-          tarifa: l.tarifaServicio,
-          valor: Math.round(l.valorServicio),
-          unidad: l.unidad,
-          tiquete: l.tiquete,
-        })),
-      ...(pref.soporteProduccion || []),
-    ].filter((l) => l.valor > 0)
-    const total = Math.round(lineas.reduce((s, l) => s + l.total, 0))
-    const toneladas = Number(lineas.reduce((s, l) => s + (esTon(l.unidad) ? l.toneladas : 0), 0).toFixed(3))
-    const advertencias: Advertencia[] = []
-    if (ctrlR.success && ctrlR.data) {
-      const t = ctrlR.data.totales
-      if (t.ordenes_sin_tarifa > 0) advertencias.push({ tipo: "sin_tarifa", detalle: `${t.ordenes_sin_tarifa} orden(es) sin tarifa vigente (se cobraron $0)` })
-      if (t.ordenes_medio_pago > 0) advertencias.push({ tipo: "pago_no_cuadra", detalle: `${t.ordenes_medio_pago} orden(es) con medio de pago inconsistente` })
-      if (ctrlR.data.produccionAviso) advertencias.push({ tipo: "produccion_aviso", detalle: ctrlR.data.produccionAviso })
-      for (const al of ctrlR.data.produccionAlertas || []) advertencias.push({ tipo: "produccion_alerta", detalle: al })
-    }
-    const r = await guardarPrefactura({
-      idempresa,
-      proyecto: ultima?.proyecto || "",
-      periodo_desde: desde,
-      periodo_hasta: hasta,
-      lineas,
-      soporte,
-      total,
-      toneladas,
-      usuario,
-      advertencias,
-    })
-    if (!r.success || !r.id) {
-      return { success: false, estado: "error", mensaje: r.message || "No se pudo guardar la prefactura." }
-    }
-    return { success: true, estado: "generada", mensaje: `Prefactura generada para ${desde} a ${hasta}.`, prefacturaId: r.id, periodo: { desde, hasta } }
   } catch (e: any) {
-    return { success: false, estado: "error", mensaje: e?.message || "Error inesperado al generar la prefactura." }
+    return { success: false, estado: "error", mensaje: e?.message || "Error inesperado al generar la prefactura.", resultados: [] }
   }
 }
 
