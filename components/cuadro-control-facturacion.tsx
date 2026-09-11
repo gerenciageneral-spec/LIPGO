@@ -155,7 +155,7 @@ function agruparSoporte(lineas: SoporteLinea[]): { grupos: SoporteGrupo[]; total
 
 // Documento de SOPORTE (anexo) en pantalla: un bloque por owner × operación con el
 // detalle de órdenes y su subtotal. Se usa para la prefactura actual y las guardadas.
-function SoporteAnexo({ lineas }: { lineas: SoporteLinea[] }) {
+export function SoporteAnexo({ lineas }: { lineas: SoporteLinea[] }) {
   const { grupos, totalTon, totalVal } = agruparSoporte(lineas)
   if (grupos.length === 0) return <div className="py-6 text-center text-xs text-muted-foreground">Sin soporte.</div>
   return (
@@ -694,11 +694,16 @@ export function CuadroControlFacturacion() {
     }
   }
 
-  const aprobar = async (id: number, estado: "borrador" | "aprobada") => {
-    const r = await cambiarEstadoPrefactura(id, estado)
+  const aprobar = async (id: number, estado: "borrador" | "aprobada", forzar?: boolean) => {
+    const r = await cambiarEstadoPrefactura(id, estado, { usuario: user?.email || user?.nombre || null, forzar })
     if (r.success) {
       toast({ title: estado === "aprobada" ? "Prefactura aprobada" : "Reabierta a borrador" })
       cargarGuardadas()
+    } else if (!forzar && estado === "borrador" && r.message?.includes("Ciclo de Facturación")) {
+      // Bloqueado por avance del ciclo: se ofrece forzar con una confirmación aparte.
+      if (window.confirm(`${r.message}\n\n¿Forzar de todas formas?`)) {
+        await aprobar(id, estado, true)
+      }
     } else toast({ title: "Error", description: r.message, variant: "destructive" })
   }
 

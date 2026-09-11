@@ -571,10 +571,36 @@ export async function listarPrefacturas(
 export async function cambiarEstadoPrefactura(
   id: number,
   estado: "borrador" | "aprobada",
+  opciones?: { usuario?: string; forzar?: boolean },
 ): Promise<{ success: boolean; message?: string }> {
   try {
     const sb: any = await getSupabaseAdmin()
-    const { error } = await sb.from("prefacturas").update({ estado, updated_at: new Date().toISOString() }).eq("id", id)
+
+    // Reabrir a borrador: si el Ciclo de Facturación ya avanzó (ya se envió
+    // un anexo, o más), reabrir para editar los datos invalidaría un
+    // documento que puede ya estar firmado por el cliente -- se bloquea salvo
+    // que se fuerce explícitamente.
+    if (estado === "borrador" && !opciones?.forzar) {
+      const { data: actual } = await sb.from("prefacturas").select("estado_ciclo").eq("id", id).maybeSingle()
+      if (actual && actual.estado_ciclo && actual.estado_ciclo !== "pendiente_anexo") {
+        return {
+          success: false,
+          message:
+            "Esta prefactura ya tiene avance en el Ciclo de Facturación (anexo enviado o más) -- reabrirla para editar " +
+            "invalidaría un documento que puede estar firmado por el cliente. Vuelve a intentar confirmando explícitamente si de verdad quieres forzarlo.",
+        }
+      }
+    }
+
+    const updatePayload: Record<string, unknown> = { estado, updated_at: new Date().toISOString() }
+    if (estado === "aprobada") {
+      updatePayload.aprobado_por = opciones?.usuario ?? null
+      updatePayload.aprobado_en = new Date().toISOString()
+      updatePayload.estado_ciclo = "pendiente_anexo"
+      updatePayload.ciclo_actualizado_en = new Date().toISOString()
+    }
+
+    const { error } = await sb.from("prefacturas").update(updatePayload).eq("id", id)
     if (error) return { success: false, message: error.message }
     return { success: true }
   } catch (e: any) {

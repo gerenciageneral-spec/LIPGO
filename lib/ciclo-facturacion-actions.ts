@@ -1,0 +1,544 @@
+"use server"
+
+/**
+ * CICLO DE FACTURACIÓN (Gestión Financiera › Facturación).
+ *
+ * Flujo documental que arranca en los anexos que ya genera la Prefactura
+ * (Cuadro de Control / Prefactura de Producción, tabla `prefacturas`, ambos
+ * orígenes `cuadro_control`/`produccion`):
+ *
+ *   pendiente_anexo -> pendiente_firma_anexo -> pendiente_factura ->
+ *   pendiente_firma_factura -> pendiente_cierre -> cerrado
+ *
+ * Cada paso lo da una persona distinta (sin un rol de usuario real en el
+ * sistema, se usan 2 permisos booleanos: `ciclo_facturacion_jefe` para
+ * enviar anexo/factura/cerrar, `ciclo_facturacion_coordinador` para subir los
+ * documentos ya firmados por el cliente). `prefactura_ciclo_eventos` es un
+ * log APPEND-ONLY: nunca se borra ni se sobreescribe, así que una corrección
+ * queda registrada (no oculta) -- el evento más reciente de cada tipo es el
+ * vigente.
+ *
+ * Al CERRAR (marcarCierre) arranca la cartera/cobro: se calcula
+ * `dias_plazo`/`fecha_vencimiento` según `condiciones_pago_owner`, y desde ahí
+ * `registrarPago` lleva el saldo. Ver scripts/add_ciclo_facturacion.sql.
+ */
+
+import { getSupabaseAdmin } from "@/lib/supabase-admin"
+import { getAccessibleEmpresesFromPermisos } from "@/lib/orders-actions"
+import type { SoporteLinea } from "@/lib/facturacion-control-actions"
+import { ownerDePrefactura } from "@/lib/ciclo-facturacion-shared"
+
+export type EstadoCiclo =
+  | "pendiente_anexo"
+  | "pendiente_firma_anexo"
+  | "pendiente_factura"
+  | "pendiente_firma_factura"
+  | "pendiente_cierre"
+  | "cerrado"
+
+export type EstadoCobro = "pendiente" | "parcial" | "pagada"
+
+export type TipoEventoCiclo =
+  | "anexo_enviado"
+  | "anexo_firmado"
+  | "factura_enviada"
+  | "factura_firmada"
+  | "cierre"
+  | "correccion_solicitada"
+
+/** Etapas que sí producen un archivo y avanzan el ciclo (todas menos cierre/corrección). */
+export type EtapaDocumento = "anexo_enviado" | "anexo_firmado" | "factura_enviada" | "factura_firmada"
+
+/** Etapa que se puede corregir (las 4 documentales + el cierre). */
+export type EtapaCorregible = EtapaDocumento | "cierre"
+
+export interface EventoCiclo {
+  id: number
+  evento: TipoEventoCiclo
+  archivo_url: string | null
+  archivo_nombre: string | null
+  usuario: string
+  nota: string | null
+  created_at: string
+}
+
+export interface PrefacturaCiclo {
+  id: number
+  origen: "cuadro_control" | "produccion"
+  idempresa: number
+  proyecto: string | null
+  owner: string
+  ownerMezclado: boolean // true si lineas trae más de un owner distinto -- revisar manualmente
+  periodo_desde: string | null
+  periodo_hasta: string | null
+  total: number
+  estado_ciclo: EstadoCiclo
+  ciclo_actualizado_en: string | null
+  ultimoEvento: EventoCiclo | null
+  // Cartera (solo tiene sentido una vez cerrado)
+  estado_cobro: EstadoCobro
+  valor_pagado: number
+  saldo: number
+  dias_plazo: number | null
+  fecha_vencimiento: string | null
+  diasVencida: number | null // positivo = vencida hace N días; negativo = faltan N días; null = sin cerrar aún
+}
+
+export interface PagoPrefactura {
+  id: number
+  fecha: string
+  valor: number
+  observacion: string | null
+  usuario: string | null
+  created_at: string
+}
+
+const TRANSICION: Record<EtapaDocumento, { requiere: EstadoCiclo; siguiente: EstadoCiclo }> = {
+  anexo_enviado: { requiere: "pendiente_anexo", siguiente: "pendiente_firma_anexo" },
+  anexo_firmado: { requiere: "pendiente_firma_anexo", siguiente: "pendiente_factura" },
+  factura_enviada: { requiere: "pendiente_factura", siguiente: "pendiente_firma_factura" },
+  factura_firmada: { requiere: "pendiente_firma_factura", siguiente: "pendiente_cierre" },
+}
+
+/** A qué estado_ciclo se regresa al corregir cada etapa (reabre esa etapa para volver a subir el archivo correcto). */
+const ESTADO_ANTERIOR: Record<EtapaCorregible, EstadoCiclo> = {
+  anexo_enviado: "pendiente_anexo",
+  anexo_firmado: "pendiente_firma_anexo",
+  factura_enviada: "pendiente_factura",
+  factura_firmada: "pendiente_firma_factura",
+  cierre: "pendiente_cierre",
+}
+
+const LABEL_ETAPA: Record<EtapaCorregible, string> = {
+  anexo_enviado: "Anexo enviado",
+  anexo_firmado: "Anexo firmado",
+  factura_enviada: "Factura enviada",
+  factura_firmada: "Factura firmada",
+  cierre: "Cierre",
+}
+
+function diasEntre(desde: string, hasta: string): number {
+  const a = new Date(desde + "T00:00:00")
+  const b = new Date(hasta + "T00:00:00")
+  return Math.round((b.getTime() - a.getTime()) / 86400000)
+}
+
+// ---------------------------------------------------------------------------
+// Lectura
+// ---------------------------------------------------------------------------
+
+export async function listarCicloFacturacion(filtros?: {
+  idempresa?: number | null
+  estado_ciclo?: EstadoCiclo | null
+  estado_cobro?: EstadoCobro | null
+}): Promise<{ success: boolean; data: PrefacturaCiclo[]; message?: string }> {
+  try {
+    const sb: any = await getSupabaseAdmin()
+    const accesibles = await getAccessibleEmpresesFromPermisos()
+    const idsAccesibles = accesibles.map((e) => e.id)
+    if (idsAccesibles.length === 0) return { success: true, data: [] }
+
+    let query = sb
+      .from("prefacturas")
+      .select(
+        "id, origen, idempresa, proyecto, periodo_desde, periodo_hasta, total, lineas, estado_ciclo, ciclo_actualizado_en, estado_cobro, valor_pagado, dias_plazo, fecha_vencimiento",
+      )
+      .eq("estado", "aprobada")
+      .in("idempresa", idsAccesibles)
+      .order("ciclo_actualizado_en", { ascending: true, nullsFirst: true })
+
+    if (filtros?.idempresa) query = query.eq("idempresa", filtros.idempresa)
+    if (filtros?.estado_ciclo) query = query.eq("estado_ciclo", filtros.estado_ciclo)
+    if (filtros?.estado_cobro) query = query.eq("estado_cobro", filtros.estado_cobro)
+
+    const { data, error } = await query
+    if (error) return { success: false, data: [], message: error.message }
+
+    const ids = (data || []).map((r: any) => r.id)
+    const ultimosPorPrefactura = new Map<number, EventoCiclo>()
+    if (ids.length > 0) {
+      const { data: eventos } = await sb
+        .from("prefactura_ciclo_eventos")
+        .select("id, prefactura_id, evento, archivo_url, archivo_nombre, usuario, nota, created_at")
+        .in("prefactura_id", ids)
+        .order("created_at", { ascending: true })
+      for (const e of eventos || []) {
+        ultimosPorPrefactura.set(e.prefactura_id, e) // el último en iterar (orden asc) queda como el más reciente
+      }
+    }
+
+    const hoy = new Date().toISOString().slice(0, 10)
+    const out: PrefacturaCiclo[] = (data || []).map((r: any) => {
+      const { owner, ownerMezclado } = ownerDePrefactura(r.lineas)
+      const total = Number(r.total || 0)
+      const valorPagado = Number(r.valor_pagado || 0)
+      return {
+        id: r.id,
+        origen: r.origen,
+        idempresa: r.idempresa,
+        proyecto: r.proyecto,
+        owner,
+        ownerMezclado,
+        periodo_desde: r.periodo_desde,
+        periodo_hasta: r.periodo_hasta,
+        total,
+        estado_ciclo: r.estado_ciclo,
+        ciclo_actualizado_en: r.ciclo_actualizado_en,
+        ultimoEvento: ultimosPorPrefactura.get(r.id) || null,
+        estado_cobro: r.estado_cobro,
+        valor_pagado: valorPagado,
+        saldo: Math.max(0, total - valorPagado),
+        dias_plazo: r.dias_plazo,
+        fecha_vencimiento: r.fecha_vencimiento,
+        diasVencida: r.fecha_vencimiento ? diasEntre(r.fecha_vencimiento, hoy) : null,
+      }
+    })
+
+    return { success: true, data: out }
+  } catch (e: any) {
+    return { success: false, data: [], message: e?.message || "Error al listar el ciclo de facturación." }
+  }
+}
+
+export async function getEventosCiclo(prefacturaId: number): Promise<{ success: boolean; data: EventoCiclo[]; message?: string }> {
+  try {
+    const sb: any = await getSupabaseAdmin()
+    const { data, error } = await sb
+      .from("prefactura_ciclo_eventos")
+      .select("id, evento, archivo_url, archivo_nombre, usuario, nota, created_at")
+      .eq("prefactura_id", prefacturaId)
+      .order("created_at", { ascending: true })
+    if (error) return { success: false, data: [], message: error.message }
+    return { success: true, data: data || [] }
+  } catch (e: any) {
+    return { success: false, data: [], message: e?.message || "Error al leer el historial." }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Escritura -- avance del ciclo
+// ---------------------------------------------------------------------------
+
+export async function registrarEventoCiclo(
+  prefacturaId: number,
+  evento: EtapaDocumento,
+  archivos: { url: string; nombre: string }[],
+  usuario: string,
+): Promise<{ success: boolean; message?: string }> {
+  if (!archivos.length) return { success: false, message: "Adjunta al menos un archivo." }
+  try {
+    const sb: any = await getSupabaseAdmin()
+    const { data: pref, error: errPref } = await sb
+      .from("prefacturas")
+      .select("id, estado, estado_ciclo")
+      .eq("id", prefacturaId)
+      .maybeSingle()
+    if (errPref) return { success: false, message: errPref.message }
+    if (!pref) return { success: false, message: "Prefactura no encontrada." }
+    if (pref.estado !== "aprobada") return { success: false, message: "Esta prefactura todavía no está aprobada." }
+
+    const transicion = TRANSICION[evento]
+    if (pref.estado_ciclo !== transicion.requiere) {
+      return {
+        success: false,
+        message: `Esta prefactura está en "${pref.estado_ciclo}", no en "${transicion.requiere}" -- no se puede registrar "${evento}" ahora.`,
+      }
+    }
+
+    const filas = archivos.map((a) => ({
+      prefactura_id: prefacturaId,
+      evento,
+      archivo_url: a.url,
+      archivo_nombre: a.nombre,
+      usuario,
+    }))
+    const { error: errIns } = await sb.from("prefactura_ciclo_eventos").insert(filas)
+    if (errIns) return { success: false, message: errIns.message }
+
+    const { error: errUpd } = await sb
+      .from("prefacturas")
+      .update({ estado_ciclo: transicion.siguiente, ciclo_actualizado_en: new Date().toISOString() })
+      .eq("id", prefacturaId)
+    if (errUpd) return { success: false, message: errUpd.message }
+
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al registrar el evento." }
+  }
+}
+
+export async function solicitarCorreccion(
+  prefacturaId: number,
+  etapa: EtapaCorregible,
+  nota: string,
+  usuario: string,
+): Promise<{ success: boolean; message?: string }> {
+  if (!nota?.trim()) return { success: false, message: "Escribe el motivo de la corrección." }
+  try {
+    const sb: any = await getSupabaseAdmin()
+    const { data: pref, error: errPref } = await sb
+      .from("prefacturas")
+      .select("id, estado_ciclo")
+      .eq("id", prefacturaId)
+      .maybeSingle()
+    if (errPref) return { success: false, message: errPref.message }
+    if (!pref) return { success: false, message: "Prefactura no encontrada." }
+
+    if (etapa === "cierre") {
+      const { count, error: errPagos } = await sb
+        .from("prefactura_pagos")
+        .select("id", { count: "exact", head: true })
+        .eq("prefactura_id", prefacturaId)
+      if (errPagos) return { success: false, message: errPagos.message }
+      if ((count || 0) > 0) {
+        return {
+          success: false,
+          message: "No se puede corregir el cierre: ya hay pagos registrados sobre esta factura. Revisa los pagos primero.",
+        }
+      }
+    }
+
+    const { error: errIns } = await sb.from("prefactura_ciclo_eventos").insert({
+      prefactura_id: prefacturaId,
+      evento: "correccion_solicitada",
+      usuario,
+      nota: `[${LABEL_ETAPA[etapa]}] ${nota.trim()}`,
+    })
+    if (errIns) return { success: false, message: errIns.message }
+
+    const updatePayload: Record<string, unknown> = {
+      estado_ciclo: ESTADO_ANTERIOR[etapa],
+      ciclo_actualizado_en: new Date().toISOString(),
+    }
+    if (etapa === "cierre") {
+      updatePayload.estado_cobro = "pendiente"
+      updatePayload.dias_plazo = null
+      updatePayload.fecha_vencimiento = null
+      updatePayload.valor_pagado = 0
+      updatePayload.fecha_ultimo_pago = null
+    }
+
+    const { error: errUpd } = await sb.from("prefacturas").update(updatePayload).eq("id", prefacturaId)
+    if (errUpd) return { success: false, message: errUpd.message }
+
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al solicitar la corrección." }
+  }
+}
+
+export async function marcarCierre(prefacturaId: number, usuario: string): Promise<{ success: boolean; message?: string }> {
+  try {
+    const sb: any = await getSupabaseAdmin()
+    const { data: pref, error: errPref } = await sb
+      .from("prefacturas")
+      .select("id, estado_ciclo, lineas")
+      .eq("id", prefacturaId)
+      .maybeSingle()
+    if (errPref) return { success: false, message: errPref.message }
+    if (!pref) return { success: false, message: "Prefactura no encontrada." }
+    if (pref.estado_ciclo !== "pendiente_cierre") {
+      return { success: false, message: `Esta prefactura está en "${pref.estado_ciclo}", no está lista para cerrar todavía.` }
+    }
+
+    const { owner } = ownerDePrefactura(pref.lineas)
+    const { data: cond } = await sb
+      .from("condiciones_pago_owner")
+      .select("dias_plazo")
+      .eq("owner", owner)
+      .maybeSingle()
+    const diasPlazo = cond?.dias_plazo ?? 30
+    if (!cond) {
+      // Siembra silenciosa: para que el owner aparezca en la pantalla de
+      // configuración con su default, en vez de quedar invisible.
+      await sb.from("condiciones_pago_owner").upsert({ owner, dias_plazo: 30 }, { onConflict: "owner" })
+    }
+
+    const hoy = new Date()
+    const vencimiento = new Date(hoy)
+    vencimiento.setDate(vencimiento.getDate() + diasPlazo)
+    const fechaVencimiento = vencimiento.toISOString().slice(0, 10)
+
+    const { error: errIns } = await sb.from("prefactura_ciclo_eventos").insert({
+      prefactura_id: prefacturaId,
+      evento: "cierre",
+      usuario,
+    })
+    if (errIns) return { success: false, message: errIns.message }
+
+    const { error: errUpd } = await sb
+      .from("prefacturas")
+      .update({
+        estado_ciclo: "cerrado",
+        ciclo_actualizado_en: new Date().toISOString(),
+        dias_plazo: diasPlazo,
+        fecha_vencimiento: fechaVencimiento,
+      })
+      .eq("id", prefacturaId)
+    if (errUpd) return { success: false, message: errUpd.message }
+
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al cerrar la facturación." }
+  }
+}
+
+/** Soporte (anexo) congelado de la prefactura -- para previsualizarlo sin salir del módulo. */
+export async function getSoporteDePrefactura(prefacturaId: number): Promise<{ success: boolean; data: SoporteLinea[]; message?: string }> {
+  try {
+    const sb: any = await getSupabaseAdmin()
+    const { data, error } = await sb.from("prefacturas").select("soporte").eq("id", prefacturaId).maybeSingle()
+    if (error) return { success: false, data: [], message: error.message }
+    return { success: true, data: (data?.soporte as SoporteLinea[]) || [] }
+  } catch (e: any) {
+    return { success: false, data: [], message: e?.message || "Error al leer el soporte." }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Cartera / cobro (solo aplica una vez cerrado)
+// ---------------------------------------------------------------------------
+
+export async function registrarPago(
+  prefacturaId: number,
+  pago: { fecha: string; valor: number; observacion?: string; usuario: string },
+): Promise<{ success: boolean; message?: string }> {
+  if (!(pago.valor > 0)) return { success: false, message: "El valor del pago debe ser mayor a 0." }
+  try {
+    const sb: any = await getSupabaseAdmin()
+    const { data: pref, error: errPref } = await sb
+      .from("prefacturas")
+      .select("id, estado_ciclo, total, valor_pagado")
+      .eq("id", prefacturaId)
+      .maybeSingle()
+    if (errPref) return { success: false, message: errPref.message }
+    if (!pref) return { success: false, message: "Prefactura no encontrada." }
+    if (pref.estado_ciclo !== "cerrado") return { success: false, message: "Esta factura todavía no está cerrada -- no se puede registrar cobro." }
+
+    const total = Number(pref.total || 0)
+    const pagadoActual = Number(pref.valor_pagado || 0)
+    // Tolerancia de 1 peso por redondeo -- no bloquea un pago que cuadra el saldo justo.
+    if (pagadoActual + pago.valor > total + 1) {
+      return {
+        success: false,
+        message: `Ese pago (${pago.valor.toLocaleString("es-CO")}) deja el saldo en negativo -- el pendiente es ${(total - pagadoActual).toLocaleString("es-CO")}.`,
+      }
+    }
+
+    const { error: errIns } = await sb.from("prefactura_pagos").insert({
+      prefactura_id: prefacturaId,
+      fecha: pago.fecha,
+      valor: pago.valor,
+      observacion: pago.observacion || null,
+      usuario: pago.usuario,
+    })
+    if (errIns) return { success: false, message: errIns.message }
+
+    const { data: pagos } = await sb.from("prefactura_pagos").select("fecha, valor").eq("prefactura_id", prefacturaId)
+    const valorPagado = (pagos || []).reduce((s: number, p: any) => s + Number(p.valor || 0), 0)
+    const fechaUltimoPago = (pagos || []).reduce((max: string | null, p: any) => (!max || p.fecha > max ? p.fecha : max), null as string | null)
+    const estadoCobro: EstadoCobro = valorPagado >= total - 1 ? "pagada" : valorPagado > 0 ? "parcial" : "pendiente"
+
+    const { error: errUpd } = await sb
+      .from("prefacturas")
+      .update({ valor_pagado: valorPagado, estado_cobro: estadoCobro, fecha_ultimo_pago: fechaUltimoPago })
+      .eq("id", prefacturaId)
+    if (errUpd) return { success: false, message: errUpd.message }
+
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al registrar el pago." }
+  }
+}
+
+export async function getPagosDe(prefacturaId: number): Promise<{ success: boolean; data: PagoPrefactura[]; message?: string }> {
+  try {
+    const sb: any = await getSupabaseAdmin()
+    const { data, error } = await sb
+      .from("prefactura_pagos")
+      .select("id, fecha, valor, observacion, usuario, created_at")
+      .eq("prefactura_id", prefacturaId)
+      .order("fecha", { ascending: false })
+    if (error) return { success: false, data: [], message: error.message }
+    return { success: true, data: data || [] }
+  } catch (e: any) {
+    return { success: false, data: [], message: e?.message || "Error al leer los pagos." }
+  }
+}
+
+export async function getCondicionesPagoOwner(): Promise<{ success: boolean; data: { owner: string; dias_plazo: number }[]; message?: string }> {
+  try {
+    const sb: any = await getSupabaseAdmin()
+    const { data, error } = await sb.from("condiciones_pago_owner").select("owner, dias_plazo").order("owner")
+    if (error) return { success: false, data: [], message: error.message }
+    return { success: true, data: data || [] }
+  } catch (e: any) {
+    return { success: false, data: [], message: e?.message || "Error al leer las condiciones de pago." }
+  }
+}
+
+export interface CondicionEnvioAnexo {
+  idempresa: number
+  proyecto: string
+  frecuencia: "diario" | "semanal"
+  dia_semana: number | null // 0=domingo..6=sábado
+}
+
+/** Frecuencia de envío automático de anexos, POR PROYECTO -- usada por el cron semanal (app/api/cron/anexos-pendientes/route.ts). Trae los 4 proyectos (SIG_CLIENTES_LIP) con su config guardada, o el default (semanal, lunes) si no tienen fila propia. */
+export async function getCondicionesEnvioAnexo(): Promise<{ success: boolean; data: CondicionEnvioAnexo[]; message?: string }> {
+  try {
+    const sb: any = await getSupabaseAdmin()
+    const { data: empresas, error: errEmp } = await sb.from("empresas_permisos").select("id, nombre").in("id", [1, 2, 3, 4]).order("id")
+    if (errEmp) return { success: false, data: [], message: errEmp.message }
+    const { data: condiciones, error: errCond } = await sb.from("condiciones_envio_anexo").select("idempresa, frecuencia, dia_semana")
+    if (errCond) return { success: false, data: [], message: errCond.message }
+    const porEmpresa = new Map<number, { frecuencia: string; dia_semana: number | null }>()
+    for (const c of condiciones || []) porEmpresa.set(c.idempresa, c)
+    const out: CondicionEnvioAnexo[] = (empresas || []).map((e: any) => {
+      const c = porEmpresa.get(e.id)
+      return {
+        idempresa: e.id,
+        proyecto: e.nombre,
+        frecuencia: (c?.frecuencia as "diario" | "semanal") || "semanal",
+        dia_semana: c ? c.dia_semana : 1,
+      }
+    })
+    return { success: true, data: out }
+  } catch (e: any) {
+    return { success: false, data: [], message: e?.message || "Error al leer la frecuencia de envío." }
+  }
+}
+
+export async function actualizarCondicionEnvioAnexo(
+  idempresa: number,
+  frecuencia: "diario" | "semanal",
+  dia_semana: number | null,
+): Promise<{ success: boolean; message?: string }> {
+  if (!idempresa) return { success: false, message: "Falta el proyecto." }
+  if (frecuencia === "semanal" && (dia_semana === null || dia_semana < 0 || dia_semana > 6)) {
+    return { success: false, message: "Selecciona un día de la semana válido." }
+  }
+  try {
+    const sb: any = await getSupabaseAdmin()
+    const { error } = await sb
+      .from("condiciones_envio_anexo")
+      .upsert({ idempresa, frecuencia, dia_semana: frecuencia === "diario" ? null : dia_semana }, { onConflict: "idempresa" })
+    if (error) return { success: false, message: error.message }
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al guardar la frecuencia de envío." }
+  }
+}
+
+export async function actualizarCondicionPagoOwner(owner: string, dias_plazo: number): Promise<{ success: boolean; message?: string }> {
+  if (!owner?.trim()) return { success: false, message: "Falta el owner." }
+  if (!(dias_plazo > 0)) return { success: false, message: "Los días de plazo deben ser mayores a 0." }
+  try {
+    const sb: any = await getSupabaseAdmin()
+    const { error } = await sb.from("condiciones_pago_owner").upsert({ owner: owner.trim(), dias_plazo }, { onConflict: "owner" })
+    if (error) return { success: false, message: error.message }
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al guardar la condición de pago." }
+  }
+}

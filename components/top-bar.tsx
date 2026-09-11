@@ -11,6 +11,7 @@ import { usePendingTurnos } from "@/hooks/usePendingTurnos"
 import { usePreoperacionalAlerts } from "@/hooks/usePreoperacionalAlerts"
 import { useRendimientoAlerts } from "@/hooks/useRendimientoAlerts"
 import { useFacturasAlerts } from "@/hooks/useFacturasAlerts"
+import { useCicloFacturacionAlerts } from "@/hooks/useCicloFacturacionAlerts"
 import { useInventarioAlerts } from "@/hooks/useInventarioAlerts"
  import { useEvaluacionesAlerts } from "@/hooks/useEvaluacionesAlerts"
 import { useAsistenciaAlerts } from "@/hooks/useAsistenciaAlerts"
@@ -53,6 +54,7 @@ export function TopBar() {
   const { alerts: preoperacionalAlerts, count: preoperacionalAlertCount, hasPermission: hasPrechequeoPermission } = usePreoperacionalAlerts(selectedEmpresaId, profile?.id)
   const { alerts: rendimientoAlerts, count: rendimientoAlertCount, hasPermission: hasDashboardOperacionPermission } = useRendimientoAlerts(selectedEmpresaId, profile?.id)
   const { alerts: facturasAlerts, count: facturasAlertCount, hasPermission: hasGestionFacturasPermission } = useFacturasAlerts(selectedEmpresaId, profile?.id)
+  const { alerts: cicloFacturacionAlerts, count: cicloFacturacionAlertCount, hasPermission: hasCicloFacturacionPermission } = useCicloFacturacionAlerts()
   const { alerts: inventarioAlerts, count: inventarioAlertCount, hasPermission: hasSaldosProductoPermission } = useInventarioAlerts(selectedEmpresaId, profile?.id)
   const { alerts: evaluacionesAlerts, count: evaluacionesAlertCount, hasPermission: hasEvaluacionesPermission } = useEvaluacionesAlerts(selectedEmpresaId, profile?.id)
   // Alertas de Asistencia (tabla del dia) y Operaciones del Dia.
@@ -79,6 +81,7 @@ export function TopBar() {
   const [prechequeoOpen, setPrechequeoOpen] = useState(false)
   const [rendimientoOpen, setRendimientoOpen] = useState(false)
   const [facturasOpen, setFacturasOpen] = useState(false)
+  const [cicloFacturacionOpen, setCicloFacturacionOpen] = useState(false)
   const [inventarioOpen, setInventarioOpen] = useState(false)
   const [evaluacionesOpen, setEvaluacionesOpen] = useState(false)
   const [asistenciaPendientesOpen, setAsistenciaPendientesOpen] = useState(false)
@@ -90,6 +93,7 @@ export function TopBar() {
   const hasPrechequeoAlerts = hasPrechequeoPermission && preoperacionalAlertCount > 0
   const hasRendimientoAlerts = hasDashboardOperacionPermission && rendimientoAlertCount > 0
   const hasFacturasAlerts = hasGestionFacturasPermission && facturasAlertCount > 0
+  const hasCicloFacturacionAlerts = hasCicloFacturacionPermission && cicloFacturacionAlertCount > 0
   const hasInventarioAlerts = hasSaldosProductoPermission && inventarioAlertCount > 0
   const hasEvaluacionesAlerts = hasEvaluacionesPermission && evaluacionesAlertCount > 0
   const hasAsistenciaPendientesAlerts =
@@ -406,6 +410,45 @@ export function TopBar() {
                         </p>
                       </div>
                     )}
+                  </div>
+                </PopoverContent>
+              </Popover>
+            )}
+
+            {/* Ciclo de Facturación: depende de la SESIÓN (jefe/coordinador), no de la empresa seleccionada. */}
+            {hasCicloFacturacionAlerts && (
+              <Popover open={cicloFacturacionOpen} onOpenChange={setCicloFacturacionOpen}>
+                <PopoverTrigger asChild>
+                  <button
+                    className="relative p-1 sm:p-2 rounded-lg hover:bg-blue-100 transition-colors"
+                    title="Pendientes del Ciclo de Facturación"
+                  >
+                    <ClipboardCheck className="h-4 w-4 sm:h-5 sm:w-5 text-blue-600" />
+                    <span className="absolute top-0 right-0 flex items-center justify-center h-5 w-5 text-xs font-bold text-white bg-blue-600 rounded-full animate-pulse">
+                      {cicloFacturacionAlertCount > 9 ? "9+" : cicloFacturacionAlertCount}
+                    </span>
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent className="w-96 p-0" align="end">
+                  <div className="p-3 border-b bg-blue-50">
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-semibold text-sm flex items-center gap-2 text-blue-700">
+                        <ClipboardCheck className="h-4 w-4" />
+                        Ciclo de Facturación
+                      </h4>
+                      <Badge variant="secondary" className="bg-blue-100 text-blue-700">
+                        {cicloFacturacionAlertCount} pendiente{cicloFacturacionAlertCount !== 1 ? "s" : ""}
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-blue-600 mt-1">Te toca actuar</p>
+                  </div>
+                  <div className="max-h-72 overflow-y-auto divide-y">
+                    {cicloFacturacionAlerts.map((f) => (
+                      <div key={f.id} className="p-3 hover:bg-blue-50/50 transition-colors">
+                        <p className="text-sm font-medium text-blue-700 truncate">{f.owner}</p>
+                        <p className="text-xs text-muted-foreground truncate">{f.proyecto} · {f.estado_ciclo}</p>
+                      </div>
+                    ))}
                   </div>
                 </PopoverContent>
               </Popover>

@@ -3,6 +3,10 @@
     {
       "path": "/api/indicadores/snapshot",
       "schedule": "0 6 1 * *"
+    },
+    {
+      "path": "/api/cron/anexos-pendientes",
+      "schedule": "0 13 * * *"
     }
   ]
 }

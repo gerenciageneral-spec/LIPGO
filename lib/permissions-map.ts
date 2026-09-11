@@ -189,6 +189,12 @@ export interface UserPermissions {
   cuadro_facturacion: boolean
   conciliacion_avimol: boolean
   prefactura_produccion: boolean
+  // Ciclo de Facturación: anexo enviado -> firmado -> factura enviada ->
+  // firmada -> cierre, más cartera/cobro. Visibilidad general +
+  // 2 capacidades separadas (sin rol de usuario real en el sistema).
+  ciclo_facturacion: boolean
+  ciclo_facturacion_jefe: boolean
+  ciclo_facturacion_coordinador: boolean
   bonos: boolean
   // Módulo "Asignación de apoyo en cargue" (Compensación): agrega personal
   // extra a una orden de Cargue/Descargue para que entre en el reparto de
@@ -349,6 +355,11 @@ export const MODULE_PERMISSION_MAP: Record<string, keyof UserPermissions> = {
   // + horas extra) e Indupan (Tolva). Documento cobrable con ciclo de vida, así
   // que lleva permiso propio y no el del Cuadro de Control.
   "Prefactura de Producción": "prefactura_produccion",
+  // Ciclo de Facturación: la visibilidad del módulo/menú es `ciclo_facturacion`
+  // (el mapa solo soporta una llave por módulo); dentro del módulo, las
+  // acciones de cada paso se gatean aparte por `ciclo_facturacion_jefe`/
+  // `ciclo_facturacion_coordinador`.
+  "Ciclo de Facturación": "ciclo_facturacion",
   // Ambos modulos del flujo de gastos comparten un unico permiso `gastos`
   // en `permisos_usuarios`, asi que mapean al mismo campo.
   "Registrar Gasto": "gastos",

@@ -270,6 +270,10 @@ export const groups: Group[] = [
           // Avimol (Salvado / Estibado PT + horas extra) e Indupan (Tolva / Tolva f).
           // La de Avimol también vive como pestaña dentro de Conciliación Avimol.
           { name: "Prefactura de Producción", icon: FileText },
+          // Flujo documental de una prefactura ya aprobada: anexo enviado ->
+          // firmado por el cliente -> factura enviada -> firmada -> cierre,
+          // más cartera/cobro (días vencidos) desde el cierre. Permiso propio.
+          { name: "Ciclo de Facturación", icon: Landmark },
           { name: "Tarifas", icon: CreditCard },
           // "Gestión de Facturas" se MOVIÓ a Gestión LIP → Operación Lip (función
           // operativa del coordinador). Conserva su permiso (gestionfacturas).

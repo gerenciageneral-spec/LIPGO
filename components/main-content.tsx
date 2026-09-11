@@ -90,6 +90,7 @@ import { ClaveFinancieraGuard } from "@/components/clave-financiera-guard"
 import CargosFijos from "@/components/cargos-fijos"
 import ConciliacionAvimol from "@/components/conciliacion-avimol"
 import PrefacturaProduccion from "@/components/prefactura-produccion"
+import CicloFacturacion from "@/components/ciclo-facturacion"
 import { DashboardOperacionesLip } from "@/components/dashboard-operaciones-lip" // Dashboard Operaciones LIP
 import { RegistroPreoperacional } from "@/components/registro-preoperacional" // Registro Preoperacional
 import GestionContratos from "@/components/rrhh/gestion-contratos"
@@ -1060,6 +1061,12 @@ export function MainContent({
             <PermissionGuard moduleName="Prefactura de Producción">
               <ClaveFinancieraGuard>
                 <PrefacturaProduccion />
+              </ClaveFinancieraGuard>
+            </PermissionGuard>
+          ) : selectedModule === "Ciclo de Facturación" ? (
+            <PermissionGuard moduleName="Ciclo de Facturación">
+              <ClaveFinancieraGuard>
+                <CicloFacturacion />
               </ClaveFinancieraGuard>
             </PermissionGuard>
           ) : selectedModule === "Gestión de Facturas" ? (

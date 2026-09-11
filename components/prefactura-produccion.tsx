@@ -195,6 +195,20 @@ export default function PrefacturaProduccion({ idempresaFija }: { idempresaFija?
     }
   }
 
+  // Reabrir bloqueado por avance del Ciclo de Facturación: se ofrece forzar
+  // con una confirmación aparte, en vez de dejar la acción muerta.
+  const reabrirConConfirmacion = async (id: number) => {
+    const r = await reabrirPrefacturaProduccion(id)
+    if (r.success) {
+      toast({ title: "Prefactura reabierta" })
+      cargarGuardadas()
+    } else if (r.message?.includes("Ciclo de Facturación") && window.confirm(`${r.message}\n\n¿Forzar de todas formas?`)) {
+      await accionGuardada(() => reabrirPrefacturaProduccion(id, true), "Prefactura reabierta")
+    } else {
+      toast({ title: "No se pudo completar", description: r.message, variant: "destructive" })
+    }
+  }
+
   const exportarExcel = () => {
     if (!data || seleccionadas.length === 0) return
     const wb = XLSX.utils.book_new()
@@ -590,9 +604,7 @@ export default function PrefacturaProduccion({ idempresaFija }: { idempresaFija?
                             size="sm"
                             variant="outline"
                             className="h-7 px-2"
-                            onClick={() =>
-                              accionGuardada(() => reabrirPrefacturaProduccion(p.id), "Prefactura reabierta")
-                            }
+                            onClick={() => reabrirConConfirmacion(p.id)}
                           >
                             Reabrir
                           </Button>

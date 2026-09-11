@@ -524,7 +524,7 @@ export async function listarPrefacturasProduccion(
   }
 }
 
-/** Aprobar deja el documento en firme y REGISTRA QUIÉN lo aprobó. */
+/** Aprobar deja el documento en firme, REGISTRA QUIÉN lo aprobó, y arranca el Ciclo de Facturación. */
 export async function aprobarPrefacturaProduccion(id: number): Promise<{ success: boolean; message?: string }> {
   if (!id) return { success: false, message: "Prefactura inválida." }
   try {
@@ -536,6 +536,8 @@ export async function aprobarPrefacturaProduccion(id: number): Promise<{ success
         estado: "aprobada",
         aprobado_por: usuario,
         aprobado_en: new Date().toISOString(),
+        estado_ciclo: "pendiente_anexo",
+        ciclo_actualizado_en: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
       .eq("id", id)
@@ -550,11 +552,22 @@ export async function aprobarPrefacturaProduccion(id: number): Promise<{ success
   }
 }
 
-/** Reabrir devuelve a borrador y limpia el rastro de aprobación. */
-export async function reabrirPrefacturaProduccion(id: number): Promise<{ success: boolean; message?: string }> {
+/** Reabrir devuelve a borrador y limpia el rastro de aprobación. Bloqueado si el Ciclo de Facturación ya avanzó (anexo enviado o más), salvo que se fuerce. */
+export async function reabrirPrefacturaProduccion(id: number, forzar?: boolean): Promise<{ success: boolean; message?: string }> {
   if (!id) return { success: false, message: "Prefactura inválida." }
   try {
     const admin: any = await getSupabaseAdmin()
+    if (!forzar) {
+      const { data: actual } = await admin.from("prefacturas").select("estado_ciclo").eq("id", id).maybeSingle()
+      if (actual && actual.estado_ciclo && actual.estado_ciclo !== "pendiente_anexo") {
+        return {
+          success: false,
+          message:
+            "Esta prefactura ya tiene avance en el Ciclo de Facturación (anexo enviado o más) -- reabrirla para editar " +
+            "invalidaría un documento que puede estar firmado por el cliente.",
+        }
+      }
+    }
     const { error } = await admin
       .from("prefacturas")
       .update({ estado: "borrador", aprobado_por: null, aprobado_en: null, updated_at: new Date().toISOString() })
