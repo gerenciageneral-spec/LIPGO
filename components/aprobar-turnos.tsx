@@ -669,7 +669,7 @@ export function AprobarTurnos() {
                           <TableHead>Solicitante</TableHead>
                           <TableHead>Tipo</TableHead>
                           <TableHead>Puesto</TableHead>
-                          <TableHead>Fecha Requerida</TableHead>
+                          <TableHead>Fecha de Servicio</TableHead>
                           <TableHead>Cantidad</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -867,7 +867,7 @@ export function AprobarTurnos() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label htmlFor="filtro-fecha-requerida">Fecha Requerida</Label>
+                  <Label htmlFor="filtro-fecha-requerida">Fecha de Servicio</Label>
                   <DatePickerField
                     id="filtro-fecha-requerida"
                     value={filtroFechaRequerida}
@@ -907,7 +907,7 @@ export function AprobarTurnos() {
                       <TableRow>
                         <TableHead className="w-10"></TableHead>
                         <TableHead>Fecha Solicitud</TableHead>
-                        <TableHead>Fecha Requerida</TableHead>
+                        <TableHead>Fecha de Servicio</TableHead>
                         <TableHead>Fecha Aprobación</TableHead>
                         <TableHead>Solicitante</TableHead>
                         <TableHead>Tipo</TableHead>
