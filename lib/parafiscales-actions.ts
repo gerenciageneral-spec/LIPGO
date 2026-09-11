@@ -335,10 +335,10 @@ export async function getParafiscales(
       // podría colarse; este corte lo blinda aquí también, igual que fecha_retiro.
       if (info.fechaInicio && fecha < info.fechaInicio) continue
       // Un mes de LIP son SIEMPRE 30 días (igual que la nómina base): el día 31 de
-      // un mes de 31 no es un día ADICIONAL de cotización — su devengado (recargos/
-      // destajo, nunca hay "base" ese día) se suma igual al IBC, pero sin sumar un
-      // día 31° al conteo (si no, el piso de 1 SMLV y la mensualización a 30 días
-      // quedarían inflados por encima de un mes completo).
+      // un mes de 31 NO cotiza NADA -- ni día ni devengado (ver el `default` del
+      // switch más abajo). Desde 2026-08-31 pagonomina le paga BASE COMPLETA al
+      // día 31 (antes $0); si se sumara su valor aquí el mes quedaría inflado en
+      // un día extra de salario -- bug real corregido 2026-09-11.
       const diaMes = Number(fecha.slice(8, 10))
       const esDia31 = diaMes === 31
       const a =
@@ -365,8 +365,19 @@ export async function getParafiscales(
           // día). El bono de productividad (excedente de destajo neteado por quincena)
           // se lee de `archivoplano` más abajo, NO se re-suma aquí -- ver comentario
           // junto a `bonoRealPorCedulaQuincena`.
-          a.ibcTrab += Number(r.total_liquidado_dia || 0)
-          if (!esDia31) a.diasTrab += 1
+          //
+          // El día 31 NO suma NADA (ni día ni valor) -- BUG REAL corregido
+          // 2026-09-11: desde 2026-08-31 pagonomina le paga BASE COMPLETA al
+          // día 31 (antes $0), así que sumar su `total_liquidado_dia` aquí
+          // infla el mes en un día extra de salario. Su destajo/exceso no se
+          // pierde: pagonomina lo manda a `bonif_prestacional`, que
+          // archivoplano ya excluye de esta quincena y difiere a la
+          // siguiente -- ese dinero entra por `bonoRealPorCedulaQuincena`,
+          // no debe contarse aquí también. Confirmado con datos reales.
+          if (!esDia31) {
+            a.ibcTrab += Number(r.total_liquidado_dia || 0)
+            a.diasTrab += 1
+          }
         }
       }
       acum.set(nombre, a)

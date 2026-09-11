@@ -262,10 +262,24 @@ export async function generarArchivoCargaPila(
             segmentoTrab = { tipo: "TRAB", diaIni: diaMes, diaFin: diaMes, dias: 0, ibcTrabDevengado: 0 }
             segmentos.push(segmentoTrab)
           }
-          // El día 31 suma su devengado pero NO cuenta como día adicional
-          // (mes de 30 días, ver pagonomina_reemplazo.sql).
-          if (!esDia31) { segmentoTrab.dias += 1; segmentoTrab.diaFin = diaMes }
-          segmentoTrab.ibcTrabDevengado += Number(r.total_liquidado_dia || 0)
+          // El día 31 NO cuenta ni como día ni como valor (mes de 30 días,
+          // ver pagonomina_reemplazo.sql) -- BUG REAL corregido 2026-09-11:
+          // antes sí se sumaba su `total_liquidado_dia`, algo inofensivo
+          // cuando ese día pagaba $0 base (regla vieja, hasta 2026-08-30),
+          // pero desde el 2026-08-31 pagonomina le paga BASE COMPLETA (un
+          // día normal más), así que sumarlo aquí inflaba el mes en un día
+          // extra de salario. Confirmado con datos reales: DEIVER LOPEZ DE
+          // LA ROSA, agosto-2026, exactamente +$58.364 (un día) de más. El
+          // destajo/exceso de ese día NO se pierde: pagonomina lo manda a
+          // `bonif_prestacional`, que archivoplano YA excluye de esta
+          // quincena y difiere a la siguiente vía Ajuste Nómina Anterior --
+          // ese dinero llega por el bono real que se lee de archivoplano,
+          // no debe contarse aquí también.
+          if (!esDia31) {
+            segmentoTrab.dias += 1
+            segmentoTrab.diaFin = diaMes
+            segmentoTrab.ibcTrabDevengado += Number(r.total_liquidado_dia || 0)
+          }
           continue
         }
         if (esDia31) continue // otras novedades no se reportan el día 31
