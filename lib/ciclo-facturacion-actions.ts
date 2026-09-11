@@ -82,6 +82,10 @@ export interface PrefacturaCiclo {
   dias_plazo: number | null
   fecha_vencimiento: string | null
   diasVencida: number | null // positivo = vencida hace N días; negativo = faltan N días; null = sin cerrar aún
+  // Advertencias detectadas al generar (sin tarifa/sin gestionar/pago no cuadra/
+  // avisos de producción) -- se llenan sobre todo cuando la prefactura se
+  // generó SOLA (cron), para que el Jefe la revise después.
+  advertencias: { tipo: string; detalle: string }[]
 }
 
 export interface PagoPrefactura {
@@ -146,7 +150,7 @@ export async function listarCicloFacturacion(filtros?: {
     let query = sb
       .from("prefacturas")
       .select(
-        "id, origen, idempresa, proyecto, periodo_desde, periodo_hasta, total, lineas, estado_ciclo, ciclo_actualizado_en, estado_cobro, valor_pagado, dias_plazo, fecha_vencimiento",
+        "id, origen, idempresa, proyecto, periodo_desde, periodo_hasta, total, lineas, estado_ciclo, ciclo_actualizado_en, estado_cobro, valor_pagado, dias_plazo, fecha_vencimiento, advertencias",
       )
       .eq("estado", "aprobada")
       .in("idempresa", idsAccesibles)
@@ -198,6 +202,7 @@ export async function listarCicloFacturacion(filtros?: {
         dias_plazo: r.dias_plazo,
         fecha_vencimiento: r.fecha_vencimiento,
         diasVencida: r.fecha_vencimiento ? diasEntre(r.fecha_vencimiento, hoy) : null,
+        advertencias: r.advertencias || [],
       }
     })
 
@@ -534,6 +539,68 @@ export async function actualizarCondicionEnvioAnexo(
     return { success: true }
   } catch (e: any) {
     return { success: false, message: e?.message || "Error al guardar la frecuencia de envío." }
+  }
+}
+
+export interface CondicionGeneracionPrefactura {
+  idempresa: number
+  proyecto: string
+  frecuencia: "diario" | "semanal"
+  dia_semana: number | null // 0=domingo..6=sábado
+  activo: boolean
+}
+
+/** Frecuencia de GENERACIÓN automática de la prefactura, POR PROYECTO -- usada
+ *  por el cron diario (app/api/cron/anexos-pendientes/route.ts, Fase A).
+ *  Separada a propósito de `condiciones_envio_anexo` (esa es solo para el
+ *  envío de un anexo de una prefactura que YA existe): generar el documento
+ *  desde cero es una decisión más delicada, así que sin fila propia el
+ *  default es `activo=false` -- cada proyecto se prende a mano, nunca por
+ *  omisión. */
+export async function getCondicionesGeneracionPrefactura(): Promise<{ success: boolean; data: CondicionGeneracionPrefactura[]; message?: string }> {
+  try {
+    const sb: any = await getSupabaseAdmin()
+    const { data: empresas, error: errEmp } = await sb.from("empresas_permisos").select("id, nombre").in("id", [1, 2, 3, 4]).order("id")
+    if (errEmp) return { success: false, data: [], message: errEmp.message }
+    const { data: condiciones, error: errCond } = await sb.from("condiciones_generacion_prefactura").select("idempresa, frecuencia, dia_semana, activo")
+    if (errCond) return { success: false, data: [], message: errCond.message }
+    const porEmpresa = new Map<number, { frecuencia: string; dia_semana: number | null; activo: boolean }>()
+    for (const c of condiciones || []) porEmpresa.set(c.idempresa, c)
+    const out: CondicionGeneracionPrefactura[] = (empresas || []).map((e: any) => {
+      const c = porEmpresa.get(e.id)
+      return {
+        idempresa: e.id,
+        proyecto: e.nombre,
+        frecuencia: (c?.frecuencia as "diario" | "semanal") || "semanal",
+        dia_semana: c ? c.dia_semana : 1,
+        activo: c?.activo === true,
+      }
+    })
+    return { success: true, data: out }
+  } catch (e: any) {
+    return { success: false, data: [], message: e?.message || "Error al leer la frecuencia de generación." }
+  }
+}
+
+export async function actualizarCondicionGeneracionPrefactura(
+  idempresa: number,
+  frecuencia: "diario" | "semanal",
+  dia_semana: number | null,
+  activo: boolean,
+): Promise<{ success: boolean; message?: string }> {
+  if (!idempresa) return { success: false, message: "Falta el proyecto." }
+  if (frecuencia === "semanal" && (dia_semana === null || dia_semana < 0 || dia_semana > 6)) {
+    return { success: false, message: "Selecciona un día de la semana válido." }
+  }
+  try {
+    const sb: any = await getSupabaseAdmin()
+    const { error } = await sb
+      .from("condiciones_generacion_prefactura")
+      .upsert({ idempresa, frecuencia, dia_semana: frecuencia === "diario" ? null : dia_semana, activo }, { onConflict: "idempresa" })
+    if (error) return { success: false, message: error.message }
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al guardar la frecuencia de generación." }
   }
 }
 

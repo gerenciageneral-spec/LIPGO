@@ -508,6 +508,16 @@ export interface PrefacturaGuardada {
   created_at: string
 }
 
+/** Una advertencia detectada al momento de generar (sin tarifa, sin gestionar,
+ *  pago que no cuadra, avisos de producción) -- se persiste tal cual en
+ *  `prefacturas.advertencias` para que, cuando la generación es automática
+ *  (cron, nadie mirando la pantalla), el Jefe pueda revisarlas después en vez
+ *  de perderlas. */
+export interface Advertencia {
+  tipo: string
+  detalle: string
+}
+
 export async function guardarPrefactura(payload: {
   idempresa: number
   proyecto?: string | null
@@ -519,6 +529,7 @@ export async function guardarPrefactura(payload: {
   toneladas: number
   usuario?: string | null
   observacion?: string | null
+  advertencias?: Advertencia[]
 }): Promise<{ success: boolean; id?: number; message?: string }> {
   if (!payload?.idempresa) return { success: false, message: "Falta el proyecto." }
   if (!payload.lineas?.length) return { success: false, message: "La prefactura no tiene líneas seleccionadas." }
@@ -549,6 +560,7 @@ export async function guardarPrefactura(payload: {
         ciclo_actualizado_en: new Date().toISOString(),
         usuario: payload.usuario ?? null,
         observacion: payload.observacion ?? null,
+        advertencias: payload.advertencias ?? [],
         updated_at: new Date().toISOString(),
       })
       .select("id")
@@ -558,6 +570,30 @@ export async function guardarPrefactura(payload: {
   } catch (e: any) {
     return { success: false, message: e?.message || "Error al guardar la prefactura." }
   }
+}
+
+/** Igual que `buscarSolapes` de Prefactura de Producción (mismo test de
+ *  solape), pero para el origen `cuadro_control` -- no existía porque el
+ *  Cuadro de Control siempre generaba a mano, con una persona mirando la
+ *  pantalla que naturalmente no repetía un período ya facturado. La
+ *  generación automática no tiene ese ojo humano, así que necesita su
+ *  propia verificación antes de guardar. */
+export async function buscarSolapesCuadroControl(idempresa: number, desde: string, hasta: string) {
+  const sb: any = await getSupabaseAdmin()
+  const { data } = await sb
+    .from("prefacturas")
+    .select("id, periodo_desde, periodo_hasta, total, aprobado_por")
+    .eq("idempresa", idempresa)
+    .eq("origen", "cuadro_control")
+    .eq("estado", "aprobada")
+  return (data || [])
+    .filter((p: any) => {
+      const d = String(p.periodo_desde || "").slice(0, 10)
+      const h = String(p.periodo_hasta || "").slice(0, 10)
+      if (!d || !h) return false
+      return d <= hasta && h >= desde
+    })
+    .map((p: any) => ({ id: p.id, periodo: `${p.periodo_desde} a ${p.periodo_hasta}`, total: p.total, aprobadoPor: p.aprobado_por }))
 }
 
 export async function listarPrefacturas(

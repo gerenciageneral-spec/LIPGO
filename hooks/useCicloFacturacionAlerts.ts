@@ -8,6 +8,9 @@ interface CicloFacturacionAlerta {
   proyecto: string | null
   owner: string
   estado_ciclo: string
+  /** "pendiente_accion" (te toca actuar) y/o "advertencias" (se generó sola
+   *  con advertencias -- sin tarifa/sin gestionar/pago no cuadra -- revisa). */
+  motivos: string[]
 }
 
 interface UseCicloFacturacionAlertsResult {

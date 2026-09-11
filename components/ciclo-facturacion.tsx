@@ -33,6 +33,8 @@ import {
   actualizarCondicionPagoOwner,
   getCondicionesEnvioAnexo,
   actualizarCondicionEnvioAnexo,
+  getCondicionesGeneracionPrefactura,
+  actualizarCondicionGeneracionPrefactura,
   getSoporteDePrefactura,
   type PrefacturaCiclo,
   type EventoCiclo,
@@ -41,7 +43,9 @@ import {
   type EtapaCorregible,
   type PagoPrefactura,
   type CondicionEnvioAnexo,
+  type CondicionGeneracionPrefactura,
 } from "@/lib/ciclo-facturacion-actions"
+import { Switch } from "@/components/ui/switch"
 import { DIAS_SEMANA_LABEL } from "@/lib/ciclo-facturacion-shared"
 import { getAccessibleEmpresesFromPermisos } from "@/lib/orders-actions"
 import { AdjuntosUploader } from "@/components/ciclo-facturacion/adjuntos-uploader"
@@ -462,6 +466,7 @@ export default function CicloFacturacion() {
         </CardContent>
       </Card>
 
+      {permisos.jefe && <FrecuenciaGeneracionPrefacturaPanel />}
       {permisos.jefe && <FrecuenciaEnvioAnexoPanel />}
       {permisos.jefe && <CondicionesPagoPanel />}
     </div>
@@ -503,6 +508,11 @@ function FilaCiclo({
             {p.ownerMezclado && (
               <span className="ml-1.5 inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-950/50 dark:text-amber-300">
                 <AlertTriangle className="h-3 w-3" /> mezcla varios owners
+              </span>
+            )}
+            {p.advertencias?.length > 0 && (
+              <span className="ml-1.5 inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-950/50 dark:text-amber-300">
+                <AlertTriangle className="h-3 w-3" /> {p.advertencias.length} advertencia{p.advertencias.length > 1 ? "s" : ""}
               </span>
             )}
           </div>
@@ -591,6 +601,25 @@ function DetalleCiclo({
 
   return (
     <div className="space-y-4 border-t bg-muted/20 p-3">
+      {/* Advertencias de la generación automática (sin tarifa vigente, pago
+          que no cuadra, avisos de producción) -- se generó igual, pero
+          quedaron guardadas para que el Jefe las revise y corrija si hace
+          falta. Van primero: es lo más urgente de ver al abrir la fila. */}
+      {prefactura.advertencias?.length > 0 && (
+        <div className="rounded-md border border-amber-300 bg-amber-50/60 p-3 dark:border-amber-800 dark:bg-amber-950/20">
+          <div className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-amber-800 dark:text-amber-300">
+            <AlertTriangle className="h-3.5 w-3.5" /> Advertencias de la generación automática -- revisar
+          </div>
+          <ul className="space-y-0.5 text-[11px] text-amber-800 dark:text-amber-300">
+            {prefactura.advertencias.map((a, i) => (
+              <li key={i}>
+                <span className="font-medium">{a.tipo}:</span> {a.detalle}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Último documento recibido -- lo que mandó la otra persona (o el
           cron) para llegar al paso actual. Con badge Automático/Manual para
           que el Jefe pueda revisar lo que el cron envió solo, y el
@@ -910,6 +939,86 @@ function ModalPago({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+function FrecuenciaGeneracionPrefacturaPanel() {
+  const { toast } = useToast()
+  const [abierto, setAbierto] = useState(true)
+  const [condiciones, setCondiciones] = useState<CondicionGeneracionPrefactura[]>([])
+  const [guardando, setGuardando] = useState<number | null>(null)
+
+  const cargar = async () => {
+    const r = await getCondicionesGeneracionPrefactura()
+    if (r.success) setCondiciones(r.data)
+  }
+  useEffect(() => {
+    if (abierto) cargar()
+  }, [abierto])
+
+  const actualizarLocal = (idempresa: number, patch: Partial<CondicionGeneracionPrefactura>) => {
+    setCondiciones((prev) => prev.map((c) => (c.idempresa === idempresa ? { ...c, ...patch } : c)))
+  }
+
+  const guardar = async (c: CondicionGeneracionPrefactura) => {
+    setGuardando(c.idempresa)
+    const r = await actualizarCondicionGeneracionPrefactura(c.idempresa, c.frecuencia, c.dia_semana, c.activo)
+    setGuardando(null)
+    if (r.success) toast({ title: "Guardado" })
+    else toast({ title: "Error", description: r.message, variant: "destructive" })
+  }
+
+  return (
+    <Card>
+      <CardHeader className="cursor-pointer pb-2" onClick={() => setAbierto((v) => !v)}>
+        <CardTitle className="flex items-center justify-between gap-2 text-sm">
+          <span className="flex items-center gap-2"><Clock className="h-4 w-4" /> Automatización: generación de prefacturas por Proyecto</span>
+          {abierto ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+        </CardTitle>
+        <CardDescription className="text-xs">
+          Sin activar, la prefactura la sigue generando una persona a mano en Cuadro de Control / Prefactura de Producción -- ese sigue siendo el default.
+          Al activarla, el cron genera solo el período siguiente (desde el día después de la última prefactura aprobada, hasta ayer) y, si encuentra
+advertencias (sin tarifa vigente, pago que no cuadra), igual la genera y te avisa aquí para que la revises después.
+        </CardDescription>
+      </CardHeader>
+      {abierto && (
+        <CardContent className="space-y-2">
+          {condiciones.map((c) => (
+            <div key={c.idempresa} className="flex flex-wrap items-center gap-2">
+              <label className="flex w-40 items-center gap-2 text-xs">
+                <Switch checked={c.activo} onCheckedChange={(v) => actualizarLocal(c.idempresa, { activo: v })} />
+                {c.proyecto}
+              </label>
+              <Select
+                value={c.frecuencia}
+                onValueChange={(v) => actualizarLocal(c.idempresa, { frecuencia: v as "diario" | "semanal", dia_semana: v === "semanal" ? (c.dia_semana ?? 1) : c.dia_semana })}
+                disabled={!c.activo}
+              >
+                <SelectTrigger className="h-7 w-28 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="semanal">Semanal</SelectItem>
+                  <SelectItem value="diario">Diario</SelectItem>
+                </SelectContent>
+              </Select>
+              {c.frecuencia === "semanal" && (
+                <Select value={String(c.dia_semana ?? 1)} onValueChange={(v) => actualizarLocal(c.idempresa, { dia_semana: Number(v) })} disabled={!c.activo}>
+                  <SelectTrigger className="h-7 w-32 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {DIAS_SEMANA_LABEL.map((label, i) => (
+                      <SelectItem key={i} value={String(i)}>{label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => guardar(c)} disabled={guardando === c.idempresa}>
+                {guardando === c.idempresa && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                Guardar
+              </Button>
+            </div>
+          ))}
+        </CardContent>
+      )}
+    </Card>
   )
 }
 

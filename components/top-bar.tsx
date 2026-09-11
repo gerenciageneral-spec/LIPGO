@@ -447,6 +447,9 @@ export function TopBar() {
                       <div key={f.id} className="p-3 hover:bg-blue-50/50 transition-colors">
                         <p className="text-sm font-medium text-blue-700 truncate">{f.owner}</p>
                         <p className="text-xs text-muted-foreground truncate">{f.proyecto} · {f.estado_ciclo}</p>
+                        {f.motivos?.includes("advertencias") && (
+                          <p className="text-xs font-medium text-amber-600 mt-0.5">⚠ Revisar advertencias de generación automática</p>
+                        )}
                       </div>
                     ))}
                   </div>

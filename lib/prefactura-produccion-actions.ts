@@ -29,6 +29,7 @@
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getCurrentUsuarioForInsert } from "@/lib/user-context"
 import { getConciliacionAvimol, type AlertaAvimol } from "@/lib/conciliacion-avimol-actions"
+import type { Advertencia } from "@/lib/facturacion-control-actions"
 // Las constantes viven en un módulo aparte: este archivo es "use server" y ahí
 // solo se pueden exportar funciones async. Ver lib/prefactura-produccion-constants.ts.
 import {
@@ -446,6 +447,11 @@ export async function guardarPrefacturaProduccion(payload: {
   observacion?: string | null
   /** El usuario ya vio el aviso de solape y decidió continuar. */
   confirmarSolape?: boolean
+  advertencias?: Advertencia[]
+  /** Para llamadas sin sesión (cron): reemplaza a `getCurrentUsuarioForInsert()`,
+   *  que sin sesión cae en "admin" -- con esto queda "sistema (cron diario)",
+   *  igual que ya se ve en los eventos del Ciclo de Facturación. */
+  usuarioOverride?: string
 }): Promise<{ success: boolean; id?: number; message?: string }> {
   if (!payload?.idempresa) return { success: false, message: "Falta el proyecto." }
   if (!payload.periodo_desde || !payload.periodo_hasta)
@@ -475,7 +481,7 @@ export async function guardarPrefacturaProduccion(payload: {
     }
 
     const admin: any = await getSupabaseAdmin()
-    const usuario = await getCurrentUsuarioForInsert()
+    const usuario = payload.usuarioOverride || (await getCurrentUsuarioForInsert())
     const { data, error } = await admin
       .from("prefacturas")
       .insert({
@@ -504,6 +510,7 @@ export async function guardarPrefacturaProduccion(payload: {
         ciclo_actualizado_en: new Date().toISOString(),
         usuario,
         observacion: payload.observacion ?? null,
+        advertencias: payload.advertencias ?? [],
         updated_at: new Date().toISOString(),
       })
       .select("id")
