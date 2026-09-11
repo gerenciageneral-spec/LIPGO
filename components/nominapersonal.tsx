@@ -74,7 +74,7 @@ interface DetalleAuxiliar {
 export default function Nominapersonal() {
   const { selectedEmpresaId } = useAuth()
   const { toast } = useToast()
-  const [viewMode, setViewMode] = useState<"total" | "detalle" | "liquidacion" | "archivoplano">("total")
+  const [viewMode, setViewMode] = useState<"total" | "detalle" | "liquidacion" | "archivoplano" | "adelantos">("total")
   const [loading, setLoading] = useState(false)
   const [currentPageArchivoplanano, setCurrentPageArchivoplanano] = useState(1) // Declare the variable here
   // El archivo plano se lee desde el SERVIDOR: ver el comentario de
@@ -142,6 +142,28 @@ export default function Nominapersonal() {
     ),
   )
   const [filtroQuincena, setFiltroQuincena] = useState("")
+
+  // Archivo Plano de Adelantos: MISMA fuente (`archivoplano`, vía
+  // getArchivoPlano) que la pestaña de arriba -- nunca se reimplementa el
+  // cálculo del anticipo aparte, para no arriesgarse a que este archivo
+  // diga un valor distinto al que ya viaja a Siigo por el archivo plano
+  // general. Solo se filtra a la novedad de anticipo y se consolida por
+  // persona (un anticipado puede pedir más de uno en la misma quincena).
+  // Filtros propios (no comparten estado con la pestaña "Archivo Plano")
+  // para que cambiar de una a otra no se pise el período elegido.
+  const [filtroMesAdelantos, setFiltroMesAdelantos] = useState(() =>
+    String(
+      Number(
+        new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota", month: "2-digit" }).format(
+          new Date(),
+        ),
+      ),
+    ),
+  )
+  const [filtroQuincenaAdelantos, setFiltroQuincenaAdelantos] = useState("")
+  const [adelantosRaw, setAdelantosRaw] = useState<any[]>([])
+  const [currentPageAdelantos, setCurrentPageAdelantos] = useState(1)
+  const NOVEDAD_ANTICIPO = "56-Dcto. Anticipo de Nomina-Deducción"
 
   /**
    * Carga las liquidaciones aplicando el rango de fechas COMO FILTRO EN
@@ -367,6 +389,35 @@ export default function Nominapersonal() {
       setArchivoplanos(r.data)
     } catch (error: any) {
       console.error("[v0] Error:", error)
+      toast({ title: "Error", description: error?.message || "Error inesperado", variant: "destructive" })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Trae el mismo `archivoplano` (misma llamada que la pestaña de arriba) y
+  // guarda SOLO las filas crudas de anticipo -- la consolidación por persona
+  // se hace después, derivada (`adelantosPorPersona`), para que nunca quede
+  // desincronizada de lo que realmente devolvió el servidor.
+  const loadAdelantos = async (
+    mes: string = filtroMesAdelantos,
+    quincena: string = filtroQuincenaAdelantos,
+  ) => {
+    if (!selectedEmpresaId) return
+    setLoading(true)
+    try {
+      const r = await getArchivoPlano(selectedEmpresaId, mes, quincena)
+      if (!r.success) {
+        setAdelantosRaw([])
+        toast({
+          title: "No se pudo cargar los adelantos",
+          description: r.message || "Error al cargar datos",
+          variant: "destructive",
+        })
+        return
+      }
+      setAdelantosRaw(r.data.filter((f: any) => f.nombrenovedad === NOVEDAD_ANTICIPO))
+    } catch (error: any) {
       toast({ title: "Error", description: error?.message || "Error inesperado", variant: "destructive" })
     } finally {
       setLoading(false)
@@ -622,6 +673,31 @@ export default function Nominapersonal() {
     return matchMes && matchQuincena
   })
 
+  // Consolida los adelantos por persona: el pedido explícito es "el valor
+  // TOTAL de anticipos aprobados en el período para el empleado", no una
+  // fila por solicitud -- una persona puede pedir más de un anticipo en la
+  // misma quincena y en `archivoplano` cada uno viaja en su propia fila.
+  const adelantosPorPersona = useMemo(() => {
+    const porCedula = new Map<
+      string,
+      { identificacion: string; nombre: string; contrato: string; total: number; cantidad: number }
+    >()
+    for (const f of adelantosRaw) {
+      const ced = f.identificacionempleado || "(sin identificación)"
+      const actual = porCedula.get(ced) || {
+        identificacion: ced,
+        nombre: f.nombreempleado || "",
+        contrato: f.contratoempleado || "",
+        total: 0,
+        cantidad: 0,
+      }
+      actual.total += Number(f.cantidadvalor) || 0
+      actual.cantidad += 1
+      porCedula.set(ced, actual)
+    }
+    return Array.from(porCedula.values()).sort((a, b) => a.nombre.localeCompare(b.nombre, "es"))
+  }, [adelantosRaw])
+
   const exportToExcelArchivoplanano = async () => {
     try {
       // ORDEN EXIGIDO POR SIIGO: el NOMBRE del empleado va inmediatamente
@@ -691,6 +767,47 @@ export default function Nominapersonal() {
     }
   }
 
+  // Mismo layout de columnas que exportToExcelArchivoplanano (el que exige
+  // Siigo) -- una fila por persona, con el valor ya consolidado.
+  const exportToExcelAdelantos = async () => {
+    try {
+      const headers = ["Contrato", "Identificación", "Nombre", "Novedad", "Tipo Novedad", "Cantidad/Valor", "Fecha Inicio", "Fecha Fin", "Días No Hábiles"]
+
+      const data = adelantosPorPersona.map((p) => [
+        p.contrato,
+        p.identificacion,
+        p.nombre,
+        NOVEDAD_ANTICIPO,
+        "Valor",
+        Math.round(p.total),
+        "",
+        "",
+        0,
+      ])
+
+      const ws = XLSX.utils.aoa_to_sheet([headers, ...data])
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, "Adelantos")
+
+      const numericColumns = [5, 8]
+      for (let rowIndex = 1; rowIndex < data.length + 1; rowIndex++) {
+        numericColumns.forEach((colIndex) => {
+          const cellRef = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex })
+          if (ws[cellRef] && typeof ws[cellRef].v === "number") ws[cellRef].z = "#,##0.00"
+        })
+      }
+
+      const colWidths = [15, 15, 32, 30, 15, 15, 15, 15, 15]
+      ws["!cols"] = colWidths.map((width) => ({ wch: width }))
+
+      XLSX.writeFile(wb, `archivo-plano-adelantos-${new Date().toISOString().split("T")[0]}.xlsx`)
+      toast({ title: "Éxito", description: "Archivo de adelantos exportado correctamente" })
+    } catch (error) {
+      console.error("[v0] Nominapersonal: Export adelantos error:", error)
+      toast({ title: "Error", description: "Error al exportar archivo", variant: "destructive" })
+    }
+  }
+
   // Pagination helper functions
   const getPaginatedData = (data: any[], currentPage: number) => {
     const startIndex = (currentPage - 1) * ITEMS_PER_PAGE
@@ -722,6 +839,12 @@ export default function Nominapersonal() {
   // Los filtros de mes/quincena se aplican EN LA BASE, así que cambiarlos
   // reconsulta. Antes solo filtraban en memoria sobre un dataset que muchas
   // veces ni llegaba a cargar.
+  useEffect(() => {
+    if (selectedEmpresaId && viewMode === "adelantos") {
+      loadAdelantos(filtroMesAdelantos, filtroQuincenaAdelantos)
+    }
+  }, [selectedEmpresaId, viewMode, filtroMesAdelantos, filtroQuincenaAdelantos])
+
   useEffect(() => {
     if (selectedEmpresaId && viewMode === "archivoplano") {
       loadArchivoplanano(filtroMes, filtroQuincena)
@@ -963,6 +1086,12 @@ export default function Nominapersonal() {
           onClick={() => setViewMode("archivoplano")}
         >
           Archivo Plano
+        </Button>
+        <Button
+          variant={viewMode === "adelantos" ? "default" : "outline"}
+          onClick={() => setViewMode("adelantos")}
+        >
+          Archivo Plano Adelantos
         </Button>
       </div>
 
@@ -1912,6 +2041,163 @@ export default function Nominapersonal() {
                     variant="outline"
                     onClick={() => setCurrentPageArchivoplanano(Math.min(getTotalPages(archivoplanosFiltrados), currentPageArchivoplanano + 1))}
                     disabled={currentPageArchivoplanano === getTotalPages(archivoplanosFiltrados)}
+                    className="h-8 text-xs"
+                  >
+                    Siguiente
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      ) : viewMode === "adelantos" ? (
+        <div className="space-y-4">
+          {/* Filters */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm">Filtros</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <Label className="text-xs">Mes</Label>
+                  <select
+                    value={filtroMesAdelantos}
+                    onChange={(e) => setFiltroMesAdelantos(e.target.value)}
+                    className="w-full h-8 text-xs border rounded px-2"
+                  >
+                    <option value="">Todos</option>
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((mes) => (
+                      <option key={mes} value={mes}>
+                        {mes}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Quincena</Label>
+                  <select
+                    value={filtroQuincenaAdelantos}
+                    onChange={(e) => setFiltroQuincenaAdelantos(e.target.value)}
+                    className="w-full h-8 text-xs border rounded px-2"
+                  >
+                    <option value="">Todas</option>
+                    <option value="1">Primera (1-15)</option>
+                    <option value="2">Segunda (16-30/31)</option>
+                  </select>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground mt-3">
+                El período se aplica sobre la fecha en que se APROBÓ el anticipo, no sobre la fecha en que se pidió --
+                mismo criterio que usa el archivo plano general para decidir a qué quincena pertenece.
+              </p>
+            </CardContent>
+          </Card>
+
+          {/* Actualizar + Export */}
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => loadAdelantos(filtroMesAdelantos, filtroQuincenaAdelantos)}
+              disabled={loading}
+              className="text-xs h-8 gap-2 bg-transparent"
+            >
+              <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+              Actualizar
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={exportToExcelAdelantos}
+              disabled={adelantosPorPersona.length === 0}
+              className="text-xs h-8 gap-2 bg-transparent"
+            >
+              <Download className="h-4 w-4" />
+              Exportar a Excel
+            </Button>
+          </div>
+
+          {/* Table with Scrollable Content */}
+          <Card>
+            <CardContent className="pt-4">
+              <div className="border rounded-lg">
+                <div className="overflow-x-auto max-h-96 overflow-y-auto">
+                  <Table>
+                    <TableHeader className="sticky top-0 bg-white">
+                      <TableRow>
+                        <TableHead className="text-xs">Contrato</TableHead>
+                        <TableHead className="text-xs">Identificación</TableHead>
+                        <TableHead className="text-xs">Nombre</TableHead>
+                        <TableHead className="text-xs text-center"># Anticipos</TableHead>
+                        <TableHead className="text-xs text-right">Valor Total</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {loading ? (
+                        <TableRow>
+                          <TableCell colSpan={5} className="text-center text-xs">
+                            Cargando...
+                          </TableCell>
+                        </TableRow>
+                      ) : adelantosPorPersona.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={5} className="text-center text-xs">
+                            No hay anticipos aprobados en este período
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        getPaginatedData(adelantosPorPersona, currentPageAdelantos).map((p, idx) => (
+                          <TableRow key={idx}>
+                            <TableCell className="text-xs">{p.contrato || "-"}</TableCell>
+                            <TableCell className="text-xs">{p.identificacion || "-"}</TableCell>
+                            <TableCell className="text-xs">{p.nombre || "-"}</TableCell>
+                            <TableCell className="text-xs text-center">{p.cantidad}</TableCell>
+                            <TableCell className="text-xs text-right">
+                              {p.total.toLocaleString("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 })}
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                    {adelantosPorPersona.length > 0 && (
+                      <tfoot>
+                        <TableRow>
+                          <TableCell colSpan={4} className="text-xs font-semibold text-right">
+                            Total
+                          </TableCell>
+                          <TableCell className="text-xs font-semibold text-right">
+                            {adelantosPorPersona
+                              .reduce((s, p) => s + p.total, 0)
+                              .toLocaleString("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 })}
+                          </TableCell>
+                        </TableRow>
+                      </tfoot>
+                    )}
+                  </Table>
+                </div>
+              </div>
+
+              {/* Pagination Controls */}
+              {getTotalPages(adelantosPorPersona) > 1 && (
+                <div className="flex justify-center gap-2 mt-4">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setCurrentPageAdelantos(Math.max(1, currentPageAdelantos - 1))}
+                    disabled={currentPageAdelantos === 1}
+                    className="h-8 text-xs"
+                  >
+                    Anterior
+                  </Button>
+                  <span className="flex items-center text-xs px-2">
+                    Página {currentPageAdelantos} de {getTotalPages(adelantosPorPersona)}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setCurrentPageAdelantos(Math.min(getTotalPages(adelantosPorPersona), currentPageAdelantos + 1))}
+                    disabled={currentPageAdelantos === getTotalPages(adelantosPorPersona)}
                     className="h-8 text-xs"
                   >
                     Siguiente
