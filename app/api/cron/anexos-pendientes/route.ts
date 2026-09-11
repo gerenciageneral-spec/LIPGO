@@ -176,7 +176,7 @@ export async function GET(request: NextRequest) {
         const { data: pub } = sb.storage.from("archivos").getPublicUrl(path)
         const nombre = `Anexo_${owner}_${p.id}.pdf`.replace(/[^a-zA-Z0-9_.-]+/g, "_")
 
-        const r = await registrarEventoCiclo(p.id, "anexo_enviado", [{ url: pub.publicUrl, nombre }], USUARIO_CRON)
+        const r = await registrarEventoCiclo(p.id, "anexo_enviado", [{ url: pub.publicUrl, nombre }], USUARIO_CRON, true)
         if (!r.success) throw new Error(r.message || "registrarEventoCiclo falló")
 
         resultados.procesadas++

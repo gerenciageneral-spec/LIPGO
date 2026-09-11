@@ -186,6 +186,13 @@ export default function CicloFacturacion() {
   // viceversa", en vez de una sola tabla revuelta con un checkbox). Arranca
   // en la bandeja del único rol que tenga la persona; si tiene los dos (o
   // ninguno) arranca en "Todas".
+  //
+  // "Todas" (ver los pasos del OTRO rol) queda visible para cualquiera con
+  // acceso al módulo -- confirmado por el usuario 2026-09-11: "si no puede
+  // tocar está bien" -- lo que de verdad no puede pasar es que alguien
+  // MODIFIQUE el paso del otro rol, y eso ya lo bloquea `necesitaMiAccion`
+  // más abajo (los botones de acción solo aparecen para quien tiene el
+  // permiso de ESE paso), sin importar qué pestaña esté mirando.
   type Vista = "todas" | "jefe" | "coordinador" | "cartera"
   const [vista, setVista] = useState<Vista>("todas")
   useEffect(() => {

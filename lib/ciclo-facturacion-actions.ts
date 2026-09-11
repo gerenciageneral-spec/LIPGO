@@ -39,6 +39,7 @@ import {
   type UnidadCobro,
 } from "@/lib/facturacion-control-actions"
 import { ownerDePrefactura } from "@/lib/ciclo-facturacion-shared"
+import { getUserPermissions } from "@/lib/permissions-actions"
 
 export type EstadoCiclo =
   | "pendiente_anexo"
@@ -123,6 +124,33 @@ const ESTADO_ANTERIOR: Record<EtapaCorregible, EstadoCiclo> = {
   factura_enviada: "pendiente_factura",
   factura_firmada: "pendiente_firma_factura",
   cierre: "pendiente_cierre",
+}
+
+// ---------------------------------------------------------------------------
+// Blindaje SERVER-SIDE de "cada quien tiene su pedazo" -- hasta ahora los
+// botones de acción solo se ESCONDÍAN en la UI si el rol no coincidía
+// (`necesitaMiAccion`/`puedoActuar` en components/ciclo-facturacion.tsx), sin
+// que el server action verificara nada -- mismo hueco ya identificado y
+// corregido antes en otro módulo de este proyecto ("Facturar por orden":
+// "blindaje server-side, no confiar solo en el disabled de la UI"). Ahora
+// cada escritura verifica el permiso REAL de quien llama (sesión del
+// servidor, `getUserPermissions()` -- no un booleano que mande el cliente).
+const ROL_POR_ESTADO: Record<EstadoCiclo, "jefe" | "coordinador" | null> = {
+  pendiente_anexo: "jefe",
+  pendiente_firma_anexo: "coordinador",
+  pendiente_factura: "jefe",
+  pendiente_firma_factura: "coordinador",
+  pendiente_cierre: "jefe",
+  cerrado: null,
+}
+
+async function verificarPermisoCiclo(rol: "jefe" | "coordinador"): Promise<string | null> {
+  const permisos = await getUserPermissions()
+  const tienePermiso = rol === "jefe" ? permisos?.ciclo_facturacion_jefe : permisos?.ciclo_facturacion_coordinador
+  if (!tienePermiso) {
+    return `No tienes el permiso de ${rol === "jefe" ? "Jefe de Facturación" : "Coordinador"} en Ciclo de Facturación -- este paso no te corresponde.`
+  }
+  return null
 }
 
 const LABEL_ETAPA: Record<EtapaCorregible, string> = {
@@ -248,9 +276,18 @@ export async function registrarEventoCiclo(
   evento: EtapaDocumento,
   archivos: { url: string; nombre: string }[],
   usuario: string,
+  /** true SOLO para la llamada interna del cron (app/api/cron/anexos-
+   *  pendientes/route.ts), que ya se autentica aparte con CRON_SECRET antes
+   *  de llegar aquí y no tiene sesión de usuario -- nunca lo pase la UI. */
+  origenSistema = false,
 ): Promise<{ success: boolean; message?: string }> {
   if (!archivos.length) return { success: false, message: "Adjunta al menos un archivo." }
   try {
+    if (!origenSistema) {
+      const rolRequerido = evento === "anexo_enviado" || evento === "factura_enviada" ? "jefe" : "coordinador"
+      const errPermiso = await verificarPermisoCiclo(rolRequerido)
+      if (errPermiso) return { success: false, message: errPermiso }
+    }
     const sb: any = await getSupabaseAdmin()
     const { data: pref, error: errPref } = await sb
       .from("prefacturas")
@@ -299,6 +336,13 @@ export async function solicitarCorreccion(
 ): Promise<{ success: boolean; message?: string }> {
   if (!nota?.trim()) return { success: false, message: "Escribe el motivo de la corrección." }
   try {
+    // Solo puede corregir SU PROPIA acción -- quien mandó el anexo/factura
+    // (o cerró) es quien puede pedir rehacerla, no el otro rol.
+    const rolQueLaHizo = ROL_POR_ESTADO[ESTADO_ANTERIOR[etapa]]
+    if (rolQueLaHizo) {
+      const errPermiso = await verificarPermisoCiclo(rolQueLaHizo)
+      if (errPermiso) return { success: false, message: errPermiso }
+    }
     const sb: any = await getSupabaseAdmin()
     const { data: pref, error: errPref } = await sb
       .from("prefacturas")
@@ -353,6 +397,8 @@ export async function solicitarCorreccion(
 
 export async function marcarCierre(prefacturaId: number, usuario: string): Promise<{ success: boolean; message?: string }> {
   try {
+    const errPermiso = await verificarPermisoCiclo("jefe") // pendiente_cierre -> cerrado siempre es del Jefe.
+    if (errPermiso) return { success: false, message: errPermiso }
     const sb: any = await getSupabaseAdmin()
     const { data: pref, error: errPref } = await sb
       .from("prefacturas")
