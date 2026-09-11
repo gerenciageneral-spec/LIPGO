@@ -35,6 +35,7 @@ import {
   actualizarCondicionEnvioAnexo,
   getCondicionesGeneracionPrefactura,
   actualizarCondicionGeneracionPrefactura,
+  generarPrefacturaAhora,
   getSoporteDePrefactura,
   type PrefacturaCiclo,
   type EventoCiclo,
@@ -944,9 +945,12 @@ function ModalPago({
 
 function FrecuenciaGeneracionPrefacturaPanel() {
   const { toast } = useToast()
+  const { user } = useAuth() as any
+  const usuario: string = user?.email || user?.nombre || "usuario"
   const [abierto, setAbierto] = useState(true)
   const [condiciones, setCondiciones] = useState<CondicionGeneracionPrefactura[]>([])
   const [guardando, setGuardando] = useState<number | null>(null)
+  const [generando, setGenerando] = useState<number | null>(null)
 
   const cargar = async () => {
     const r = await getCondicionesGeneracionPrefactura()
@@ -968,6 +972,21 @@ function FrecuenciaGeneracionPrefacturaPanel() {
     else toast({ title: "Error", description: r.message, variant: "destructive" })
   }
 
+  const generarAhora = async (c: CondicionGeneracionPrefactura) => {
+    if (!confirm(`¿Generar la prefactura de ${c.proyecto} ahora mismo? Esto crea un documento real (mismo efecto que si corriera el cron hoy).`)) return
+    setGenerando(c.idempresa)
+    const r = await generarPrefacturaAhora(c.idempresa, usuario)
+    setGenerando(null)
+    if (r.estado === "generada") {
+      toast({ title: "Prefactura generada", description: r.mensaje })
+    } else if (r.success) {
+      // al_dia / nada_que_facturar -- no es un error, solo no había nada que generar todavía.
+      toast({ title: "Nada que generar", description: r.mensaje })
+    } else {
+      toast({ title: "No se generó", description: r.mensaje, variant: "destructive" })
+    }
+  }
+
   return (
     <Card>
       <CardHeader className="cursor-pointer pb-2" onClick={() => setAbierto((v) => !v)}>
@@ -977,9 +996,11 @@ function FrecuenciaGeneracionPrefacturaPanel() {
         </CardTitle>
         <CardDescription className="text-xs">
           Sin activar, la prefactura la sigue generando una persona a mano en Cuadro de Control / Prefactura de Producción -- ese sigue siendo el default.
-          Al activarla, el cron genera solo el período siguiente (desde el día después de la última prefactura aprobada, hasta ayer) y, si encuentra
-          advertencias (sin tarifa vigente, pago que no cuadra), igual la genera y te avisa aquí para que la revises después. Si el proyecto NUNCA ha
-          tenido una prefactura, no hay de dónde partir -- escribe la "Fecha de inicio" una sola vez para que arranque; de ahí en adelante sigue solo.
+          Al activarla, el cron genera solo el período siguiente (desde el día después de la última prefactura aprobada, hasta ayer) todos los días a las
+          8am, y si encuentra advertencias (sin tarifa vigente, pago que no cuadra) igual la genera y te avisa aquí para que la revises después. Si el
+          proyecto NUNCA ha tenido una prefactura, no hay de dónde partir -- escribe la "Fecha de inicio" una sola vez para que arranque; de ahí en
+          adelante sigue solo. <strong>Usa "Generar ahora" para probarlo o para no esperar al cron de mañana</strong> -- hace exactamente lo mismo que
+          la corrida automática, pero al instante y con el resultado a la vista.
         </CardDescription>
       </CardHeader>
       {abierto && (
@@ -1023,6 +1044,17 @@ function FrecuenciaGeneracionPrefacturaPanel() {
               <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => guardar(c)} disabled={guardando === c.idempresa}>
                 {guardando === c.idempresa && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
                 Guardar
+              </Button>
+              <Button
+                size="sm"
+                variant="default"
+                className="h-7 text-xs"
+                onClick={() => generarAhora(c)}
+                disabled={generando === c.idempresa}
+                title="Genera ya mismo la prefactura pendiente de este proyecto, sin esperar al cron de mañana"
+              >
+                {generando === c.idempresa && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                Generar ahora
               </Button>
             </div>
           ))}

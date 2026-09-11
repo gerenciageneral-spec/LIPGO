@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getSupabaseAdminAsSystem } from "@/lib/supabase-admin"
-import { registrarEventoCiclo, getCondicionesGeneracionPrefactura } from "@/lib/ciclo-facturacion-actions"
+import { registrarEventoCiclo, getCondicionesGeneracionPrefactura, generarPrefacturaAhora } from "@/lib/ciclo-facturacion-actions"
 import { ownerDePrefactura } from "@/lib/ciclo-facturacion-shared"
 import { construirPdfAnexoFacturacion } from "@/lib/anexo-facturacion-pdf"
-import { getPrefactura, getControlFacturacion, guardarPrefactura, buscarSolapesCuadroControl, type Advertencia, type UnidadCobro } from "@/lib/facturacion-control-actions"
-import { getPrefacturaProduccion, guardarPrefacturaProduccion } from "@/lib/prefactura-produccion-actions"
 
 /**
  * CRON DIARIO -- dos fases, en este orden:
@@ -40,8 +38,6 @@ import { getPrefacturaProduccion, guardarPrefacturaProduccion } from "@/lib/pref
 
 const DIA_SEMANA_DEFAULT = 1 // lunes
 const USUARIO_CRON = "sistema (cron diario)"
-const IDS_PRODUCCION = new Set([1, 2]) // Indupan, Avimol -> Prefactura de Producción; 3/4 -> Cuadro de Control
-const esTon = (u?: UnidadCobro) => u !== "h" && u !== "turno" && u !== "u"
 
 function diaSemanaColombiaHoy(): number {
   const ahora = new Date()
@@ -49,26 +45,14 @@ function diaSemanaColombiaHoy(): number {
   return colombia.getDay()
 }
 
-function fechaAyerColombia(): string {
-  const ahora = new Date()
-  const colombia = new Date(ahora.toLocaleString("en-US", { timeZone: "America/Bogota" }))
-  colombia.setDate(colombia.getDate() - 1)
-  const y = colombia.getFullYear()
-  const m = String(colombia.getMonth() + 1).padStart(2, "0")
-  const d = String(colombia.getDate()).padStart(2, "0")
-  return `${y}-${m}-${d}`
-}
-
-function diaSiguiente(fechaISO: string): string {
-  const d = new Date(fechaISO + "T00:00:00")
-  d.setDate(d.getDate() + 1)
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, "0")
-  const dd = String(d.getDate()).padStart(2, "0")
-  return `${y}-${m}-${dd}`
-}
-
-async function generarPrefacturasAutomaticas(sb: any, hoy: number) {
+/**
+ * Decide, por proyecto, si HOY le toca generar (activo + frecuencia/día) y,
+ * si le toca, delega TODA la lógica de generación a `generarPrefacturaAhora`
+ * -- la MISMA función que usa el botón manual "Generar ahora" de la UI, para
+ * que nunca existan 2 fórmulas paralelas del mismo cálculo (mismo principio
+ * ya aplicado al bono de productividad de Parafiscales/PILA esta sesión).
+ */
+async function generarPrefacturasAutomaticas(hoy: number) {
   const resultado = { generadas: 0, omitidas: 0, errores: [] as { idempresa: number; error: string }[] }
 
   const condiciones = await getCondicionesGeneracionPrefactura()
@@ -78,184 +62,20 @@ async function generarPrefacturasAutomaticas(sb: any, hoy: number) {
   }
 
   for (const cond of condiciones.data) {
-    try {
-      if (!cond.activo) {
-        resultado.omitidas++
-        continue
-      }
-      const leToca = cond.frecuencia === "diario" || cond.dia_semana === hoy
-      if (!leToca) {
-        resultado.omitidas++
-        continue
-      }
-
-      const origen = IDS_PRODUCCION.has(cond.idempresa) ? "produccion" : "cuadro_control"
-      const { data: ultima } = await sb
-        .from("prefacturas")
-        .select("periodo_hasta")
-        .eq("idempresa", cond.idempresa)
-        .eq("origen", origen)
-        .eq("estado", "aprobada")
-        .order("periodo_hasta", { ascending: false })
-        .limit(1)
-        .maybeSingle()
-
-      // Nunca se adivina una fecha de arranque: si el proyecto no tiene
-      // ninguna prefactura previa, el ÚNICO arranque válido es el que el
-      // Jefe escribió a mano en `fecha_inicio` (panel de Ciclo de
-      // Facturación) -- sin eso, se omite (no genera nada) hasta que alguien
-      // decida esa fecha, explícito, una sola vez por proyecto.
-      const desde = ultima?.periodo_hasta ? diaSiguiente(ultima.periodo_hasta) : cond.fecha_inicio
-      if (!desde) {
-        resultado.omitidas++
-        continue
-      }
-
-      const hasta = fechaAyerColombia()
-      if (desde > hasta) {
-        // ya está al día -- no ha pasado un día nuevo por facturar
-        resultado.omitidas++
-        continue
-      }
-
-      if (IDS_PRODUCCION.has(cond.idempresa)) {
-        // -------- Indupan (1) / Avimol (2) --------
-        const prev = await getPrefacturaProduccion(cond.idempresa, desde, hasta)
-        if (!prev.success || !prev.data) {
-          resultado.errores.push({ idempresa: cond.idempresa, error: prev.message || "No se pudo calcular la prefactura de producción" })
-          continue
-        }
-        const data = prev.data
-        if (!(data.total > 0)) {
-          resultado.omitidas++ // nada que facturar este período
-          continue
-        }
-
-        const todasLasLineas = [...data.produccion, ...data.horasExtra]
-        const advertencias: Advertencia[] = [
-          ...data.alertas.map((a) => ({ tipo: a.tipo, detalle: a.detalle })),
-          ...todasLasLineas.filter((l) => l.sinTarifa).map((l) => ({ tipo: "sin_tarifa", detalle: `${l.concepto}: sin tarifa vigente (se cobró $0)` })),
-        ]
-
-        const r = await guardarPrefacturaProduccion({
-          idempresa: cond.idempresa,
-          proyecto: data.proyecto,
-          periodo_desde: desde,
-          periodo_hasta: hasta,
-          lineas: todasLasLineas,
-          soporte: data.soporte,
-          total: data.total,
-          toneladas: data.totalToneladas,
-          usuarioOverride: USUARIO_CRON,
-          advertencias,
-        })
-        if (!r.success) {
-          resultado.errores.push({ idempresa: cond.idempresa, error: r.message || "No se pudo guardar la prefactura de producción" })
-          continue
-        }
-        resultado.generadas++
-      } else {
-        // -------- Cedi Funza (3) / Cedi Medellín (4) --------
-        const solapes = await buscarSolapesCuadroControl(cond.idempresa, desde, hasta)
-        if (solapes.length > 0) {
-          resultado.errores.push({
-            idempresa: cond.idempresa,
-            error: `Solape con prefactura(s) ya aprobada(s): ${solapes.map((s: any) => `#${s.id} ${s.periodo}`).join(", ")} -- no se generó para evitar cobrar dos veces.`,
-          })
-          continue
-        }
-
-        const [prefR, ctrlR] = await Promise.all([
-          getPrefactura(cond.idempresa, { desde, hasta }),
-          getControlFacturacion(cond.idempresa, { desde, hasta }),
-        ])
-        if (!prefR.success || !prefR.data) {
-          resultado.errores.push({ idempresa: cond.idempresa, error: prefR.message || "No se pudo calcular la prefactura" })
-          continue
-        }
-        const pref = prefR.data
-
-        // "Seleccionar todo" -- el default documentado de la UI (guardarBorrador),
-        // aquí sin selección manual porque no hay nadie mirando la pantalla.
-        const lineas = pref.resumen
-          .filter((r) => r.valorPorFacturar > 0)
-          .map((r) => ({
-            owner: r.owner,
-            servicio: r.operacion,
-            toneladas: Number(r.tonPorFacturar.toFixed(3)),
-            tarifa: r.tarifa,
-            total: Math.round(r.valorPorFacturar),
-            fuente: r.fuente,
-            unidad: r.unidad,
-          }))
-        if (lineas.length === 0) {
-          resultado.omitidas++ // nada por facturar (todo ya tiene factura Siigo, o no hubo movimiento)
-          continue
-        }
-
-        const soporte = [
-          ...pref.origen
-            .filter((l) => l.categoria !== "facturado")
-            .map((l) => ({
-              owner: l.owner,
-              operacion: l.grupoResumen || "",
-              servicio: l.servicio,
-              fecha: l.fechacargue,
-              numeroorden: l.numeroorden,
-              placa: l.placa,
-              cliente: l.cliente,
-              producto: l.producto,
-              toneladas: Number((l.toneladas || 0).toFixed(3)),
-              tarifa: l.tarifaServicio,
-              valor: Math.round(l.valorServicio),
-              unidad: l.unidad,
-              tiquete: l.tiquete,
-            })),
-          ...(pref.soporteProduccion || []),
-        ].filter((l) => l.valor > 0)
-
-        const total = Math.round(lineas.reduce((s, l) => s + l.total, 0))
-        const toneladas = Number(lineas.reduce((s, l) => s + (esTon(l.unidad) ? l.toneladas : 0), 0).toFixed(3))
-
-        // OJO: `ordenes_sin_gestionar` NO entra aquí -- es, por definición, el
-        // conteo de "órdenes listas para facturar por primera vez" (de ahí
-        // sale `valorPorFacturar` mismo), no una anomalía. Confirmado con una
-        // corrida en seco contra datos reales: en cualquier período recién
-        // generado ese contador es SIEMPRE > 0 -- tratarlo como advertencia
-        // marcaría TODA prefactura automática como sospechosa, sin serlo, y
-        // el aviso dejaría de servir para algo. Solo cuentan como
-        // advertencia real las anomalías de DATOS (tarifa/pago), no el
-        // estado normal de "esto está pendiente de facturar".
-        const advertencias: Advertencia[] = []
-        if (ctrlR.success && ctrlR.data) {
-          const t = ctrlR.data.totales
-          if (t.ordenes_sin_tarifa > 0) advertencias.push({ tipo: "sin_tarifa", detalle: `${t.ordenes_sin_tarifa} orden(es) sin tarifa vigente (se cobraron $0)` })
-          if (t.ordenes_medio_pago > 0) advertencias.push({ tipo: "pago_no_cuadra", detalle: `${t.ordenes_medio_pago} orden(es) con medio de pago inconsistente` })
-          if (ctrlR.data.produccionAviso) advertencias.push({ tipo: "produccion_aviso", detalle: ctrlR.data.produccionAviso })
-          for (const al of ctrlR.data.produccionAlertas || []) advertencias.push({ tipo: "produccion_alerta", detalle: al })
-        }
-
-        const r = await guardarPrefactura({
-          idempresa: cond.idempresa,
-          proyecto: cond.proyecto,
-          periodo_desde: desde,
-          periodo_hasta: hasta,
-          lineas,
-          soporte,
-          total,
-          toneladas,
-          usuario: USUARIO_CRON,
-          advertencias,
-        })
-        if (!r.success) {
-          resultado.errores.push({ idempresa: cond.idempresa, error: r.message || "No se pudo guardar la prefactura" })
-          continue
-        }
-        resultado.generadas++
-      }
-    } catch (e: any) {
-      resultado.errores.push({ idempresa: cond.idempresa, error: e?.message || String(e) })
+    if (!cond.activo) {
+      resultado.omitidas++
+      continue
     }
+    const leToca = cond.frecuencia === "diario" || cond.dia_semana === hoy
+    if (!leToca) {
+      resultado.omitidas++
+      continue
+    }
+
+    const r = await generarPrefacturaAhora(cond.idempresa, USUARIO_CRON)
+    if (r.estado === "generada") resultado.generadas++
+    else if (!r.success) resultado.errores.push({ idempresa: cond.idempresa, error: r.mensaje })
+    else resultado.omitidas++ // al_dia / nada_que_facturar: resultado esperado, no un error
   }
 
   return resultado
@@ -290,7 +110,7 @@ export async function GET(request: NextRequest) {
     const hoy = diaSemanaColombiaHoy()
 
     // FASE A -- generar automáticamente lo que corresponda hoy.
-    resultados.generacion = await generarPrefacturasAutomaticas(sb, hoy)
+    resultados.generacion = await generarPrefacturasAutomaticas(hoy)
 
     // FASE B -- enviar el anexo de toda prefactura aprobada (recién generada
     // arriba, o aprobada por una persona) que esté esperando su anexo.
