@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import {
   Loader2,
   Landmark,
@@ -42,7 +43,13 @@ import {
   type ParafiscalPersona,
   type ResumenParafiscales,
 } from "@/lib/parafiscales-actions"
-import { generarArchivoCargaPila } from "@/lib/parafiscales-exportador-actions"
+import {
+  generarArchivoCargaPila,
+  listarFichasEstaticas,
+  guardarFichaEstaticaParafiscal,
+  type FilaFichaEstatica,
+} from "@/lib/parafiscales-exportador-actions"
+import { CODIGOS_AFP, CODIGOS_EPS } from "@/lib/pila-codigos-oficiales"
 import PrestacionesActivos from "@/components/prestaciones-activos"
 import CuadroControlNomina from "@/components/cuadro-control-nomina"
 import {
@@ -195,11 +202,11 @@ export default function Parafiscales() {
       return
     }
     const bytes = Uint8Array.from(atob(r.base64), (c) => c.charCodeAt(0))
-    const blob = new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })
+    const blob = new Blob([bytes], { type: "text/plain;charset=utf-8" })
     const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
     a.href = url
-    a.download = r.filename || `Planilla PILA ${mes}-${anio}.xlsx`
+    a.download = r.filename || `Planilla PILA ${mes}-${anio}.txt`
     a.click()
     URL.revokeObjectURL(url)
     if (r.excepciones && r.excepciones.length > 0) {
@@ -209,6 +216,59 @@ export default function Parafiscales() {
       })
     } else {
       toast({ title: "Archivo generado", description: "Revísalo antes de subirlo a Aportes en Línea." })
+    }
+  }
+
+  const [showFichas, setShowFichas] = useState(false)
+  const [fichas, setFichas] = useState<FilaFichaEstatica[]>([])
+  const [cargandoFichas, setCargandoFichas] = useState(false)
+  const [guardandoFicha, setGuardandoFicha] = useState<string | null>(null)
+
+  const abrirFichas = async () => {
+    setShowFichas(true)
+    setCargandoFichas(true)
+    const r = await listarFichasEstaticas()
+    setCargandoFichas(false)
+    if (r.success) setFichas(r.data)
+    else toast({ title: "No se pudieron cargar las fichas", description: r.message, variant: "destructive" })
+  }
+
+  const actualizarFicha = (identificacion: string, campo: keyof FilaFichaEstatica, valor: string) => {
+    setFichas((prev) => prev.map((f) => (f.identificacion === identificacion ? { ...f, [campo]: valor } : f)))
+  }
+
+  const guardarFicha = async (f: FilaFichaEstatica) => {
+    setGuardandoFicha(f.identificacion)
+    // Si nunca se completaron nombre1/apellido1 (ficha nueva), se derivan del
+    // nombre de Head Count -- mismo orden "nombre(s) apellido(s)" verificado
+    // en el backfill original (ej. "DEIVID DANIEL PARRA OSSA" -> nombre1
+    // DEIVID, nombre2 DANIEL, apellido1 PARRA, apellido2 OSSA).
+    let { apellido1, apellido2, nombre1, nombre2 } = f
+    if (!apellido1) {
+      const partes = f.nombre.trim().split(/\s+/)
+      if (partes.length >= 4) {
+        ;[nombre1, nombre2, apellido1, apellido2] = [partes[0], partes[1], partes.slice(2, -1).join(" "), partes[partes.length - 1]]
+      } else if (partes.length === 3) {
+        ;[nombre1, apellido1, apellido2] = partes
+      } else if (partes.length === 2) {
+        ;[nombre1, apellido1] = partes
+      }
+    }
+    const r = await guardarFichaEstaticaParafiscal({
+      identificacion: f.identificacion,
+      proyecto: f.proyecto, departamento: f.departamento, ciudad: f.ciudad,
+      tipo_cotizante: f.tipo_cotizante, subtipo_cotizante: f.subtipo_cotizante,
+      administradora_pension: f.administradora_pension, administradora_salud: f.administradora_salud,
+      administradora_arl: f.administradora_arl, administradora_caja: f.administradora_caja,
+      clase_riesgo: f.clase_riesgo, centro_trabajo: f.centro_trabajo, actividad_economica: f.actividad_economica,
+      apellido1, apellido2, nombre1, nombre2,
+    })
+    setGuardandoFicha(null)
+    if (r.success) {
+      setFichas((prev) => prev.map((x) => (x.identificacion === f.identificacion ? { ...x, tieneFicha: true } : x)))
+      toast({ title: "Ficha guardada", description: f.nombre })
+    } else {
+      toast({ title: "Error al guardar", description: r.message, variant: "destructive" })
     }
   }
 
@@ -319,6 +379,9 @@ export default function Parafiscales() {
                 <Download className="mr-2 h-4 w-4" />
               )}
               Archivo de carga (Aportes en Línea)
+            </Button>
+            <Button size="sm" variant="outline" onClick={abrirFichas}>
+              Ficha PILA (EPS/AFP/CCF)
             </Button>
             <Button size="sm" variant="outline" onClick={cargar} disabled={loading}>
               <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Actualizar
@@ -962,6 +1025,136 @@ export default function Parafiscales() {
           <PrestacionesActivos />
         </>
       )}
+
+      <Dialog open={showFichas} onOpenChange={setShowFichas}>
+        <DialogContent className="max-h-[85vh] max-w-6xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Ficha PILA por trabajador (EPS · AFP · CCF · ubicación)</DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-muted-foreground">
+            Esta ficha alimenta el archivo plano PILA (código oficial de EPS/AFP/CCF, ciudad, clase de riesgo, etc.).
+            Quien no tenga ficha queda excluido del archivo. Las listas de EPS/AFP muestran solo las que ya tienen
+            código oficial mapeado — si falta una nueva, agrégala primero en <code>lib/pila-codigos-oficiales.ts</code>.
+          </p>
+          {cargandoFichas ? (
+            <div className="flex items-center justify-center py-10">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Trabajador</TableHead>
+                    <TableHead>Proyecto</TableHead>
+                    <TableHead>Ciudad</TableHead>
+                    <TableHead>AFP</TableHead>
+                    <TableHead>EPS</TableHead>
+                    <TableHead>CCF (código)</TableHead>
+                    <TableHead>Clase riesgo</TableHead>
+                    <TableHead>Centro trabajo</TableHead>
+                    <TableHead>Act. económica</TableHead>
+                    <TableHead></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {fichas.map((f) => (
+                    <TableRow key={f.identificacion} className={f.tieneFicha ? "" : "bg-amber-500/10"}>
+                      <TableCell>
+                        <div className="font-medium">{f.nombre}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {f.identificacion} {!f.tieneFicha && <span className="text-amber-600">· sin ficha</span>}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          className="h-8 w-32"
+                          value={f.proyecto || ""}
+                          onChange={(e) => actualizarFicha(f.identificacion, "proyecto", e.target.value)}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          className="h-8 w-28"
+                          value={f.ciudad || ""}
+                          onChange={(e) => actualizarFicha(f.identificacion, "ciudad", e.target.value)}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <select
+                          className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+                          value={f.administradora_pension || ""}
+                          onChange={(e) => actualizarFicha(f.identificacion, "administradora_pension", e.target.value)}
+                        >
+                          <option value="">—</option>
+                          {Object.keys(CODIGOS_AFP).map((n) => (
+                            <option key={n} value={n}>{n}</option>
+                          ))}
+                        </select>
+                      </TableCell>
+                      <TableCell>
+                        <select
+                          className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+                          value={f.administradora_salud || ""}
+                          onChange={(e) => actualizarFicha(f.identificacion, "administradora_salud", e.target.value)}
+                        >
+                          <option value="">—</option>
+                          {Object.keys(CODIGOS_EPS).map((n) => (
+                            <option key={n} value={n}>{n}</option>
+                          ))}
+                        </select>
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          className="h-8 w-20"
+                          placeholder="CCF24"
+                          value={f.administradora_caja || ""}
+                          onChange={(e) => actualizarFicha(f.identificacion, "administradora_caja", e.target.value)}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          className="h-8 w-16"
+                          value={f.clase_riesgo || ""}
+                          onChange={(e) => actualizarFicha(f.identificacion, "clase_riesgo", e.target.value)}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          className="h-8 w-28"
+                          value={f.centro_trabajo || ""}
+                          onChange={(e) => actualizarFicha(f.identificacion, "centro_trabajo", e.target.value)}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          className="h-8 w-24"
+                          value={f.actividad_economica || ""}
+                          onChange={(e) => actualizarFicha(f.identificacion, "actividad_economica", e.target.value)}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={guardandoFicha === f.identificacion}
+                          onClick={() => guardarFicha(f)}
+                        >
+                          {guardandoFicha === f.identificacion ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Save className="h-3.5 w-3.5" />
+                          )}
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

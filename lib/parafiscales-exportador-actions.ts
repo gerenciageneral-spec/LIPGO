@@ -2,13 +2,18 @@
 
 // Exportador del archivo de CARGA de Aportes en Línea (PILA) -- distinto del
 // "cuadro de control" de parafiscales-actions.ts (que solo muestra números en
-// pantalla). Este módulo genera el archivo EXCEL que se sube al operador,
-// clonando el layout real de una planilla ya aceptada (columna por columna,
-// 99 columnas) en vez de reconstruirlo desde cero -- así se preservan las
-// otras hojas del archivo (catálogos, etc.) que el portal puede necesitar.
+// pantalla). Este módulo genera el ARCHIVO PLANO real de ancho fijo que exige
+// el operador (Anexo Técnico 2, Resolución 2388/2016 -- ver
+// `lib/pila-planoformat.ts` para las posiciones exactas), NO un Excel. Hasta
+// el 2026-09-11 generaba un .xlsx clonando una plantilla; se reemplazó porque
+// el usuario compartió el archivo plano REAL del último pago (agosto-2026,
+// `Agosto_2026_LIPPROGRESSIVEINTEGRALLOGISTICSSAS_Pila.txt`) y pidió que el
+// generador produjera ese mismo formato -- se validó campo por campo contra
+// ese archivo y contra datos reales de 5 trabajadores antes de implementar
+// (ver el plan de este cambio).
 //
-// Fuente de verdad de cada columna: auditada contra la planilla real de
-// julio-2026 (`7. julio ADDIN.xlsx`, hoja "Liquidaciones (2)"), 2026-09-07.
+// Fuente de verdad del CÁLCULO de cada columna (esto NO cambió con el
+// formato): auditada contra la planilla real de julio-2026, 2026-09-07.
 // Reglas de cotización por tipo de novedad -- confirmadas con esa planilla:
 //   · TRAB  -> cotiza TODO (pensión 0.16, salud 0.04/0.125, ARL, caja 0.04).
 //   · VAC   -> cotiza pensión + SALUD + caja (NO ARL). (parafiscales.ts tenía
@@ -38,22 +43,23 @@
 //     en un tramo corto lo infla de más aunque el mes completo esté bien.
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
-import { calcularAportes, PARAFISCALES_DEFAULT, clasificarDiaCotizacion, type TipoDiaCotizacion } from "@/lib/parafiscales"
+import { calcularAportes, PARAFISCALES_DEFAULT, clasificarDiaCotizacion, type TipoDiaCotizacion, type ClaseRiesgo } from "@/lib/parafiscales"
 import { getLiquidaciones } from "@/lib/liquidaciones-actions"
-import * as XLSX from "xlsx"
-
-const PLANTILLA_STORAGE_PATH = "parafiscales/plantilla-carga-pila.xlsx"
-const PLANTILLA_SHEET = "Liquidaciones (2)"
+import { armarRegistroTipo01, armarRegistroTipo02, type DatosDetallePila02 } from "@/lib/pila-planoformat"
+import { codigoAfp, codigoEps, codigoDivipola } from "@/lib/pila-codigos-oficiales"
 
 function finDeMes(anio: number, mes: number): string {
   const d = new Date(Date.UTC(anio, mes, 0))
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`
 }
 
-function serialExcel(fechaIso: string): number {
-  const [y, m, d] = fechaIso.split("-").map(Number)
-  return Math.round((Date.UTC(y, m - 1, d) - Date.UTC(1899, 11, 30)) / 86400000)
+// "1. DEPENDIENTE" -> "01"; "NINGUNO" -> "00" (sin dígito líder = sin subtipo).
+function codigoCotizante(texto: string | null | undefined): string {
+  const m = String(texto || "").match(/^(\d+)/)
+  return m ? m[1].padStart(2, "0") : "00"
 }
+
+const CLASE_RIESGO_DIGITO: Record<ClaseRiesgo, string> = { I: "1", II: "2", III: "3", IV: "4", V: "5" }
 
 interface Segmento {
   tipo: TipoDiaCotizacion
@@ -69,11 +75,12 @@ export interface ExcepcionExportador {
 }
 
 /**
- * Genera el archivo de carga PILA de un mes, clonando el layout real (99
- * columnas) desde la plantilla guardada en Storage. Devuelve el archivo en
- * base64 (para descargar desde el cliente) + la lista de excepciones a
- * revisar manualmente (personas sin ficha estática, bono repartido entre
- * varios tramos del mismo tipo, etc.).
+ * Genera el archivo plano PILA de ancho fijo de un mes (registro tipo 01 +
+ * un registro tipo 02 por tramo de novedad de cada trabajador). Devuelve el
+ * archivo en base64 (para descargar desde el cliente) + la lista de
+ * excepciones a revisar manualmente (personas sin ficha estática, sin código
+ * oficial de administradora mapeado, bono repartido entre varios tramos del
+ * mismo tipo, etc.).
  */
 export async function generarArchivoCargaPila(
   anio: number,
@@ -174,8 +181,9 @@ export async function generarArchivoCargaPila(
     }
 
     const excepciones: ExcepcionExportador[] = []
-    const filasSalida: any[] = []
+    const registrosDetalle: DatosDetallePila02[] = []
     let noCounter = 0
+    let valorTotalNomina = 0
 
     for (const [nombre, dias] of porPersona) {
       const ficha = info.get(nombre)!
@@ -196,7 +204,18 @@ export async function generarArchivoCargaPila(
       const bonoQ1 = Math.max(0, excQ1)
       const bonoQ2 = Math.max(0, excQ2)
 
+      // TRAB se consolida en UN SOLO segmento para todo el mes, sin importar
+      // cuántas veces se interrumpa por otra novedad (incapacidad, suspensión,
+      // vacaciones...) -- verificado campo por campo contra el archivo real de
+      // agosto-2026 (Anexo Técnico 2): el registro tipo 02 de "días trabajados"
+      // es UNO por persona por mes, con la suma completa de días/IBC, mientras
+      // que cada OTRA novedad sí sigue reportándose en su propio tramo (fusión
+      // solo si son días consecutivos de la MISMA novedad). Antes de este fix
+      // (2026-09-11) un trabajador con, por ejemplo, dos días de suspensión no
+      // consecutivos partía su TRAB en 3 pedazos -- no coincidía con el archivo
+      // real, que siempre trae un único renglón de días trabajados.
       const segmentos: Segmento[] = []
+      let segmentoTrab: Segmento | null = null
       for (const r of dias) {
         const fecha = String(r.fecha)
         const diaMes = Number(fecha.slice(8, 10))
@@ -206,43 +225,49 @@ export async function generarArchivoCargaPila(
         const tipo = clasificarDiaCotizacion(r.novedad_reportada)
         if (tipo === "RETIRO") continue
 
-        if (esDia31) {
-          if (tipo === "TRAB") {
-            for (let k = segmentos.length - 1; k >= 0; k--) {
-              if (segmentos[k].tipo === "TRAB") {
-                segmentos[k].ibcTrabDevengado += Number(r.total_liquidado_dia || 0)
-                break
-              }
-            }
+        if (tipo === "TRAB") {
+          if (!segmentoTrab) {
+            segmentoTrab = { tipo: "TRAB", diaIni: diaMes, diaFin: diaMes, dias: 0, ibcTrabDevengado: 0 }
+            segmentos.push(segmentoTrab)
           }
+          // El día 31 suma su devengado pero NO cuenta como día adicional
+          // (mes de 30 días, ver pagonomina_reemplazo.sql).
+          if (!esDia31) { segmentoTrab.dias += 1; segmentoTrab.diaFin = diaMes }
+          segmentoTrab.ibcTrabDevengado += Number(r.total_liquidado_dia || 0)
           continue
         }
+        if (esDia31) continue // otras novedades no se reportan el día 31
 
         const last = segmentos[segmentos.length - 1]
         if (last && last.tipo === tipo && last.diaFin === diaMes - 1) {
           last.diaFin = diaMes
           last.dias += 1
-          if (tipo === "TRAB") last.ibcTrabDevengado += Number(r.total_liquidado_dia || 0)
         } else {
-          segmentos.push({ tipo, diaIni: diaMes, diaFin: diaMes, dias: 1, ibcTrabDevengado: tipo === "TRAB" ? Number(r.total_liquidado_dia || 0) : 0 })
+          segmentos.push({ tipo, diaIni: diaMes, diaFin: diaMes, dias: 1, ibcTrabDevengado: 0 })
         }
       }
 
-      const trabQ1 = segmentos.filter((s) => s.tipo === "TRAB" && s.diaIni <= 15)
-      const trabQ2 = segmentos.filter((s) => s.tipo === "TRAB" && s.diaFin > 15)
-      if (trabQ1.length > 1 || trabQ2.length > 1) {
-        excepciones.push({ persona: nombre, motivo: "Varios tramos trabajados en la misma quincena -- el bono de productividad se repartió proporcional por días, revisar." })
+      // El tramo TRAB siempre va PRIMERO en el archivo real (verificado),
+      // aunque el primer día calendario del mes no sea un día trabajado (ej.
+      // arranca con una incapacidad) -- `segmentoTrab` puede haberse insertado
+      // en cualquier posición según el orden cronológico en que se recorrieron
+      // los días; se reordena aquí sin tocar el resto de la secuencia.
+      if (segmentoTrab && segmentos[0] !== segmentoTrab) {
+        segmentos.splice(segmentos.indexOf(segmentoTrab), 1)
+        segmentos.unshift(segmentoTrab)
       }
-      const diasQ1 = trabQ1.reduce((s, x) => s + x.dias, 0)
-      const diasQ2 = trabQ2.reduce((s, x) => s + x.dias, 0)
-      let bonoQ1Asignado = false, bonoQ2Asignado = false
-      if (bonoQ1 > 0 && diasQ1 > 0) { for (const s of trabQ1) s.ibcTrabDevengado += (bonoQ1 * s.dias) / diasQ1; bonoQ1Asignado = true }
-      if (bonoQ2 > 0 && diasQ2 > 0) { for (const s of trabQ2) s.ibcTrabDevengado += (bonoQ2 * s.dias) / diasQ2; bonoQ2Asignado = true }
-      if (bonoQ1 > 0 && !bonoQ1Asignado) excepciones.push({ persona: nombre, motivo: `Bono quincena 1 (${Math.round(bonoQ1)}) sin tramo trabajado donde asignarlo.` })
-      if (bonoQ2 > 0 && !bonoQ2Asignado) excepciones.push({ persona: nombre, motivo: `Bono quincena 2 (${Math.round(bonoQ2)}) sin tramo trabajado donde asignarlo.` })
 
-      // Piso de 1 SMLV proporcional -- UNA vez sobre el total del mes, no por tramo.
-      const todosTrab = segmentos.filter((s) => s.tipo === "TRAB")
+      // El bono de productividad de las 2 quincenas se suma completo al ÚNICO
+      // segmento TRAB del mes (ya no hay que repartirlo proporcional entre
+      // varios tramos -- solo puede haber uno).
+      if (segmentoTrab) {
+        segmentoTrab.ibcTrabDevengado += bonoQ1 + bonoQ2
+      } else if (bonoQ1 > 0 || bonoQ2 > 0) {
+        excepciones.push({ persona: nombre, motivo: `Bono de productividad (${Math.round(bonoQ1 + bonoQ2)}) sin días trabajados en el mes donde asignarlo.` })
+      }
+
+      // Piso de 1 SMLV -- sobre el único segmento TRAB del mes.
+      const todosTrab = segmentoTrab ? [segmentoTrab] : []
       const diasTrabTotal = todosTrab.reduce((s, x) => s + x.dias, 0)
       const ibcTrabTotal = todosTrab.reduce((s, x) => s + x.ibcTrabDevengado, 0)
       const pisoMes = (smlv / 30) * diasTrabTotal
@@ -274,11 +299,14 @@ export async function generarArchivoCargaPila(
         const fIni = `${anio}-${String(mes).padStart(2, "0")}-${String(seg.diaIni).padStart(2, "0")}`
         const fFin = `${anio}-${String(mes).padStart(2, "0")}-${String(seg.diaFin).padStart(2, "0")}`
         const llevaBono = seg.tipo === "TRAB" && ((seg.diaIni <= 15 && bonoQ1 > 0) || (seg.diaFin > 15 && bonoQ2 > 0))
-        // Vacaciones de liquidación de retiro: se suman SOLO al segmento de
-        // CIERRE (el que lleva `retFecha`), y SOLO al IBC/valor de Caja -- ver
-        // comentario junto a `vacLiqPorCedula` más arriba.
-        const esSegmentoCierre = retEsteMes && seg === segmentos[segmentos.length - 1]
-        const vacLiqAplicada = esSegmentoCierre ? vacLiqPorCedula.get(ficha.identificacion) || 0 : 0
+        // Ingreso/retiro (y las vacaciones de liquidación, ver más abajo) van
+        // en el tramo TRAB cuando existe -- verificado contra el archivo real:
+        // el retiro se marca en la fila de días trabajados, no en la última
+        // fila del array por posición (que podía ser cualquier otra novedad
+        // si el mes terminaba, por ejemplo, en una incapacidad).
+        const esPrimerSegmento = segmentoTrab ? seg === segmentoTrab : seg === segmentos[0]
+        const esSegmentoCierre = segmentoTrab ? seg === segmentoTrab : seg === segmentos[segmentos.length - 1]
+        const vacLiqAplicada = retEsteMes && esSegmentoCierre ? vacLiqPorCedula.get(ficha.identificacion) || 0 : 0
         const cajaIbcFila = ap.ibcCaja + vacLiqAplicada
         const cajaValorFila = ap.caja + vacLiqAplicada * (PARAFISCALES_DEFAULT.pctCaja / 100)
         // Tarifa combinada (empleador+empleado) calculada del valor real sobre el
@@ -286,124 +314,82 @@ export async function generarArchivoCargaPila(
         // días normales pero 12% en ausentismo/suspensión (solo empleador), y
         // salud da 12.5%/4%(exonerado) en días normales pero 4% siempre en
         // incapacidad (el 8.5% patronal no se causa, ver lib/parafiscales.ts).
-        const pensionTarifa = ap.ibcPension > 0 ? (ap.pensionEmpleador + ap.pensionEmpleado) / ap.ibcPension : 0
-        const saludTarifa = ap.ibcSalud > 0 ? (ap.saludEmpleador + ap.saludEmpleado) / ap.ibcSalud : 0
-        filasSalida.push({
-          no: noCounter, tipoId: "CC", noId: ficha.identificacion,
-          proyecto: est.proyecto, apellido1: est.apellido1 || "", apellido2: est.apellido2 || "", nombre1: est.nombre1 || "", nombre2: est.nombre2 || "",
-          departamento: est.departamento, ciudad: est.ciudad, tipoCotizante: est.tipo_cotizante, subtipoCotizante: est.subtipo_cotizante,
-          horasLaboradas: seg.dias * 7,
-          vst: llevaBono ? "SI" : "NO", salarioVariable: tieneSalarioVariable ? "SI" : "NO",
-          ingFecha: ingEsteMes && seg === segmentos[0] ? ficha.fechaInicio : null,
-          retFecha: retEsteMes && seg === segmentos[segmentos.length - 1] ? ficha.fechaRetiro : null,
-          tipoSegmento: seg.tipo, fechaIniSerial: serialExcel(fIni), fechaFinSerial: serialExcel(fFin),
-          salarioMensual: ficha.salario,
-          pensionAdmin: est.administradora_pension, pensionDias: seg.dias, pensionIbc: ap.ibcPension, pensionTarifa, pensionValor: ap.pensionEmpleador + ap.pensionEmpleado,
-          saludAdmin: est.administradora_salud, saludDias: seg.dias, saludIbc: ap.ibcSalud, saludTarifa, saludValor: ap.saludEmpleador + ap.saludEmpleado,
-          arlAdmin: est.administradora_arl, arlDias: seg.dias, arlIbc: ap.ibcArl, arlTarifa: ap.ibcArl > 0 ? ap.pctArl / 100 : 0, arlValor: ap.arl,
-          claseRiesgo: est.clase_riesgo, centroTrabajo: est.centro_trabajo, actividadEconomica: est.actividad_economica,
-          cajaAdmin: est.administradora_caja, cajaDias: seg.dias, cajaIbc: cajaIbcFila, cajaTarifa: cajaIbcFila > 0 ? PARAFISCALES_DEFAULT.pctCaja / 100 : 0, cajaValor: cajaValorFila,
-          senaValor: ap.sena, icbfValor: ap.icbf, exonerado: ap.exonerado ? "SI" : "NO",
+        // `campoTarifa` (pila-planoformat.ts) espera PORCENTAJE (ej. 16), por
+        // eso se multiplica por 100 la fracción que sale de calcularAportes.
+        const pensionTarifaPct = (ap.ibcPension > 0 ? (ap.pensionEmpleador + ap.pensionEmpleado) / ap.ibcPension : 0) * 100
+        const saludTarifaPct = (ap.ibcSalud > 0 ? (ap.saludEmpleador + ap.saludEmpleado) / ap.ibcSalud : 0) * 100
+
+        const codAfp = codigoAfp(est.administradora_pension)
+        const codEps = codigoEps(est.administradora_salud)
+        if (!codAfp || !codEps) {
+          excepciones.push({
+            persona: `${nombre} (${ficha.identificacion})`,
+            motivo: `Administradora sin código oficial mapeado: ${!codAfp ? `pensión "${est.administradora_pension}"` : ""}${!codAfp && !codEps ? " y " : ""}${!codEps ? `salud "${est.administradora_salud}"` : ""} -- agrégala en lib/pila-codigos-oficiales.ts.`,
+          })
+        }
+        const [divipolaDepto, divipolaMunicipio] = codigoDivipola(est.ciudad).split("-")
+        const centroTrabajoNum = Number(String(est.centro_trabajo || "").match(/(\d+)$/)?.[1] || 0)
+
+        valorTotalNomina += cajaIbcFila
+        registrosDetalle.push({
+          secuencia: noCounter,
+          identificacion: ficha.identificacion,
+          tipoCotizante: codigoCotizante(est.tipo_cotizante),
+          subtipoCotizante: codigoCotizante(est.subtipo_cotizante),
+          divipolaDepto, divipolaMunicipio,
+          apellido1: est.apellido1 || "", apellido2: est.apellido2 || "", nombre1: est.nombre1 || "", nombre2: est.nombre2 || "",
+          ing: ingEsteMes && esPrimerSegmento ? "X" : "",
+          ret: retEsteMes && esSegmentoCierre ? "X" : "",
+          vst: llevaBono ? "X" : "",
+          sln: seg.tipo === "AUS" ? "X" : "",
+          ige: seg.tipo === "INCAP" ? "X" : "",
+          lma: "",
+          vacLr: seg.tipo === "VAC" ? "X" : seg.tipo === "LICR" ? "L" : "",
+          codAfp, codEps, codCcf: est.administradora_caja || null,
+          diasPension: seg.dias, diasSalud: seg.dias, diasArl: seg.dias, diasCcf: seg.dias,
+          salario: ficha.salario,
+          tipoSalario: tieneSalarioVariable ? "V" : "F",
+          ibcPension: ap.ibcPension, ibcSalud: ap.ibcSalud, ibcArl: ap.ibcArl, ibcCcf: cajaIbcFila,
+          tarifaPensionPct: pensionTarifaPct,
+          cotizacionPension: ap.pensionEmpleador + ap.pensionEmpleado,
+          tarifaSaludPct: saludTarifaPct,
+          cotizacionSalud: ap.saludEmpleador + ap.saludEmpleado,
+          tarifaArlPct: ap.pctArl,
+          centroTrabajo: centroTrabajoNum,
+          cotizacionArl: ap.arl,
+          tarifaCcfPct: cajaIbcFila > 0 ? PARAFISCALES_DEFAULT.pctCaja : 0,
+          valorCcf: cajaValorFila,
+          tarifaSenaPct: ap.exonerado ? 0 : PARAFISCALES_DEFAULT.pctSena,
+          valorSena: ap.sena,
+          tarifaIcbfPct: ap.exonerado ? 0 : PARAFISCALES_DEFAULT.pctIcbf,
+          valorIcbf: ap.icbf,
+          exonerado: ap.exonerado,
+          claseRiesgo: CLASE_RIESGO_DIGITO[ap.claseArl],
+          fechaIngreso: ingEsteMes && esPrimerSegmento ? ficha.fechaInicio : null,
+          fechaRetiro: retEsteMes && esSegmentoCierre ? ficha.fechaRetiro : null,
+          fechaInicioSln: seg.tipo === "AUS" ? fIni : null,
+          fechaFinSln: seg.tipo === "AUS" ? fFin : null,
+          fechaInicioIge: seg.tipo === "INCAP" ? fIni : null,
+          fechaFinIge: seg.tipo === "INCAP" ? fFin : null,
+          fechaInicioVacLr: seg.tipo === "VAC" || seg.tipo === "LICR" ? fIni : null,
+          fechaFinVacLr: seg.tipo === "VAC" || seg.tipo === "LICR" ? fFin : null,
+          ibcOtrosParafiscales: ap.baseParafiscales,
+          horasLaboradas: seg.tipo === "TRAB" ? seg.dias * 7 : 0,
+          actividadEconomica: est.actividad_economica || "",
         })
       }
     }
 
-    if (filasSalida.length === 0) {
+    if (registrosDetalle.length === 0) {
       return { success: false, message: `No hay datos de nómina para ${mes}/${anio}.` }
     }
 
-    // Cargar la plantilla real desde Storage y reemplazar solo los datos de
-    // la hoja de Liquidaciones -- las demás hojas quedan intactas.
-    const { data: plantillaBlob, error: dlErr } = await admin.storage.from("archivos").download(PLANTILLA_STORAGE_PATH)
-    if (dlErr || !plantillaBlob) {
-      return { success: false, message: `No se pudo leer la plantilla del archivo de carga: ${dlErr?.message || "no encontrada"}.` }
-    }
-    const plantillaBuf = Buffer.from(await plantillaBlob.arrayBuffer())
-    const wb = XLSX.read(plantillaBuf, { type: "buffer" })
-    const filasJulio = XLSX.utils.sheet_to_json(wb.Sheets[PLANTILLA_SHEET], { header: 1, defval: "" }) as any[][]
-    // FIX 2026-09-11: el portal quitó la columna "Proyecto" (índice 3) de su
-    // formato de exportación entre julio y agosto -- confirmado columna por
-    // columna contra la planilla real de agosto (`addin ss 202608.xlsx`):
-    // TODO lo demás coincide exacto una vez se quita esa única columna, en
-    // las 99 columnas y en las 18 filas de encabezado por igual (no solo en
-    // la tabla de empleados). La plantilla guardada (julio) todavía la
-    // tiene, así que se quita aquí al clonar el encabezado -- ver el mismo
-    // ajuste más abajo en `row.splice(3, 1)` para las filas de datos.
-    const encabezado = filasJulio.slice(0, 18).map((fila) => {
-      const f = [...fila]
-      f.splice(3, 1)
-      return f
-    })
-
-    const NO = "NO"
-    const ESPACIOS15 = "               "
-    const nuevasFilas: any[][] = []
-    for (const f of filasSalida) {
-      // Se sigue construyendo con los mismos 99 índices de siempre (para no
-      // tener que re-numerar cada asignación de abajo) y se quita la columna
-      // "Proyecto" (índice 3) al final con splice -- ver el comentario junto
-      // a `encabezado` más arriba.
-      const row = new Array(99).fill("")
-      row[0] = f.no; row[1] = f.tipoId; row[2] = f.noId; row[3] = f.proyecto
-      row[4] = f.apellido1; row[5] = f.apellido2; row[6] = f.nombre1; row[7] = f.nombre2
-      row[8] = f.departamento; row[9] = f.ciudad; row[10] = f.tipoCotizante; row[11] = f.subtipoCotizante
-      row[12] = f.horasLaboradas
-      row[13] = NO; row[14] = NO; row[15] = ""
-      row[16] = f.ingFecha ? "Todos los sistemas (ARL, AFP, CCF, EPS)" : NO
-      row[17] = f.ingFecha ? serialExcel(f.ingFecha) : ""
-      row[18] = f.retFecha ? "Todos los sistemas (ARL, AFP, CCF, EPS)" : NO
-      row[19] = f.retFecha ? serialExcel(f.retFecha) : ""
-      row[20] = NO; row[21] = NO; row[22] = NO; row[23] = NO
-      row[24] = NO; row[25] = ""
-      row[26] = f.vst
-      row[27] = NO; row[28] = ""; row[29] = ""
-      row[30] = NO; row[31] = ""; row[32] = ""
-      row[33] = NO; row[34] = ""; row[35] = ""
-      row[36] = NO; row[37] = ""; row[38] = ""
-      row[39] = NO
-      row[40] = NO; row[41] = ""; row[42] = ""
-      row[43] = 0; row[44] = ""; row[45] = ""
-      if (f.tipoSegmento === "AUS") { row[27] = "LICENCIA NO REMUNERADA"; row[28] = f.fechaIniSerial; row[29] = f.fechaFinSerial }
-      if (f.tipoSegmento === "INCAP") { row[30] = "INCAPACIDAD GENERAL"; row[31] = f.fechaIniSerial; row[32] = f.fechaFinSerial }
-      if (f.tipoSegmento === "VAC") { row[36] = "VACACIONES"; row[37] = f.fechaIniSerial; row[38] = f.fechaFinSerial }
-      if (f.tipoSegmento === "LICR") { row[36] = "LICENCIA REMUNERADA"; row[37] = f.fechaIniSerial; row[38] = f.fechaFinSerial }
-      row[46] = 0
-      row[47] = f.salarioMensual
-      row[48] = NO
-      row[49] = f.salarioVariable
-      row[50] = f.pensionAdmin; row[51] = f.pensionDias; row[52] = Math.round(f.pensionIbc); row[53] = f.pensionTarifa; row[54] = Math.round(f.pensionValor)
-      row[55] = "Sin Riesgo"; row[56] = 0; row[57] = 0; row[58] = 0; row[59] = 0; row[60] = 0
-      row[61] = Math.round(f.pensionValor)
-      row[62] = "NINGUNA"
-      row[63] = f.saludAdmin; row[64] = f.saludDias; row[65] = Math.round(f.saludIbc); row[66] = f.saludTarifa; row[67] = Math.round(f.saludValor)
-      row[68] = 0; row[69] = ESPACIOS15; row[70] = 0; row[71] = ESPACIOS15; row[72] = 0
-      row[73] = "NINGUNA"
-      row[74] = f.arlAdmin; row[75] = f.arlDias; row[76] = Math.round(f.arlIbc); row[77] = f.arlTarifa
-      row[78] = f.claseRiesgo; row[79] = f.centroTrabajo; row[80] = f.actividadEconomica
-      row[81] = Math.round(f.arlValor)
-      row[82] = f.cajaDias; row[83] = f.cajaAdmin; row[84] = Math.round(f.cajaIbc); row[85] = f.cajaTarifa; row[86] = Math.round(f.cajaValor)
-      row[87] = 0
-      row[88] = f.exonerado === "SI" ? 0 : 2; row[89] = Math.round(f.senaValor)
-      row[90] = f.exonerado === "SI" ? 0 : 3; row[91] = Math.round(f.icbfValor)
-      row[92] = 0; row[93] = 0; row[94] = 0; row[95] = 0
-      row[96] = f.exonerado
-      row[97] = ""; row[98] = ""
-      row.splice(3, 1) // quitar "Proyecto" -- el portal ya no la trae (ver FIX 2026-09-11 arriba)
-      nuevasFilas.push(row)
-    }
-
-    if (encabezado[9]) {
-      const periodoAnterior = `${anio}-${String(mes).padStart(2, "0")}`
-      for (let i = 0; i < encabezado[9].length; i++) {
-        if (typeof encabezado[9][i] === "string" && /^\d{4}-\d{2}$/.test(encabezado[9][i])) encabezado[9][i] = periodoAnterior
-      }
-    }
-
-    const nuevaHoja = XLSX.utils.aoa_to_sheet([...encabezado, ...nuevasFilas])
-    wb.Sheets[PLANTILLA_SHEET] = nuevaHoja
-    const buf = XLSX.write(wb, { bookType: "xlsx", type: "buffer" }) as Buffer
-    const filename = `Planilla PILA ${String(mes).padStart(2, "0")}-${anio} (LIPgo - REVISAR antes de subir).xlsx`
-    return { success: true, base64: buf.toString("base64"), filename, excepciones }
+    const cotizantesUnicos = new Set(registrosDetalle.map((r) => r.identificacion)).size
+    const lineaEncabezado = armarRegistroTipo01({ anio, mes, numCotizantes: cotizantesUnicos, valorTotalNomina })
+    const lineasDetalle = registrosDetalle.map((r) => armarRegistroTipo02(r))
+    const contenido = [lineaEncabezado, ...lineasDetalle].join("\r\n")
+    const filename = `Planilla PILA ${String(mes).padStart(2, "0")}-${anio} (LIPgo - REVISAR antes de subir).txt`
+    return { success: true, base64: Buffer.from(contenido, "utf8").toString("base64"), filename, excepciones }
   } catch (e: any) {
     return { success: false, message: e?.message || "Error al generar el archivo de carga." }
   }
@@ -424,6 +410,10 @@ export async function guardarFichaEstaticaParafiscal(payload: {
   clase_riesgo?: string | null
   centro_trabajo?: string | null
   actividad_economica?: string | null
+  apellido1?: string | null
+  apellido2?: string | null
+  nombre1?: string | null
+  nombre2?: string | null
 }): Promise<{ success: boolean; message?: string }> {
   if (!payload?.identificacion) return { success: false, message: "Falta la identificación." }
   try {
@@ -446,5 +436,89 @@ export async function getFichaEstaticaParafiscal(identificacion: string): Promis
     return { success: true, data }
   } catch (e: any) {
     return { success: false, message: e?.message || "Error al leer la ficha." }
+  }
+}
+
+export interface FilaFichaEstatica {
+  identificacion: string
+  nombre: string
+  idempresa: number | null
+  tieneFicha: boolean
+  proyecto: string | null
+  departamento: string | null
+  ciudad: string | null
+  tipo_cotizante: string | null
+  subtipo_cotizante: string | null
+  administradora_pension: string | null
+  administradora_salud: string | null
+  administradora_arl: string | null
+  administradora_caja: string | null
+  clase_riesgo: string | null
+  centro_trabajo: string | null
+  actividad_economica: string | null
+  apellido1: string | null
+  apellido2: string | null
+  nombre1: string | null
+  nombre2: string | null
+}
+
+/**
+ * Headcount activo (con contrato SIIGO) cruzado con `parafiscales_estatico`,
+ * para la pantalla de mantenimiento de la ficha -- así se ve, de un vistazo,
+ * quién todavía no tiene ficha (necesaria para el archivo plano PILA) en vez
+ * de tener que ir a buscarlo a mano en la base de datos.
+ */
+export async function listarFichasEstaticas(): Promise<{ success: boolean; data: FilaFichaEstatica[]; message?: string }> {
+  try {
+    const admin: any = await getSupabaseAdmin()
+    const { data: personal, error: hErr } = await admin
+      .from("headcount")
+      .select("identificacion, nombre, idempresa, estado, contratosiigo")
+      .not("nombre", "ilike", "%prueba%")
+      .order("nombre", { ascending: true })
+    if (hErr) return { success: false, data: [], message: hErr.message }
+    const { data: fichas, error: fErr } = await admin.from("parafiscales_estatico").select("*")
+    if (fErr) return { success: false, data: [], message: fErr.message }
+    const fichaPorCedula = new Map<string, any>()
+    for (const f of fichas || []) fichaPorCedula.set(String(f.identificacion).trim(), f)
+
+    const vistos = new Set<string>()
+    const out: FilaFichaEstatica[] = []
+    for (const h of personal || []) {
+      const nombre = String(h.nombre || "").trim()
+      const identificacion = String(h.identificacion || "").trim()
+      if (!nombre || !identificacion || !String(h.contratosiigo || "").trim()) continue
+      if (String(h.estado || "").trim().toUpperCase() !== "ACTIVO") continue
+      if (vistos.has(identificacion)) continue
+      vistos.add(identificacion)
+      const f = fichaPorCedula.get(identificacion)
+      out.push({
+        identificacion,
+        nombre,
+        idempresa: h.idempresa ?? null,
+        tieneFicha: !!f,
+        proyecto: f?.proyecto ?? null,
+        departamento: f?.departamento ?? null,
+        ciudad: f?.ciudad ?? null,
+        tipo_cotizante: f?.tipo_cotizante ?? null,
+        subtipo_cotizante: f?.subtipo_cotizante ?? null,
+        administradora_pension: f?.administradora_pension ?? null,
+        administradora_salud: f?.administradora_salud ?? null,
+        administradora_arl: f?.administradora_arl ?? null,
+        administradora_caja: f?.administradora_caja ?? null,
+        clase_riesgo: f?.clase_riesgo ?? null,
+        centro_trabajo: f?.centro_trabajo ?? null,
+        actividad_economica: f?.actividad_economica ?? null,
+        apellido1: f?.apellido1 ?? null,
+        apellido2: f?.apellido2 ?? null,
+        nombre1: f?.nombre1 ?? null,
+        nombre2: f?.nombre2 ?? null,
+      })
+    }
+    // Sin ficha primero -- son las que urge completar.
+    out.sort((a, b) => Number(a.tieneFicha) - Number(b.tieneFicha) || a.nombre.localeCompare(b.nombre))
+    return { success: true, data: out }
+  } catch (e: any) {
+    return { success: false, data: [], message: e?.message || "Error al listar las fichas." }
   }
 }
