@@ -11,12 +11,17 @@
  * plano sobre datos reales, auditable, sin riesgo de alucinación en algo
  * adyacente a nómina. Reusa tal cual:
  *  - `getControlToneladas` (toneladas / % de meta)
- *  - `getProgramacionQuincena` (Cobertura = necesidad por puesto, ya
- *    declarada por el coordinador en `demanda_puesto`)
+ *  - `getHorarioTolva` (cuántos turnos de Tolva programó el coordinador ese
+ *    día -- único insumo variable de `NECESIDAD_FIJA`, ver ID1 abajo)
  *  - `categoriaDeNovedad` (filtro de domingo, mismo código que usa nómina
  *    para Siigo -- "sin justa causa" = novedad "licencia no remunerada")
- *  - `resolverPuesto`/`normalizarPuesto` (gating de Pacas/Cosedor contra
- *    Solicitudes Adicionales)
+ *  - `resolverPuesto` (gating de Pacas/Cosedor contra Solicitudes Adicionales)
+ *
+ * "Necesidad por puesto" son cantidades FIJAS de planta confirmadas por el
+ * negocio (`NECESIDAD_FIJA`, 2026-09-20) -- NO se leen de la Cobertura de
+ * Vista de quincena (esa demanda día-a-día existe en el esquema pero nadie
+ * la ha declarado todavía; si algún día se usa, se puede sumar como
+ * excepción puntual sin tocar esta lógica).
  *
  * Criterios, en el orden confirmado por el negocio:
  *   1) Horas extra acumuladas (últimos 7 días) -- quien ya está topado entra
@@ -33,9 +38,9 @@
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getControlToneladas } from "@/lib/control-toneladas-actions"
-import { getProgramacionQuincena } from "@/lib/programacion-quincena-actions"
+import { getHorarioTolva } from "@/lib/horario-tolva-actions"
 import { categoriaDeNovedad } from "@/lib/ausentismo-categorias"
-import { normalizarPuesto, resolverPuesto } from "@/lib/puestos-turno-alias"
+import { resolverPuesto } from "@/lib/puestos-turno-alias"
 import { normalizeName } from "@/lib/nomina-calculo-utils"
 
 const INDUPAN = 1
@@ -70,9 +75,44 @@ const MATRIZ_ROTACION: Record<number, ReglaRotacion> = {
   },
   [CEDI_FUNZA]: {
     origen: null,
+    // Los mismos 7 de Cargue/Descargue cubren Distribución rotando -- no hay
+    // un pool separado para Distribución en este proyecto.
     destinos: [{ puesto: "Distribución Turno" }],
     rotacionSemanalObligatoria: true,
   },
+}
+
+interface ItemNecesidadFija {
+  puesto: string
+  /** Cantidad fija de planta, o "porTurnoTolva" (solo ID1 Auxiliar Mixto: 4 × turnos de Tolva configurados ese día). */
+  cantidad: number | "porTurnoTolva"
+}
+
+/**
+ * Cantidades FIJAS de planta por puesto, confirmadas por el negocio
+ * 2026-09-20. Puestos de un proyecto que NO aparecen aquí (ej.
+ * "Cargue/Descargue Huevos" en ID2) no tienen cupo fijo declarado -- la
+ * sugerencia no los acota.
+ */
+const NECESIDAD_FIJA: Record<number, ItemNecesidadFija[]> = {
+  [INDUPAN]: [
+    { puesto: "Cargue/Descargue", cantidad: 12 },
+    { puesto: "Auxiliar Mixto", cantidad: "porTurnoTolva" },
+  ],
+  [AVIMOL]: [
+    { puesto: "Cargue/Descargue", cantidad: 12 },
+    { puesto: "Estibado PT", cantidad: 3 },
+    { puesto: "Operario Salvado", cantidad: 3 },
+    { puesto: "Montacargas de producción", cantidad: 1 },
+    { puesto: "Montacargas de cargue", cantidad: 1 },
+    { puesto: "Distribución Turno", cantidad: 4 },
+  ],
+  [CEDI_FUNZA]: [
+    { puesto: "Cargue/Descargue", cantidad: 7 },
+    // "1 montacargas" -- se asume "Montacargas de cargue" (carga camiones de
+    // distribución); si el puesto real de ID3 es otro, avisar para corregir.
+    { puesto: "Montacargas de cargue", cantidad: 1 },
+  ],
 }
 
 export interface SugerenciaPersona {
@@ -244,39 +284,53 @@ export async function sugerirRotacion(
     if (!actual || String(r.fecha) > actual) ultimaVezEnPuesto.set(key, String(r.fecha))
   }
 
-  // 7) Cobertura (necesidad por puesto) del día objetivo -- tabla real
-  //    `demanda_puesto`, ya declarada por el coordinador en Vista de
-  //    quincena. Solo se puede leer si la quincena tiene `turnos_definicion`
-  //    migrado; si no, se sigue sin acotar (alerta informativa).
-  const diaMes = Number(fecha.split("-")[2])
-  const quincenaNum: 1 | 2 = diaMes <= 15 ? 1 : 2
-  const quincenaRes = await getProgramacionQuincena(empresaId, y, m, quincenaNum)
+  // 7) Necesidad por puesto: cantidades FIJAS de planta, confirmadas por el
+  //    negocio (2026-09-20), no una demanda declarada día a día -- por eso NO
+  //    se lee de `demanda_puesto`/Cobertura (esa tabla está vacía hoy). Único
+  //    caso variable: ID1 Auxiliar Mixto depende de cuántos turnos de Tolva
+  //    programó el coordinador ESE día (Horario de Tolva, Turno 1/2).
+  //    "asignadosHoy" sí es real: cuenta filas ya guardadas en
+  //    `registroasistencia` para ese puesto/fecha.
+  const destinosTodos = regla.destinos.map((d) => d.puesto)
+  const necesidadFijaPorPuesto = new Map<string, number>()
+  for (const item of NECESIDAD_FIJA[empresaId] || []) {
+    if (item.cantidad === "porTurnoTolva") {
+      const horarioRes = await getHorarioTolva(empresaId, fecha)
+      let turnosConfigurados = 0
+      if (horarioRes.success && horarioRes.data) {
+        if (horarioRes.data.turno1.horaInicio && horarioRes.data.turno1.horaFin) turnosConfigurados++
+        if (horarioRes.data.turno2.horaInicio && horarioRes.data.turno2.horaFin) turnosConfigurados++
+      }
+      necesidadFijaPorPuesto.set(item.puesto, 4 * turnosConfigurados)
+      if (turnosConfigurados === 0) alertas.push(`No hay Horario de Tolva configurado para ${fecha} -- no se sugiere ${item.puesto} hasta que se configure.`)
+    } else {
+      necesidadFijaPorPuesto.set(item.puesto, item.cantidad)
+    }
+  }
+
+  const { data: asignadosHoyRows } = await admin
+    .from("registroasistencia")
+    .select("puesto")
+    .eq("idempresa", empresaId)
+    .eq("fecha", fecha)
+    .in("puesto", destinosTodos)
+  const asignadosHoyPorPuesto = new Map<string, number>()
+  for (const r of asignadosHoyRows || []) {
+    asignadosHoyPorPuesto.set(r.puesto, (asignadosHoyPorPuesto.get(r.puesto) || 0) + 1)
+  }
+
   const necesidadPorPuesto: NecesidadPuesto[] = []
   const disponiblesPorPuesto = new Map<string, number | null>()
-  const destinosTodos = regla.destinos.map((d) => d.puesto)
-  if (quincenaRes.success && quincenaRes.data) {
-    for (const destino of destinosTodos) {
-      const filasDestino = quincenaRes.data.cobertura.filter((c) => normalizarPuesto(c.puesto) === normalizarPuesto(destino))
-      if (filasDestino.length === 0) {
-        disponiblesPorPuesto.set(destino, null)
-        continue
-      }
-      let requeridos = 0
-      let asignados = 0
-      for (const fila of filasDestino) {
-        const celda = fila.dias.find((d) => d.fecha === fecha)
-        if (celda) {
-          requeridos += celda.requeridos
-          asignados += celda.asignados
-        }
-      }
-      const disponibles = Math.max(0, requeridos - asignados)
-      disponiblesPorPuesto.set(destino, disponibles)
-      necesidadPorPuesto.push({ puesto: destino, requeridos, asignadosHoy: asignados, disponibles })
+  for (const destino of destinosTodos) {
+    const requeridos = necesidadFijaPorPuesto.get(destino)
+    if (requeridos === undefined) {
+      disponiblesPorPuesto.set(destino, null) // sin cupo fijo declarado (ej. Cargue/Descargue Huevos) -- no se acota
+      continue
     }
-  } else {
-    for (const destino of destinosTodos) disponiblesPorPuesto.set(destino, null)
-    alertas.push("No se pudo leer la Cobertura de Vista de quincena -- la sugerencia no limita cuántos van a cada puesto.")
+    const asignados = asignadosHoyPorPuesto.get(destino) || 0
+    const disponibles = Math.max(0, requeridos - asignados)
+    disponiblesPorPuesto.set(destino, disponibles)
+    necesidadPorPuesto.push({ puesto: destino, requeridos, asignadosHoy: asignados, disponibles })
   }
 
   // 8) Gating de Pacas/Cosedor contra Solicitudes Adicionales aprobadas.
