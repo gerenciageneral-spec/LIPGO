@@ -92,6 +92,9 @@ import {
 } from "@/lib/programacion-turnos-actions"
 import { getHorarioTolva, guardarHorarioTolva, type VentanaTurno } from "@/lib/horario-tolva-actions"
 import { NOVEDADES_DIA as NOTICE_OPTIONS } from "@/lib/asistencia-catalogos"
+import { FichaTrabajadorDialog } from "@/components/rrhh/ficha-trabajador-dialog"
+import { CopilotoRotacion } from "@/components/rrhh/copiloto-rotacion"
+import type { SugerenciaPersona } from "@/lib/rotacion-sugerida-actions"
 
 /**
  * Puesto con doble jornada: al programar "Auxiliar Mixto" se puede
@@ -179,6 +182,10 @@ export default function ProgramacionTurnos() {
   const [saving, setSaving] = useState(false)
   const [deletingId, setDeletingId] = useState<number | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<ProgramacionExistenteRow | null>(null)
+
+  // ── Ficha del trabajador (clic en el nombre) ───────────────
+  const [fichaOpen, setFichaOpen] = useState(false)
+  const [fichaIdentificacion, setFichaIdentificacion] = useState<string | null>(null)
 
   // ── Horario de Tolva (Turno 1/2) — ventana COMPARTIDA por día+empresa,
   // independiente del horaentrada/salida normal de cada persona. La usa
@@ -380,6 +387,55 @@ export default function ProgramacionTurnos() {
   }, [selection])
 
   const totalSeleccionados = seleccionados.length
+
+  /**
+   * Cantidades por puesto entre lo seleccionado ahora mismo -- antes había
+   * que contarlas a mano en la lista. Puro cálculo en cliente sobre
+   * `selection`, no pega a la base de datos.
+   */
+  const cantidadesPorPuesto = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const [, s] of seleccionados) {
+      if (!s.puesto || s.novedad) continue
+      m.set(s.puesto, (m.get(s.puesto) || 0) + 1)
+    }
+    return m
+  }, [seleccionados])
+
+  /**
+   * Aplica la sugerencia del copiloto LIPbot al MISMO estado `selection` que
+   * ya usa el formulario manual -- no guarda nada en la base de datos, solo
+   * pre-marca filas para que el coordinador las revise/edite y confirme con
+   * "Programar" como siempre.
+   */
+  function aplicarSugerenciaRotacion(sugerencias: SugerenciaPersona[]) {
+    let aplicadas = 0
+    updateSelection((m) => {
+      for (const sug of sugerencias) {
+        const persona = people.find((p) => p.identificacion === sug.identificacion)
+        if (!persona) continue
+        if (estaBloqueada(persona.identificacion, sug.puestoSugerido)) continue
+        const cur = getOrInit(persona.id, m)
+        m.set(persona.id, {
+          ...cur,
+          selected: true,
+          puesto: sug.puestoSugerido,
+          hora: sug.horaEntradaSugerida || cur.hora || defaultHora,
+          horaSalida: cur.horaSalida || defaultHoraSalida,
+          novedad: "",
+          turno: sug.puestoSugerido === AUXILIAR_MIXTO ? cur.turno : "",
+        })
+        aplicadas++
+      }
+    })
+    toast({
+      title: aplicadas > 0 ? "Sugerencia aplicada" : "Nada para aplicar",
+      description:
+        aplicadas > 0
+          ? `${aplicadas} ${aplicadas === 1 ? "persona quedó" : "personas quedaron"} pre-marcada(s). Revisa y confirma con "Programar".`
+          : "Las personas sugeridas ya están programadas o bloqueadas para esta fecha.",
+    })
+  }
 
   /** Inmutabilidad-friendly: clona el Map y aplica `mutator`. */
   function updateSelection(mutator: (m: Map<number, SelectionState>) => void) {
@@ -671,7 +727,7 @@ export default function ProgramacionTurnos() {
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Users className="h-4 w-4" />
                 <span>
-                  {people.length} activos · {puestos.length} puestos disponibles
+                  {people.length} activos · {puestos.length} puestos disponibles · {existing.length} ya programados hoy
                 </span>
               </div>
             </div>
@@ -781,8 +837,23 @@ export default function ProgramacionTurnos() {
               </Button>
             </div>
           </div>
+
+          {/* Cantidades por puesto entre lo seleccionado -- antes tocaba
+              contarlas a mano en la lista de abajo. */}
+          {cantidadesPorPuesto.size > 0 && (
+            <div className="flex flex-wrap gap-2 pt-1">
+              {[...cantidadesPorPuesto.entries()].map(([puesto, n]) => (
+                <Badge key={puesto} variant="outline" className="gap-1.5 rounded-full py-1 pl-2.5 pr-3 font-normal">
+                  <span className="text-muted-foreground">{puesto}</span>
+                  <span className="font-mono font-bold tabular-nums">{n}</span>
+                </Badge>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
+
+      <CopilotoRotacion empresaId={selectedEmpresaId ?? null} fecha={fecha} onAplicar={aplicarSugerenciaRotacion} />
 
       <div className="grid gap-4 lg:grid-cols-5">
         {/* ── Panel izquierdo: personal disponible ────────── */}
@@ -891,8 +962,26 @@ export default function ProgramacionTurnos() {
                               />
                             </TableCell>
                             <TableCell>
-                              <div className="flex flex-col">
-                                <span className="text-sm font-medium leading-tight">
+                              <button
+                                type="button"
+                                className="flex items-center gap-2 text-left"
+                                onClick={() => {
+                                  setFichaIdentificacion(p.identificacion)
+                                  setFichaOpen(true)
+                                }}
+                                title="Ver ficha del trabajador"
+                              >
+                                <span className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-[10px] font-bold text-primary sm:flex">
+                                  {p.nombre
+                                    .trim()
+                                    .split(/\s+/)
+                                    .slice(0, 2)
+                                    .map((w) => w[0])
+                                    .join("")
+                                    .toUpperCase()}
+                                </span>
+                                <div className="flex flex-col">
+                                <span className="text-sm font-medium leading-tight hover:underline hover:decoration-primary hover:underline-offset-2">
                                   {p.nombre}
                                 </span>
                                 <span className="md:hidden text-[10px] text-muted-foreground">
@@ -913,7 +1002,8 @@ export default function ProgramacionTurnos() {
                                     {turnosOcupados.has("1") ? "Turno 1" : "Turno 2"} programado
                                   </Badge>
                                 ) : null}
-                              </div>
+                                </div>
+                              </button>
                             </TableCell>
                             <TableCell className="hidden md:table-cell text-sm text-muted-foreground tabular-nums">
                               {p.identificacion}
@@ -1314,6 +1404,14 @@ export default function ProgramacionTurnos() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <FichaTrabajadorDialog
+        open={fichaOpen}
+        onOpenChange={setFichaOpen}
+        empresaId={selectedEmpresaId ?? null}
+        identificacion={fichaIdentificacion}
+        fecha={fecha}
+      />
     </div>
   )
 }
