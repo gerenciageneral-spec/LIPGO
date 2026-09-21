@@ -94,9 +94,20 @@ interface ItemNecesidadFija {
 
 /**
  * Cantidades FIJAS de planta por puesto, confirmadas por el negocio
- * 2026-09-20. Puestos de un proyecto que NO aparecen aquí (ej.
- * "Cargue/Descargue Huevos" en ID2) no tienen cupo fijo declarado -- la
- * sugerencia no los acota.
+ * 2026-09-20. Puestos de un proyecto que NO aparecen aquí no tienen cupo
+ * fijo declarado -- la sugerencia no los acota.
+ *
+ * INCIDENTE 2026-09-21: "Cargue/Descargue Huevos" se dejó SIN esta entrada a
+ * propósito (se consideró "sin tope declarado"), y al aplicarse la
+ * sugerencia terminó absorbiendo 13 personas -- vació casi por completo el
+ * puesto de origen "Cargue/Descargue" (quedó en CERO personas ese día) y
+ * bloqueó Centro de Coordinación (nadie disponible para asignar a
+ * vehículos). Confirmado con el negocio: Cargue/Descargue Huevos SÍ es una
+ * especialidad real (distinta de Cargue/Descargue), y su cupo real es 3
+ * personas/día, igual que Estibado PT y Salvado -- por eso ahora tiene
+ * entrada aquí como los demás. Ver también el "piso" en `sugerirRotacion`
+ * (punto 9b) que protege el puesto de ORIGEN independientemente de si
+ * algún destino queda sin tope en el futuro.
  */
 const NECESIDAD_FIJA: Record<number, ItemNecesidadFija[]> = {
   [INDUPAN]: [
@@ -108,6 +119,7 @@ const NECESIDAD_FIJA: Record<number, ItemNecesidadFija[]> = {
     { puesto: "Estibado PT", cantidad: 3 },
     { puesto: "Salvado", cantidad: 3 },
     { puesto: "Distribución Turno", cantidad: 4 },
+    { puesto: "Cargue/Descargue Huevos", cantidad: 3 },
     // Montacargas de producción/de cargue = 1 cada uno (confirmado por el
     // negocio), pero NO se agregan como destino activo de rotación: en el
     // historial real solo ~50% de quienes pasan por ahí también aparecen en
@@ -396,6 +408,22 @@ export async function sugerirRotacion(
 
   if (esDomingo(fecha)) candidatos = candidatos.filter((c) => !excluidosDomingo.has(c.identificacion))
 
+  // 9b) PISO del puesto de ORIGEN -- protección directa contra el incidente
+  // 2026-09-21 (Avimol quedó con CERO personas en Cargue/Descargue porque un
+  // destino sin tope absorbió a todos los candidatos, bloqueando Centro de
+  // Coordinación). Sin importar cuántos destinos tengan cupo disponible,
+  // nunca se sugiere rotar más gente de la que deja el puesto de origen por
+  // debajo de su propia `NECESIDAD_FIJA` (o, si hay menos candidatos que esa
+  // cifra, no se sugiere ninguno -- ya está corto de por sí).
+  const necesidadOrigen = regla.origen ? (NECESIDAD_FIJA[empresaId] || []).find((i) => i.puesto === regla.origen) : null
+  const pisoOrigen = necesidadOrigen && typeof necesidadOrigen.cantidad === "number" ? necesidadOrigen.cantidad : 0
+  const maxARotar = regla.origen ? Math.max(0, candidatos.length - pisoOrigen) : candidatos.length
+  if (regla.origen && candidatos.length > 0 && maxARotar < candidatos.length) {
+    alertas.push(
+      `${regla.origen} necesita quedarse con al menos ${pisoOrigen} personas -- de ${candidatos.length} candidatos, solo se sugieren ${maxARotar} rotaciones hoy.`,
+    )
+  }
+
   candidatos.sort((a, b) => {
     const heA = horasExtraPorNombreNorm.get(normalizeName(a.nombre)) ?? 0
     const heB = horasExtraPorNombreNorm.get(normalizeName(b.nombre)) ?? 0
@@ -411,6 +439,7 @@ export async function sugerirRotacion(
   })
 
   for (const cand of candidatos) {
+    if (sugerencias.length >= maxARotar) break // piso del puesto de origen (9b) ya alcanzado
     // Elegir el destino habilitado con más cupo disponible (criterio 3: la
     // especialidad que hoy paga más nómina -- se aproxima con la tarifa
     // vigente más alta entre los destinos con cupo; si ninguno tiene cupo
