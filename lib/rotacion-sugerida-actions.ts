@@ -67,19 +67,22 @@ const MATRIZ_ROTACION: Record<number, ReglaRotacion> = {
     origen: "Cargue/Descargue",
     destinos: [
       { puesto: "Estibado PT" },
-      { puesto: "Operario Salvado" },
+      { puesto: "Salvado" },
+      { puesto: "Distribución Turno" },
       { puesto: "Cargue/Descargue Huevos" },
       { puesto: "Pacas", gatedPorSolicitud: true },
       { puesto: "Cosedor", gatedPorSolicitud: true },
     ],
   },
-  [CEDI_FUNZA]: {
-    origen: null,
-    // Los mismos 7 de Cargue/Descargue cubren Distribución rotando -- no hay
-    // un pool separado para Distribución en este proyecto.
-    destinos: [{ puesto: "Distribución Turno" }],
-    rotacionSemanalObligatoria: true,
-  },
+  // ID3 (CEDI Funza) deliberadamente SIN entrada: se investigó con datos
+  // reales (2026-09-20) y "Distribución" ahí es un TIPO DE ORDEN
+  // (`cabeceraoc.tipooperacion = 'Distribucion'`), no un puesto de
+  // `registroasistencia` -- en 45 días de historial el 100% de las filas de
+  // ID3 tienen `puesto = 'Cargue/Descargue'`, nunca "Distribución Turno" ni
+  // ningún montacargas (ese es un cargo de Head Count aparte, dedicado, que
+  // no pasa por esta pantalla). No hay nada que este copiloto pueda rotar
+  // aquí todavía -- pendiente de confirmar con el negocio qué debería
+  // sugerir. Mientras tanto cae en la rama "sin regla configurada".
 }
 
 interface ItemNecesidadFija {
@@ -102,17 +105,23 @@ const NECESIDAD_FIJA: Record<number, ItemNecesidadFija[]> = {
   [AVIMOL]: [
     { puesto: "Cargue/Descargue", cantidad: 12 },
     { puesto: "Estibado PT", cantidad: 3 },
-    { puesto: "Operario Salvado", cantidad: 3 },
-    { puesto: "Montacargas de producción", cantidad: 1 },
-    { puesto: "Montacargas de cargue", cantidad: 1 },
+    { puesto: "Salvado", cantidad: 3 },
     { puesto: "Distribución Turno", cantidad: 4 },
+    // Montacargas de producción/de cargue = 1 cada uno (confirmado por el
+    // negocio), pero NO se agregan como destino activo de rotación: en el
+    // historial real solo ~50% de quienes pasan por ahí también aparecen en
+    // Cargue/Descargue (vs. 75-92% en Estibado PT/Salvado/Distribución) --
+    // consistente con que manejar montacargas exige certificación y no es
+    // algo a lo que cualquiera pueda rotar. Se documentan aquí como
+    // referencia de planta; agregarlos a `destinos` arriba si el negocio
+    // confirma que sí deben recibir rotación automática.
   ],
-  [CEDI_FUNZA]: [
-    { puesto: "Cargue/Descargue", cantidad: 7 },
-    // "1 montacargas" -- se asume "Montacargas de cargue" (carga camiones de
-    // distribución); si el puesto real de ID3 es otro, avisar para corregir.
-    { puesto: "Montacargas de cargue", cantidad: 1 },
-  ],
+  // ID3 CEDI Funza: sin regla activa -- ver nota en `sugerirRotacion` (2026-09-20).
+  // "Distribución" en este proyecto es un TIPO DE ORDEN (`cabeceraoc.tipooperacion`),
+  // no un puesto de `registroasistencia` -- las mismas personas de
+  // Cargue/Descargue cubren órdenes de Distribución automáticamente al
+  // asignarse la orden, sin pasar por esta pantalla. No hay nada que rotar
+  // aquí hasta que el negocio confirme qué debería sugerir el copiloto.
 }
 
 export interface SugerenciaPersona {
