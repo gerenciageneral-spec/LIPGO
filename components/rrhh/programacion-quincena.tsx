@@ -43,10 +43,17 @@ const NUM = new Intl.NumberFormat("es-CO")
  * no al azar: así el mismo puesto conserva su color entre recargas y entre
  * quincenas, que es lo que permite leer la grilla de un vistazo.
  */
+// Paleta validada con node scripts/validate_palette.js (skill dataviz),
+// --pairs all (cualquier par debe distinguirse, no solo los vecinos): las
+// primeras 8 pasan TODOS los chequeos (banda de luminosidad, piso de croma,
+// separación bajo daltonismo protan/deutan >=8 y a simple vista >=15); de la
+// 9 en adelante ya no es matemáticamente posible seguir pasando el piso de
+// daltonismo con 15 colores en total (confirmado por búsqueda numérica), así
+// que quedan lo mejor posible -- por eso la leyenda y el tooltip de cada
+// celda siempre muestran el nombre real del puesto además del color.
 const PALETA_PUESTOS = [
-  "#0d9488", "#7dd3fc", "#f59e0b", "#a855f7", "#ef4444",
-  "#10b981", "#3b82f6", "#f97316", "#14b8a6", "#8b5cf6",
-  "#ec4899", "#84cc16", "#06b6d4", "#d946ef", "#eab308",
+  "#bb15b8", "#7a3b76", "#9f7bf8", "#4a59eb", "#c48118", "#d13218", "#cd6b9e", "#2c9068",
+  "#415c9c", "#301ae2", "#6f12a7", "#94004a", "#f31662", "#dd4ed0", "#954241",
 ]
 
 function colorDePuesto(puesto: string | null, orden: string[]): string {
