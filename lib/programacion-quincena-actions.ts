@@ -28,16 +28,9 @@ import type {
   FilaCobertura,
   FilaPersona,
   ProgramacionQuincenaData,
-  TurnoDef,
+  HorarioActividad,
 } from "@/lib/programacion-quincena-tipos"
-
-/**
- * Franja nocturna legal. Solo para el ESTIMADO que muestra la pantalla: no se
- * usa para liquidar nada. La reforma la corrió a las 19:00; el valor vive aquí
- * y no en la base porque nada lo consume todavía.
- */
-const NOCTURNO_DESDE = 19 * 60
-const NOCTURNO_HASTA = 6 * 60
+import { aMinutos, fmtMinutos, minutosTurno, minutosNocturnos, agruparHorariosPorPuesto } from "@/lib/horarios-actividad-utils"
 
 const DIAS_SEMANA = ["do", "lu", "ma", "mi", "ju", "vi", "sá"]
 
@@ -48,41 +41,6 @@ const MESES = [
 
 function ultimoDiaDe(anio: number, mes: number): number {
   return new Date(anio, mes, 0).getDate()
-}
-
-function aMinutos(hhmm: string | null): number | null {
-  if (!hhmm) return null
-  const [h, m] = String(hhmm).slice(0, 5).split(":").map(Number)
-  if (Number.isNaN(h) || Number.isNaN(m)) return null
-  return h * 60 + m
-}
-
-function fmt(min: number): string {
-  const h = Math.floor(min / 60)
-  const m = min % 60
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`
-}
-
-/** Minutos de un turno, contemplando que cruce la medianoche. */
-function minutosTurno(ini: number, fin: number): number {
-  return fin > ini ? fin - ini : 24 * 60 - ini + fin
-}
-
-/**
- * Minutos del turno que caen en la franja nocturna.
- *
- * Se recorre minuto a minuto en vez de intersectar intervalos: el turno puede
- * cruzar la medianoche Y la franja nocturna también, y con intervalos hay
- * cuatro casos que es fácil equivocar. Son 1440 iteraciones como mucho.
- */
-function minutosNocturnos(ini: number, fin: number): number {
-  const total = minutosTurno(ini, fin)
-  let n = 0
-  for (let i = 0; i < total; i++) {
-    const m = (ini + i) % (24 * 60)
-    if (m >= NOCTURNO_DESDE || m < NOCTURNO_HASTA) n++
-  }
-  return n
 }
 
 function faltaTabla(msg: string | undefined): boolean {
@@ -127,40 +85,10 @@ export async function getProgramacionQuincena(
   try {
     const sb: any = await getSupabaseAdmin()
 
-    // --- TURNOS DEFINIDOS -------------------------------------------------
-    let turnos: TurnoDef[] = []
+    // faltaMigracion se detecta más abajo, en la primera tabla de
+    // scripts/176_*.sql que se lea (equipos_trabajo) -- los horarios ya no
+    // dependen de esa migración, pero equipos/patrones/cobertura sí.
     let faltaMigracion = false
-    {
-      const { data, error } = await sb
-        .from("turnos_definicion")
-        .select("id, codigo, nombre, hora_inicio, hora_fin, descanso_min, color, es_administrativo, orden")
-        .eq("idempresa", empresaId)
-        .eq("activo", true)
-        .order("orden", { ascending: true })
-      if (error) {
-        if (faltaTabla(error.message)) faltaMigracion = true
-        else avisos.push("No se pudieron leer los turnos definidos.")
-      } else {
-        turnos = (data ?? []).map((t: any) => {
-          const ini = aMinutos(t.hora_inicio) ?? 0
-          const fin = aMinutos(t.hora_fin) ?? 0
-          const brutos = minutosTurno(ini, fin)
-          return {
-            id: Number(t.id),
-            codigo: t.codigo,
-            nombre: t.nombre,
-            horaInicio: fmt(ini),
-            horaFin: fmt(fin),
-            descansoMin: Number(t.descanso_min) || 0,
-            color: t.color ?? null,
-            esAdministrativo: !!t.es_administrativo,
-            orden: Number(t.orden) || 0,
-            horas: Math.round(((brutos - (Number(t.descanso_min) || 0)) / 60) * 10) / 10,
-            horasNocturnas: Math.round((minutosNocturnos(ini, fin) / 60) * 10) / 10,
-          }
-        })
-      }
-    }
 
     // --- DÍAS DE LA QUINCENA, CON FESTIVOS --------------------------------
     const festivos = new Set<string>()
@@ -217,6 +145,7 @@ export async function getProgramacionQuincena(
           sb.from("patrones_rotacion").select("id, nombre, descripcion, secuencia, horas_semana").eq("idempresa", empresaId).eq("activo", true).order("nombre"),
           sb.from("equipos_integrantes").select("equipo_id, identificacion"),
         ])
+        if (eqRes.error && faltaTabla(eqRes.error.message)) faltaMigracion = true
         const patMap = new Map<number, any>((patRes.data ?? []).map((x: any) => [Number(x.id), x]))
         for (const x of patRes.data ?? []) {
           patrones.push({
@@ -273,13 +202,18 @@ export async function getProgramacionQuincena(
       console.error("[v0] getProgramacionQuincena registroasistencia:", e?.message ?? e)
     }
 
-    // Reconocer el turno por su horario: registroasistencia guarda horas, no
-    // códigos. Si las horas no coinciden con ningún turno definido, la celda se
-    // muestra igual con su horario en vez de descartarla.
-    const porHorario = new Map<string, string>()
-    for (const t of turnos) porHorario.set(`${t.horaInicio}|${t.horaFin}`, t.codigo)
-    const horasPorCodigo = new Map(turnos.map((t) => [t.codigo, t.horas]))
-    const nocturnasPorCodigo = new Map(turnos.map((t) => [t.codigo, t.horasNocturnas]))
+    // Horarios REALES en uso esta quincena, agrupados por puesto -- lo que
+    // el coordinador de verdad programó, no un catálogo fijo que se
+    // desactualiza. Reemplaza toda resolución de "código de turno".
+    const horariosReales: HorarioActividad[] = agruparHorariosPorPuesto(
+      filasRA
+        .filter((r: any) => r.puesto != null && r.asistencia == null)
+        .map((r: any) => ({
+          puesto: r.puesto,
+          horaEntrada: r.horaentradaprogramada ? fmtMinutos(aMinutos(r.horaentradaprogramada)!) : null,
+          horaSalida: r.horasalidaprogramada ? fmtMinutos(aMinutos(r.horasalidaprogramada)!) : null,
+        })),
+    )
 
     const personas: FilaPersona[] = personasBase.map((per) => {
       const ident = String(per.identificacion ?? "").trim()
@@ -308,15 +242,12 @@ export async function getProgramacionQuincena(
       const fecha = String(r.fecha).slice(0, 10)
       const ini = aMinutos(r.horaentradaprogramada)
       const fin = aMinutos(r.horasalidaprogramada)
-      const codigo =
-        ini != null && fin != null ? porHorario.get(`${fmt(ini)}|${fmt(fin)}`) ?? null : null
 
       fila.dias[fecha] = {
         id: Number(r.id),
-        turnoCodigo: codigo,
         puesto: r.puesto ?? null,
-        horaEntrada: ini != null ? fmt(ini) : null,
-        horaSalida: fin != null ? fmt(fin) : null,
+        horaEntrada: ini != null ? fmtMinutos(ini) : null,
+        horaSalida: fin != null ? fmtMinutos(fin) : null,
         novedad: r.asistencia ?? null,
         marco: !!r.horaingreso,
       }
@@ -324,22 +255,11 @@ export async function getProgramacionQuincena(
       if (r.puesto != null && r.asistencia == null) {
         fila.diasConTurno++
         diasProgramados++
-        // Si el turno se reconoció, se usan sus horas netas; si no, se calcula
-        // del horario de la fila. Nunca se asume 8.
-        const hs =
-          codigo != null
-            ? horasPorCodigo.get(codigo) ?? 0
-            : ini != null && fin != null
-              ? Math.round((minutosTurno(ini, fin) / 60) * 10) / 10
-              : 0
+        // Horas siempre EN VIVO del horario real de la fila. Nunca se asume 8.
+        const hs = ini != null && fin != null ? Math.round((minutosTurno(ini, fin) / 60) * 10) / 10 : 0
         fila.horasQuincena += hs
         horasProgramadas += hs
-        horasNocturnasEstimadas +=
-          codigo != null
-            ? nocturnasPorCodigo.get(codigo) ?? 0
-            : ini != null && fin != null
-              ? Math.round((minutosNocturnos(ini, fin) / 60) * 10) / 10
-              : 0
+        horasNocturnasEstimadas += ini != null && fin != null ? Math.round((minutosNocturnos(ini, fin) / 60) * 10) / 10 : 0
       }
     }
 
@@ -363,36 +283,36 @@ export async function getProgramacionQuincena(
       try {
         const { data: dem } = await sb
           .from("demanda_puesto")
-          .select("puesto, turno_codigo, fecha, requeridos")
+          .select("puesto, hora_inicio, fecha, requeridos")
           .eq("idempresa", empresaId)
 
         // Base (fecha null) + excepciones por día.
         const base = new Map<string, number>()
         const excep = new Map<string, number>()
         for (const d of dem ?? []) {
-          const k = `${d.puesto}|${d.turno_codigo}`
+          if (!d.hora_inicio) continue // demanda vieja sin migrar (turno_codigo) -- se ignora, no se adivina
+          const k = `${d.puesto}|${d.hora_inicio}`
           if (d.fecha == null) base.set(k, Number(d.requeridos) || 0)
           else excep.set(`${k}|${String(d.fecha).slice(0, 10)}`, Number(d.requeridos) || 0)
         }
 
-        // Asignados reales por (puesto, turno, fecha).
+        // Asignados reales por (puesto, hora de entrada, fecha) -- ya no
+        // depende de reconocer un código de turno fijo: CUALQUIER horario
+        // real que el coordinador use cuenta para la cobertura.
         const asignados = new Map<string, number>()
         for (const r of filasRA) {
           if (r.puesto == null || r.asistencia != null) continue
           const ini = aMinutos(r.horaentradaprogramada)
-          const fin = aMinutos(r.horasalidaprogramada)
-          const cod = ini != null && fin != null ? porHorario.get(`${fmt(ini)}|${fmt(fin)}`) : null
-          if (!cod) continue
-          const k = `${r.puesto}|${cod}|${String(r.fecha).slice(0, 10)}`
+          if (ini == null) continue
+          const k = `${r.puesto}|${fmtMinutos(ini)}|${String(r.fecha).slice(0, 10)}`
           asignados.set(k, (asignados.get(k) ?? 0) + 1)
         }
 
-        const nombreTurno = new Map(turnos.map((t) => [t.codigo, t.nombre]))
         for (const [k, req] of base) {
-          const [puesto, cod] = k.split("|")
+          const [puesto, horaInicio] = k.split("|")
           const celdas: CeldaCobertura[] = dias.map((d) => {
             const requeridos = excep.get(`${k}|${d.fecha}`) ?? req
-            const asig = asignados.get(`${puesto}|${cod}|${d.fecha}`) ?? 0
+            const asig = asignados.get(`${puesto}|${horaInicio}|${d.fecha}`) ?? 0
             let estado: CeldaCobertura["estado"] = "sin_demanda"
             if (requeridos > 0) {
               estado = asig >= requeridos ? "cubierto" : asig === 0 ? "deficit" : asig >= requeridos * 0.85 ? "parcial" : "deficit"
@@ -401,20 +321,15 @@ export async function getProgramacionQuincena(
           })
           cobertura.push({
             puesto,
-            turnoCodigo: cod,
-            turnoNombre: nombreTurno.get(cod) ?? cod,
+            horaInicio,
             requeridosBase: req,
             dias: celdas,
           })
         }
-        cobertura.sort((a, b) => a.puesto.localeCompare(b.puesto) || a.turnoCodigo.localeCompare(b.turnoCodigo))
+        cobertura.sort((a, b) => a.puesto.localeCompare(b.puesto) || a.horaInicio.localeCompare(b.horaInicio))
       } catch (e: any) {
         console.error("[v0] getProgramacionQuincena demanda:", e?.message ?? e)
       }
-    }
-
-    if (!faltaMigracion && turnos.length === 0) {
-      avisos.push("No hay turnos definidos para esta empresa: la grilla no puede reconocer los horarios.")
     }
 
     return {
@@ -425,7 +340,7 @@ export async function getProgramacionQuincena(
           etiqueta: `${diaIni} – ${diaFin} de ${MESES[mes - 1]}`,
         },
         dias,
-        turnos,
+        horariosReales,
         personas,
         equipos,
         patrones,
@@ -490,18 +405,19 @@ export async function guardarTurnoDef(payload: {
   }
 }
 
-/** Define cuántas personas requiere un puesto en un turno. */
+/** Define cuántas personas requiere un puesto a partir de una hora de entrada real. */
 export async function guardarDemanda(payload: {
   empresaId: number
   puesto: string
-  turnoCodigo: string
+  /** Hora de entrada real ("HH:MM") -- ya no un código de turno fijo. */
+  horaInicio: string
   requeridos: number
   /** null = demanda base de todos los días. */
   fecha?: string | null
 }): Promise<{ success: boolean; message?: string }> {
   try {
-    if (!payload.puesto?.trim() || !payload.turnoCodigo?.trim()) {
-      return { success: false, message: "Falta el puesto o el turno." }
+    if (!payload.puesto?.trim() || !payload.horaInicio?.trim()) {
+      return { success: false, message: "Falta el puesto o la hora de entrada." }
     }
     const sb: any = await getSupabaseAdmin()
     const usuario = await getCurrentUsuarioForInsert().catch(() => null)
@@ -514,14 +430,14 @@ export async function guardarDemanda(payload: {
       .select("id")
       .eq("idempresa", payload.empresaId)
       .eq("puesto", payload.puesto.trim())
-      .eq("turno_codigo", payload.turnoCodigo.trim())
+      .eq("hora_inicio", payload.horaInicio.trim())
     q = payload.fecha ? q.eq("fecha", payload.fecha) : q.is("fecha", null)
     const { data: ya } = await q.maybeSingle()
 
     const fila = {
       idempresa: payload.empresaId,
       puesto: payload.puesto.trim(),
-      turno_codigo: payload.turnoCodigo.trim(),
+      hora_inicio: payload.horaInicio.trim(),
       fecha: payload.fecha ?? null,
       requeridos: req,
       actualizado_por: usuario,

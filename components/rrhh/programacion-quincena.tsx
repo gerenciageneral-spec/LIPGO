@@ -32,7 +32,7 @@ import {
   getProgramacionQuincena,
   guardarDemanda,
 } from "@/lib/programacion-quincena-actions"
-import type { ProgramacionQuincenaData, TurnoDef } from "@/lib/programacion-quincena-tipos"
+import type { ProgramacionQuincenaData, HorarioActividad } from "@/lib/programacion-quincena-tipos"
 
 const NUM = new Intl.NumberFormat("es-CO")
 
@@ -66,39 +66,31 @@ function hoyColombia(): Date {
   return new Date(a, m - 1, d)
 }
 
-/** Ficha de un turno en la cabecera. */
-function FichaTurno({ t }: { t: TurnoDef }) {
+/** Ficha de un horario REAL en uso (puesto + horaInicio-horaFin), no un turno fijo. */
+function FichaHorario({ h, color }: { h: HorarioActividad; color: string }) {
   return (
     <div className="min-w-[210px] flex-1 rounded-lg border border-border p-3">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <span
-            className="rounded px-1.5 py-0.5 font-mono text-[10px] font-medium text-white"
-            style={{ background: t.color ?? "#0d9488" }}
-          >
-            {t.codigo}
-          </span>
-          <span className="text-sm font-medium">{t.nombre}</span>
+          <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: color }} />
+          <span className="text-sm font-medium">{h.puesto}</span>
         </div>
-        <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px]">{t.horas} h</span>
+        <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px]">{h.horas} h</span>
       </div>
       <p className="mt-1.5 font-mono text-xs text-muted-foreground">
-        {t.horaInicio} — {t.horaFin}
-        {t.descansoMin > 0 ? ` · ${t.descansoMin} min de descanso` : ""}
+        {h.horaInicio} — {h.horaFin}
       </p>
       <div className="mt-1.5 flex flex-wrap gap-1">
-        {t.horasNocturnas > 0 && (
+        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+          usado {h.muestras} {h.muestras === 1 ? "vez" : "veces"} esta quincena
+        </span>
+        {h.horasNocturnas > 0 && (
           <span
             className="inline-flex items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-700"
             title="Estimado de pantalla. El sistema todavía no liquida el recargo nocturno."
           >
             <Moon className="h-3 w-3" />
-            {t.horasNocturnas} h en franja nocturna
-          </span>
-        )}
-        {t.horas - t.horasNocturnas > 0 && (
-          <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] text-sky-700">
-            {Math.round((t.horas - t.horasNocturnas) * 10) / 10} h diurnas
+            {h.horasNocturnas} h en franja nocturna
           </span>
         )}
       </div>
@@ -120,9 +112,9 @@ export function ProgramacionQuincena() {
   const [error, setError] = useState<string | null>(null)
   const [buscar, setBuscar] = useState("")
   const [equipoFiltro, setEquipoFiltro] = useState<number | null>(null)
-  const [editDemanda, setEditDemanda] = useState<{ puesto: string; turno: string; valor: string } | null>(null)
+  const [editDemanda, setEditDemanda] = useState<{ puesto: string; horaInicio: string; valor: string } | null>(null)
   // Alta de demanda para un puesto que todavia no tiene fila.
-  const [nuevaDemanda, setNuevaDemanda] = useState<{ puesto: string; turno: string; valor: string } | null>(null)
+  const [nuevaDemanda, setNuevaDemanda] = useState<{ puesto: string; horaInicio: string; valor: string } | null>(null)
 
   const cargar = useCallback(async () => {
     setCargando(true)
@@ -183,18 +175,18 @@ export function ProgramacionQuincena() {
   }
 
   async function guardarReq(
-    d: { puesto: string; turno: string; valor: string } | null,
+    d: { puesto: string; horaInicio: string; valor: string } | null,
     esNueva = false,
   ) {
     if (!d || !selectedEmpresaId) return
-    if (!d.puesto || !d.turno) {
-      toast({ title: "Falta el puesto o el turno", variant: "destructive" })
+    if (!d.puesto || !d.horaInicio) {
+      toast({ title: "Falta el puesto o la hora de entrada", variant: "destructive" })
       return
     }
     const r = await guardarDemanda({
       empresaId: selectedEmpresaId,
       puesto: d.puesto,
-      turnoCodigo: d.turno,
+      horaInicio: d.horaInicio,
       requeridos: Number(d.valor) || 0,
     })
     if (!r.success) {
@@ -203,7 +195,7 @@ export function ProgramacionQuincena() {
     }
     toast({
       title: "Demanda guardada",
-      description: `${d.puesto} · ${d.turno}: ${Number(d.valor) || 0} persona(s) por día.`,
+      description: `${d.puesto} · entra ${d.horaInicio}: ${Number(d.valor) || 0} persona(s) por día.`,
     })
     if (esNueva) setNuevaDemanda(null)
     else setEditDemanda(null)
@@ -265,8 +257,8 @@ export function ProgramacionQuincena() {
             Falta correr <code className="font-mono text-xs">scripts/176_add_programacion_turnos_quincena.sql</code>
           </p>
           <p className="mt-1 text-xs">
-            Sin él no existen los turnos con nombre, los equipos ni la demanda por puesto. La grilla
-            de abajo funciona igual, pero sin poder reconocer a qué turno pertenece cada horario.
+            Sin él no existen los equipos ni la demanda por puesto (Cobertura). Los horarios reales
+            y el Detalle por persona funcionan igual, esos no dependen de esta migración.
           </p>
         </div>
       )}
@@ -282,41 +274,53 @@ export function ProgramacionQuincena() {
         </div>
       )}
 
-      {/* HORARIOS DE TURNO — cabecera común a las tres vistas */}
-      {d.turnos.length > 0 && (
-        <section className="rounded-xl border border-border bg-card p-4">
-          <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <h2 className="text-sm font-semibold">Horarios de turno</h2>
-              <p className="text-xs text-muted-foreground">
-                Definen la jornada de cada turno y cuántas horas caen en franja nocturna.
-              </p>
-            </div>
-            <span className="font-mono text-[11px] text-muted-foreground">
-              Franja nocturna 19:00–06:00
-            </span>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {d.turnos.map((t) => (
-              <FichaTurno key={t.id} t={t} />
-            ))}
-          </div>
-
-          {/* Lo que el sistema NO calcula todavía. Se dice aquí y no se simula. */}
-          <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-2.5">
-            <p className="flex items-start gap-1.5 text-[11px] text-slate-700">
-              <Moon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              <span>
-                Las <strong>{d.totales.horasNocturnasEstimadas} h</strong> en franja nocturna de esta
-                quincena son un <strong>estimado de esta pantalla</strong>. El recargo nocturno
-                todavía no se liquida: la nómina calcula horas extra diurnas y festivas, y las
-                columnas de recargo nocturno siguen en cero. Mientras eso siga así, aquí no se
-                muestra un valor en pesos que la nómina no respalda.
-              </span>
+      {/* HORARIOS REALES EN USO — se calculan solos de lo que el coordinador
+          programó en "Programar el día", no de una tabla de configuración
+          fija (que se desactualizaba en cuanto los horarios cambiaban). */}
+      <section className="rounded-xl border border-border bg-card p-4">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-semibold">Horarios reales en uso esta quincena</h2>
+            <p className="text-xs text-muted-foreground">
+              Se arman solos a partir de lo que ya se programó — no es una configuración fija.
             </p>
           </div>
-        </section>
-      )}
+          <span className="font-mono text-[11px] text-muted-foreground">
+            Franja nocturna 19:00–06:00
+          </span>
+        </div>
+
+        {d.horariosReales.length === 0 ? (
+          <p className="py-6 text-center text-xs text-muted-foreground">
+            Todavía no hay nada programado esta quincena. En cuanto el coordinador programe en
+            "Programar el día", los horarios reales aparecen aquí solos.
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {d.horariosReales.map((h) => (
+              <FichaHorario
+                key={`${h.puesto}|${h.horaInicio}|${h.horaFin}`}
+                h={h}
+                color={colorDePuesto(h.puesto, puestosEnUso)}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* Lo que el sistema NO calcula todavía. Se dice aquí y no se simula. */}
+        <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+          <p className="flex items-start gap-1.5 text-[11px] text-slate-700">
+            <Moon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>
+              Las <strong>{d.totales.horasNocturnasEstimadas} h</strong> en franja nocturna de esta
+              quincena son un <strong>estimado de esta pantalla</strong>. El recargo nocturno
+              todavía no se liquida: la nómina calcula horas extra diurnas y festivas, y las
+              columnas de recargo nocturno siguen en cero. Mientras eso siga así, aquí no se
+              muestra un valor en pesos que la nómina no respalda.
+            </span>
+          </p>
+        </div>
+      </section>
 
       <Tabs defaultValue="cobertura">
         <TabsList>
@@ -331,7 +335,8 @@ export function ProgramacionQuincena() {
               <div>
                 <h2 className="text-sm font-semibold">Demanda por puesto</h2>
                 <p className="text-xs text-muted-foreground">
-                  Cuánta gente necesitas por turno, no quién va cada día.
+                  Declara cuántas personas necesitas en cada puesto, entrando a una hora concreta.
+                  Cada celda de abajo compara eso contra cuántas quedaron programadas ese día.
                 </p>
               </div>
               <div className="flex items-center gap-3 text-[11px]">
@@ -342,7 +347,7 @@ export function ProgramacionQuincena() {
                   onClick={() =>
                     setNuevaDemanda({
                       puesto: d.puestos[0] ?? "",
-                      turno: d.turnos[0]?.codigo ?? "",
+                      horaInicio: d.horariosReales[0]?.horaInicio ?? "06:00",
                       valor: "0",
                     })
                   }
@@ -362,10 +367,10 @@ export function ProgramacionQuincena() {
               </div>
             </div>
 
-            {/* Alta de demanda: cuánta gente se necesita en un puesto y turno.
-                Los puestos salen de `tarifasturnos`, el MISMO catálogo con el
-                que se programa: así lo que se exige coincide siempre con lo que
-                se puede asignar. */}
+            {/* Alta de demanda: cuánta gente se necesita en un puesto,
+                entrando a una hora concreta. Los puestos salen de
+                `tarifasturnos`, el MISMO catálogo con el que se programa: así
+                lo que se exige coincide siempre con lo que se puede asignar. */}
             {nuevaDemanda && (
               <div className="flex flex-wrap items-end gap-2 border-b border-border bg-muted/30 px-4 py-3">
                 <div>
@@ -382,19 +387,13 @@ export function ProgramacionQuincena() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[11px] text-muted-foreground">Turno</label>
-                  <select
-                    value={nuevaDemanda.turno}
-                    onChange={(e) => setNuevaDemanda({ ...nuevaDemanda, turno: e.target.value })}
-                    className="mt-1 h-8 w-40 rounded border bg-background px-2 text-xs"
-                  >
-                    {d.turnos.length === 0 && <option value="">Sin turnos definidos</option>}
-                    {d.turnos.map((t) => (
-                      <option key={t.codigo} value={t.codigo}>
-                        {t.codigo} · {t.horaInicio}–{t.horaFin}
-                      </option>
-                    ))}
-                  </select>
+                  <label className="block text-[11px] text-muted-foreground">Hora de entrada</label>
+                  <Input
+                    type="time"
+                    value={nuevaDemanda.horaInicio}
+                    onChange={(e) => setNuevaDemanda({ ...nuevaDemanda, horaInicio: e.target.value })}
+                    className="mt-1 h-8 w-32 text-sm"
+                  />
                 </div>
                 <div>
                   <label className="block text-[11px] text-muted-foreground">Personas por día</label>
@@ -426,8 +425,9 @@ export function ProgramacionQuincena() {
                 </p>
                 <p className="mx-auto mt-1 max-w-lg text-xs text-muted-foreground">
                   Esa información no existe hoy en el sistema: no se puede deducir de lo programado,
-                  porque lo programado es lo que hubo, no lo que se necesitaba. Defínela una vez y la
-                  cobertura se calcula sola cada quincena.
+                  porque lo programado es lo que hubo, no lo que se necesitaba. Defínela una vez con
+                  "Definir puesto" (arriba) y la cobertura se calcula sola cada quincena — cada celda
+                  compara cuántos quedaron programados ese día contra cuántos declaraste que hacen falta.
                 </p>
               </div>
             ) : (
@@ -436,7 +436,7 @@ export function ProgramacionQuincena() {
                   <thead>
                     <tr className="border-b border-border">
                       <th className="sticky left-0 z-10 bg-card px-3 py-2 text-left font-medium">
-                        Puesto · turno
+                        Puesto · hora de entrada
                       </th>
                       {d.dias.map((dd) => (
                         <th
@@ -454,11 +454,11 @@ export function ProgramacionQuincena() {
                   </thead>
                   <tbody>
                     {d.cobertura.map((f) => (
-                      <tr key={`${f.puesto}|${f.turnoCodigo}`} className="border-b border-border last:border-0">
+                      <tr key={`${f.puesto}|${f.horaInicio}`} className="border-b border-border last:border-0">
                         <td className="sticky left-0 z-10 bg-card px-3 py-1.5">
                           <span className="flex items-center gap-1.5">
                             <span className="rounded bg-muted px-1 font-mono text-[10px]">
-                              {f.turnoCodigo}
+                              {f.horaInicio}
                             </span>
                             <span className="font-medium">{f.puesto}</span>
                           </span>
@@ -468,7 +468,7 @@ export function ProgramacionQuincena() {
                             onClick={() =>
                               setEditDemanda({
                                 puesto: f.puesto,
-                                turno: f.turnoCodigo,
+                                horaInicio: f.horaInicio,
                                 valor: String(f.requeridosBase),
                               })
                             }
@@ -480,6 +480,7 @@ export function ProgramacionQuincena() {
                           <td key={c.fecha} className="px-1 py-1.5 text-center">
                             <span
                               className="inline-block rounded px-1 py-0.5 font-mono text-[10px] tabular-nums"
+                              title={`${c.asignados} programada(s) de las ${c.requeridos} que este puesto necesita ese día`}
                               style={{
                                 background:
                                   c.estado === "cubierto" ? "#dcfce7"
@@ -506,7 +507,7 @@ export function ProgramacionQuincena() {
               <div className="flex flex-wrap items-end gap-2 border-t border-border bg-muted/30 px-4 py-3">
                 <div>
                   <label className="block text-[11px] text-muted-foreground">
-                    {editDemanda.puesto} · {editDemanda.turno}
+                    {editDemanda.puesto} · entra {editDemanda.horaInicio}
                   </label>
                   <Input
                     type="number"
@@ -622,9 +623,6 @@ export function ProgramacionQuincena() {
                         </td>
                         {d.dias.map((dd) => {
                           const c = per.dias[dd.fecha]
-                          const turno = c?.turnoCodigo
-                            ? d.turnos.find((t) => t.codigo === c.turnoCodigo)
-                            : null
                           return (
                             <td
                               key={dd.fecha}
@@ -651,7 +649,7 @@ export function ProgramacionQuincena() {
                                   // se ve en el código de la celda.
                                   style={{ background: colorDePuesto(c.puesto, puestosEnUso) }}
                                 >
-                                  {turno?.codigo ?? (c.horaEntrada ? c.horaEntrada.slice(0, 2) : "?")}
+                                  {c.horaEntrada ? c.horaEntrada.slice(0, 2) : "?"}
                                 </button>
                               )}
                             </td>

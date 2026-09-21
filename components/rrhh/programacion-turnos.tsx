@@ -421,7 +421,7 @@ export default function ProgramacionTurnos() {
           selected: true,
           puesto: sug.puestoSugerido,
           hora: sug.horaEntradaSugerida || cur.hora || defaultHora,
-          horaSalida: cur.horaSalida || defaultHoraSalida,
+          horaSalida: sug.horaSalidaSugerida || cur.horaSalida || defaultHoraSalida,
           novedad: "",
           turno: sug.puestoSugerido === AUXILIAR_MIXTO ? cur.turno : "",
         })

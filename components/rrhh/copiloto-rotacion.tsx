@@ -123,6 +123,12 @@ export function CopilotoRotacion({
                     <div className="min-w-[170px]">
                       <b className="block text-xs">{s.nombre}</b>
                       <span className="text-[10.5px] text-[#9FD8E3]">{s.puestoActual || "—"} → <b>{s.puestoSugerido}</b></span>
+                      {s.horaEntradaSugerida && (
+                        <span className="mt-0.5 block font-mono text-[10px] text-[#9FD8E3]">
+                          {s.horaEntradaSugerida}
+                          {s.horaSalidaSugerida ? `–${s.horaSalidaSugerida}` : ""}
+                        </span>
+                      )}
                     </div>
                     <div className="flex flex-1 flex-wrap gap-1.5">
                       {s.criteriosAplicados.map((c, i) => (

@@ -3,28 +3,8 @@
 // Van aparte del archivo de acciones porque ese es "use server" y esos archivos
 // solo pueden exportar funciones async.
 
-/** Un turno con nombre: T1 mañana, T2 tarde, T3 noche, AD administrativo. */
-export interface TurnoDef {
-  id: number
-  codigo: string
-  nombre: string
-  horaInicio: string // "HH:MM"
-  horaFin: string
-  descansoMin: number
-  color: string | null
-  esAdministrativo: boolean
-  orden: number
-  /** Horas de jornada, ya descontado el descanso. */
-  horas: number
-  /**
-   * Horas que caen dentro de la franja nocturna.
-   *
-   * Es un CÁLCULO INFORMATIVO de la pantalla, no lo que se liquida: el trigger
-   * de nómina solo escribe hed/hedf y nunca toca hen/hef/hn. Sirve para ver qué
-   * turnos generarían recargo el día que se implemente.
-   */
-  horasNocturnas: number
-}
+import type { HorarioActividad } from "@/lib/horarios-actividad-utils"
+export type { HorarioActividad } from "@/lib/horarios-actividad-utils"
 
 /** Día de la quincena, con su contexto de calendario. */
 export interface DiaQuincena {
@@ -40,8 +20,6 @@ export interface DiaQuincena {
 export interface CeldaAsignacion {
   /** id de la fila de registroasistencia, para poder borrarla. */
   id: number | null
-  /** Código del turno si se pudo reconocer por su horario; null si no. */
-  turnoCodigo: string | null
   puesto: string | null
   horaEntrada: string | null
   horaSalida: string | null
@@ -94,11 +72,11 @@ export interface CeldaCobertura {
   estado: "cubierto" | "parcial" | "deficit" | "sin_demanda"
 }
 
-/** Una fila de Cobertura: un puesto en un turno, a lo largo de la quincena. */
+/** Una fila de Cobertura: un puesto con un horario real de entrada, a lo largo de la quincena. */
 export interface FilaCobertura {
   puesto: string
-  turnoCodigo: string
-  turnoNombre: string
+  /** Hora de entrada real ("HH:MM") -- ya no un código de turno fijo. */
+  horaInicio: string
   /** Demanda base declarada (la que aplica todos los días). */
   requeridosBase: number
   dias: CeldaCobertura[]
@@ -107,7 +85,8 @@ export interface FilaCobertura {
 export interface ProgramacionQuincenaData {
   quincena: { anio: number; mes: number; numero: 1 | 2; desde: string; hasta: string; etiqueta: string }
   dias: DiaQuincena[]
-  turnos: TurnoDef[]
+  /** Horarios reales usados esta quincena, agrupados por puesto -- reemplaza al catálogo fijo de turnos. */
+  horariosReales: HorarioActividad[]
   personas: FilaPersona[]
   equipos: EquipoResumen[]
   patrones: PatronResumen[]

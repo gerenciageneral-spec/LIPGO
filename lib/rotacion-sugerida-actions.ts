@@ -42,6 +42,7 @@ import { getHorarioTolva } from "@/lib/horario-tolva-actions"
 import { categoriaDeNovedad } from "@/lib/ausentismo-categorias"
 import { resolverPuesto } from "@/lib/puestos-turno-alias"
 import { normalizeName } from "@/lib/nomina-calculo-utils"
+import { agruparHorariosPorPuesto, horarioMasUsado } from "@/lib/horarios-actividad-utils"
 
 const INDUPAN = 1
 const AVIMOL = 2
@@ -194,17 +195,18 @@ export async function sugerirRotacion(
   }))
   if (personas.length === 0) return { success: true, data: { fecha, reglaEmpresa: regla.origen, sugerencias: [], necesidadPorPuesto: [], alertas: ["No hay personal activo."] } }
 
-  // 2) Últimos 7 días de registroasistencia -- para saber el puesto/hora más
-  //    frecuente de cada persona (quién está en destajo, hora habitual).
+  // 2) Últimos 7 días de registroasistencia -- para saber el puesto más
+  //    frecuente de cada persona (quién está en destajo) Y el horario REAL
+  //    más usado de cada puesto (para sugerir la hora del puesto DESTINO, no
+  //    la hora habitual de la persona en su puesto viejo -- ver punto 9).
   const desde7 = fechaMenosDias(fecha, 7)
   const { data: raRows } = await admin
     .from("registroasistencia")
-    .select("identificacion, nombre, puesto, horaentradaprogramada, asistencia, fecha")
+    .select("identificacion, nombre, puesto, horaentradaprogramada, horasalidaprogramada, asistencia, fecha")
     .eq("idempresa", empresaId)
     .gte("fecha", desde7)
     .lt("fecha", fecha)
   const puestoFrecuentePorId = new Map<string, string>()
-  const horaFrecuentePorId = new Map<string, string>()
   const historicoPorId = new Map<string, any[]>()
   for (const r of raRows || []) {
     const ident = String(r.identificacion || "")
@@ -213,19 +215,20 @@ export async function sugerirRotacion(
   }
   for (const [ident, filas] of historicoPorId.entries()) {
     const conteoPuesto = new Map<string, number>()
-    const conteoHora = new Map<string, number>()
     for (const r of filas) {
       if (r.puesto) conteoPuesto.set(r.puesto, (conteoPuesto.get(r.puesto) || 0) + 1)
-      if (r.horaentradaprogramada) {
-        const h = String(r.horaentradaprogramada).slice(0, 5)
-        conteoHora.set(h, (conteoHora.get(h) || 0) + 1)
-      }
     }
     const puestoTop = [...conteoPuesto.entries()].sort((a, b) => b[1] - a[1])[0]
     if (puestoTop) puestoFrecuentePorId.set(ident, puestoTop[0])
-    const horaTop = [...conteoHora.entries()].sort((a, b) => b[1] - a[1])[0]
-    if (horaTop) horaFrecuentePorId.set(ident, horaTop[0])
   }
+
+  // Horario real más usado de CADA puesto en los últimos 7 días -- mismo
+  // helper que usa Vista de quincena, así nunca diverge de lo que se ve ahí.
+  const horariosPorPuesto = agruparHorariosPorPuesto(
+    (raRows || [])
+      .filter((r: any) => r.puesto != null && r.asistencia == null)
+      .map((r: any) => ({ puesto: r.puesto, horaEntrada: r.horaentradaprogramada, horaSalida: r.horasalidaprogramada })),
+  )
 
   // 3) Filtro de domingo: novedad "NO_REMUNERADA" (licencia no remunerada) en
   //    los últimos 30 días -- mismo código que ya usa nómina para Siigo.
@@ -437,18 +440,23 @@ export async function sugerirRotacion(
     }
     if (heCand > 0) criterios.push(`${heCand}h extra esta semana`)
 
-    // Horario del destino: el más frecuente reciente para ESE puesto en la
-    // empresa (últimos 14 días); si no hay historial, se deja el default
-    // genérico que ya usa el formulario (06:00-14:00) y se avisa.
-    const horaSugerida = horaFrecuentePorId.get(cand.identificacion) || "06:00"
+    // Horario del destino: el REAL más usado de ESE puesto en los últimos 7
+    // días (no el horario habitual de la persona en su puesto viejo -- eso
+    // era un error real, corregido 2026-09-20 a pedido del negocio). Si el
+    // destino nunca se ha usado recientemente, se avisa en vez de inventar
+    // una hora.
+    const horarioDestino = horarioMasUsado(horariosPorPuesto, destinoElegido)
+    if (!horarioDestino) {
+      alertas.push(`${destinoElegido} no tiene horario real reciente -- confirma la hora a mano para ${cand.nombre}.`)
+    }
 
     sugerencias.push({
       identificacion: cand.identificacion,
       nombre: cand.nombre,
       puestoActual: cand.puestoActual,
       puestoSugerido: destinoElegido,
-      horaEntradaSugerida: horaSugerida,
-      horaSalidaSugerida: "", // el coordinador la confirma al aplicar (mismo campo que ya edita a mano)
+      horaEntradaSugerida: horarioDestino?.horaInicio ?? "",
+      horaSalidaSugerida: horarioDestino?.horaFin ?? "",
       criteriosAplicados: criterios,
       pctCumplimiento: pctCand,
       horasExtraSemana: heCand,
