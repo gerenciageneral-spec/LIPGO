@@ -10,7 +10,7 @@
 // completa y permite quitar asignaciones; para crear turnos se sigue usando la
 // pestaña diaria, que es la que conoce las reglas de inserción.
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react"
 import { useAuth } from "@/components/auth-provider"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -32,7 +32,13 @@ import {
   getProgramacionQuincena,
   guardarDemanda,
 } from "@/lib/programacion-quincena-actions"
-import type { ProgramacionQuincenaData, HorarioActividad } from "@/lib/programacion-quincena-tipos"
+import type {
+  CeldaAsignacion,
+  DiaQuincena,
+  FilaPersona,
+  HorarioActividad,
+  ProgramacionQuincenaData,
+} from "@/lib/programacion-quincena-tipos"
 
 const NUM = new Intl.NumberFormat("es-CO")
 
@@ -60,6 +66,51 @@ function colorDePuesto(puesto: string | null, orden: string[]): string {
   if (!puesto) return "#94a3b8"
   const i = orden.indexOf(puesto)
   return i >= 0 ? PALETA_PUESTOS[i % PALETA_PUESTOS.length] : "#64748b"
+}
+
+const STOPWORDS_SIGLA = new Set(["de", "del", "la", "el", "los", "las", "y", "en", "por", "con", "a"])
+
+/**
+ * Sigla corta (2 letras) por puesto, única dentro de la lista de la quincena.
+ * Va DENTRO de cada celda junto a la hora: con 9+ puestos simultáneos ya no
+ * existen colores perfectamente separables para daltonismo (ver nota de
+ * PALETA_PUESTOS), así que la sigla es la segunda pista que quita la duda.
+ */
+function siglasDePuestos(puestos: string[]): Record<string, string> {
+  const usadas = new Set<string>()
+  const out: Record<string, string> = {}
+  for (const p of puestos) {
+    const w = p.split(/[\s/]+/).filter((x) => x && !STOPWORDS_SIGLA.has(x.toLowerCase()))
+    const cand: string[] = []
+    if (w.length >= 2) cand.push((w[0][0] + w[1][0]).toUpperCase())
+    if (w.length >= 3) cand.push((w[0][0] + w[2][0]).toUpperCase())
+    if (w.length >= 3) cand.push((w[1][0] + w[2][0]).toUpperCase())
+    if (w.length >= 1) cand.push(w[0].slice(0, 2).toUpperCase())
+    let sigla = cand.find((c) => c.length > 0 && !usadas.has(c))
+    if (!sigla) {
+      const base = (w[0]?.[0] ?? "?").toUpperCase()
+      let n = 2
+      while (usadas.has(base + n)) n++
+      sigla = base + n
+    }
+    usadas.add(sigla)
+    out[p] = sigla
+  }
+  return out
+}
+
+/** Celda elegida en la grilla de Detalle: alimenta el popover de detalle/quitar. */
+interface CeldaSeleccionada {
+  id: number | null
+  nombre: string
+  fecha: string
+  diaLabel: string
+  puesto: string | null
+  horaEntrada: string | null
+  horaSalida: string | null
+  marco: boolean
+  x: number
+  y: number
 }
 
 function hoyColombia(): Date {
@@ -123,6 +174,15 @@ export function ProgramacionQuincena() {
   // Alta de demanda para un puesto que todavia no tiene fila.
   const [nuevaDemanda, setNuevaDemanda] = useState<{ puesto: string; horaInicio: string; valor: string } | null>(null)
 
+  // --- Interacción de la grilla "Detalle por persona" (solo capa visual) ---
+  /** Puesto resaltado desde la leyenda: el resto de celdas se atenúa. */
+  const [puestoResaltado, setPuestoResaltado] = useState<string | null>(null)
+  /** Columna (fecha) bajo el mouse, para la guía en cruz. */
+  const [hovCol, setHovCol] = useState<string | null>(null)
+  /** Celda con el popover de detalle abierto. Quitar pasa por aquí, ya no por un clic directo. */
+  const [celdaSel, setCeldaSel] = useState<CeldaSeleccionada | null>(null)
+  const [quitando, setQuitando] = useState(false)
+
   const cargar = useCallback(async () => {
     setCargando(true)
     setError(null)
@@ -161,6 +221,8 @@ export function ProgramacionQuincena() {
     return [...s].sort((a, b) => a.localeCompare(b, "es"))
   }, [data])
 
+  const siglas = useMemo(() => siglasDePuestos(puestosEnUso), [puestosEnUso])
+
   const personasFiltradas = useMemo(() => {
     if (!data) return []
     const t = buscar.trim().toLowerCase()
@@ -169,6 +231,43 @@ export function ProgramacionQuincena() {
       return !t || p.nombre.toLowerCase().includes(t) || p.identificacion.includes(t)
     })
   }, [data, buscar, equipoFiltro])
+
+  // Personas programadas por día (respeta búsqueda y filtro de equipo):
+  // alimenta la fila "Personas / día" al pie de la grilla de Detalle.
+  const totalesPorDia = useMemo(() => {
+    const m: Record<string, number> = {}
+    if (!data) return m
+    for (const dd of data.dias) {
+      let n = 0
+      for (const per of personasFiltradas) {
+        const c = per.dias[dd.fecha]
+        if (c && !c.novedad && c.puesto) n++
+      }
+      m[dd.fecha] = n
+    }
+    return m
+  }, [data, personasFiltradas])
+
+  /** Promedio de los días que sí tienen gente: sirve para marcar días flacos. */
+  const mediaPersonasDia = useMemo(() => {
+    const vals = Object.values(totalesPorDia).filter((n) => n > 0)
+    return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0
+  }, [totalesPorDia])
+
+  // Al cambiar de quincena/empresa, el resaltado y el popover pierden sentido.
+  useEffect(() => {
+    setPuestoResaltado(null)
+    setCeldaSel(null)
+  }, [data])
+
+  useEffect(() => {
+    if (!celdaSel) return
+    const fn = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setCeldaSel(null)
+    }
+    window.addEventListener("keydown", fn)
+    return () => window.removeEventListener("keydown", fn)
+  }, [celdaSel])
 
   async function quitar(id: number, nombre: string, fecha: string) {
     if (!selectedEmpresaId) return
@@ -179,6 +278,31 @@ export function ProgramacionQuincena() {
     }
     toast({ title: "Asignación retirada", description: `${nombre} · ${fecha}` })
     cargar()
+  }
+
+  /** Abre el popover de detalle de la celda, pegado al botón que se clicó. */
+  function abrirDetalle(
+    e: ReactMouseEvent<HTMLButtonElement>,
+    per: FilaPersona,
+    dd: DiaQuincena,
+    c: CeldaAsignacion,
+  ) {
+    const r = e.currentTarget.getBoundingClientRect()
+    const x = Math.min(Math.max(8, r.left + r.width / 2 - 130), window.innerWidth - 268)
+    let y = r.bottom + 8
+    if (y + 220 > window.innerHeight) y = Math.max(8, r.top - 228)
+    setCeldaSel({
+      id: c.id,
+      nombre: per.nombre,
+      fecha: dd.fecha,
+      diaLabel: `${dd.diaSemana} ${dd.diaMes}`,
+      puesto: c.puesto,
+      horaEntrada: c.horaEntrada,
+      horaSalida: c.horaSalida,
+      marco: c.marco,
+      x,
+      y,
+    })
   }
 
   async function guardarReq(
@@ -573,23 +697,39 @@ export function ProgramacionQuincena() {
               </div>
             </div>
 
-            {/* Leyenda de puestos: cada color de la grilla dice en qué puesto
-                estuvo la persona ese día. */}
+            {/* Leyenda de puestos: cada color+sigla de la grilla dice en qué
+                puesto estuvo la persona ese día. Clic en un puesto lo resalta
+                en toda la grilla (clic de nuevo, vuelve a la normalidad). */}
             {puestosEnUso.length > 0 && (
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-border px-4 py-2.5">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-b border-border px-4 py-2.5">
                 <span className="text-[11px] text-muted-foreground">Puesto:</span>
                 {puestosEnUso.map((p) => (
-                  <span key={p} className="flex items-center gap-1 text-[11px]">
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setPuestoResaltado(puestoResaltado === p ? null : p)}
+                    title={puestoResaltado === p ? "Quitar resaltado" : `Resaltar solo ${p} en la grilla`}
+                    className={`flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] transition-opacity ${
+                      puestoResaltado === p
+                        ? "border-foreground font-semibold"
+                        : "border-transparent hover:border-border"
+                    } ${puestoResaltado !== null && puestoResaltado !== p ? "opacity-40" : ""}`}
+                  >
                     <span
-                      className="h-2.5 w-2.5 rounded-sm"
+                      className="inline-flex h-4 min-w-[22px] items-center justify-center rounded px-1 text-[9px] font-bold text-white"
                       style={{ background: colorDePuesto(p, puestosEnUso) }}
-                    />
+                    >
+                      {siglas[p]}
+                    </span>
                     {p}
-                  </span>
+                  </button>
                 ))}
                 <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
                   <span className="h-2.5 w-2.5 rounded-sm bg-slate-200" />
                   novedad
+                </span>
+                <span className="ml-auto text-[10.5px] text-muted-foreground">
+                  clic en un puesto para resaltarlo · <b>punto blanco</b> = ya marcó ingreso
                 </span>
               </div>
             )}
@@ -600,28 +740,37 @@ export function ProgramacionQuincena() {
               </p>
             ) : (
               <div className="max-h-[560px] overflow-auto">
-                <table className="w-full border-collapse text-xs">
+                <table className="w-full border-collapse text-xs" onMouseLeave={() => setHovCol(null)}>
                   <thead className="sticky top-0 z-20 bg-card">
                     <tr className="border-b border-border">
-                      <th className="sticky left-0 z-30 bg-card px-3 py-2 text-left font-medium">
+                      <th
+                        className="sticky left-0 z-30 bg-card px-3 py-2 text-left font-medium"
+                        onMouseEnter={() => setHovCol(null)}
+                      >
                         Trabajador
                       </th>
                       {d.dias.map((dd) => (
                         <th
                           key={dd.fecha}
-                          className={`min-w-[38px] px-1 py-2 text-center font-medium ${dd.esFestivo ? "bg-amber-50" : dd.esDomingo ? "bg-muted/50" : ""}`}
+                          onMouseEnter={() => setHovCol(dd.fecha)}
+                          className={`min-w-[44px] px-1 py-2 text-center font-medium ${hovCol === dd.fecha ? "bg-[#e8eef6]" : dd.esFestivo ? "bg-amber-50" : dd.esDomingo ? "bg-muted/50" : ""}`}
                         >
                           <span className="block text-[10px] text-muted-foreground">{dd.diaSemana}</span>
                           <span className="block">{dd.diaMes}</span>
                         </th>
                       ))}
-                      <th className="px-2 py-2 text-right font-medium">Horas</th>
+                      <th className="px-2 py-2 text-right font-medium" onMouseEnter={() => setHovCol(null)}>
+                        Horas
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
                     {personasFiltradas.map((per) => (
-                      <tr key={per.identificacion} className="border-b border-border last:border-0">
-                        <td className="sticky left-0 z-10 bg-card px-3 py-1.5">
+                      <tr key={per.identificacion} className="group border-b border-border last:border-0">
+                        <td
+                          className="sticky left-0 z-10 bg-card px-3 py-1.5 group-hover:bg-[#e8eef6]"
+                          onMouseEnter={() => setHovCol(null)}
+                        >
                           <p className="max-w-[220px] truncate font-medium">{per.nombre}</p>
                           <p className="truncate font-mono text-[10px] text-muted-foreground">
                             {per.identificacion}
@@ -630,39 +779,51 @@ export function ProgramacionQuincena() {
                         </td>
                         {d.dias.map((dd) => {
                           const c = per.dias[dd.fecha]
+                          const atenuada = puestoResaltado !== null && (!c || c.puesto !== puestoResaltado)
                           return (
                             <td
                               key={dd.fecha}
-                              className={`px-0.5 py-1 text-center ${dd.esFestivo ? "bg-amber-50/50" : dd.esDomingo ? "bg-muted/30" : ""}`}
+                              onMouseEnter={() => setHovCol(dd.fecha)}
+                              className={`px-0.5 py-1 text-center group-hover:bg-[#e8eef6] ${hovCol === dd.fecha ? "bg-[#e8eef6]" : dd.esFestivo ? "bg-amber-50/50" : dd.esDomingo ? "bg-muted/30" : ""}`}
                             >
                               {!c ? (
                                 <span className="text-muted-foreground/40">·</span>
                               ) : c.novedad ? (
                                 <span
                                   title={c.novedad}
-                                  className="inline-block max-w-[34px] truncate rounded bg-slate-100 px-1 py-0.5 text-[9px] text-slate-600"
+                                  className={`inline-block max-w-[38px] truncate rounded bg-slate-100 px-1 py-0.5 text-[9px] text-slate-600 ${atenuada ? "opacity-[0.15]" : ""}`}
                                 >
                                   {c.novedad.replace(/^\d+-\s*/, "").slice(0, 4)}
                                 </span>
                               ) : (
                                 <button
                                   type="button"
-                                  title={`${c.puesto ?? ""} ${c.horaEntrada ?? ""}-${c.horaSalida ?? ""}${c.marco ? " · ya marcó" : ""} — clic para quitar`}
-                                  onClick={() => c.id && quitar(c.id, per.nombre, dd.fecha)}
-                                  className="inline-block rounded px-1 py-0.5 font-mono text-[10px] text-white hover:opacity-80"
-                                  // El color lo da el PUESTO: es lo que se
-                                  // quiere leer de un vistazo en la grilla
-                                  // --dónde estuvo cada quien-- y el turno ya
-                                  // se ve en el código de la celda.
+                                  title={`${c.puesto ?? ""} ${c.horaEntrada ?? ""}-${c.horaSalida ?? ""}${c.marco ? " · ya marcó" : ""} — clic para ver el detalle`}
+                                  onClick={(e) => abrirDetalle(e, per, dd, c)}
+                                  className={`inline-flex items-center gap-[3px] rounded px-1 py-0.5 font-mono text-[10px] font-semibold text-white transition-opacity hover:opacity-85 ${atenuada ? "opacity-[0.15]" : ""}`}
+                                  // El color y la sigla los da el PUESTO: es lo
+                                  // que se quiere leer de un vistazo en la
+                                  // grilla --dónde estuvo cada quien-- y la
+                                  // hora de entrada completa el código.
                                   style={{ background: colorDePuesto(c.puesto, puestosEnUso) }}
                                 >
+                                  {c.puesto ? (siglas[c.puesto] ?? "?") : "?"}·
                                   {c.horaEntrada ? c.horaEntrada.slice(0, 2) : "?"}
+                                  {c.marco && (
+                                    <span
+                                      className="h-1 w-1 rounded-full bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.25)]"
+                                      aria-label="ya marcó ingreso"
+                                    />
+                                  )}
                                 </button>
                               )}
                             </td>
                           )
                         })}
-                        <td className="px-2 py-1.5 text-right">
+                        <td
+                          className="px-2 py-1.5 text-right group-hover:bg-[#e8eef6]"
+                          onMouseEnter={() => setHovCol(null)}
+                        >
                           <span className="font-medium tabular-nums">{per.horasQuincena} h</span>
                           <span className="block text-[10px] text-muted-foreground">
                             {per.diasConTurno} {per.diasConTurno === 1 ? "turno" : "turnos"}
@@ -671,6 +832,41 @@ export function ProgramacionQuincena() {
                       </tr>
                     ))}
                   </tbody>
+                  {/* Personas programadas por día: la cobertura de un vistazo
+                      sin salir de la pestaña. Ámbar = día flaco frente al
+                      promedio de la quincena. */}
+                  <tfoot>
+                    <tr>
+                      <th
+                        className="sticky bottom-0 left-0 z-30 border-t border-border bg-card px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
+                        onMouseEnter={() => setHovCol(null)}
+                      >
+                        Personas / día
+                      </th>
+                      {d.dias.map((dd) => {
+                        const t = totalesPorDia[dd.fecha] ?? 0
+                        const bajo = t > 0 && mediaPersonasDia > 0 && t < mediaPersonasDia * 0.75
+                        return (
+                          <th
+                            key={dd.fecha}
+                            onMouseEnter={() => setHovCol(dd.fecha)}
+                            title={bajo ? `Cobertura baja: ${t} frente a un promedio de ${Math.round(mediaPersonasDia)} por día` : undefined}
+                            className={`sticky bottom-0 z-20 border-t border-border px-1 py-2 text-center font-semibold tabular-nums ${
+                              bajo ? "bg-amber-100 text-amber-800" : hovCol === dd.fecha ? "bg-[#e8eef6]" : "bg-card"
+                            }`}
+                          >
+                            {t === 0 ? <span className="font-normal text-muted-foreground/50">0</span> : t}
+                          </th>
+                        )
+                      })}
+                      <th
+                        className="sticky bottom-0 z-20 border-t border-border bg-card px-2 py-2 text-right font-normal text-muted-foreground"
+                        onMouseEnter={() => setHovCol(null)}
+                      >
+                        —
+                      </th>
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             )}
@@ -679,15 +875,94 @@ export function ProgramacionQuincena() {
               <p className="flex items-start gap-1.5 text-[11px] text-muted-foreground">
                 <Clock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <span>
-                  Clic en un turno para quitarlo. <strong>No hay borrador</strong>: lo que se ve aquí
-                  ya está en nómina y facturación. Para asignar turnos usa la pestaña de programación
-                  diaria, que aplica las reglas de inserción.
+                  Clic en un turno abre su detalle; desde ahí se quita con un botón explícito — ya
+                  nada se borra por un clic accidental. <strong>No hay borrador</strong>: lo que se ve
+                  aquí ya está en nómina y facturación. Para asignar turnos usa la pestaña de
+                  programación diaria, que aplica las reglas de inserción.
                 </span>
               </p>
             </div>
           </section>
         </TabsContent>
       </Tabs>
+
+      {/* Popover de detalle de una celda de la grilla. Quitar la asignación
+          pasa por aquí --botón explícito-- en vez del clic directo de antes,
+          que borraba de una sobre datos que ya están en nómina. */}
+      {celdaSel && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setCeldaSel(null)} />
+          <div
+            role="dialog"
+            aria-label={`Detalle del turno de ${celdaSel.nombre}`}
+            className="fixed z-50 w-[260px] rounded-xl border border-border bg-card p-3 shadow-2xl"
+            style={{ left: celdaSel.x, top: celdaSel.y }}
+          >
+            <p className="text-sm font-semibold leading-tight">{celdaSel.nombre}</p>
+            <p className="text-[11px] text-muted-foreground">
+              {celdaSel.diaLabel} · {celdaSel.fecha}
+            </p>
+            <div className="mt-2 space-y-1.5 text-xs">
+              <p className="flex items-center gap-2">
+                <span className="w-14 shrink-0 text-[10px] text-muted-foreground">Puesto</span>
+                {celdaSel.puesto ? (
+                  <>
+                    <span
+                      className="inline-flex h-4 min-w-[22px] items-center justify-center rounded px-1 text-[9px] font-bold text-white"
+                      style={{ background: colorDePuesto(celdaSel.puesto, puestosEnUso) }}
+                    >
+                      {siglas[celdaSel.puesto] ?? "?"}
+                    </span>
+                    <span className="font-medium">{celdaSel.puesto}</span>
+                  </>
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
+              </p>
+              <p className="flex items-center gap-2">
+                <span className="w-14 shrink-0 text-[10px] text-muted-foreground">Horario</span>
+                <span className="font-mono">
+                  {celdaSel.horaEntrada ?? "?"} – {celdaSel.horaSalida ?? "?"}
+                </span>
+              </p>
+              <p className="flex items-center gap-2">
+                <span className="w-14 shrink-0 text-[10px] text-muted-foreground">Estado</span>
+                {celdaSel.marco ? (
+                  <span className="font-medium text-emerald-700">✓ Ya marcó ingreso</span>
+                ) : (
+                  <span className="text-muted-foreground">Programado — aún no marca</span>
+                )}
+              </p>
+            </div>
+            <div className="mt-3 flex gap-2 border-t border-border pt-2.5">
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 flex-1 border-red-200 bg-red-50 text-xs text-red-700 hover:bg-red-100 hover:text-red-800"
+                disabled={quitando || !celdaSel.id}
+                onClick={async () => {
+                  if (!celdaSel.id) return
+                  setQuitando(true)
+                  await quitar(celdaSel.id, celdaSel.nombre, celdaSel.fecha)
+                  setQuitando(false)
+                  setCeldaSel(null)
+                }}
+              >
+                {quitando && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                Quitar asignación
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 flex-1 text-xs"
+                onClick={() => setCeldaSel(null)}
+              >
+                Cerrar
+              </Button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }
