@@ -191,7 +191,9 @@ export async function getProgramacionQuincena(
       filasRA = await traerTodo((d, h) =>
         sb
           .from("registroasistencia")
-          .select("id, fecha, nombre, identificacion, puesto, asistencia, horaentradaprogramada, horasalidaprogramada, horaingreso, turno")
+          .select(
+            "id, fecha, nombre, identificacion, puesto, asistencia, horaentradaprogramada, horasalidaprogramada, horaingreso, horasalida, especialidad, hed, hedf, turno",
+          )
           .eq("idempresa", empresaId)
           .gte("fecha", desde)
           .lte("fecha", hasta)
@@ -243,6 +245,7 @@ export async function getProgramacionQuincena(
       const ini = aMinutos(r.horaentradaprogramada)
       const fin = aMinutos(r.horasalidaprogramada)
 
+      const aplicaExtra = String(r.especialidad ?? "").trim().toLowerCase() === "true"
       fila.dias[fecha] = {
         id: Number(r.id),
         puesto: r.puesto ?? null,
@@ -250,6 +253,14 @@ export async function getProgramacionQuincena(
         horaSalida: fin != null ? fmtMinutos(fin) : null,
         novedad: r.asistencia ?? null,
         marco: !!r.horaingreso,
+        horasExtra: aplicaExtra
+          ? {
+              aplica: true,
+              cerrado: !!r.horasalida,
+              ordinaria: Number(r.hed) || 0,
+              festiva: Number(r.hedf) || 0,
+            }
+          : { aplica: false, cerrado: !!r.horasalida, ordinaria: 0, festiva: 0 },
       }
 
       if (r.puesto != null && r.asistencia == null) {

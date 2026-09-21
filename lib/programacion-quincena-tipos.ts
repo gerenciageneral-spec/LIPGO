@@ -16,6 +16,23 @@ export interface DiaQuincena {
   esFestivo: boolean
 }
 
+/**
+ * Horas extra de una fila de registroasistencia -- lee `hed`/`hedf`, que ya
+ * los llena el trigger real `calcular_extras_con_politica` (scripts/sig/57).
+ * No se recalcula nada en pantalla: si el trigger cambia de fórmula, esto
+ * cambia solo con él.
+ */
+export interface HorasExtraCelda {
+  /** false = puesto al destajo (especialidad != true): el trigger no corre ahí, paga por tonelada. */
+  aplica: boolean
+  /** true = ya marcó salida y el valor de abajo es definitivo para ese día. */
+  cerrado: boolean
+  /** Ordinaria (hed). */
+  ordinaria: number
+  /** Dominical/festiva (hedf). */
+  festiva: number
+}
+
 /** Lo que tiene una persona asignado un día. */
 export interface CeldaAsignacion {
   /** id de la fila de registroasistencia, para poder borrarla. */
@@ -27,6 +44,7 @@ export interface CeldaAsignacion {
   novedad: string | null
   /** Ya marcó en portería: la fila refleja algo que ocurrió. */
   marco: boolean
+  horasExtra: HorasExtraCelda | null
 }
 
 /** Una fila de la grilla: una persona con sus días. */

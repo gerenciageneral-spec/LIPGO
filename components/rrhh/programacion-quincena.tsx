@@ -37,6 +37,7 @@ import type {
   DiaQuincena,
   FilaPersona,
   HorarioActividad,
+  HorasExtraCelda,
   ProgramacionQuincenaData,
 } from "@/lib/programacion-quincena-tipos"
 
@@ -109,8 +110,27 @@ interface CeldaSeleccionada {
   horaEntrada: string | null
   horaSalida: string | null
   marco: boolean
+  horasExtra: HorasExtraCelda | null
   x: number
   y: number
+}
+
+/** Texto + color del renglón "Horas extra" del popover, ya resuelto. */
+function estadoHorasExtra(h: HorasExtraCelda | null): { texto: string; clase: string } {
+  if (!h || !h.aplica) {
+    return { texto: "No aplica — puesto al destajo, paga por tonelada", clase: "text-muted-foreground" }
+  }
+  if (!h.cerrado) {
+    return { texto: "Turno en curso — aún no marca salida", clase: "text-muted-foreground" }
+  }
+  const total = Math.round((h.ordinaria + h.festiva) * 100) / 100
+  if (total <= 0) {
+    return { texto: "No generó horas extra", clase: "text-muted-foreground" }
+  }
+  const partes: string[] = []
+  if (h.ordinaria > 0) partes.push(`${h.ordinaria} h ordinaria`)
+  if (h.festiva > 0) partes.push(`${h.festiva} h dominical/festiva`)
+  return { texto: `${total} h extra (${partes.join(" + ")})`, clase: "font-medium text-amber-700" }
 }
 
 function hoyColombia(): Date {
@@ -290,7 +310,7 @@ export function ProgramacionQuincena() {
     const r = e.currentTarget.getBoundingClientRect()
     const x = Math.min(Math.max(8, r.left + r.width / 2 - 130), window.innerWidth - 268)
     let y = r.bottom + 8
-    if (y + 220 > window.innerHeight) y = Math.max(8, r.top - 228)
+    if (y + 260 > window.innerHeight) y = Math.max(8, r.top - 268)
     setCeldaSel({
       id: c.id,
       nombre: per.nombre,
@@ -300,6 +320,7 @@ export function ProgramacionQuincena() {
       horaEntrada: c.horaEntrada,
       horaSalida: c.horaSalida,
       marco: c.marco,
+      horasExtra: c.horasExtra,
       x,
       y,
     })
@@ -932,6 +953,12 @@ export function ProgramacionQuincena() {
                 ) : (
                   <span className="text-muted-foreground">Programado — aún no marca</span>
                 )}
+              </p>
+              <p className="flex items-start gap-2">
+                <span className="w-14 shrink-0 pt-px text-[10px] text-muted-foreground">Extra</span>
+                <span className={estadoHorasExtra(celdaSel.horasExtra).clase}>
+                  {estadoHorasExtra(celdaSel.horasExtra).texto}
+                </span>
               </p>
             </div>
             <div className="mt-3 flex gap-2 border-t border-border pt-2.5">
