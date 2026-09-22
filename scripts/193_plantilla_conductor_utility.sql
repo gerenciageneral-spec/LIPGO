@@ -33,17 +33,20 @@
 
 
 -- ----------------------------------------------------------------------------
--- PASO 1 — QUÉ CREAR EN WHATSAPP MANAGER (a mano, antes de correr esto)
+-- PASO 1 — LA PLANTILLA EN WHATSAPP MANAGER
 -- ----------------------------------------------------------------------------
+-- YA CREADA Y APROBADA (22/09/2026). Esto queda como referencia de su
+-- estructura: si alguna vez hay que recrearla, este es el contenido.
 --
--- Nombre:    aviso_cargue_conductor
+-- Nombre:    plantilla_conductor
 -- Categoría: UTILITY  (Utilidad)
 -- Idioma:    Español (COL)   -> es_CO
 --
 -- ENCABEZADO (texto):
---     LIP Logística
---   Sin variables: un encabezado fijo ayuda a que Meta lo lea como aviso
---   operativo, y evita el error de "falta el parámetro del header".
+--     {{nombre_reporte}}
+--   Recibe el título configurado en la pantalla ("LIP Logística"). El código
+--   lee de Meta si el encabezado lleva variable y manda el parámetro solo
+--   cuando toca: un encabezado con variable enviado sin su parámetro falla.
 --
 -- CUERPO:
 --     Hola {{conductor}}, le informamos sobre su vehículo de placa {{placa}}
@@ -62,6 +65,7 @@
 --     Este es un mensaje automático sobre su servicio.
 --
 -- EJEMPLOS que pide Meta al crearla (los usa para revisar):
+--     nombre_reporte -> LIP Logística
 --     conductor -> Jorge Ramírez
 --     placa     -> ABC123
 --     orden     -> OC-4451
@@ -78,11 +82,11 @@
 insert into public.whatsapp_plantillas
   (nombre, idioma, descripcion, cuando_usar, variables)
 values (
-  'aviso_cargue_conductor',
+  'plantilla_conductor',
   'es_CO',
   'Aviso al conductor sobre su cargue: asignación de muelle y fin de cargue.',
   'Los avisos automáticos al conductor. Es UTILITY, así que no tiene el tope por destinatario que sí tienen las de MARKETING.',
-  '{"header": [], "body": ["conductor", "placa", "orden", "detalle"]}'::jsonb
+  '{"header": ["nombre_reporte"], "body": ["conductor", "placa", "orden", "detalle"]}'::jsonb
 )
 on conflict (nombre) do update
   set idioma      = excluded.idioma,
@@ -121,7 +125,7 @@ update public.notificaciones_conductor_config
 
 select nombre, idioma, variables, activa
 from public.whatsapp_plantillas
-where nombre in ('aviso_cargue_conductor', 'plantilla_estandar')
+where nombre in ('plantilla_conductor', 'plantilla_estandar')
 order by nombre;
 
 -- 4b) Las dos conviven: la genérica sigue sirviendo para los avisos al
@@ -138,4 +142,4 @@ select evento, mensaje from public.notificaciones_conductor_config order by even
 -- El aviso vuelve a usar `plantilla_estandar` --y con ella el tope de
 -- MARKETING-- si se borra el registro:
 --
---   delete from public.whatsapp_plantillas where nombre = 'aviso_cargue_conductor';
+--   delete from public.whatsapp_plantillas where nombre = 'plantilla_conductor';

@@ -419,7 +419,7 @@ const PLANTILLA_ESTANDAR = "plantilla_estandar"
  * mandar variables sin nombre a una que las usa con nombre, son los dos fallos
  * que ya costaron un diagnóstico cada uno.
  */
-const PLANTILLA_CONDUCTOR = "aviso_cargue_conductor"
+const PLANTILLA_CONDUCTOR = "plantilla_conductor"
 
 /**
  * Aviso al conductor sobre su cargue.
@@ -506,12 +506,29 @@ export async function enviarAvisoConductor(payload: {
       : ["conductor", "placa", "orden", "detalle"]
     : undefined
 
+  /*
+   * El encabezado.
+   *
+   * La plantilla quedó con `{{nombre_reporte}}`, no con texto fijo. Un
+   * encabezado con variable que se envía sin su parámetro falla, así que se
+   * manda el título configurado ("LIP Logística").
+   *
+   * Se decide por lo que Meta reporta y no por una constante: si mañana se
+   * aprueba una versión con encabezado fijo, esto deja de mandarlo solo, en vez
+   * de fallar por enviar un parámetro que ya no existe.
+   */
+  const llevaHeader = propia.varsHeader.length > 0
+  const header = llevaHeader ? [limpiar(payload.titulo) || "LIP Logística"] : undefined
+  const nombresHeader =
+    llevaHeader && propia.conNombre ? propia.varsHeader : undefined
+
   return enviarPlantilla({
     empresaId: payload.empresaId ?? null,
     telefono: payload.telefono,
     plantilla: PLANTILLA_CONDUCTOR,
     idioma: propia.idioma,
-    // El encabezado es texto fijo: no lleva parámetros.
+    header,
+    nombresHeader,
     body,
     nombresBody,
     origen: payload.origen,
