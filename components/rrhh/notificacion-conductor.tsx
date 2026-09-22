@@ -343,8 +343,18 @@ function Tarjeta({
           <p className={`mt-1 text-[11px] ${telPrueba ? "text-sky-800" : "text-red-800"}`}>
             {telPrueba
               ? "Todos los avisos van a este número, no al conductor. Vacíalo cuando quieras pasar a real."
-              : "Sin número de pruebas, los avisos irán al teléfono del conductor de cada orden."}
+              : "Los avisos van al celular del conductor de cada orden (cabeceraoc.celular). El indicativo 57 se antepone solo."}
           </p>
+          {/* En modo real, el dato de la orden decide si el mensaje sale. Un
+              celular incompleto no rompe nada visible: el conductor no recibe
+              y en el historial queda un intento sin mensaje. Conviene decirlo
+              donde se toma la decisión. */}
+          {!telPrueba && (
+            <p className="mt-1 text-[11px] text-red-800">
+              Las órdenes con el celular vacío o mal digitado <strong>no reciben aviso</strong>.
+              Aparecen abajo como “Sin enviar”, con el motivo.
+            </p>
+          )}
         </div>
 
         <Button className="w-full gap-1.5" onClick={guardar} disabled={guardando}>
@@ -468,11 +478,17 @@ function Historial() {
                           Sin enviar
                         </span>
                       )}
-                      {f.errorCodigo && (
+                      {f.errorCodigo ? (
                         <p className="mt-0.5 text-[10px] text-red-700">
                           [{f.errorCodigo}] {f.errorDetalle}
                         </p>
-                      )}
+                      ) : f.motivo ? (
+                        // Sin esto, "Sin enviar" no distingue un celular mal
+                        // digitado de un problema de conexión con Meta.
+                        <p className="mt-0.5 max-w-[22rem] text-[10px] text-amber-800">
+                          {f.motivo}
+                        </p>
+                      ) : null}
                     </td>
                   </tr>
                 )

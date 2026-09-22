@@ -255,6 +255,7 @@ export async function getHistorialConductor(
           estado: m?.estado ?? null,
           errorCodigo: m?.error_codigo ?? null,
           errorDetalle: m?.error_detalle ?? null,
+          motivo: e.motivo ?? null,
           creadoEn: e.created_at,
         }
       }),
@@ -383,19 +384,65 @@ export async function notificarConductor(
       }
     }
 
+    /*
+     * Registra un intento que NO llegó a enviarse.
+     *
+     * Sin esto, los fallos por dato --celular vacío o mal digitado-- serían
+     * invisibles: la función retorna antes de llegar al registro, así que no
+     * quedaría ni rastro. El conductor no recibe nada y en el historial no hay
+     * ninguna línea que explique el hueco.
+     *
+     * Se registra con `mensaje_id` en null, que es lo que el historial lee como
+     * "Sin enviar", más el motivo.
+     */
+    const registrarFallo = async (motivo: string, telefono?: string | null) => {
+      try {
+        await sb.from("notificaciones_conductor_enviadas").insert({
+          orden_id: ordenId,
+          evento,
+          telefono: telefono ?? null,
+          mensaje_id: null,
+          motivo,
+        })
+      } catch {
+        // El índice único lo rechaza si ya había un intento para esta orden y
+        // evento. No es un error: ya está registrado.
+      }
+    }
+
     // --- 4) A qué número ---------------------------------------------------
     // El desvío de pruebas manda sobre todo lo demás: mientras tenga valor,
     // ninguna persona externa recibe nada.
     let destino = cfg.telefonoPrueba
     if (!destino) {
       // Sin desvío, va al conductor real.
-      destino = ctx.telefonoConductor
-      if (!destino) {
-        return {
-          enviado: false,
-          motivo: "La orden no tiene teléfono del conductor y no hay número de pruebas configurado.",
-        }
+      const crudo = ctx.telefonoConductor
+      if (!crudo) {
+        const motivo = `La orden ${ctx.ordenDeCargue ?? ordenId} no tiene teléfono del conductor.`
+        await registrarFallo(motivo)
+        return { enviado: false, motivo }
       }
+
+      /*
+       * Se normaliza AQUÍ, y no se deja para el envío, por dos razones.
+       *
+       * En la base el celular se guarda sin indicativo (3215698570) y WhatsApp
+       * lo exige completo. Eso lo resuelve `normalizarTelefono`, que antepone
+       * el 57.
+       *
+       * Pero también hay números mal digitados --de 9 dígitos, o con letras--
+       * que no se pueden arreglar adivinando. Antes, uno de esos llegaba al
+       * envío y fallaba allá, con un mensaje genérico y sin decir de qué orden
+       * venía. Fallar aquí permite nombrar la orden y el valor que trae, que es
+       * lo único con lo que alguien puede ir a corregir el dato.
+       */
+      const normalizado = await normalizarTelefono(crudo)
+      if (!normalizado) {
+        const motivo = `El celular del conductor de la orden ${ctx.ordenDeCargue ?? ordenId} no es válido: "${crudo}". En Colombia son 10 dígitos empezando por 3.`
+        await registrarFallo(motivo, crudo)
+        return { enviado: false, motivo }
+      }
+      destino = normalizado
     }
 
     // El enlace de la encuesta se arma POR ORDEN: lleva un token propio para
@@ -444,6 +491,7 @@ export async function notificarConductor(
         evento,
         telefono: destino,
         mensaje_id: r.messageId ?? null,
+        motivo: r.success ? null : r.message ?? null,
       })
     } catch {
       // El índice único puede rechazarlo si dos llamadas corrieron a la vez.

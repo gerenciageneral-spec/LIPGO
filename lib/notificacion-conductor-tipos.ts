@@ -63,5 +63,7 @@ export interface AvisoEnviado {
   estado: string | null
   errorCodigo: string | null
   errorDetalle: string | null
+  /** Por qué no salió, cuando el aviso no llegó a enviarse. */
+  motivo: string | null
   creadoEn: string
 }
