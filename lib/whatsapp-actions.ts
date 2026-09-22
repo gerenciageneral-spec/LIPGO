@@ -81,6 +81,7 @@ export async function getEstadoWhatsapp(): Promise<EstadoConfigWhatsapp> {
     apiVersion: API_VERSION,
     numeroVerificado: null,
     nombreVerificado: null,
+    calidadNumero: null,
     mensajeError: null,
   }
 
@@ -101,6 +102,7 @@ export async function getEstadoWhatsapp(): Promise<EstadoConfigWhatsapp> {
     }
     base.numeroVerificado = j?.display_phone_number ?? null
     base.nombreVerificado = j?.verified_name ?? null
+    base.calidadNumero = j?.quality_rating ?? null
   } catch (e: any) {
     base.mensajeError = e?.message || "No se pudo contactar a Meta."
   }
@@ -310,6 +312,24 @@ export async function enviarPlantilla(input: EnviarPlantillaInput): Promise<Resu
       // mandar a nadie a buscar una plantilla que ya está creada.
       if (String(err.code) === "100" && /parameter name/i.test(String(msg))) {
         msg = `La plantilla "${input.plantilla}" usa variables CON NOMBRE ({{usuario}}) y se enviaron sin nombre. Vuelve a abrir la pantalla para que lea la estructura actualizada de Meta. Detalle: ${msg}`
+      }
+      /*
+       * 131049 — "healthy ecosystem engagement".
+       *
+       * Meta ACEPTÓ el mensaje y luego decidió no entregarlo. Es el límite por
+       * destinatario de plantillas de MARKETING: ~2 cada 24 horas sumando
+       * TODOS los negocios, ajustado según cuánto interactúe esa persona.
+       *
+       * Aplica solo a MARKETING. Las de UTILITY --avisos transaccionales como
+       * "su vehículo fue asignado al muelle 3"-- no están sujetas a este tope.
+       * Por eso el mensaje apunta a la categoría: reintentar no sirve, y el
+       * texto crudo de Meta no dice ni que hay un límite ni de qué depende.
+       */
+      if (String(err.code) === "131049") {
+        msg =
+          `WhatsApp aceptó el mensaje pero no lo entregó: ese número ya recibió el máximo de mensajes de MARKETING permitidos en 24 horas (un tope de Meta que suma todos los negocios, no solo LIP). ` +
+          `Reintentar antes de 24 horas da el mismo error. ` +
+          `Si la plantilla "${input.plantilla}" es un aviso operativo y no publicidad, su categoría en WhatsApp Manager debería ser UTILITY: esas no tienen este límite y además cuestan menos.`
       }
       if (String(err.code) === "132001") {
         msg = `La plantilla "${input.plantilla}" no existe en el idioma "${input.idioma || "es"}". Suele estar aprobada en otro idioma (por ejemplo es_CO): revisa el idioma exacto en WhatsApp Manager y ajústalo. Detalle de Meta: ${msg}`

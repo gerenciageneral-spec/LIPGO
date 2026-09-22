@@ -58,6 +58,8 @@ export default function WhatsappConfig() {
       nombre: string
       idioma: string
       estado: string
+      /** MARKETING | UTILITY | AUTHENTICATION. Decide si hay tope por persona. */
+      categoria: string
       conNombre: boolean
       varsHeader: string[]
       varsBody: string[]
@@ -379,6 +381,7 @@ export default function WhatsappConfig() {
                 >
                   En Meta: {estadoEnMeta.estado === "APPROVED" ? "aprobada" : estadoEnMeta.estado} ·
                   idioma <strong>{estadoEnMeta.idioma}</strong> ·
+                  categoría <strong>{estadoEnMeta.categoria}</strong> ·
                   variables {estadoEnMeta.conNombre ? "con nombre" : "posicionales"}
                   {estadoEnMeta.estado !== "APPROVED" && " — todavía no se puede enviar"}
                 </p>
@@ -387,6 +390,26 @@ export default function WhatsappConfig() {
                   No aparece en Meta con ese nombre. Revisa que coincida exactamente.
                 </p>
               ) : null}
+
+              {/* La categoría decide si hay tope de envíos, y no se nota hasta
+                  que un mensaje falla con 131049 -- que Meta explica como
+                  "healthy ecosystem engagement", sin mencionar ni el límite ni
+                  la categoría. Vale más decirlo antes. */}
+              {estadoEnMeta?.categoria === "MARKETING" && (
+                <div className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-2">
+                  <p className="text-[11px] text-amber-900">
+                    <strong>Esta plantilla es de categoría MARKETING.</strong> Meta limita esos
+                    mensajes a unos pocos por persona cada 24 horas —sumando todos los negocios, no
+                    solo LIP— y los que pasan del tope fallan con el error{" "}
+                    <code className="font-mono">131049</code>.
+                  </p>
+                  <p className="mt-1 text-[11px] text-amber-900">
+                    Los avisos operativos (“su vehículo fue asignado al muelle 3”) son{" "}
+                    <strong>UTILITY</strong>: no tienen ese límite y cuestan menos. La categoría se
+                    cambia en WhatsApp Manager y Meta la revisa de nuevo.
+                  </p>
+                </div>
+              )}
 
               {/* El fallo mas comun y el que peor se explica: Meta trata "es" y
                   "es_CO" como idiomas distintos, y su error dice "template name

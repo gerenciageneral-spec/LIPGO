@@ -45,6 +45,14 @@ export interface EstadoConfigWhatsapp {
   /** Lo que responde Meta al consultar el número. null = no se pudo. */
   numeroVerificado: string | null
   nombreVerificado: string | null
+  /**
+   * Calidad del número según Meta: GREEN | YELLOW | RED | UNKNOWN.
+   *
+   * Baja cuando la gente bloquea o reporta los mensajes, y arrastra consigo el
+   * límite de envíos diarios. Se pedía a Meta pero se descartaba, así que
+   * cuando los envíos empezaban a fallar no había dónde mirar.
+   */
+  calidadNumero: string | null
   mensajeError: string | null
 }
 
