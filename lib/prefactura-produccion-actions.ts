@@ -364,6 +364,50 @@ async function armarIndupan(desde: string, hasta: string) {
   // 2026-09-14 ("error en ingreso") seguían contando en la prefactura.
   const reversadoPorId = await getReversosPorIdempresa(INDUPAN)
 
+  // Reclasificaciones de lote (código 309) -- se necesita ANTES de las
+  // alertas de "lote_invalido" de más abajo (no solo para sumar el ajuste al
+  // cobro): un ingreso con el lote mal digitado que YA fue corregido por el
+  // Coordinador con este mecanismo NO debe seguir apareciendo como alerta --
+  // la corrección ya resolvió esa cantidad, aunque la fila original (con el
+  // lote viejo) nunca se edita. Sin este chequeo, las alertas volvían a
+  // aparecer eternamente para producción que ya se había arreglado, incluso
+  // el mismo día que se corrigió.
+  // BUG REAL encontrado 2026-09-21 (reportado por el usuario): tras corregir
+  // los typos de lote "20200910"/"20261209" vía código 309, las 92 filas
+  // originales seguían disparando `lote_invalido` como si nada se hubiera
+  // resuelto.
+  const { data: reclaCruda } = await admin
+    .from("invtrans")
+    .select("id, idproducto, nombreproducto, cantidad, lote, tipomov, status, tipo_produccion, ordentolva")
+    .eq("idempresa", INDUPAN)
+    .eq("cod_movimiento", "309")
+  const filasReclaResueltas = (reclaCruda || []).filter(
+    (r: any) =>
+      String(r.status || "").toLowerCase().startsWith("aprob") &&
+      r.tipomov === "Salida" &&
+      r.tipo_produccion !== "Harinera" &&
+      !PRODUCTOS_NO_TOLVA_INDUPAN.has(String(r.nombreproducto || "")),
+  )
+  // Cuánto se sacó de CADA (lote, producto) vía una reclasificación -- esa
+  // cantidad ya no cuenta como "sin resolver" en el lote de origen, sin
+  // importar cuál fila puntual del LOGO la originó (son unidades fungibles
+  // del mismo producto).
+  const resueltoPorLoteProducto = new Map<string, number>()
+  for (const r of filasReclaResueltas) {
+    const k = `${r.lote}|${r.nombreproducto}`
+    resueltoPorLoteProducto.set(k, (resueltoPorLoteProducto.get(k) ?? 0) + num(r.cantidad))
+  }
+  /** Consume del cupo ya resuelto por reclasificación; true = no alertar. */
+  function yaResueltoPorReclasificacion(lote: string, nombreproducto: string, cantidad: number): boolean {
+    const k = `${lote}|${nombreproducto}`
+    const disponible = resueltoPorLoteProducto.get(k) ?? 0
+    if (disponible >= cantidad) {
+      resueltoPorLoteProducto.set(k, disponible - cantidad)
+      return true
+    }
+    return false
+  }
+
   // Ingresos aprobados del rango cuyo LOTE no es una fecha parseable, O cuyo
   // LOTE parsea a una fecha pero muy distinta de `fechaprod`: el filtro de
   // arriba (por rango de LOTE) los deja fuera en los dos casos, así que se
@@ -399,6 +443,7 @@ async function armarIndupan(desde: string, hasta: string) {
     for (const r of data || []) {
       if (r.tipo_produccion === "Harinera") continue
       if (PRODUCTOS_NO_TOLVA_INDUPAN.has(String(r.nombreproducto || ""))) continue
+      if (yaResueltoPorReclasificacion(String(r.lote ?? ""), String(r.nombreproducto || ""), num(r.cantidad))) continue
       const fechaLote = loteAFechaIndupan(r.lote)
       const fechaProd = String(r.fechaprod ?? "").slice(0, 10)
       if (fechaLote === null) {
@@ -478,12 +523,11 @@ async function armarIndupan(desde: string, hasta: string) {
     { ton: number; bultos: number; kg: number; lote: string; nombreproducto: string; ordentolva: string | null }
   >()
   {
-    const { data: recla } = await admin
-      .from("invtrans")
-      .select("id, idproducto, nombreproducto, cantidad, lote, tipomov, status, tipo_produccion, ordentolva")
-      .eq("idempresa", INDUPAN)
-      .eq("cod_movimiento", "309")
-    const filasRecla = (recla || []).filter(
+    // Reusa `reclaCruda` (ya traído arriba para `resueltoPorLoteProducto`) --
+    // una sola consulta a `cod_movimiento='309'` para las dos cosas, no dos.
+    // Esta necesita `ordentolva` además de lo ya filtrado, así que vuelve a
+    // filtrar sobre los mismos datos crudos en vez de re-consultar.
+    const filasRecla = (reclaCruda || []).filter(
       (r: any) =>
         String(r.status || "").toLowerCase().startsWith("aprob") &&
         r.tipo_produccion !== "Harinera" &&
@@ -534,12 +578,15 @@ async function armarIndupan(desde: string, hasta: string) {
       })
       continue
     }
-    // Guardarraíl contra devoluciones/descargues manuales con fecha real muy
-    // distinta a su lote (ver comentario arriba, caso real de agosto): ahora
-    // que ya no se filtra por `creadopor`, este chequeo es lo único que
-    // sigue dejando eso fuera. Solo aplica si trae `fechaprod` -- muchas
-    // filas reales del LOGO no la tienen (ver lib/liquidacion-tolva-actions.ts).
-    if (r.fechaprod && diasEntreFechas(fecha, String(r.fechaprod).slice(0, 10)) > TOLERANCIA_LOTE_FECHAPROD_DIAS) {
+    // Guardarraíl contra ingresos con fecha real muy distinta a su lote (ver
+    // comentario arriba, caso real de agosto). Solo aplica si trae
+    // `fechaprod` -- muchas filas reales del LOGO no la tienen (ver
+    // lib/liquidacion-tolva-actions.ts).
+    if (
+      r.fechaprod &&
+      diasEntreFechas(fecha, String(r.fechaprod).slice(0, 10)) > TOLERANCIA_LOTE_FECHAPROD_DIAS &&
+      !yaResueltoPorReclasificacion(String(r.lote ?? ""), String(r.nombreproducto || ""), num(r.cantidad))
+    ) {
       alertas.push({
         tipo: "lote_invalido",
         detalle: `Ingreso #${r.id} (${r.nombreproducto || "sin producto"}) con lote "${r.lote}" (léase como ${fecha}) no coincide con su fecha real de producción (${String(r.fechaprod).slice(0, 10)}) — excluido del cobro.`,
