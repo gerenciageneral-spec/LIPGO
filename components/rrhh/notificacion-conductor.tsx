@@ -382,6 +382,25 @@ const ESTADOS: Record<string, { texto: string; clase: string; Icono: typeof Chec
   error: { texto: "Error", clase: "bg-red-100 text-red-800", Icono: X },
 }
 
+/**
+ * Qué clase de fallo fue, para poder contarlos y distinguirlos.
+ *
+ * "Falta el celular" y "el celular está mal escrito" se arreglan en lugares
+ * distintos: uno es capturar el dato, el otro corregirlo. Mezclados en un solo
+ * "Sin enviar" no se puede saber cuál pesa más.
+ */
+function claseDeFallo(motivo: string | null): "sin_celular" | "invalido" | "otro" {
+  const m = String(motivo ?? "")
+  if (m.startsWith("SIN_CELULAR:")) return "sin_celular"
+  if (m.startsWith("CELULAR_INVALIDO:")) return "invalido"
+  return "otro"
+}
+
+/** El motivo sin el prefijo técnico: eso no se le muestra a nadie. */
+function motivoLegible(motivo: string | null): string {
+  return String(motivo ?? "").replace(/^(SIN_CELULAR|CELULAR_INVALIDO):\s*/, "")
+}
+
 function Historial() {
   const [filas, setFilas] = useState<AvisoEnviado[]>([])
   const [cargando, setCargando] = useState(true)
@@ -432,6 +451,26 @@ function Historial() {
             <strong className="text-amber-700">{filas.filter((f) => !f.estado).length}</strong>{" "}
             <span className="text-muted-foreground">sin enviar</span>
           </span>
+          {/* El desglose es lo accionable: dice si hay que capturar el celular
+              o corregir los que ya están. */}
+          {filas.some((f) => !f.estado && claseDeFallo(f.motivo) === "sin_celular") && (
+            <span className="text-muted-foreground">
+              ·{" "}
+              <strong>
+                {filas.filter((f) => !f.estado && claseDeFallo(f.motivo) === "sin_celular").length}
+              </strong>{" "}
+              sin celular en la orden
+            </span>
+          )}
+          {filas.some((f) => !f.estado && claseDeFallo(f.motivo) === "invalido") && (
+            <span className="text-muted-foreground">
+              ·{" "}
+              <strong>
+                {filas.filter((f) => !f.estado && claseDeFallo(f.motivo) === "invalido").length}
+              </strong>{" "}
+              celular mal escrito
+            </span>
+          )}
           <span>
             <strong className="text-red-700">
               {filas.filter((f) => f.estado === "fallido" || f.estado === "error").length}
@@ -497,10 +536,14 @@ function Historial() {
                       ) : (
                         <span
                           className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800"
-                          title="El intento quedó registrado pero no se creó el mensaje. Suele ser configuración faltante."
+                          title={motivoLegible(f.motivo) || "No se llegó a crear el mensaje."}
                         >
                           <AlertTriangle className="h-3 w-3" />
-                          Sin enviar
+                          {claseDeFallo(f.motivo) === "sin_celular"
+                            ? "Sin celular"
+                            : claseDeFallo(f.motivo) === "invalido"
+                              ? "Celular inválido"
+                              : "Sin enviar"}
                         </span>
                       )}
                       {f.errorCodigo ? (
@@ -511,7 +554,7 @@ function Historial() {
                         // Sin esto, "Sin enviar" no distingue un celular mal
                         // digitado de un problema de conexión con Meta.
                         <p className="mt-0.5 max-w-[22rem] text-[10px] text-amber-800">
-                          {f.motivo}
+                          {motivoLegible(f.motivo)}
                         </p>
                       ) : null}
                     </td>

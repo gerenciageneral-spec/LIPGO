@@ -418,7 +418,10 @@ export async function notificarConductor(
       // Sin desvío, va al conductor real.
       const crudo = ctx.telefonoConductor
       if (!crudo) {
-        const motivo = `La orden ${ctx.ordenDeCargue ?? ordenId} no tiene teléfono del conductor.`
+        // El prefijo permite clasificar el fallo en el historial sin tener que
+        // interpretar el texto. Son dos problemas distintos: aquí falta
+        // capturar el dato; abajo el dato está pero mal escrito.
+        const motivo = `SIN_CELULAR: la orden ${ctx.ordenDeCargue ?? ordenId} no tiene teléfono del conductor.`
         await registrarFallo(motivo)
         return { enviado: false, motivo }
       }
@@ -438,7 +441,8 @@ export async function notificarConductor(
        */
       const normalizado = await normalizarTelefono(crudo)
       if (!normalizado) {
-        const motivo = `El celular del conductor de la orden ${ctx.ordenDeCargue ?? ordenId} no es válido: "${crudo}". En Colombia son 10 dígitos empezando por 3.`
+        const digitos = String(crudo).replace(/\D/g, "")
+        const motivo = `CELULAR_INVALIDO: "${crudo}" (${digitos.length} dígitos). Se esperan 10 empezando por 3; el 57 lo antepone el sistema. Orden ${ctx.ordenDeCargue ?? ordenId}.`
         await registrarFallo(motivo, crudo)
         return { enviado: false, motivo }
       }
