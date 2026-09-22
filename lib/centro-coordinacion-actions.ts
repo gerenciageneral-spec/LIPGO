@@ -10,6 +10,7 @@
 // operación con SLA/ritmo/proyección ya construidos.
 
 import { createClient } from "@/lib/supabase-client"
+import { notificarConductor } from "@/lib/notificacion-conductor-actions"
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getColombiaDateTime, getColombiaTime } from "@/lib/date-utils"
 import { pesoBaseCalculo, excluirAvimolDistribucion } from "@/lib/nomina-calculo-utils"
@@ -991,6 +992,16 @@ export async function asignarOrdenAMuelle(
 
   const { error } = await supabase.from("cabeceraoc").update(cambios).eq("id", orderId)
   if (error) return { success: false, message: error.message }
+
+  // Aviso al conductor. Va DESPUES del update y sin await bloqueante sobre el
+  // resultado: si la mensajeria falla, el muelle ya quedo asignado y el
+  // coordinador no puede quedarse esperando. `notificarConductor` nunca lanza.
+  try {
+    await notificarConductor("muelle_asignado", orderId)
+  } catch (e: any) {
+    console.error("[v0] aviso muelle_asignado:", e?.message ?? e)
+  }
+
   return {
     success: true,
     message: arrancoElReloj
