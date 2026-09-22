@@ -79,8 +79,10 @@
 -- PASO 2 — REGISTRARLA EN LIPgo
 -- ----------------------------------------------------------------------------
 
+-- La columna de "para qué sirve" se llama `uso` (script 180), no `cuando_usar`.
+
 insert into public.whatsapp_plantillas
-  (nombre, idioma, descripcion, cuando_usar, variables)
+  (nombre, idioma, descripcion, uso, variables)
 values (
   'plantilla_conductor',
   'es_CO',
@@ -91,7 +93,7 @@ values (
 on conflict (nombre) do update
   set idioma      = excluded.idioma,
       descripcion = excluded.descripcion,
-      cuando_usar = excluded.cuando_usar,
+      uso         = excluded.uso,
       variables   = excluded.variables;
 
 
