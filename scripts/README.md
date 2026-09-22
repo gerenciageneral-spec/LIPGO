@@ -42,7 +42,32 @@ que se ejecutó.
    un año necesita saber qué problema resolvía.
 2. **Aditivo e idempotente**: `add column if not exists`, `create table if not
    exists`. Correrlo dos veces no puede romper nada.
-3. **Verificación al final**, solo lecturas, para confirmar que quedó aplicado.
+3. **Todo en `public`, y escrito**: `create table public.x`, no `create table x`.
+4. **Verificación al final**, solo lecturas, para confirmar que quedó aplicado.
+
+## Un solo esquema: `public`
+
+Este proyecto usa **únicamente el esquema `public`**. La aplicación no llama
+nunca a `.schema()`, así que cualquier tabla fuera de `public` es invisible para
+LIPgo.
+
+Por eso los scripts **escriben el esquema siempre**, aunque parezca redundante:
+
+```sql
+create table if not exists public.mi_tabla (...);   -- sí
+create table if not exists mi_tabla (...);          -- no
+```
+
+Sin el prefijo, la tabla se crea donde diga el `search_path` de quien ejecuta
+—que no es el mismo en el editor de Supabase, en una conexión directa o en un
+rol distinto—. El script "funciona", no da ningún error, y la tabla queda en un
+esquema que la aplicación nunca va a leer.
+
+Ya pasó: apareció un `cobos.sig_satisfaccion`, una copia de la tabla de
+encuestas en otro esquema. Una encuesta guardada ahí no cuenta en el indicador,
+y nada lo avisa —el número simplemente sale más bajo de lo que debería—.
+
+Si encuentras tablas fuera de `public`, no son de LIPgo.
 4. **Reversión comentada**, con la advertencia de lo que NO se revierte (un
    archivo ya subido a Storage, un movimiento de inventario ya hecho).
 
