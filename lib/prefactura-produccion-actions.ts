@@ -315,7 +315,7 @@ async function armarIndupan(desde: string, hasta: string) {
   for (let off = 0; ; off += 1000) {
     const { data, error } = await admin
       .from("invtrans")
-      .select("id, idproducto, nombreproducto, cantidad, lote, fechaprod, creadopor, tipo_produccion, observaciones")
+      .select("id, idproducto, nombreproducto, cantidad, lote, fechaprod, creadopor, tipo_produccion, observaciones, ordentolva")
       .eq("idempresa", INDUPAN)
       .eq("tipomov", "Entrada")
       .eq("status", "Aprobado")
@@ -328,21 +328,22 @@ async function armarIndupan(desde: string, hasta: string) {
     ingresosCrudos.push(...data)
     if (data.length < 1000) break
   }
-  // Confirmado con el negocio 2026-09-16/17: Tolva la produce el LOGO. Lo que
-  // entra manual ("transacción manual" / usuario humano en `creadopor`) son
-  // devoluciones o descargues que se aprueban por el mismo módulo pero no
-  // son producción de Tolva -- se verificó con un caso real (5 transacciones
-  // del 17-ago, creadas semanas después por "Coordinador Indupan", con
-  // `fechaprod` que ni siquiera coincidía con el lote).
-  // `tipo_produccion = 'Harinera'` -- producción PROPIA que genera inventario
-  // pero NO se cobra (mismo criterio ya validado en Avimol, ver
-  // EXCLUIR_HARINERA en lib/conciliacion-avimol-actions.ts). Verificado con
-  // datos reales: incluye devoluciones/descargues explícitos (observaciones
-  // "Descargue de material") pero TAMBIÉN lotes grandes de productos núcleo
-  // (700 bultos de Indupan Premium 50 Kg. en un solo movimiento, sin turno
-  // real detrás) -- por eso este filtro reemplaza a la lista fija de 4
-  // productos de abajo como criterio principal; la lista se conserva como
-  // respaldo por si algún caso no trae `tipo_produccion` marcado.
+  // Probado y REVERTIDO 2026-09-21: se intentó quitar el filtro de
+  // `creadopor` (por si el LOGO no trabaja algún día y el Coordinador captura
+  // a mano) -- verificado con datos reales que NO hubo ningún ingreso manual
+  // creado el domingo 13-sep en cuestión (0 filas), así que esa hipótesis
+  // puntual no aplicó aquí. Y al quitar el filtro en general, el total SUBIÓ
+  // muy por encima del Excel del cliente (de 897t a 1036t, +153t) porque se
+  // colaron entradas manuales que SÍ son ajenas a Tolva -- ej. 34,1t el
+  // 01-sep (`creadopor="Coordinador Indupan"`, sin fechaprod que lo
+  // delatara), el mismo patrón de "devolución/descargue" que confirmó el
+  // negocio en agosto. Se mantiene el filtro `creadopor === "LOGO"`.
+  //
+  // Lo que SÍ quedó corregido de raíz por separado (no dependía de esto):
+  // reversos (código 102, ver `reversadoPorId` abajo) y reclasificaciones de
+  // lote (código 309, ver `deltaLoteProducto` abajo) -- esos son
+  // correcciones REALES sobre producción que YA era del LOGO, así que se
+  // incluyen sin importar quién las autorizó.
   const ingresos = ingresosCrudos.filter(
     (r: any) =>
       r.creadopor === "LOGO" &&
@@ -367,9 +368,8 @@ async function armarIndupan(desde: string, hasta: string) {
   // LOTE parsea a una fecha pero muy distinta de `fechaprod`: el filtro de
   // arriba (por rango de LOTE) los deja fuera en los dos casos, así que se
   // buscan por `fechaprod` para que no queden invisibles (no suman al cobro,
-  // solo se alertan). Mismo filtro LOGO + exclusión de productos que
-  // `ingresos` -- si no, cualquier devolución/descargue manual con lote roto
-  // dispararía una alerta de algo que de todas formas nunca se iba a facturar.
+  // solo se alertan). Misma exclusión de productos que `ingresos` -- ya NO
+  // se filtra por `creadopor` (ver comentario arriba).
   //
   // BUG REAL encontrado y corregido 2026-09-21: un lote como "20200910" (año
   // 2020 en vez de 2026, digitado a mano por error) o "20261209" (día/mes
@@ -380,7 +380,10 @@ async function armarIndupan(desde: string, hasta: string) {
   // nunca cae años de diferencia de su `fechaprod` -- eso "estaría vencido",
   // como lo resumió el usuario -- así que cualquier diferencia mayor a
   // `TOLERANCIA_LOTE_FECHAPROD_DIAS` es casi con certeza un typo, no un turno
-  // legítimo que cruza medianoche (eso como mucho difiere 1 día).
+  // legítimo que cruza medianoche (eso como mucho difiere 1 día). Mismo
+  // filtro `creadopor = LOGO` que `ingresos` -- una devolución/descargue
+  // manual con lote roto nunca se iba a facturar de todas formas, así que
+  // alertarla solo sería ruido.
   {
     const { data } = await admin
       .from("invtrans")
@@ -425,6 +428,95 @@ async function armarIndupan(desde: string, hasta: string) {
     for (const p of data || []) pesoPorProducto.set(Number(p.id), num(p.peso_unitkg))
   }
 
+  // Tarifa REAL de la orden (cabeceraoc.tipooperacion), cuando el ingreso ya
+  // tiene turno asignado (`ordentolva`). El cierre de lote NO siempre cae
+  // exacto en el cambio de tarifa (normal->festiva): un lote puede seguir
+  // abierto ya entrado el festivo, o cerrar recién iniciado el festivo antes
+  // de que se le asigne el turno del día siguiente. Cuando ya existe una
+  // orden real, esa clasificación es la que decidió el coordinador al
+  // cerrar el turno -- manda sobre volver a adivinarla desde la fecha del
+  // lote. Solo se usa "domingo de la fecha del lote" cuando todavía NO hay
+  // orden (producción sin liquidar aún).
+  // BUG REAL encontrado 2026-09-21 (confirmado por el usuario con el
+  // archivo del cliente): ingreso #31051 (261 bultos, "Indupan Panificacion
+  // 50 Kg.") con lote "20260913" (domingo) pertenece a la orden real
+  // Tolva9160, ya registrada como tipooperacion='Tolva' (normal,
+  // fechacargue 2026-09-14) -- se estaba cobrando a tarifa festiva una
+  // producción que el propio sistema ya había clasificado como normal.
+  const ordenesEnIngresos = Array.from(new Set(ingresos.map((r: any) => r.ordentolva).filter(Boolean)))
+  const tarifaPorOrden = new Map<string, "Tolva" | "Tolva f">()
+  for (let i = 0; i < ordenesEnIngresos.length; i += 100) {
+    const chunk = ordenesEnIngresos.slice(i, i + 100)
+    const { data } = await admin
+      .from("cabeceraoc")
+      .select("ordendecargue, tipooperacion")
+      .in("ordendecargue", chunk)
+      .in("tipooperacion", ["Tolva", "Tolva f"])
+    for (const o of data || []) tarifaPorOrden.set(String(o.ordendecargue), o.tipooperacion)
+  }
+
+  // Reclasificaciones de lote ("Movimiento por código 309" -- Salida del
+  // lote viejo + Entrada al lote correcto, neta cero en inventario, para
+  // RENOMBRAR el lote de un ingreso ya aprobado). Van SIEMPRE con
+  // creadopor="Coordinador Indupan" (`origen`="transaccion manual"), así
+  // que `ingresos` (arriba, exige creadopor=LOGO) las excluye por completo
+  // -- pero no son devoluciones ni descargues, son producción REAL de LOGO
+  // a la que solo se le corrigió el lote. Sin este ajuste, la corrección
+  // queda sin efecto: el ingreso original de LOGO se sigue cobrando bajo su
+  // lote VIEJO (equivocado) y el lote NUEVO (correcto) nunca ve esa
+  // cantidad -- justo lo que pasó con 508 bultos (25,4t) de "Indupan
+  // Panificacion 50 Kg." movidos del 12 al 13-sep-2026 (Tolva normal ->
+  // Tolva f), encontrado y corregido 2026-09-21 a partir de un caso
+  // reportado por el cliente.
+  //
+  // Sin filtro de lote en la consulta (como en `reversadoPorId`): un solo
+  // movimiento puede mover producción DESDE un lote de OTRO período HACIA
+  // uno de este período (o viceversa), y solo importa si el lote resultante
+  // cae en el rango pedido -- eso se filtra más abajo, por fila, no aquí.
+  const deltaLoteProducto = new Map<
+    string,
+    { ton: number; bultos: number; kg: number; lote: string; nombreproducto: string; ordentolva: string | null }
+  >()
+  {
+    const { data: recla } = await admin
+      .from("invtrans")
+      .select("id, idproducto, nombreproducto, cantidad, lote, tipomov, status, tipo_produccion, ordentolva")
+      .eq("idempresa", INDUPAN)
+      .eq("cod_movimiento", "309")
+    const filasRecla = (recla || []).filter(
+      (r: any) =>
+        String(r.status || "").toLowerCase().startsWith("aprob") &&
+        r.tipo_produccion !== "Harinera" &&
+        !PRODUCTOS_NO_TOLVA_INDUPAN.has(String(r.nombreproducto || "")),
+    )
+    const idsProductoRecla = Array.from(
+      new Set(filasRecla.map((r: any) => r.idproducto).filter((x: any) => x != null).map((x: any) => Number(x))),
+    )
+    for (let i = 0; i < idsProductoRecla.length; i += 100) {
+      const chunk = idsProductoRecla.slice(i, i + 100)
+      const { data } = await admin.from("productos").select("id, peso_unitkg").in("id", chunk)
+      for (const p of data || []) if (!pesoPorProducto.has(Number(p.id))) pesoPorProducto.set(Number(p.id), num(p.peso_unitkg))
+    }
+    for (const r of filasRecla) {
+      const fecha = loteAFechaIndupan(r.lote)
+      if (!fecha || fecha < desde || fecha > hasta) continue // solo lotes de ESTE período
+      const peso = r.idproducto != null ? pesoPorProducto.get(Number(r.idproducto)) || 0 : 0
+      const bultos = num(r.cantidad)
+      const kg = bultos * peso
+      const ton = kg / 1000
+      if (ton <= 0) continue
+      const signo = r.tipomov === "Salida" ? -1 : r.tipomov === "Entrada" ? 1 : 0
+      if (signo === 0) continue
+      const k = `${r.lote}|${r.nombreproducto}`
+      const acc = deltaLoteProducto.get(k) || { ton: 0, bultos: 0, kg: 0, lote: r.lote, nombreproducto: r.nombreproducto, ordentolva: null }
+      acc.ton += signo * ton
+      acc.bultos += signo * bultos
+      acc.kg += signo * kg
+      if (r.tipomov === "Entrada" && r.ordentolva) acc.ordentolva = r.ordentolva
+      deltaLoteProducto.set(k, acc)
+    }
+  }
+
   const porOp = new Map<string, { cantidad: number; total: number; tarifa: number; sinTarifa: boolean }>()
   // Agregado por (lote, producto): cada ingreso individual es UNA lectura de
   // báscula/QR (puede haber decenas por lote), así que sin agregar aquí el
@@ -442,6 +534,18 @@ async function armarIndupan(desde: string, hasta: string) {
       })
       continue
     }
+    // Guardarraíl contra devoluciones/descargues manuales con fecha real muy
+    // distinta a su lote (ver comentario arriba, caso real de agosto): ahora
+    // que ya no se filtra por `creadopor`, este chequeo es lo único que
+    // sigue dejando eso fuera. Solo aplica si trae `fechaprod` -- muchas
+    // filas reales del LOGO no la tienen (ver lib/liquidacion-tolva-actions.ts).
+    if (r.fechaprod && diasEntreFechas(fecha, String(r.fechaprod).slice(0, 10)) > TOLERANCIA_LOTE_FECHAPROD_DIAS) {
+      alertas.push({
+        tipo: "lote_invalido",
+        detalle: `Ingreso #${r.id} (${r.nombreproducto || "sin producto"}) con lote "${r.lote}" (léase como ${fecha}) no coincide con su fecha real de producción (${String(r.fechaprod).slice(0, 10)}) — excluido del cobro.`,
+      })
+      continue
+    }
 
     const peso = r.idproducto != null ? pesoPorProducto.get(Number(r.idproducto)) || 0 : 0
     // Si el ingreso fue reversado (total o parcialmente) por un código de
@@ -454,7 +558,7 @@ async function armarIndupan(desde: string, hasta: string) {
 
     const [y, m, d] = fecha.split("-").map(Number)
     const esDomingo = new Date(y, m - 1, d).getDay() === 0
-    const opTarifa = esDomingo ? "Tolva f" : "Tolva"
+    const opTarifa = tarifaPorOrden.get(String(r.ordentolva)) ?? (esDomingo ? "Tolva f" : "Tolva")
 
     const tarifa = tarifaVigente(opTarifa, fecha)
     if (tarifa === 0) sinTarifaSet.add(`${opTarifa}|${fecha}`)
@@ -488,6 +592,49 @@ async function armarIndupan(desde: string, hasta: string) {
         tarifa,
         valor,
         lote: r.lote,
+      })
+    }
+  }
+
+  // Aplicar las reclasificaciones de lote (código 309) sobre los totales ya
+  // armados: el lote de origen pierde la cantidad movida, el lote destino la
+  // gana -- si el destino no tenía ninguna fila propia todavía (todo su
+  // aporte vino de la reclasificación), se crea aquí.
+  for (const d of deltaLoteProducto.values()) {
+    if (Math.abs(d.ton) < 0.0005) continue
+    const fechaLote = `${d.lote.slice(0, 4)}-${d.lote.slice(4, 6)}-${d.lote.slice(6, 8)}`
+    const [y, m, dd] = fechaLote.split("-").map(Number)
+    const esDomingo = new Date(y, m - 1, dd).getDay() === 0
+    const opTarifa = (d.ordentolva && tarifaPorOrden.get(d.ordentolva)) ?? (esDomingo ? "Tolva f" : "Tolva")
+    const tarifa = tarifaVigente(opTarifa, fechaLote)
+    const valor = d.ton * tarifa
+
+    const g = porOp.get(opTarifa) || { cantidad: 0, total: 0, tarifa: 0, sinTarifa: false }
+    g.cantidad += d.ton
+    g.total += valor
+    if (tarifa > 0) g.tarifa = tarifa
+    porOp.set(opTarifa, g)
+
+    const k = `${d.lote}|${d.nombreproducto}`
+    const existente = porLoteProducto.get(k)
+    if (existente) {
+      existente.bultos = (existente.bultos ?? 0) + d.bultos
+      existente.kg = (existente.kg ?? 0) + d.kg
+      existente.cantidad += d.ton
+      existente.valor += valor
+    } else if (d.ton > 0) {
+      porLoteProducto.set(k, {
+        fecha: fechaLote,
+        concepto: opTarifa,
+        detalle: d.nombreproducto,
+        referencia: "reclasificación de lote (código 309)",
+        bultos: d.bultos,
+        kg: d.kg,
+        cantidad: d.ton,
+        unidad: "t",
+        tarifa,
+        valor,
+        lote: d.lote,
       })
     }
   }
