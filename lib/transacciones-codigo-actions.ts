@@ -79,6 +79,41 @@ async function resolverClave(sb: any, clave: string): Promise<{ ok: boolean; res
 // ---------------------------------------------------------------------------
 
 const MARKER_REV = (id: number) => `[rev#${id}]`
+const MARKER_REV_RE = /\[rev#(\d+)\]/
+
+/**
+ * Cuánto se reversó de CADA `invtrans.id` de una empresa, vía "Movimiento por
+ * código" (102/602/552/312 — corrección, referencia el original con
+ * `[rev#<id>]` en observaciones, nunca edita/borra la fila original).
+ *
+ * Reusar esto es obligatorio en cualquier lectura de `invtrans` que alimente
+ * pago (nómina), cobro (facturación) o auditoría (entrega vs. facturado) --
+ * de lo contrario un ingreso ya anulado por Gerencia General se sigue
+ * cobrando/pagando como si fuera real. Bug real encontrado 2026-09-21 en
+ * `armarIndupan` (lib/prefactura-produccion-actions.ts): 42t reversadas que
+ * seguían contando en la prefactura de Tolva.
+ *
+ * Solo una consulta por empresa (no por fila) -- el volumen de reversos es
+ * bajo (decenas, no miles), así que se trae todo y se resuelve en memoria.
+ */
+export async function getReversosPorIdempresa(idempresa: number): Promise<Map<number, number>> {
+  const reversadoPorId = new Map<number, number>()
+  if (!idempresa) return reversadoPorId
+  const sb: any = await getSupabaseAdmin()
+  const { data } = await sb
+    .from("invtrans")
+    .select("cantidad, observaciones")
+    .eq("idempresa", idempresa)
+    .ilike("observaciones", "%[rev#%")
+  for (const r of data || []) {
+    const m = MARKER_REV_RE.exec(String(r.observaciones || ""))
+    if (!m) continue
+    const idOriginal = Number(m[1])
+    const prev = reversadoPorId.get(idOriginal) ?? 0
+    reversadoPorId.set(idOriginal, prev + Math.abs(Number(r.cantidad) || 0))
+  }
+  return reversadoPorId
+}
 
 export async function buscarMovimientoOriginal(params: {
   selectedEmpresaId: number

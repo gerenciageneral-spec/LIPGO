@@ -46,6 +46,7 @@
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getHorarioTolva } from "@/lib/horario-tolva-actions"
+import { getReversosPorIdempresa } from "@/lib/transacciones-codigo-actions"
 
 const ORIGEN_INGRESO_PRODUCCION = "%ingreso producci%"
 
@@ -317,6 +318,15 @@ export async function getLiquidacionTolvaDia(
       for (const p of productos || []) pesoPorProducto.set(Number(p.id), Number(p.peso_unitkg) || 0)
     }
 
+    // 3b) Reversos ("Transacciones por Código"): un ingreso mal digitado se
+    // corrige con un movimiento aparte que referencia al original con
+    // `[rev#<id>]` en observaciones -- la fila original NUNCA se edita ni se
+    // borra. Sin descontar esto aquí, un ingreso ya anulado por Gerencia
+    // General se agrupa en un turno igual y se termina PAGANDO como si fuera
+    // producción real (mismo hueco encontrado y corregido 2026-09-21 en la
+    // prefactura de facturación, lib/prefactura-produccion-actions.ts).
+    const reversadoPorId = await getReversosPorIdempresa(idempresa)
+
     // 4) Clasificar cada ingreso: turno 1 / turno 2 / sin_turno.
     const pendientes: IngresoPendienteRevision[] = []
     const porTurno = new Map<number, { lineas: Map<string, LineaProducto>; ids: number[] }>([
@@ -325,7 +335,8 @@ export async function getLiquidacionTolvaDia(
     ])
 
     for (const r of ingresos || []) {
-      const cantidad = Number(r.cantidad) || 0
+      const cantidad = Math.max(0, (Number(r.cantidad) || 0) - (reversadoPorId.get(Number(r.id)) ?? 0))
+      if (cantidad <= 0) continue
 
       // El turno se decide con la HORA REAL DE PRODUCCION (`horaprod`), que se
       // captura en el formulario de Ingreso de Producción. La fecha en que se
@@ -551,7 +562,7 @@ export async function getAuditoriaTolva(
     // 1) Entrega real: invtrans aprobados del rango, agrupados por fechaprod.
     const { data: ingresos, error: errIng } = await admin
       .from("invtrans")
-      .select("idproducto, cantidad, fechaprod")
+      .select("id, idproducto, cantidad, fechaprod")
       .eq("tipomov", "Entrada")
       .eq("status", "Aprobado")
       .eq("idempresa", idempresa)
@@ -576,10 +587,15 @@ export async function getAuditoriaTolva(
       const { data: productos } = await admin.from("productos").select("id, peso_unitkg").in("id", idsProducto)
       for (const p of productos || []) pesoPorProducto.set(Number(p.id), Number(p.peso_unitkg) || 0)
     }
+    // Reversos: la "entrega real" no puede incluir lo que Gerencia General ya
+    // anuló por un error de digitación -- mismo hueco y mismo fix que en
+    // getLiquidacionTolvaDia / lib/prefactura-produccion-actions.ts.
+    const reversadoPorId = await getReversosPorIdempresa(idempresa)
     const entregaPorFecha = new Map<string, number>()
     for (const r of ingresos || []) {
       const peso = r.idproducto != null ? pesoPorProducto.get(Number(r.idproducto)) || 0 : 0
-      const ton = ((Number(r.cantidad) || 0) * peso) / 1000
+      const cantidad = Math.max(0, (Number(r.cantidad) || 0) - (reversadoPorId.get(Number(r.id)) ?? 0))
+      const ton = (cantidad * peso) / 1000
       const f = String(r.fechaprod).slice(0, 10)
       entregaPorFecha.set(f, (entregaPorFecha.get(f) || 0) + ton)
     }

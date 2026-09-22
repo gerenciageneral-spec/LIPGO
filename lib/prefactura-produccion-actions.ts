@@ -29,6 +29,7 @@
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getCurrentUsuarioForInsert } from "@/lib/user-context"
 import { getConciliacionAvimol, type AlertaAvimol } from "@/lib/conciliacion-avimol-actions"
+import { getReversosPorIdempresa } from "@/lib/transacciones-codigo-actions"
 import type { Advertencia } from "@/lib/facturacion-control-actions"
 // Las constantes viven en un módulo aparte: este archivo es "use server" y ahí
 // solo se pueden exportar funciones async. Ver lib/prefactura-produccion-constants.ts.
@@ -349,6 +350,19 @@ async function armarIndupan(desde: string, hasta: string) {
       !PRODUCTOS_NO_TOLVA_INDUPAN.has(String(r.nombreproducto || "")),
   )
 
+  // Reversos ("Transacciones por Código", lib/transacciones-codigo-actions.ts):
+  // un ingreso mal digitado se corrige con un movimiento aparte (tipomov
+  // Salida, origen "transaccion manual") que referencia al original con el
+  // marcador `[rev#<id>]` en observaciones -- NUNCA se edita/borra la fila
+  // original. `ingresos` (arriba) exige tipomov=Entrada + origen "ingreso
+  // producción" + creadopor=LOGO, así que un reverso de este tipo es
+  // invisible para ese filtro y el ingreso original se seguía cobrando de
+  // más aunque ya estuviera anulado por Gerencia General.
+  // BUG REAL encontrado 2026-09-21: 840 bultos (42t, ~$428.022) de "Indupan
+  // Panificacion 50 Kg." (invtrans #31046, lote 20260913) reversados el
+  // 2026-09-14 ("error en ingreso") seguían contando en la prefactura.
+  const reversadoPorId = await getReversosPorIdempresa(INDUPAN)
+
   // Ingresos aprobados del rango cuyo LOTE no es una fecha parseable, O cuyo
   // LOTE parsea a una fecha pero muy distinta de `fechaprod`: el filtro de
   // arriba (por rango de LOTE) los deja fuera en los dos casos, así que se
@@ -430,7 +444,10 @@ async function armarIndupan(desde: string, hasta: string) {
     }
 
     const peso = r.idproducto != null ? pesoPorProducto.get(Number(r.idproducto)) || 0 : 0
-    const bultos = num(r.cantidad)
+    // Si el ingreso fue reversado (total o parcialmente) por un código de
+    // corrección, se descuenta lo reversado -- no se factura lo que
+    // Gerencia General ya anuló.
+    const bultos = Math.max(0, num(r.cantidad) - (reversadoPorId.get(Number(r.id)) ?? 0))
     const kg = bultos * peso
     const ton = kg / 1000
     if (ton <= 0) continue
