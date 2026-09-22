@@ -18,7 +18,10 @@
 // credenciales en .env.local y WHATSAPP_ENABLED=true. Cero reescritura.
 // =====================================================================
 
-const GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION || "v21.0"
+// Misma version que usa el resto del sistema. Se conserva el nombre viejo como
+// respaldo para no romper una instalacion que ya lo tenga puesto.
+const GRAPH_VERSION =
+  process.env.WHATSAPP_API_VERSION || process.env.WHATSAPP_GRAPH_VERSION || "v21.0"
 
 export type EstadoEnvio = "simulado" | "enviado" | "error" | "sin_celular"
 
@@ -84,21 +87,27 @@ export async function enviarWhatsApp(params: ParametrosEnvio): Promise<Resultado
     return { estado: "sin_celular", error: "Celular invalido o vacio" }
   }
 
-  const habilitado = process.env.WHATSAPP_ENABLED === "true"
+  // CREDENCIALES UNIFICADAS. Este modulo usaba `WHATSAPP_ACCESS_TOKEN` y exigia
+  // `WHATSAPP_ENABLED=true`, mientras el resto del sistema usa `WHATSAPP_TOKEN`.
+  // El efecto era peor que un error: sin esas variables NO fallaba, devolvia
+  // "simulado" -- la pantalla decia que habia enviado y no salia nada.
+  //
+  // Ahora la credencial es la misma del modulo de configuracion. Se acepta el
+  // nombre viejo como respaldo para no romper una instalacion que ya lo tenga.
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID
+  const token = process.env.WHATSAPP_TOKEN || process.env.WHATSAPP_ACCESS_TOKEN
 
-  // ---- MODO SIMULACION ----
-  if (!habilitado) {
+  // Simular es una decision EXPLICITA, no lo que pasa cuando falta configurar.
+  if (process.env.WHATSAPP_ENABLED === "false") {
     return { estado: "simulado", celular }
   }
 
-  // ---- ENVIO REAL (Meta Cloud API) ----
-  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID
-  const token = process.env.WHATSAPP_ACCESS_TOKEN
   if (!phoneNumberId || !token) {
     return {
       estado: "error",
       celular,
-      error: "WHATSAPP_ENABLED=true pero faltan WHATSAPP_PHONE_NUMBER_ID / WHATSAPP_ACCESS_TOKEN",
+      error:
+        "Falta WHATSAPP_TOKEN o WHATSAPP_PHONE_NUMBER_ID. Revisalo en Configuracion > Mensajeria WhatsApp.",
     }
   }
 

@@ -12,7 +12,11 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { useToast } from "@/components/ui/use-toast"
-import { Send, Users, CalendarClock, MessageSquare, AlertCircle, CheckCircle2, History, Truck } from "lucide-react"
+import { Send, Users, CalendarClock, MessageSquare, AlertCircle, CheckCircle2, History, Truck, Settings2 } from "lucide-react"
+// La configuracion y las pruebas de WhatsApp viven AQUI: es el mismo canal que
+// usa este modulo para enviar, y tenerlas en dos sitios distintos hacia que
+// nadie supiera cual era la fuente de verdad.
+import WhatsappConfig from "@/components/configuration/whatsapp-config"
 
 const TEAL = "#00b4cc"
 
@@ -247,6 +251,9 @@ export default function NotificacionesPersonal() {
           </TabsTrigger>
           <TabsTrigger value="historial" className="gap-1.5">
             <History className="h-4 w-4" /> Historial
+          </TabsTrigger>
+          <TabsTrigger value="conexion" className="gap-1.5">
+            <Settings2 className="h-4 w-4" /> Conexión y pruebas
           </TabsTrigger>
         </TabsList>
 
@@ -486,6 +493,10 @@ export default function NotificacionesPersonal() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+        {/* ---------------- CONEXIÓN Y PRUEBAS ---------------- */}
+        <TabsContent value="conexion" className="mt-4">
+          <WhatsappConfig />
         </TabsContent>
       </Tabs>
     </div>

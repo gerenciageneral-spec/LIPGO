@@ -532,15 +532,11 @@ export const groups: Group[] = [
     title: "Configuración",
     icon: Settings,
     subgroups: [
-      {
-        title: "Integraciones",
-        modules: [
-          // Mensajeria por WhatsApp Business. El token vive en variables de
-          // entorno, no en la base: quien lo tenga puede escribirle a
-          // cualquiera en nombre de la empresa.
-          { name: "WhatsApp", icon: Send, label: "Mensajería WhatsApp" },
-        ],
-      },
+      // La configuracion de WhatsApp se movio a "Notificaciones al Personal",
+      // como pestaña "Conexion y pruebas": es el mismo canal que ese modulo usa
+      // para enviar, y tenerlo en dos sitios hacia que nadie supiera cual era la
+      // fuente de verdad. El permiso `whatsapp` se conserva por si mas adelante
+      // se quiere separar de nuevo.
       {
         title: "Gestión de Clientes",
         modules: [
