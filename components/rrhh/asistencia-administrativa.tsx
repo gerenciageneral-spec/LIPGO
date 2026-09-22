@@ -36,6 +36,19 @@ import { NOVEDADES_DIA, OPERACIONES_OPTIONS, ESPECIALIDADES_OPTIONS } from "@/li
 
 const toISO = (d: Date) => d.toISOString().slice(0, 10)
 
+/**
+ * Solo para MOSTRAR en pantalla: a un administrativo, "Trabajado normal" se
+ * le guarda literalmente como novedad "Descanso" (lib/asistencia-administrativa-actions.ts
+ * explica el porqué -- es lo que evita el sobrepago de recargo dominical/festivo
+ * confirmado en 2026-09-09). Ese valor NO se toca aquí: nómina/PILA siguen
+ * leyendo "Descanso" tal cual. Esto solo cambia la etiqueta que ve quien
+ * registra, para que no lea como si la persona no hubiera trabajado ese día.
+ */
+function etiquetaNovedad(asistencia: string | null, esAdministrativo: boolean): string {
+  if (esAdministrativo && asistencia === "Descanso") return "Turno Admin"
+  return asistencia || "—"
+}
+
 export default function AsistenciaAdministrativa() {
   const { selectedEmpresaId } = useAuth()
   const { toast } = useToast()
@@ -614,7 +627,7 @@ export default function AsistenciaAdministrativa() {
                           <TableRow key={h.id}>
                             <TableCell>{h.fecha}</TableCell>
                             <TableCell>{h.puesto || "—"}</TableCell>
-                            <TableCell>{h.asistencia || "—"}</TableCell>
+                            <TableCell>{etiquetaNovedad(h.asistencia, !!seleccionada?.admin)}</TableCell>
                           </TableRow>
                         ))
                       )}
