@@ -150,6 +150,31 @@ function armarMensaje(plantilla: string, ctx: ContextoOrden, urlEncuesta: string
  * falla, devuelve `enviado: false` con el motivo y la operación sigue: nadie
  * debe quedarse sin poder cerrar una orden porque WhatsApp no respondió.
  */
+/**
+ * Dominio donde vive la encuesta pública.
+ *
+ * El enlace va en un WhatsApp a un conductor, así que tiene que ser una
+ * dirección estable y presentable. Por eso el dominio propio es lo primero y no
+ * depende de que alguien recuerde configurar una variable: si faltara, el
+ * mensaje saldría con el enlace roto y nadie se enteraría hasta ver el
+ * indicador vacío.
+ *
+ * `VERCEL_URL` queda de respaldo para las vistas previas de despliegue, donde
+ * el dominio propio todavía no apunta a ese código. No sirve como principal:
+ * cambia en cada despliegue, y un enlace así moriría al siguiente.
+ */
+function dominioPublico(): string {
+  const configurado = String(process.env.NEXT_PUBLIC_APP_URL ?? "").trim()
+  if (configurado) return configurado.replace(/\/+$/, "")
+
+  const vercel = String(process.env.VERCEL_URL ?? "").trim()
+  if (vercel && process.env.VERCEL_ENV !== "production") {
+    return `https://${vercel.replace(/^https?:\/\//, "").replace(/\/+$/, "")}`
+  }
+
+  return "https://www.lipgo.app"
+}
+
 export async function notificarConductor(
   evento: EventoConductor,
   ordenId: number,
@@ -252,12 +277,11 @@ export async function notificarConductor(
     // respeta tal cual: quien configuró eso lo hizo a propósito.
     let urlEncuesta = cfg.urlEncuesta
     if (evento === "cargue_finalizado") {
-      const base = (process.env.NEXT_PUBLIC_APP_URL || "").replace(/\/+$/, "")
       const propia = String(cfg.urlEncuesta ?? "").trim()
       const esExterna = /^https?:\/\//i.test(propia) && !propia.includes("/encuesta/")
-      if (!esExterna && base) {
+      if (!esExterna) {
         const token = await getTokenEncuesta(ordenId)
-        urlEncuesta = `${base}/encuesta/${token}`
+        urlEncuesta = `${dominioPublico()}/encuesta/${token}`
       }
     }
 

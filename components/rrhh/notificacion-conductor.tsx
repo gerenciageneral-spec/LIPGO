@@ -169,8 +169,9 @@ function Tarjeta({
                 </>
               ) : (
                 <>
-                  Se usará la <strong>encuesta de LIPgo</strong>, distinta para cada orden. Las
-                  respuestas alimentan el KPI de Satisfacción conductor en Satisfacción y PQRSF.
+                  Se usará la <strong>encuesta de LIPgo</strong>, un enlace distinto para cada
+                  orden que el conductor abre sin iniciar sesión. Las respuestas alimentan el KPI
+                  de Satisfacción conductor en Satisfacción y PQRSF.
                 </>
               )}
             </p>
