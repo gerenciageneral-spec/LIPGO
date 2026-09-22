@@ -175,6 +175,46 @@ function dominioPublico(): string {
   return "https://www.lipgo.app"
 }
 
+/**
+ * Un enlace de encuesta REAL, de la última orden cerrada.
+ *
+ * La pantalla de configuración no puede mostrar "el enlace": hay uno distinto
+ * por cada orden y se arma al enviar. Sin poder abrir uno, no hay forma de
+ * comprobar que la encuesta responde antes de activar el aviso --y el primero
+ * en descubrirlo sería un conductor con un enlace roto.
+ */
+export async function getEnlaceEncuestaEjemplo(): Promise<{
+  success: boolean
+  url?: string
+  orden?: string
+  message?: string
+}> {
+  try {
+    const sb: any = await getSupabaseAdmin()
+    const { data, error } = await sb
+      .from("cabeceraoc")
+      .select("id, ordendecargue, fechacargue")
+      .not("fincargue", "is", null)
+      .order("id", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (error) return { success: false, message: error.message }
+    if (!data) {
+      return { success: false, message: "Todavía no hay ninguna orden de cargue cerrada." }
+    }
+
+    const token = await getTokenEncuesta(Number(data.id))
+    return {
+      success: true,
+      url: `${dominioPublico()}/encuesta/${token}`,
+      orden: String(data.ordendecargue ?? data.id),
+    }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "No se pudo armar el enlace." }
+  }
+}
+
 export async function notificarConductor(
   evento: EventoConductor,
   ordenId: number,

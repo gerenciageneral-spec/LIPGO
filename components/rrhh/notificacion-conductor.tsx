@@ -15,9 +15,10 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Checkbox } from "@/components/ui/checkbox"
 import { useToast } from "@/hooks/use-toast"
-import { AlertTriangle, Loader2, Save, TestTube2, Truck } from "lucide-react"
+import { AlertTriangle, ExternalLink, Loader2, Save, TestTube2, Truck } from "lucide-react"
 import {
   getConfigConductor,
+  getEnlaceEncuestaEjemplo,
   guardarConfigConductor,
 } from "@/lib/notificacion-conductor-actions"
 import type { ConfigConductor } from "@/lib/notificacion-conductor-tipos"
@@ -54,6 +55,10 @@ function Tarjeta({
   const [empresas, setEmpresas] = useState<number[]>(cfg.empresas)
   const [telPrueba, setTelPrueba] = useState(cfg.telefonoPrueba ?? "")
   const [guardando, setGuardando] = useState(false)
+  // Un enlace real, para poder abrir la encuesta antes de activar el aviso.
+  const [ejemploUrl, setEjemploUrl] = useState<string | null>(null)
+  const [ejemploOrden, setEjemploOrden] = useState<string | null>(null)
+  const [buscandoEjemplo, setBuscandoEjemplo] = useState(false)
 
   const esCierre = cfg.evento === "cargue_finalizado"
 
@@ -93,6 +98,22 @@ function Tarjeta({
     onGuardar()
   }
 
+  async function verEnlaceReal() {
+    setBuscandoEjemplo(true)
+    const r = await getEnlaceEncuestaEjemplo()
+    setBuscandoEjemplo(false)
+    if (!r.success || !r.url) {
+      toast({
+        title: "No se pudo armar el enlace",
+        description: r.message,
+        variant: "destructive",
+      })
+      return
+    }
+    setEjemploUrl(r.url)
+    setEjemploOrden(r.orden ?? null)
+  }
+
   // Cómo se va a ver el mensaje, con datos de ejemplo.
   const ejemplo = mensaje
     .replace(/\{conductor\}/gi, "Jorge Ramírez")
@@ -102,7 +123,9 @@ function Tarjeta({
     .replace(/\{cliente\}/gi, "Avimol")
     .replace(
       /\{encuesta\}/gi,
-      urlMuerta ? "(enlace roto)" : url || "el enlace de la encuesta de LIPgo",
+      urlMuerta
+        ? "(enlace roto)"
+        : url || ejemploUrl || "el enlace de la encuesta de LIPgo",
     )
 
   return (
@@ -183,6 +206,55 @@ function Tarjeta({
                 >
                   Borrar el enlace
                 </button>
+              </div>
+            )}
+            {/* El enlace es distinto por orden y se arma al enviar, así que aquí
+                no hay uno "el" enlace que mostrar. Poder abrir uno real es lo
+                único que confirma que la encuesta responde; sin esto, el
+                primero en probarla sería un conductor. */}
+            {!url.trim() && (
+              <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+                {ejemploUrl ? (
+                  <>
+                    <p className="text-[11px] text-slate-600">
+                      Así queda para la orden <strong>{ejemploOrden}</strong>. Cada orden lleva el
+                      suyo:
+                    </p>
+                    <a
+                      href={ejemploUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-1 flex items-center gap-1.5 break-all font-mono text-[11px] text-teal-700 underline"
+                    >
+                      {ejemploUrl}
+                      <ExternalLink className="h-3 w-3 shrink-0" />
+                    </a>
+                    <p className="mt-1.5 text-[11px] text-slate-500">
+                      Ábrelo para ver lo que verá el conductor. Es real: si lo respondes, la
+                      calificación queda registrada para esa orden.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-[11px] text-slate-600">
+                      El enlace se arma al enviar y es distinto para cada orden, por eso no aparece
+                      aquí.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={verEnlaceReal}
+                      disabled={buscandoEjemplo}
+                      className="mt-1.5 flex items-center gap-1.5 rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-60"
+                    >
+                      {buscandoEjemplo ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <ExternalLink className="h-3 w-3" />
+                      )}
+                      Ver un enlace real
+                    </button>
+                  </>
+                )}
               </div>
             )}
             <p className="mt-1 text-[11px] text-muted-foreground">
