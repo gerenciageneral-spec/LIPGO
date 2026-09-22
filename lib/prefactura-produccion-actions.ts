@@ -234,6 +234,26 @@ function loteAFechaIndupan(lote: any): string | null {
  *  — tolera la tilde de "producción". */
 const ORIGEN_INGRESO_PRODUCCION_INDUPAN = "%ingreso producci%"
 
+/** Días de diferencia entre dos 'YYYY-MM-DD'. `null`/vacío -> Infinity (no se puede comparar, se alerta). */
+function diasEntreFechas(a: string | null, b: string | null): number {
+  if (!a || !b) return Infinity
+  const ma = /^(\d{4})-(\d{2})-(\d{2})$/.exec(a)
+  const mb = /^(\d{4})-(\d{2})-(\d{2})$/.exec(b)
+  if (!ma || !mb) return Infinity
+  const da = Date.UTC(Number(ma[1]), Number(ma[2]) - 1, Number(ma[3]))
+  const db = Date.UTC(Number(mb[1]), Number(mb[2]) - 1, Number(mb[3]))
+  return Math.abs(da - db) / 86400000
+}
+
+/**
+ * Un turno real puede cruzar medianoche (el lote cierra al día siguiente de
+ * cuando arrancó) -- eso difiere como mucho 1 día. Cualquier cosa por encima
+ * de esto ya no es un cruce de turno, es un error de digitación en el lote
+ * (año/día/mes mal escrito): un lote de producción real nunca cae semanas,
+ * meses o años lejos de su `fechaprod` real.
+ */
+const TOLERANCIA_LOTE_FECHAPROD_DIAS = 2
+
 /**
  * INDUPAN — producción de Tolva / Tolva f.
  *
@@ -329,12 +349,24 @@ async function armarIndupan(desde: string, hasta: string) {
       !PRODUCTOS_NO_TOLVA_INDUPAN.has(String(r.nombreproducto || "")),
   )
 
-  // Ingresos aprobados del rango cuyo LOTE no es una fecha parseable: el
-  // filtro de arriba los deja fuera, así que se buscan por `fechaprod` para
-  // que no queden invisibles (no suman al cobro, solo se alertan). Mismo
-  // filtro LOGO + exclusión de productos que `ingresos` -- si no, cualquier
-  // devolución/descargue manual con lote roto dispararía una alerta de algo
-  // que de todas formas nunca se iba a facturar.
+  // Ingresos aprobados del rango cuyo LOTE no es una fecha parseable, O cuyo
+  // LOTE parsea a una fecha pero muy distinta de `fechaprod`: el filtro de
+  // arriba (por rango de LOTE) los deja fuera en los dos casos, así que se
+  // buscan por `fechaprod` para que no queden invisibles (no suman al cobro,
+  // solo se alertan). Mismo filtro LOGO + exclusión de productos que
+  // `ingresos` -- si no, cualquier devolución/descargue manual con lote roto
+  // dispararía una alerta de algo que de todas formas nunca se iba a facturar.
+  //
+  // BUG REAL encontrado y corregido 2026-09-21: un lote como "20200910" (año
+  // 2020 en vez de 2026, digitado a mano por error) o "20261209" (día/mes
+  // invertidos, debía ser "20260912") SÍ parsea como fecha válida -- no
+  // disparaba ninguna alerta, la producción real simplemente desaparecía del
+  // rango sin que nadie se enterara (87t + 68t reales, ya facturables,
+  // encontradas en Sept 2026 antes de este fix). Un lote de producción real
+  // nunca cae años de diferencia de su `fechaprod` -- eso "estaría vencido",
+  // como lo resumió el usuario -- así que cualquier diferencia mayor a
+  // `TOLERANCIA_LOTE_FECHAPROD_DIAS` es casi con certeza un typo, no un turno
+  // legítimo que cruza medianoche (eso como mucho difiere 1 día).
   {
     const { data } = await admin
       .from("invtrans")
@@ -350,10 +382,17 @@ async function armarIndupan(desde: string, hasta: string) {
     for (const r of data || []) {
       if (r.tipo_produccion === "Harinera") continue
       if (PRODUCTOS_NO_TOLVA_INDUPAN.has(String(r.nombreproducto || ""))) continue
-      if (loteAFechaIndupan(r.lote) === null) {
+      const fechaLote = loteAFechaIndupan(r.lote)
+      const fechaProd = String(r.fechaprod ?? "").slice(0, 10)
+      if (fechaLote === null) {
         alertas.push({
           tipo: "lote_invalido",
-          detalle: `Ingreso #${r.id} (${r.nombreproducto || "sin producto"}) con lote "${r.lote ?? ""}" no es una fecha AAAAMMDD — no se factura. Producción: ${String(r.fechaprod ?? "").slice(0, 10) || "—"}.`,
+          detalle: `Ingreso #${r.id} (${r.nombreproducto || "sin producto"}) con lote "${r.lote ?? ""}" no es una fecha AAAAMMDD — no se factura. Producción: ${fechaProd || "—"}.`,
+        })
+      } else if (diasEntreFechas(fechaLote, fechaProd) > TOLERANCIA_LOTE_FECHAPROD_DIAS) {
+        alertas.push({
+          tipo: "lote_invalido",
+          detalle: `Ingreso #${r.id} (${r.nombreproducto || "sin producto"}) con lote "${r.lote}" (léase como ${fechaLote}) no coincide con la fecha real de producción (${fechaProd || "—"}) — parece un error de digitación en el lote, no se factura hasta corregirlo.`,
         })
       }
     }
