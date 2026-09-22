@@ -484,5 +484,4 @@ export const MODULE_PERMISSION_MAP: Record<string, keyof UserPermissions> = {
   "Programa de Bienestar": "gh_bienestar",
   "Participación y Evidencias": "gh_participacion",
   "Procesos Disciplinarios": "procesos_disciplinarios",
-  WhatsApp: "whatsapp",
 }

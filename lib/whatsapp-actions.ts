@@ -81,6 +81,7 @@ export async function getEstadoWhatsapp(): Promise<EstadoConfigWhatsapp> {
     apiVersion: API_VERSION,
     numeroVerificado: null,
     nombreVerificado: null,
+    calidadNumero: null,
     mensajeError: null,
   }
 
@@ -101,6 +102,7 @@ export async function getEstadoWhatsapp(): Promise<EstadoConfigWhatsapp> {
     }
     base.numeroVerificado = j?.display_phone_number ?? null
     base.nombreVerificado = j?.verified_name ?? null
+    base.calidadNumero = j?.quality_rating ?? null
   } catch (e: any) {
     base.mensajeError = e?.message || "No se pudo contactar a Meta."
   }
@@ -311,6 +313,24 @@ export async function enviarPlantilla(input: EnviarPlantillaInput): Promise<Resu
       if (String(err.code) === "100" && /parameter name/i.test(String(msg))) {
         msg = `La plantilla "${input.plantilla}" usa variables CON NOMBRE ({{usuario}}) y se enviaron sin nombre. Vuelve a abrir la pantalla para que lea la estructura actualizada de Meta. Detalle: ${msg}`
       }
+      /*
+       * 131049 — "healthy ecosystem engagement".
+       *
+       * Meta ACEPTÓ el mensaje y luego decidió no entregarlo. Es el límite por
+       * destinatario de plantillas de MARKETING: ~2 cada 24 horas sumando
+       * TODOS los negocios, ajustado según cuánto interactúe esa persona.
+       *
+       * Aplica solo a MARKETING. Las de UTILITY --avisos transaccionales como
+       * "su vehículo fue asignado al muelle 3"-- no están sujetas a este tope.
+       * Por eso el mensaje apunta a la categoría: reintentar no sirve, y el
+       * texto crudo de Meta no dice ni que hay un límite ni de qué depende.
+       */
+      if (String(err.code) === "131049") {
+        msg =
+          `WhatsApp aceptó el mensaje pero no lo entregó: ese número ya recibió el máximo de mensajes de MARKETING permitidos en 24 horas (un tope de Meta que suma todos los negocios, no solo LIP). ` +
+          `Reintentar antes de 24 horas da el mismo error. ` +
+          `Si la plantilla "${input.plantilla}" es un aviso operativo y no publicidad, su categoría en WhatsApp Manager debería ser UTILITY: esas no tienen este límite y además cuestan menos.`
+      }
       if (String(err.code) === "132001") {
         msg = `La plantilla "${input.plantilla}" no existe en el idioma "${input.idioma || "es"}". Suele estar aprobada en otro idioma (por ejemplo es_CO): revisa el idioma exacto en WhatsApp Manager y ajústalo. Detalle de Meta: ${msg}`
       }
@@ -383,4 +403,209 @@ export async function getMensajes(
   } catch (e: any) {
     return { success: false, message: e?.message || "No se pudieron leer los mensajes." }
   }
+}
+
+/** Nombre de la plantilla genérica. Vive acá para no repetir el literal. */
+const PLANTILLA_ESTANDAR = "plantilla_estandar"
+
+/**
+ * Manda un aviso con la plantilla estándar.
+ *
+ * Es la función que van a usar los flujos: en vez de que cada uno arme los
+ * componentes y recuerde si las variables llevan nombre, pasa tres textos.
+ *
+ * El idioma y el formato de las variables NO se asumen: se leen de la plantilla
+ * tal como está aprobada en Meta. Dar por hecho "es" cuando está en "es_CO", o
+ * mandar variables sin nombre a una que las usa con nombre, son los dos fallos
+ * que ya costaron un diagnóstico cada uno.
+ */
+const PLANTILLA_CONDUCTOR = "aviso_cargue_conductor"
+
+/**
+ * Aviso al conductor sobre su cargue.
+ *
+ * POR QUÉ NO USA `plantilla_estandar`
+ * Aquella es genérica --su cuerpo entero es «Hola {{usuario}}, {{contenido}}»--
+ * y Meta la clasifica como MARKETING, con razón: no hay en el texto nada que
+ * ate el mensaje a un servicio concreto. Eso trae el tope por destinatario del
+ * error 131049, que aquí duele: un conductor con dos cargues el mismo día
+ * perdería el segundo aviso.
+ *
+ * `aviso_cargue_conductor` nombra la placa y la orden en su texto fijo, así que
+ * Meta puede verificar que es transaccional y acepta UTILITY: sin tope y más
+ * barata.
+ *
+ * SI LA NUEVA NO ESTÁ APROBADA, SE USA LA GENÉRICA. Crear y aprobar una
+ * plantilla lleva su tiempo, y mientras tanto el aviso debe seguir saliendo:
+ * un mensaje con el tope de marketing es mejor que ningún mensaje.
+ */
+export async function enviarAvisoConductor(payload: {
+  telefono: string
+  conductor: string
+  placa: string
+  orden: string
+  /** Lo que se le informa: "fue asignado al muelle 3", "ha finalizado...". */
+  detalle: string
+  titulo: string
+  empresaId?: number | null
+  origen?: string
+}): Promise<ResultadoEnvio> {
+  const limpiar = (t: string) =>
+    String(t ?? "")
+      .replace(/\s*\n+\s*/g, " · ")
+      .replace(/\s{2,}/g, " ")
+      .trim()
+
+  const meta = await getPlantillasDeMeta()
+  const propia = meta.success
+    ? meta.data?.find((t) => t.nombre === PLANTILLA_CONDUCTOR && t.estado === "APPROVED")
+    : null
+
+  if (!propia) {
+    /*
+     * Todavía no está aprobada: sale por la genérica, que sí lo está.
+     *
+     * Los textos configurables están redactados para la plantilla propia, que
+     * ya nombra la placa y la orden en su encabezado fijo ("fue asignado al
+     * muelle 3"). La genérica no dice nada por sí misma, así que enviarlos tal
+     * cual dejaría un mensaje sin sujeto. Se les antepone el contexto.
+     */
+    const placa = limpiar(payload.placa)
+    const orden = limpiar(payload.orden)
+    const contexto = placa
+      ? `su vehículo de placa ${placa}${orden ? ` (orden ${orden})` : ""}`
+      : orden
+        ? `su cargue de la orden ${orden}`
+        : "su vehículo"
+
+    return enviarAvisoEstandar({
+      telefono: payload.telefono,
+      nombreReporte: payload.titulo,
+      usuario: payload.conductor || "conductor",
+      contenido: `${contexto} ${limpiar(payload.detalle)}`.trim(),
+      empresaId: payload.empresaId,
+      origen: payload.origen,
+      nombre: payload.conductor,
+    })
+  }
+
+  // El orden es el del texto de la plantilla, y es lo que importa cuando las
+  // variables son posicionales ({{1}}, {{2}}...).
+  const body = [
+    limpiar(payload.conductor) || "conductor",
+    limpiar(payload.placa) || "—",
+    limpiar(payload.orden) || "—",
+    limpiar(payload.detalle),
+  ]
+
+  // Los nombres se toman de lo que Meta reporta, no de una lista escrita aquí:
+  // si alguien renombra una variable al crear la plantilla, esto la sigue.
+  const nombresBody = propia.conNombre
+    ? propia.varsBody.length === body.length
+      ? propia.varsBody
+      : ["conductor", "placa", "orden", "detalle"]
+    : undefined
+
+  return enviarPlantilla({
+    empresaId: payload.empresaId ?? null,
+    telefono: payload.telefono,
+    plantilla: PLANTILLA_CONDUCTOR,
+    idioma: propia.idioma,
+    // El encabezado es texto fijo: no lleva parámetros.
+    body,
+    nombresBody,
+    origen: payload.origen,
+    nombre: payload.conductor,
+  })
+}
+
+export async function enviarAvisoEstandar(payload: {
+  telefono: string
+  /** Título del aviso. Va en el encabezado. */
+  nombreReporte: string
+  /** A quién se dirige. Normalmente el nombre de pila. */
+  usuario: string
+  /**
+   * El mensaje.
+   *
+   * WhatsApp NO admite saltos de línea dentro de una variable: si el texto los
+   * trae, el envío se rechaza. Se reemplazan por separadores antes de mandar.
+   */
+  contenido: string
+  empresaId?: number | null
+  /** Qué flujo lo dispara. Sirve para medir volumen y costo. */
+  origen?: string
+  identificacion?: string | null
+  nombre?: string | null
+}): Promise<ResultadoEnvio> {
+  // Los saltos de línea y los espacios repetidos rompen el envío. Se limpian
+  // acá y no en cada flujo: si se deja a cada uno, tarde o temprano alguno se
+  // olvida y falla en producción.
+  const limpiar = (t: string) =>
+    String(t ?? "")
+      .replace(/\s*\n+\s*/g, " · ")
+      .replace(/\s{2,}/g, " ")
+      .trim()
+
+  const nombreReporte = limpiar(payload.nombreReporte)
+  const usuario = limpiar(payload.usuario)
+  const contenido = limpiar(payload.contenido)
+
+  if (!contenido) return { success: false, message: "El contenido del aviso está vacío." }
+
+  // Se consulta cómo está la plantilla en Meta: idioma real y si sus variables
+  // llevan nombre. Si no se puede consultar, se usa lo registrado en LIPgo.
+  let idioma = "es_CO"
+  let conNombre = true
+  let varsHeader = ["nombre_reporte"]
+  let varsBody = ["usuario", "contenido"]
+
+  const meta = await getPlantillasDeMeta()
+  const enMeta = meta.success
+    ? meta.data?.find((t) => t.nombre === PLANTILLA_ESTANDAR && t.estado === "APPROVED")
+    : null
+
+  if (enMeta) {
+    idioma = enMeta.idioma
+    conNombre = enMeta.conNombre
+    if (enMeta.varsHeader.length) varsHeader = enMeta.varsHeader
+    if (enMeta.varsBody.length) varsBody = enMeta.varsBody
+  } else {
+    // Sin respuesta de Meta se cae a lo registrado en la base.
+    try {
+      const sb: any = await getSupabaseAdmin()
+      const { data } = await sb
+        .from("whatsapp_plantillas")
+        .select("idioma, variables")
+        .eq("nombre", PLANTILLA_ESTANDAR)
+        .maybeSingle()
+      if (data) {
+        idioma = data.idioma ?? idioma
+        varsHeader = data.variables?.header ?? varsHeader
+        varsBody = data.variables?.body ?? varsBody
+      }
+    } catch {
+      // Se sigue con los valores por defecto.
+    }
+    if (meta.success && !enMeta) {
+      return {
+        success: false,
+        message: `La plantilla "${PLANTILLA_ESTANDAR}" no está aprobada en Meta todavía. Créala en WhatsApp Manager y espera la aprobación.`,
+      }
+    }
+  }
+
+  return enviarPlantilla({
+    empresaId: payload.empresaId ?? null,
+    telefono: payload.telefono,
+    plantilla: PLANTILLA_ESTANDAR,
+    idioma,
+    header: [nombreReporte],
+    body: [usuario, contenido],
+    nombresHeader: conNombre ? varsHeader : undefined,
+    nombresBody: conNombre ? varsBody : undefined,
+    origen: payload.origen ?? "aviso",
+    identificacion: payload.identificacion ?? null,
+    nombre: payload.nombre ?? null,
+  })
 }

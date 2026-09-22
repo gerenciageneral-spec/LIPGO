@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
+import { notificarConductor } from "@/lib/notificacion-conductor-actions"
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getColombiaTime } from "@/lib/date-utils"
 import { generarIngresoProduccionDesdeDescargue } from "@/lib/orders-actions"
@@ -216,6 +217,21 @@ export async function POST(request: NextRequest) {
       // Producción → "Aprobación de ingreso". No-op para cualquier otro caso
       // (falla-seguro internamente, no bloquea la respuesta de cierre).
       await generarIngresoProduccionDesdeDescargue(supabaseAdmin, orderIdNum)
+
+      // Aviso al conductor de que puede recoger el vehiculo. Mismo patron
+      // falla-seguro que la linea de arriba: `notificarConductor` nunca lanza,
+      // asi que la orden queda cerrada aunque la mensajeria este caida.
+      //
+      // OJO con el clon de Distribucion: es el MISMO vehiculo fisico que su
+      // orden madre de Cargue, asi que avisar en ambos cierres le mandaria dos
+      // mensajes al conductor por un solo camion. Se omite el clon.
+      if (!esClonDistribucion) {
+        try {
+          await notificarConductor("cargue_finalizado", orderIdNum)
+        } catch (e: any) {
+          console.error("[v0] aviso cargue_finalizado:", e?.message ?? e)
+        }
+      }
 
       return NextResponse.json({ success: true, count: urls.length })
     }
