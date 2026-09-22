@@ -2067,8 +2067,13 @@ async function _computeIndicadoresValores(
       const avg = vals.length ? vals.reduce((a: number, b: number) => a + b, 0) / vals.length : 0
       return { v: Math.round((avg / 5) * 1000) / 10, n: vals.length }
     }
-    const satCli = await avgSat("cliente")
+    // El conductor es la parte interesada que recibe el servicio directo de
+    // LIP (cargue/descargue) -- para efectos de este indicador ES el cliente,
+    // por eso "Satisfacción del cliente" toma la misma encuesta real del
+    // conductor (kiosko). El tipo 'cliente' en sig_satisfaccion queda como
+    // mecanismo aparte (proxy histórico por SLA, admin), no como fuente viva.
     const satCon = await avgSat("conductor")
+    const satCli = satCon
 
     // --- SLA de tiempos de cargue (Acuerdos de Servicio) ---
     // % de despachos cuyo tiempo efectivo (fincargue−iniciocargue) está dentro

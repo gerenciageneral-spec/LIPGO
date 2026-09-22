@@ -92,7 +92,12 @@ export function SatisfaccionPQRSF() {
     const cerradas = pqrsf.filter((p) => p.estado === "cerrada").length
     const tiempos = pqrsf.map((p) => p.dias_respuesta).filter((d): d is number => d != null)
     const tProm = tiempos.length ? Math.round(tiempos.reduce((a, b) => a + b, 0) / tiempos.length) : 0
-    return { satCli: avg("cliente"), satCon: avg("conductor"), recPct, abiertas, cerradas, tProm, nCli: enc.filter(e=>e.tipo==="cliente").length, nCon: enc.filter(e=>e.tipo==="conductor").length }
+    // El conductor recibe el servicio directo de LIP (cargue/descargue): para
+    // este indicador ES el cliente, por eso "Satisfacción cliente" toma la
+    // misma encuesta real del conductor (kiosko) en vez del tipo 'cliente'
+    // (que hoy no tiene ninguna encuesta viva, solo un proxy histórico por SLA).
+    const satCon = avg("conductor")
+    return { satCli: satCon, satCon, recPct, abiertas, cerradas, tProm, nCli: enc.filter(e=>e.tipo==="conductor").length, nCon: enc.filter(e=>e.tipo==="conductor").length }
   }, [enc, pqrsf])
 
   async function guardarEnc() {
