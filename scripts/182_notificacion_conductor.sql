@@ -139,7 +139,12 @@ values
     false,
     'su vehículo de placa {placa} ha finalizado su cargue y puede pasar a recogerlo. Cuéntenos cómo le fue: {encuesta}',
     'LIP Logística',
-    'https://forms.gle/PENDIENTE',
+    -- Vacío a propósito: con NULL, el aviso arma el enlace a la encuesta PROPIA
+    -- de LIPgo (/encuesta/<token>), que guarda la respuesta en
+    -- `sig_satisfaccion` y alimenta el KPI de Satisfacción conductor. Poner acá
+    -- una URL externa la reemplaza, y entonces las respuestas quedan fuera del
+    -- indicador.
+    null,
     '{}',
     '573202343157'
   )

@@ -21,6 +21,7 @@
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getCurrentUsuarioForInsert } from "@/lib/user-context"
 import { enviarAvisoEstandar, normalizarTelefono } from "@/lib/whatsapp-actions"
+import { getTokenEncuesta } from "@/lib/encuesta-conductor-actions"
 import type {
   ConfigConductor,
   ContextoOrden,
@@ -243,7 +244,24 @@ export async function notificarConductor(
       }
     }
 
-    const texto = armarMensaje(cfg.mensaje, ctx, cfg.urlEncuesta)
+    // El enlace de la encuesta se arma POR ORDEN: lleva un token propio para
+    // que la respuesta quede atada a ese cargue y para que nadie pueda recorrer
+    // los enlaces de otras órdenes.
+    //
+    // Si `url_encuesta` ya es una URL completa (un formulario externo), se
+    // respeta tal cual: quien configuró eso lo hizo a propósito.
+    let urlEncuesta = cfg.urlEncuesta
+    if (evento === "cargue_finalizado") {
+      const base = (process.env.NEXT_PUBLIC_APP_URL || "").replace(/\/+$/, "")
+      const propia = String(cfg.urlEncuesta ?? "").trim()
+      const esExterna = /^https?:\/\//i.test(propia) && !propia.includes("/encuesta/")
+      if (!esExterna && base) {
+        const token = await getTokenEncuesta(ordenId)
+        urlEncuesta = `${base}/encuesta/${token}`
+      }
+    }
+
+    const texto = armarMensaje(cfg.mensaje, ctx, urlEncuesta)
     if (!texto) return { enviado: false, motivo: "El mensaje quedó vacío." }
 
     const r = await enviarAvisoEstandar({

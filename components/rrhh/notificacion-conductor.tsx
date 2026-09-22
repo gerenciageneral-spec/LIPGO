@@ -156,9 +156,24 @@ function Tarjeta({
             <Input
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://forms.gle/..."
+              placeholder="Déjalo vacío para usar la encuesta de LIPgo"
               className="mt-1 h-9 text-sm"
             />
+            {/* Vacío no es un olvido: es lo que hace que las respuestas cuenten
+                en el indicador. Conviene decirlo donde se decide. */}
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {url.trim() ? (
+                <>
+                  Se usará este enlace externo. Las respuestas quedarán{" "}
+                  <strong>fuera</strong> del indicador de Satisfacción conductor.
+                </>
+              ) : (
+                <>
+                  Se usará la <strong>encuesta de LIPgo</strong>, distinta para cada orden. Las
+                  respuestas alimentan el KPI de Satisfacción conductor en Satisfacción y PQRSF.
+                </>
+              )}
+            </p>
           </div>
         )}
 
