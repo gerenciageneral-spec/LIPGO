@@ -63,8 +63,31 @@ export async function POST(request: NextRequest) {
     })
 
     if (!res.success) {
+      /*
+       * El archivo YA está en Storage, pero nada lo referencia: sin la fila,
+       * no hay forma de encontrarlo ni de borrarlo desde la aplicación.
+       *
+       * Antes se quedaba ahí. Cada intento fallido --y el usuario reintenta,
+       * porque el error no dice que no vale la pena-- dejaba otra copia
+       * ocupando espacio para siempre.
+       */
+      try {
+        await supabase.storage.from("archivos").remove([filePath])
+      } catch {
+        // Si tampoco se puede borrar, el error que importa es el de abajo.
+      }
+
+      // El caso más probable: las columnas no existen todavía. El mensaje de
+      // Supabase ("Could not find the 'evidencia_path' column...") es correcto
+      // pero no dice qué hacer.
+      const falta = /column|schema cache/i.test(String(res.error ?? ""))
       return NextResponse.json(
-        { success: false, error: res.error || "Error al registrar la evidencia" },
+        {
+          success: false,
+          error: falta
+            ? "Falta correr scripts/194_iso_evidencia_columnas.sql en Supabase: la tabla no tiene todavía las columnas de evidencia."
+            : res.error || "Error al registrar la evidencia",
+        },
         { status: 500 },
       )
     }
