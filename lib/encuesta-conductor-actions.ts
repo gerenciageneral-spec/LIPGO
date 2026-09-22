@@ -16,6 +16,15 @@
 //  2. LA PÁGINA DEVUELVE LO MÍNIMO. Nombre de pila y placa, para que el
 //     conductor confirme que es su cargue. Ni el cliente, ni el peso, ni los
 //     auxiliares: nada que no necesite para calificar.
+//
+// SE GUARDA EN `ref_orden`, NO EN UNA COLUMNA PROPIA. Esa columna ya la creó
+// scripts/sig/33 para el kiosko, junto con el índice único que impide calificar
+// dos veces el mismo cargue. Con una columna aparte habría dos índices únicos
+// vigilando por separado, y el mismo cargue calificado en kiosko y por WhatsApp
+// contaría dos veces en el indicador.
+//
+// `ref_orden` guarda `cabeceraoc.ordendecargue` --el código, no el id--, que es
+// lo que ya escribe el kiosko.
 // ---------------------------------------------------------------------------
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
@@ -57,6 +66,9 @@ export interface DatosEncuesta {
   yaRespondida: boolean
 }
 
+/** Lo que identifica la orden en `sig_satisfaccion.ref_orden`. */
+type OrdenEncontrada = { id: number; refOrden: string }
+
 /**
  * Datos mínimos para pintar la encuesta.
  *
@@ -66,7 +78,7 @@ export interface DatosEncuesta {
  */
 export async function getEncuestaPorToken(
   token: string,
-): Promise<{ success: boolean; data?: DatosEncuesta; ordenId?: number; message?: string }> {
+): Promise<{ success: boolean; data?: DatosEncuesta; orden?: OrdenEncontrada; message?: string }> {
   if (!token || token.length !== 24) return { success: false, message: "El enlace no es válido." }
 
   try {
@@ -75,7 +87,7 @@ export async function getEncuestaPorToken(
 
     const { data: ordenes } = await sb
       .from("cabeceraoc")
-      .select("id, conductor, placa, fechacargue")
+      .select("id, ordendecargue, conductor, placa, fechacargue")
       .gte("fechacargue", hace30)
       .not("fincargue", "is", null)
       .order("id", { ascending: false })
@@ -89,15 +101,22 @@ export async function getEncuestaPorToken(
       }
     }
 
+    // Sin código de orden no hay nada que escribir en `ref_orden`, y sin eso la
+    // respuesta entraría sin el candado que impide calificar dos veces.
+    const refOrden = String(orden.ordendecargue ?? "").trim()
+    if (!refOrden) {
+      return { success: false, message: "Este cargue no se puede calificar." }
+    }
+
     const { data: ya } = await sb
       .from("sig_satisfaccion")
       .select("id")
-      .eq("orden_id", Number(orden.id))
+      .eq("ref_orden", refOrden)
       .maybeSingle()
 
     return {
       success: true,
-      ordenId: Number(orden.id),
+      orden: { id: Number(orden.id), refOrden },
       data: {
         // Solo el primer nombre: basta para saludar y evita mostrar el nombre
         // completo de una persona en una página sin autenticación.
@@ -133,7 +152,7 @@ export async function guardarEncuestaConductor(
   }
 
   const buscado = await getEncuestaPorToken(r.token)
-  if (!buscado.success || !buscado.ordenId) {
+  if (!buscado.success || !buscado.orden) {
     return { success: false, message: buscado.message ?? "El enlace no es válido." }
   }
   if (buscado.data?.yaRespondida) {
@@ -149,7 +168,7 @@ export async function guardarEncuestaConductor(
     const { data: orden } = await sb
       .from("cabeceraoc")
       .select("id, idempresa, conductor, placa, ordendecargue")
-      .eq("id", buscado.ordenId)
+      .eq("id", buscado.orden.id)
       .maybeSingle()
     if (!orden) return { success: false, message: "No se encontró el cargue." }
 
@@ -166,28 +185,37 @@ export async function guardarEncuestaConductor(
       comunicacion: r.comunicacion ?? null,
       recomendaria: r.recomendaria ?? null,
       comentario: limpiar(r.comentario),
-      // `canal` distingue esta respuesta de las digitadas a mano por alguien de
-      // LIP: es la diferencia entre lo que dijo el conductor y lo que alguien
-      // transcribió.
-      canal: "formulario",
+      // `canal` distingue de dónde vino la respuesta. Aquí la escribió el
+      // conductor en su celular; 'kiosko' es el dispositivo de LIP en sitio y
+      // 'telefonico'/'presencial' son las que transcribe alguien de LIP. Es la
+      // diferencia entre lo que dijo el conductor y lo que alguien interpretó.
+      canal: "encuesta_conductor",
       responsable: null,
       // El KPI filtra por activo = true.
       activo: true,
-      orden_id: Number(orden.id),
+      // La misma columna que usa el kiosko, y por tanto el mismo índice único:
+      // un cargue no se puede calificar dos veces, venga de donde venga.
+      ref_orden: buscado.orden.refOrden,
       placa: limpiar(orden.placa, 20),
-      orden_codigo: limpiar(orden.ordendecargue, 40),
     })
 
     if (error) {
+      const msg = String(error.message ?? "")
       // El índice único por orden puede rechazarlo si alguien envió dos veces
       // seguidas. No es un error que deba ver el conductor.
-      if (String(error.message).includes("uq_satisfaccion_orden")) {
+      if (msg.includes("uq_sig_satisfaccion_ref_orden")) {
         return { success: false, message: "Esta encuesta ya fue respondida. Gracias." }
       }
-      if (String(error.message).toLowerCase().includes("orden_id")) {
-        return { success: false, message: "Falta correr scripts/183_encuesta_conductor_publica.sql." }
+      // La tabla la crea sig/15 y la columna sig/33. Decir cuál falta ahorra
+      // rastrear un "column does not exist" hasta el script correcto.
+      if (/ref_orden|sig_satisfaccion/i.test(msg)) {
+        return {
+          success: false,
+          message:
+            "Falta correr scripts/sig/15_satisfaccion_pqrsf.sql y scripts/sig/33_calificacion_conductor.sql.",
+        }
       }
-      return { success: false, message: error.message }
+      return { success: false, message: msg }
     }
 
     return { success: true }
