@@ -99,24 +99,37 @@ export async function getPersonasPrecargadas(
   try {
     const supabase = await getSupabaseAdmin()
     const fecha = getColombiaTodayISO()
-    const { data, error } = await supabase
-      .from("registroasistencia")
-      .select("identificacion", { count: "exact" })
-      .eq("idempresa", empresaId)
-      .eq("fecha", fecha)
-      .not("horaingreso", "is", null)
+    const [{ data, error }, { data: admins }] = await Promise.all([
+      supabase
+        .from("registroasistencia")
+        .select("identificacion", { count: "exact" })
+        .eq("idempresa", empresaId)
+        .eq("fecha", fecha)
+        .not("horaingreso", "is", null),
+      // Administrativos fuera: este conteo precarga "personas en operación".
+      // `admin` es project-agnostic (hay administrativos con idempresa NULL).
+      supabase
+        .from("headcount")
+        .select("identificacion")
+        .eq("admin", true)
+        .or(`idempresa.eq.${empresaId},idempresa.is.null`),
+    ])
 
     if (error) {
       console.error("[v0] getPersonasPrecargadas error:", error)
       return { success: false, error: error.message }
     }
 
+    const idsAdmin = new Set((admins ?? []).map((r: any) => String(r.identificacion ?? "").trim()))
+
     // `count: 'exact'` puede venir en data?.length cuando se proyectan
     // columnas. Para no depender de la API interna del client, contamos
     // unicos por identificacion (defensivo contra duplicados historicos).
     const unique = new Set<string>()
     for (const row of data ?? []) {
-      if (row?.identificacion != null) unique.add(String(row.identificacion))
+      if (row?.identificacion != null && !idsAdmin.has(String(row.identificacion).trim())) {
+        unique.add(String(row.identificacion))
+      }
     }
     return { success: true, data: unique.size }
   } catch (err) {

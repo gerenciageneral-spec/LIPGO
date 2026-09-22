@@ -88,14 +88,37 @@ export async function getIndicadoresAusentismo(
     let diasEsperados = 0
     const salarioPorIdent = new Map<string, number>()
     for (const p of personas) {
-      const ident = String(p.identificacion ?? "").trim()
       if (p.admin === true) continue
+      const ident = String(p.identificacion ?? "").trim()
       diasEsperados += diasActivosEnPeriodo(p.fechainicio, p.fecha_retiro, desde, hasta)
       const s = Number(p.salario) || 0
       if (s > 0) salarioPorIdent.set(ident, s)
     }
 
+    // Identificaciones administrativas, aparte de `personas` (que está scoped
+    // a esta empresa): `admin` es project-agnostic -- hay administrativos con
+    // idempresa NULL que no saldrían en `personas` pero sí tienen filas reales
+    // de registroasistencia en esta empresa.
+    const identificacionesAdmin = new Set<string>()
+    try {
+      const filasAdmin = await traerTodo((d, h) =>
+        sb
+          .from("headcount")
+          .select("identificacion")
+          .eq("admin", true)
+          .or(`idempresa.eq.${empresaId},idempresa.is.null`)
+          .range(d, h),
+      )
+      for (const p of filasAdmin) identificacionesAdmin.add(String(p.identificacion ?? "").trim())
+    } catch (e: any) {
+      console.error("[v0] getIndicadoresAusentismo headcount admin:", e?.message ?? e)
+    }
+
     // --- LAS AUSENCIAS ----------------------------------------------------
+    // Administrativos fuera: el denominador (diasEsperados, arriba) ya los
+    // excluye -- sin este filtro aquí, sus novedades (incapacidad, licencia)
+    // inflarían el numerador (diasPerdidos/causas/reincidencia) mientras el
+    // denominador se queda solo con operativos, dando un índice inflado.
     let filas: any[] = []
     try {
       filas = await traerTodo((d, h) =>
@@ -108,7 +131,9 @@ export async function getIndicadoresAusentismo(
           .not("asistencia", "is", null)
           .range(d, h),
       )
-      filas = filas.filter((r) => !/prueba/i.test(String(r.nombre ?? "")))
+      filas = filas.filter(
+        (r) => !/prueba/i.test(String(r.nombre ?? "")) && !identificacionesAdmin.has(String(r.identificacion ?? "").trim()),
+      )
     } catch (e: any) {
       avisos.push("No se pudieron leer las novedades del periodo.")
       console.error("[v0] getIndicadoresAusentismo registroasistencia:", e?.message ?? e)

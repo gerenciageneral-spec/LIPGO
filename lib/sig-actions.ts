@@ -4708,23 +4708,43 @@ export async function getPanelOperacionLIP(
     const activos = await headCount((qq: any) => qq.ilike("estado", "activo"))
     const inactivos = await headCount((qq: any) => qq.not("estado", "ilike", "activo"))
 
-    // Asistencia del periodo (cumplimiento de jornada): asistencia NULL = presente.
-    // Excluye cuentas de prueba ("PRUEBA" en el nombre, activas en headcount
-    // para pruebas manuales) de TODO lo que cuenta con asisCount.
-    const asisCount = async (build: (q: any) => any): Promise<number> => {
-      let qq = supabase
-        .from("registroasistencia")
-        .select("*", { count: "exact", head: true })
-        .in("idempresa", clientes)
-        .not("nombre", "ilike", "%prueba%")
-      if (desde) qq = qq.gte("fecha", desde)
-      if (hasta) qq = qq.lte("fecha", hasta)
-      qq = build(qq)
-      const { count } = await qq
-      return count || 0
+    // Asistencia del periodo (cumplimiento de jornada) + ausentismo real del
+    // equipo, UNA sola lectura de registroasistencia + headcount para ambos --
+    // antes eran dos consultas separadas y la de "cumplimiento de jornada" no
+    // excluía administrativos como sí lo hacía la de ausentismo, así que
+    // Descansos/novedades de personal administrativo se colaban en un
+    // indicador que es solo operativo. Administrativos excluidos de TODO lo
+    // de aquí abajo (asisTotal, asisPresentes y turnosProgramadosOp).
+    const asisAusRows: any[] = []
+    {
+      let aFrom2 = 0
+      while (true) {
+        let qa = supabase
+          .from("registroasistencia")
+          .select("fecha,puesto,asistencia,identificacion,nombre")
+          .in("idempresa", clientes)
+          .not("nombre", "ilike", "%prueba%")
+          .range(aFrom2, aFrom2 + 999)
+        if (desde) qa = qa.gte("fecha", desde)
+        if (hasta) qa = qa.lte("fecha", hasta)
+        const { data } = await qa
+        asisAusRows.push(...(data ?? []))
+        if (!data || data.length < 1000) break
+        aFrom2 += 1000
+        if (aFrom2 > 120000) break
+      }
     }
-    const asisTotal = await asisCount((qq: any) => qq)
-    const asisPresentes = await asisCount((qq: any) => qq.is("asistencia", null))
+    const { data: hcAusHcOp } = await supabase
+      .from("headcount")
+      .select("identificacion,nombre,admin,fechainicio,fecha_retiro,idempresa")
+      .or(clientes.map((c) => `idempresa.eq.${c}`).concat("idempresa.is.null").join(","))
+    const hcAusRealesOp = (hcAusHcOp ?? []).filter((h: any) => !/prueba/i.test(String(h.nombre || "")))
+    const identificacionesAdminOp = new Set(
+      hcAusRealesOp.filter((h: any) => h.admin === true).map((h: any) => String(h.identificacion || "").trim()),
+    )
+    const asisAusRealesOp = asisAusRows.filter((r) => !identificacionesAdminOp.has(String(r.identificacion || "").trim()))
+    const asisTotal = asisAusRealesOp.length
+    const asisPresentes = asisAusRealesOp.filter((r) => r.asistencia === null).length
 
     // --- SLA de tiempos por vehículo (Acuerdos de Servicio acordados) ---
     // Tiempo efectivo (fincargue−iniciocargue) vs el SLA acordado para el tipo
@@ -4827,35 +4847,8 @@ export async function getPanelOperacionLIP(
     // según headcount (fechainicio/fecha_retiro cruzados con el período) --
     // no un conteo de filas de registroasistencia. "Capacidad de respuesta"
     // (programado vs real del control diario) se conserva aparte, es un
-    // indicador operativo distinto. Administrativos excluidos de ambos.
-    const asisAusRows: any[] = []
-    {
-      let aFrom2 = 0
-      while (true) {
-        let qa = supabase
-          .from("registroasistencia")
-          .select("fecha,puesto,asistencia,identificacion,nombre")
-          .in("idempresa", clientes)
-          .not("nombre", "ilike", "%prueba%")
-          .range(aFrom2, aFrom2 + 999)
-        if (desde) qa = qa.gte("fecha", desde)
-        if (hasta) qa = qa.lte("fecha", hasta)
-        const { data } = await qa
-        asisAusRows.push(...(data ?? []))
-        if (!data || data.length < 1000) break
-        aFrom2 += 1000
-        if (aFrom2 > 120000) break
-      }
-    }
-    const { data: hcAusHcOp } = await supabase
-      .from("headcount")
-      .select("identificacion,nombre,admin,fechainicio,fecha_retiro,idempresa")
-      .or(clientes.map((c) => `idempresa.eq.${c}`).concat("idempresa.is.null").join(","))
-    const hcAusRealesOp = (hcAusHcOp ?? []).filter((h: any) => !/prueba/i.test(String(h.nombre || "")))
-    const identificacionesAdminOp = new Set(
-      hcAusRealesOp.filter((h: any) => h.admin === true).map((h: any) => String(h.identificacion || "").trim()),
-    )
-    const asisAusRealesOp = asisAusRows.filter((r) => !identificacionesAdminOp.has(String(r.identificacion || "").trim()))
+    // indicador operativo distinto. Reusa asisAusRealesOp (ya fetcheado y sin
+    // administrativos, ver el bloque de "cumplimiento de jornada" arriba).
     const turnosProgramadosOp = asisAusRealesOp.filter((r) => r.puesto !== null || r.asistencia !== null).length
     // Turnos (filas) para "capacidad de respuesta"; días-persona distintos
     // para el ausentismo real (misma unidad que el denominador).

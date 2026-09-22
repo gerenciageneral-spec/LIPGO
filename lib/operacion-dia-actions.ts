@@ -117,6 +117,26 @@ export async function getOperacionDia(
       console.error("[v0] getOperacionDia headcount:", e?.message ?? e)
     }
 
+    // Identificaciones administrativas: se descartan de TODO lo que sigue en
+    // este panel (turnos de la quincena, cobertura de hoy) -- los administrativos
+    // no marcan turno, no son parte de la operación del día. `admin` es
+    // project-agnostic: hay administrativos con `idempresa IS NULL` (cruzan
+    // varios proyectos), por eso el `.or` en vez de un simple `.eq`.
+    let idsAdmin = new Set<string>()
+    try {
+      const filasAdmin = await traerTodo((d, h) =>
+        sb
+          .from("headcount")
+          .select("identificacion")
+          .eq("admin", true)
+          .or(`idempresa.eq.${empresaId},idempresa.is.null`)
+          .range(d, h),
+      )
+      idsAdmin = new Set(filasAdmin.map((r) => String(r.identificacion ?? "").trim()))
+    } catch (e: any) {
+      console.error("[v0] getOperacionDia headcount admin:", e?.message ?? e)
+    }
+
     // --- TURNOS DE LA QUINCENA --------------------------------------------
     // Un "turno programado" es una fila de registroasistencia con puesto (turno
     // operativo) o con asistencia (novedad del día). Mismo criterio que usa el
@@ -133,7 +153,7 @@ export async function getOperacionDia(
           .lte("fecha", hasta)
           .range(d, h),
       )
-      const vivas = filas.filter((r) => !esPrueba(r.nombre))
+      const vivas = filas.filter((r) => !esPrueba(r.nombre) && !idsAdmin.has(String(r.identificacion ?? "").trim()))
       const programadas = vivas.filter((r) => r.puesto != null || r.asistencia != null)
       turnosProgramadosQuincena = programadas.length
 
@@ -186,7 +206,12 @@ export async function getOperacionDia(
       const marcaron = new Set(
         (kiosco ?? []).map((r: any) => String(r.identificacion ?? "").trim()),
       )
-      const vivas = ra.filter((r) => !esPrueba(r.nombre) && (r.puesto != null || r.asistencia != null))
+      const vivas = ra.filter(
+        (r) =>
+          !esPrueba(r.nombre) &&
+          !idsAdmin.has(String(r.identificacion ?? "").trim()) &&
+          (r.puesto != null || r.asistencia != null),
+      )
 
       // Horario real de la empresa para ese día, si está configurado.
       const horarios: Record<string, string | null> = {}

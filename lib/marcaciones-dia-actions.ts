@@ -66,7 +66,7 @@ export async function getMarcacionesDia(
   try {
     const sb: any = await getSupabaseAdmin()
 
-    const [marcadas, programadas] = await Promise.all([
+    const [marcadas, programadas, personalAdmin] = await Promise.all([
       traerTodo((d, h) =>
         sb
           .from("asistencia")
@@ -91,7 +91,22 @@ export async function getMarcacionesDia(
         console.error("[v0] getMarcacionesDia registroasistencia:", e?.message ?? e)
         return [] as any[]
       }),
+      // Administrativos fuera: portería es una pantalla operativa, no de ellos.
+      // `admin` es project-agnostic (hay administrativos con idempresa NULL),
+      // de ahí el `.or` en vez de un simple `.eq`.
+      traerTodo((d, h) =>
+        sb
+          .from("headcount")
+          .select("identificacion")
+          .eq("admin", true)
+          .or(`idempresa.eq.${empresaId},idempresa.is.null`)
+          .range(d, h),
+      ).catch((e: any) => {
+        console.error("[v0] getMarcacionesDia headcount admin:", e?.message ?? e)
+        return [] as any[]
+      }),
     ])
+    const idsAdmin = new Set(personalAdmin.map((r: any) => String(r.identificacion ?? "").trim()))
 
     // Primera marcación de cada persona: si alguien marca dos veces, la entrada
     // es la más temprana.
@@ -106,7 +121,9 @@ export async function getMarcacionesDia(
 
     // Nombres: se toman de la programación, y si alguien marcó sin estar
     // programado se completa desde headcount.
-    const vivas = programadas.filter((r: any) => !/prueba/i.test(String(r.nombre ?? "")))
+    const vivas = programadas.filter(
+      (r: any) => !/prueba/i.test(String(r.nombre ?? "")) && !idsAdmin.has(String(r.identificacion ?? "").trim()),
+    )
     const nombrePorIdent = new Map<string, string>()
     for (const r of vivas) {
       const id = String(r.identificacion ?? "").trim()
@@ -175,8 +192,9 @@ export async function getMarcacionesDia(
     }
 
     // 2) Quien marcó SIN estar programado. No se descarta: es justo lo que un
-    //    supervisor querría ver.
+    //    supervisor querría ver. Administrativos sí se descartan aquí también.
     for (const [id, hora] of horaPorIdent) {
+      if (idsAdmin.has(id)) continue
       if ([...yaVistos].some((k) => k.startsWith(`${id}|`))) continue
       marcaciones.push({
         identificacion: id,
