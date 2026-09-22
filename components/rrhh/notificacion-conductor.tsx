@@ -43,13 +43,20 @@ const EMPRESAS = [
   { id: 4, nombre: "Cedi Medellín" },
 ]
 
+/*
+ * Los marcadores que admite el texto.
+ *
+ * `repetido` señala los que la plantilla YA pone en su encabezado fijo. Se
+ * siguen aceptando --puede haber mensajes viejos que los usen-- pero se marcan,
+ * porque ponerlos otra vez dice la placa dos veces en el mismo mensaje.
+ */
 const MARCADORES = [
-  { clave: "{conductor}", que: "nombre del conductor" },
-  { clave: "{placa}", que: "placa del vehículo" },
   { clave: "{muelle}", que: "número de muelle" },
-  { clave: "{orden}", que: "número de orden" },
   { clave: "{cliente}", que: "empresa" },
   { clave: "{encuesta}", que: "enlace de la encuesta" },
+  { clave: "{conductor}", que: "nombre del conductor", repetido: true },
+  { clave: "{placa}", que: "placa del vehículo", repetido: true },
+  { clave: "{orden}", que: "número de orden", repetido: true },
 ]
 
 function Tarjeta({
@@ -183,9 +190,17 @@ function Tarjeta({
               <button
                 key={m.clave}
                 type="button"
-                title={m.que}
+                title={
+                  m.repetido
+                    ? `${m.que} — la plantilla ya lo incluye, ponerlo aquí lo repite`
+                    : m.que
+                }
                 onClick={() => setMensaje((t) => `${t} ${m.clave}`.replace(/\s{2,}/g, " ").trim())}
-                className="rounded border border-border px-1.5 py-0.5 font-mono text-[10px] hover:bg-muted/50"
+                className={`rounded border px-1.5 py-0.5 font-mono text-[10px] hover:bg-muted/50 ${
+                  m.repetido
+                    ? "border-dashed border-amber-300 text-amber-700"
+                    : "border-border"
+                }`}
               >
                 {m.clave}
               </button>
@@ -289,10 +304,28 @@ function Tarjeta({
         {/* Cómo lo va a recibir el conductor. */}
         <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
           <p className="text-[10px] uppercase tracking-wide text-emerald-800">Así se verá</p>
+          {/* Espejo del texto REAL de `plantilla_conductor`. Lo que se escribe
+              arriba es solo el fragmento {detalle}: el resto --el saludo, la
+              placa, la orden y la firma-- viene fijo de la plantilla aprobada
+              y no se puede cambiar desde aquí. Sin mostrarlo, la vista previa
+              hacía pensar que el mensaje empezaba en "Hola X, {detalle}". */}
           <p className="mt-1 text-sm text-emerald-900">
             <strong>{titulo || "LIP Logística"}</strong>
             <br />
-            Hola Jorge Ramírez, {ejemplo || "…"}
+            <br />
+            Hola <span className="text-emerald-700">Jorge Ramírez</span>, le informamos sobre su
+            vehículo de placa <span className="text-emerald-700">ABC123</span> en la orden de cargue{" "}
+            <span className="text-emerald-700">OC-4451</span>.
+            <br />
+            <br />
+            <strong>{ejemplo || "…"}</strong>
+            <br />
+            <br />
+            LIP Progressive Integral Logistics.
+          </p>
+          <p className="mt-2 border-t border-emerald-200 pt-1.5 text-[10px] text-emerald-800">
+            En <strong>negrita</strong>, lo que escribes arriba. Lo demás lo pone la plantilla
+            aprobada por Meta y no se edita desde aquí.
           </p>
         </div>
 
