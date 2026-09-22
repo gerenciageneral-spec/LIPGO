@@ -124,7 +124,7 @@ export async function getMatrizIntegrada(
         .select("id, numeral, tema, es_comun, evidencia_comun_sugerida, orden, activo")
         .eq("activo", true)
         .order("orden", { ascending: true }),
-      supabase.from("sig_requisito_norma").select("id, requisito_id, norma_id, texto, aplica"),
+      supabase.from("sig_requisito_norma").select("id, requisito_id, norma_id, texto, aplica, peso"),
       supabase
         // "*" para tolerar que la columna documento_id aun no exista (script 04
         // opcional): si falta, simplemente no viene y la enriquecemos como null.
@@ -272,6 +272,7 @@ export async function getMatrizIntegrada(
             codigo: n.codigo,
             texto: detalle?.texto ?? null,
             aplica,
+            peso: detalle?.peso ?? 1,
             coberturas,
             modulos,
             estado: isoEstadoASig(iso.estado),
@@ -312,6 +313,7 @@ export async function getMatrizIntegrada(
             codigo: n.codigo,
             texto: detalle?.texto ?? null,
             aplica,
+            peso: detalle?.peso ?? 1,
             coberturas,
             modulos,
             estado,
@@ -327,6 +329,7 @@ export async function getMatrizIntegrada(
           codigo: n.codigo,
           texto: detalle?.texto ?? null,
           aplica,
+          peso: detalle?.peso ?? 1,
           coberturas,
           modulos,
           estado: estadoAgregado(aplica, coberturas),
@@ -600,6 +603,33 @@ export async function upsertCobertura(
       .single()
     if (error) return { success: false, error: error.message }
     return { success: true, id: (data as any)?.id }
+  } catch (err: any) {
+    return { success: false, error: err?.message || "Error desconocido" }
+  }
+}
+
+/**
+ * Ajusta el peso de un requisito DENTRO DE UNA NORMA (sig_requisito_norma.peso).
+ * Mismo rol que sst_estandar_items.peso en la 0312: alimenta el % ponderado
+ * de avance de esa norma (ver `avance` en matriz-integrada-sig.tsx). No toca
+ * ninguna cobertura ni estado -- solo el peso.
+ */
+export async function actualizarPesoRequisitoNorma(
+  requisitoId: number,
+  normaId: number,
+  peso: number,
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    if (!requisitoId || !normaId) return { success: false, error: "requisito y norma son obligatorios" }
+    if (!Number.isFinite(peso) || peso < 0) return { success: false, error: "El peso debe ser un número positivo." }
+    const supabase: any = await getSupabaseAdmin()
+    const { error } = await supabase
+      .from("sig_requisito_norma")
+      .update({ peso })
+      .eq("requisito_id", requisitoId)
+      .eq("norma_id", normaId)
+    if (error) return { success: false, error: error.message }
+    return { success: true }
   } catch (err: any) {
     return { success: false, error: err?.message || "Error desconocido" }
   }

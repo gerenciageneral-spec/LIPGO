@@ -45,6 +45,7 @@ export interface SigRequisitoNorma {
   norma_id: number
   texto: string | null // "requisito / como evidenciar" de esa norma
   aplica: boolean
+  peso: number // peso del requisito EN ESTA norma (mismo patron que sst_estandar_items.peso)
 }
 
 // Documento del maestro documental del SIG (tabla sig_documentos, 94 reales).
@@ -114,6 +115,7 @@ export interface SigCeldaNorma {
   codigo: string
   texto: string | null
   aplica: boolean
+  peso: number // peso del requisito en esta norma (alimenta el % ponderado)
   // Coberturas (documentos vinculados) de ese requisito en esa norma.
   coberturas: SigCobertura[]
   estado: SigEstadoCobertura // estado agregado: aprobado > cargado > pendiente / no_aplica

@@ -31,6 +31,7 @@ import {
   getTablasModuloPermitidas,
   vincularModuloARequisito,
   desvincularModuloDeRequisito,
+  actualizarPesoRequisitoNorma,
 } from "@/lib/sig-actions"
 import { groups } from "@/lib/dashboard-data"
 import type {
@@ -207,31 +208,40 @@ export function MatrizIntegradaSIG({ selectedEmpresaId: propEmpresaId }: Props) 
   // Requisitos comunes (la 2a hoja del Excel): los que comparten las normas.
   const rowsComunes = useMemo(() => rows.filter((r) => r.requisito.es_comun !== "no"), [rows])
 
-  // Avance por norma (calculado en vivo desde las filas cargadas).
+  // Avance por norma (calculado en vivo desde las filas cargadas). Ponderado
+  // por el peso de cada requisito EN esa norma -- mismo esquema que la 0312
+  // (Art. 27): "aprobado" suma su peso completo, "cargado" (sin verificar)
+  // suma la mitad, "pendiente"/"no aplica" no suma nada.
   const avance = useMemo(() => {
     return normas.map((n) => {
       let total = 0
       let cargados = 0
       let aprobados = 0
+      let pesoTotal = 0
+      let pesoObtenido = 0
       for (const row of rows) {
         const celda = row.celdas.find((c) => c.norma_id === n.id)
         if (!celda || !celda.aplica) continue
         total += 1
+        const peso = celda.peso || 0
+        pesoTotal += peso
         if (celda.estado === "aprobado") {
           aprobados += 1
           cargados += 1
+          pesoObtenido += peso
         } else if (celda.estado === "cargado") {
           cargados += 1
+          pesoObtenido += peso * 0.5
         }
       }
       // AVANCE REAL de la norma: sin evidencia = 0 · documentado (cargado, sin
       // verificar) = medio avance · verificado/aprobado = avance completo. Subir un
       // documento no cierra el numeral; documental y verificado se muestran aparte.
       const soloCargados = Math.max(0, cargados - aprobados)
-      const pct = total > 0 ? Math.round(((aprobados + soloCargados * 0.5) / total) * 100) : 0
+      const pct = pesoTotal > 0 ? Math.round((pesoObtenido / pesoTotal) * 100) : 0
       const pctDocumental = total > 0 ? Math.round((cargados / total) * 100) : 0
       const pctAprobado = total > 0 ? Math.round((aprobados / total) * 100) : 0
-      return { norma: n, total, cargados, aprobados, soloCargados, pct, pctDocumental, pctAprobado }
+      return { norma: n, total, cargados, aprobados, soloCargados, pct, pctDocumental, pctAprobado, pesoTotal, pesoObtenido }
     })
   }, [normas, rows])
 
@@ -278,7 +288,10 @@ export function MatrizIntegradaSIG({ selectedEmpresaId: propEmpresaId }: Props) 
             </div>
             <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Avance real de la norma</p>
             <Progress value={a.pct} className="mt-1 h-2" />
-            <p className="mt-1.5 text-xs text-muted-foreground">
+            <p className="mt-1.5 text-xs font-medium" style={{ color: SST_TOKENS.navy }}>
+              {a.pesoObtenido.toFixed(1)} / {a.pesoTotal.toFixed(0)} pts (peso)
+            </p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
               {a.aprobados} verificados · {a.soloCargados} documentados (sin verificar) · {a.total} aplican
             </p>
             <p className="text-[11px] text-muted-foreground">Documentado {a.pctDocumental}% · Verificado {a.pctAprobado}%</p>
@@ -473,6 +486,7 @@ function NormaTabla({
               <th className="px-3 py-2 font-semibold" style={{ color: SST_TOKENS.ink }}>Numeral</th>
               <th className="px-3 py-2 font-semibold" style={{ color: SST_TOKENS.ink }}>Requisito / tema</th>
               <th className="px-3 py-2 font-semibold" style={{ color: SST_TOKENS.ink }}>Cómo evidenciar</th>
+              <th className="px-3 py-2 text-center font-semibold" style={{ color: SST_TOKENS.ink }}>Peso</th>
               <th className="px-3 py-2 text-center font-semibold" style={{ color: SST_TOKENS.ink }}>Estado</th>
               <th className="px-2 py-2" />
             </tr>
@@ -484,7 +498,7 @@ function NormaTabla({
               const showCiclo = idx === 0 || cicloDeNumeral(visibles[idx - 1].row.requisito.numeral) !== ciclo
               return (
                 <Fragment key={row.requisito.id}>
-                  {showCiclo && <CicloHeader ciclo={ciclo} colSpan={5} />}
+                  {showCiclo && <CicloHeader ciclo={ciclo} colSpan={6} />}
                   <tr
                     className="cursor-pointer border-b hover:bg-muted/40"
                     onClick={() => setExpanded(isOpen ? null : row.requisito.id)}
@@ -492,6 +506,9 @@ function NormaTabla({
                     <td className="px-3 py-2 font-mono text-xs">{row.requisito.numeral}</td>
                     <td className="px-3 py-2">{row.requisito.tema}</td>
                     <td className="px-3 py-2 text-muted-foreground">{celda?.texto}</td>
+                    <td className="px-3 py-2 text-center font-medium" style={{ color: SST_TOKENS.navy }}>
+                      {celda?.peso ?? "—"}
+                    </td>
                     <td className="px-3 py-2 text-center">{celda ? <EstadoBadge estado={celda.estado} /> : null}</td>
                     <td className="px-2 py-2 text-muted-foreground">
                       {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
@@ -499,7 +516,7 @@ function NormaTabla({
                   </tr>
                   {isOpen && (
                     <tr>
-                      <td colSpan={5} className="bg-muted/20 px-4 py-4">
+                      <td colSpan={6} className="bg-muted/20 px-4 py-4">
                         <RequisitoDetalle
                           row={row}
                           normas={[norma]}
@@ -518,6 +535,92 @@ function NormaTabla({
         </table>
       </div>
     </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Editor de peso (requisito x norma): a diferencia de la 0312 -- donde el
+// peso lo fija la Resolucion y no se edita desde la pantalla -- aqui SI es
+// ajustable, porque las normas ISO no traen un peso oficial por numeral.
+// Arranca en 1 para todos (mismo % que antes) y se afina desde aqui.
+// ---------------------------------------------------------------------------
+
+function PesoEditor({
+  requisitoId,
+  normaId,
+  peso,
+  onSaved,
+}: {
+  requisitoId: number
+  normaId: number
+  peso: number
+  onSaved: () => void
+}) {
+  const [editando, setEditando] = useState(false)
+  const [valor, setValor] = useState(String(peso))
+  const [saving, setSaving] = useState(false)
+  const { toast } = useToast()
+
+  useEffect(() => {
+    if (!editando) setValor(String(peso))
+  }, [peso, editando])
+
+  async function guardar() {
+    const n = Number(valor)
+    if (!Number.isFinite(n) || n < 0) {
+      toast({ title: "Peso inválido", description: "Escribe un número positivo." })
+      return
+    }
+    if (n === peso) {
+      setEditando(false)
+      return
+    }
+    setSaving(true)
+    const res = await actualizarPesoRequisitoNorma(requisitoId, normaId, n)
+    setSaving(false)
+    setEditando(false)
+    if (res.success) onSaved()
+    else toast({ title: "No se pudo guardar el peso", description: res.error })
+  }
+
+  if (!editando) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          setEditando(true)
+        }}
+        title="Editar peso de este requisito en esta norma"
+        className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground hover:border-current hover:text-foreground"
+      >
+        Peso {peso}
+      </button>
+    )
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+      <Input
+        autoFocus
+        type="number"
+        min={0}
+        step={0.5}
+        value={valor}
+        disabled={saving}
+        onChange={(e) => setValor(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") guardar()
+          if (e.key === "Escape") {
+            setValor(String(peso))
+            setEditando(false)
+          }
+        }}
+        onBlur={guardar}
+        className="h-6 w-16 px-1.5 text-[11px]"
+      />
+      {saving && <Loader2 className="h-3 w-3 animate-spin" />}
+    </span>
   )
 }
 
@@ -602,11 +705,14 @@ function RequisitoDetalle({
           }
           return (
             <div key={n.id} className="rounded-md border px-3 py-2">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <span className="text-sm font-medium" style={{ color: n.color ?? SST_TOKENS.navy }}>
                   {n.nombre}
                 </span>
-                <EstadoBadge estado={celda.estado} />
+                <div className="flex shrink-0 items-center gap-2">
+                  <PesoEditor requisitoId={requisito.id} normaId={n.id} peso={celda.peso} onSaved={onUploaded} />
+                  <EstadoBadge estado={celda.estado} />
+                </div>
               </div>
               {celda.texto && <p className="mt-1 text-xs text-muted-foreground">{celda.texto}</p>}
 
