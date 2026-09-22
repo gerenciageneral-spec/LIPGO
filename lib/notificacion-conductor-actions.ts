@@ -23,6 +23,7 @@ import { getCurrentUsuarioForInsert } from "@/lib/user-context"
 import { enviarAvisoEstandar, normalizarTelefono } from "@/lib/whatsapp-actions"
 import { getTokenEncuesta } from "@/lib/encuesta-conductor-actions"
 import type {
+  AvisoEnviado,
   ConfigConductor,
   ContextoOrden,
   EventoConductor,
@@ -173,6 +174,94 @@ function dominioPublico(): string {
   }
 
   return "https://www.lipgo.app"
+}
+
+/**
+ * Historial de los avisos automáticos al conductor.
+ *
+ * POR QUÉ NO BASTA CON `whatsapp_mensajes`
+ * Esa tabla tiene el estado del mensaje pero no sabe de órdenes: guardaría
+ * "se envió a 573202343157" sin decir a qué cargue correspondía. Revisar un
+ * reclamo --"al conductor de la orden X nunca le llegó"-- exigiría cruzar a
+ * mano por teléfono y hora.
+ *
+ * Se parte de `notificaciones_conductor_enviadas`, que sí tiene la orden, y se
+ * trae el estado real del mensaje por `mensaje_id`.
+ *
+ * UN AVISO SIN MENSAJE NO ES UN HUECO EN LOS DATOS: es información. Significa
+ * que se registró el intento pero el envío no llegó a crear una fila, casi
+ * siempre porque faltaba configuración. Por eso `estado` puede venir en null y
+ * la pantalla lo muestra como tal en vez de esconderlo.
+ */
+export async function getHistorialConductor(
+  limite = 50,
+): Promise<{ success: boolean; data?: AvisoEnviado[]; faltaMigracion?: boolean; message?: string }> {
+  try {
+    const sb: any = await getSupabaseAdmin()
+
+    const { data: enviadas, error } = await sb
+      .from("notificaciones_conductor_enviadas")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(limite)
+
+    if (error) {
+      if (faltaTabla(error.message)) return { success: true, data: [], faltaMigracion: true }
+      return { success: false, message: error.message }
+    }
+    if (!enviadas?.length) return { success: true, data: [] }
+
+    // Estado real de cada mensaje.
+    const ids = enviadas.map((e: any) => e.mensaje_id).filter(Boolean)
+    const porMensaje: Record<string, any> = {}
+    if (ids.length) {
+      const { data: msgs } = await sb
+        .from("whatsapp_mensajes")
+        .select("message_id, estado, error_codigo, error_detalle")
+        .in("message_id", ids)
+      for (const m of msgs ?? []) porMensaje[String(m.message_id)] = m
+    }
+
+    // Datos de la orden, para reconocerla sin tener que buscarla aparte.
+    const ordenIds = [...new Set(enviadas.map((e: any) => Number(e.orden_id)))]
+    const porOrden: Record<number, any> = {}
+    if (ordenIds.length) {
+      const { data: ords } = await sb
+        .from("cabeceraoc")
+        .select("id, ordendecargue, placa, conductor")
+        .in("id", ordenIds)
+      for (const o of ords ?? []) porOrden[Number(o.id)] = o
+    }
+
+    const nombres: Record<string, string> = {
+      muelle_asignado: "Asignación de muelle",
+      cargue_finalizado: "Fin de cargue",
+    }
+
+    return {
+      success: true,
+      data: enviadas.map((e: any) => {
+        const m = e.mensaje_id ? porMensaje[String(e.mensaje_id)] : null
+        const o = porOrden[Number(e.orden_id)]
+        return {
+          id: Number(e.id),
+          ordenId: Number(e.orden_id),
+          evento: e.evento,
+          eventoNombre: nombres[e.evento] ?? e.evento,
+          ordenDeCargue: o?.ordendecargue ?? null,
+          placa: o?.placa ?? null,
+          conductor: o?.conductor ?? null,
+          telefono: e.telefono ?? null,
+          estado: m?.estado ?? null,
+          errorCodigo: m?.error_codigo ?? null,
+          errorDetalle: m?.error_detalle ?? null,
+          creadoEn: e.created_at,
+        }
+      }),
+    }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "No se pudo leer el historial." }
+  }
 }
 
 /**
@@ -345,11 +434,16 @@ export async function notificarConductor(
 
     // Se registra aunque falle: un intento fallido también cuenta como "ya se
     // intentó", y evita que un reintento automático inunde al conductor.
+    //
+    // `message_id` es lo que permite cruzar después con `whatsapp_mensajes` y
+    // saber qué orden fue cada aviso. Sin él, el historial mostraría teléfonos
+    // sueltos sin forma de decir a qué cargue correspondían.
     try {
       await sb.from("notificaciones_conductor_enviadas").insert({
         orden_id: ordenId,
         evento,
         telefono: destino,
+        mensaje_id: r.messageId ?? null,
       })
     } catch {
       // El índice único puede rechazarlo si dos llamadas corrieron a la vez.

@@ -43,3 +43,25 @@ export interface ResultadoAviso {
   motivo?: string
   telefono?: string
 }
+
+/** Una línea del historial de avisos automáticos. */
+export interface AvisoEnviado {
+  id: number
+  ordenId: number
+  evento: EventoConductor
+  eventoNombre: string
+  /** Código de la orden, para reconocerla. */
+  ordenDeCargue: string | null
+  placa: string | null
+  conductor: string | null
+  telefono: string | null
+  /**
+   * enviado | entregado | leido | fallido | error, de `whatsapp_mensajes`.
+   * null cuando no se pudo cruzar: el aviso se registró pero no hay rastro del
+   * mensaje, que es en sí mismo una señal de que algo falló antes de enviarlo.
+   */
+  estado: string | null
+  errorCodigo: string | null
+  errorDetalle: string | null
+  creadoEn: string
+}
