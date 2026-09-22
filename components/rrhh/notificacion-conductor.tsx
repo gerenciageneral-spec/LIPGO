@@ -57,6 +57,11 @@ function Tarjeta({
 
   const esCierre = cfg.evento === "cargue_finalizado"
 
+  // La primera versión del script 182 sembró este marcador. No es un formulario:
+  // es un enlace muerto que le gana a la encuesta propia y deja el KPI en cero
+  // sin que nada avise. Se señala aquí porque se corrige borrando el campo.
+  const urlMuerta = url.trim() === "https://forms.gle/PENDIENTE"
+
   async function guardar() {
     // Quitar el desvío es lo que hace que empiecen a llegarle mensajes a gente
     // real. No puede pasar por descuido.
@@ -95,7 +100,10 @@ function Tarjeta({
     .replace(/\{muelle\}/gi, "3")
     .replace(/\{orden\}/gi, "OC-4451")
     .replace(/\{cliente\}/gi, "Avimol")
-    .replace(/\{encuesta\}/gi, url || "(sin enlace)")
+    .replace(
+      /\{encuesta\}/gi,
+      urlMuerta ? "(enlace roto)" : url || "el enlace de la encuesta de LIPgo",
+    )
 
   return (
     <section className="rounded-xl border border-border bg-card">
@@ -161,13 +169,29 @@ function Tarjeta({
             />
             {/* Vacío no es un olvido: es lo que hace que las respuestas cuenten
                 en el indicador. Conviene decirlo donde se decide. */}
+            {urlMuerta && (
+              <div className="mt-1.5 rounded-md border border-amber-300 bg-amber-50 p-2">
+                <p className="text-[11px] text-amber-900">
+                  <strong>Este enlace no lleva a ninguna parte.</strong> Es un marcador que quedó
+                  de una versión anterior. Bórralo y guarda para usar la encuesta de LIPgo; si lo
+                  dejas, al conductor le llega un enlace que no abre.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setUrl("")}
+                  className="mt-1.5 rounded border border-amber-400 bg-white px-2 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100"
+                >
+                  Borrar el enlace
+                </button>
+              </div>
+            )}
             <p className="mt-1 text-[11px] text-muted-foreground">
-              {url.trim() ? (
+              {url.trim() && !urlMuerta ? (
                 <>
                   Se usará este enlace externo. Las respuestas quedarán{" "}
                   <strong>fuera</strong> del indicador de Satisfacción conductor.
                 </>
-              ) : (
+              ) : urlMuerta ? null : (
                 <>
                   Se usará la <strong>encuesta de LIPgo</strong>, un enlace distinto para cada
                   orden que el conductor abre sin iniciar sesión. Las respuestas alimentan el KPI

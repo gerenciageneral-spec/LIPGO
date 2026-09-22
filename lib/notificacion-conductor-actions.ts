@@ -278,7 +278,12 @@ export async function notificarConductor(
     let urlEncuesta = cfg.urlEncuesta
     if (evento === "cargue_finalizado") {
       const propia = String(cfg.urlEncuesta ?? "").trim()
-      const esExterna = /^https?:\/\//i.test(propia) && !propia.includes("/encuesta/")
+      // 'forms.gle/PENDIENTE' fue el marcador que sembró la primera versión del
+      // script 182. Parece una URL externa y por eso le ganaría a la encuesta
+      // propia, pero no abre nada: se ignora como si el campo estuviera vacío.
+      const esMarcadorMuerto = propia === "https://forms.gle/PENDIENTE"
+      const esExterna =
+        !esMarcadorMuerto && /^https?:\/\//i.test(propia) && !propia.includes("/encuesta/")
       if (!esExterna) {
         const token = await getTokenEncuesta(ordenId)
         urlEncuesta = `${dominioPublico()}/encuesta/${token}`
