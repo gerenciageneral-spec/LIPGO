@@ -20,7 +20,7 @@
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { getCurrentUsuarioForInsert } from "@/lib/user-context"
-import { enviarAvisoEstandar, normalizarTelefono } from "@/lib/whatsapp-actions"
+import { enviarAvisoConductor, normalizarTelefono } from "@/lib/whatsapp-actions"
 import { getTokenEncuesta } from "@/lib/encuesta-conductor-actions"
 import type {
   AvisoEnviado,
@@ -473,14 +473,18 @@ export async function notificarConductor(
     const texto = armarMensaje(cfg.mensaje, ctx, urlEncuesta)
     if (!texto) return { enviado: false, motivo: "El mensaje quedó vacío." }
 
-    const r = await enviarAvisoEstandar({
+    // Usa la plantilla propia del conductor --UTILITY, sin el tope por
+    // destinatario de las de MARKETING-- y cae a la genérica si Meta todavía
+    // no la aprobó.
+    const r = await enviarAvisoConductor({
       telefono: destino,
-      nombreReporte: cfg.titulo,
-      usuario: ctx.conductor || "conductor",
-      contenido: texto,
+      conductor: ctx.conductor || "conductor",
+      placa: ctx.placa ?? "",
+      orden: ctx.ordenDeCargue ?? String(ordenId),
+      detalle: texto,
+      titulo: cfg.titulo,
       empresaId,
       origen: `conductor:${evento}`,
-      nombre: ctx.conductor,
     })
 
     // Se registra aunque falle: un intento fallido también cuenta como "ya se

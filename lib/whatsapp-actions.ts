@@ -419,6 +419,106 @@ const PLANTILLA_ESTANDAR = "plantilla_estandar"
  * mandar variables sin nombre a una que las usa con nombre, son los dos fallos
  * que ya costaron un diagnóstico cada uno.
  */
+const PLANTILLA_CONDUCTOR = "aviso_cargue_conductor"
+
+/**
+ * Aviso al conductor sobre su cargue.
+ *
+ * POR QUÉ NO USA `plantilla_estandar`
+ * Aquella es genérica --su cuerpo entero es «Hola {{usuario}}, {{contenido}}»--
+ * y Meta la clasifica como MARKETING, con razón: no hay en el texto nada que
+ * ate el mensaje a un servicio concreto. Eso trae el tope por destinatario del
+ * error 131049, que aquí duele: un conductor con dos cargues el mismo día
+ * perdería el segundo aviso.
+ *
+ * `aviso_cargue_conductor` nombra la placa y la orden en su texto fijo, así que
+ * Meta puede verificar que es transaccional y acepta UTILITY: sin tope y más
+ * barata.
+ *
+ * SI LA NUEVA NO ESTÁ APROBADA, SE USA LA GENÉRICA. Crear y aprobar una
+ * plantilla lleva su tiempo, y mientras tanto el aviso debe seguir saliendo:
+ * un mensaje con el tope de marketing es mejor que ningún mensaje.
+ */
+export async function enviarAvisoConductor(payload: {
+  telefono: string
+  conductor: string
+  placa: string
+  orden: string
+  /** Lo que se le informa: "fue asignado al muelle 3", "ha finalizado...". */
+  detalle: string
+  titulo: string
+  empresaId?: number | null
+  origen?: string
+}): Promise<ResultadoEnvio> {
+  const limpiar = (t: string) =>
+    String(t ?? "")
+      .replace(/\s*\n+\s*/g, " · ")
+      .replace(/\s{2,}/g, " ")
+      .trim()
+
+  const meta = await getPlantillasDeMeta()
+  const propia = meta.success
+    ? meta.data?.find((t) => t.nombre === PLANTILLA_CONDUCTOR && t.estado === "APPROVED")
+    : null
+
+  if (!propia) {
+    /*
+     * Todavía no está aprobada: sale por la genérica, que sí lo está.
+     *
+     * Los textos configurables están redactados para la plantilla propia, que
+     * ya nombra la placa y la orden en su encabezado fijo ("fue asignado al
+     * muelle 3"). La genérica no dice nada por sí misma, así que enviarlos tal
+     * cual dejaría un mensaje sin sujeto. Se les antepone el contexto.
+     */
+    const placa = limpiar(payload.placa)
+    const orden = limpiar(payload.orden)
+    const contexto = placa
+      ? `su vehículo de placa ${placa}${orden ? ` (orden ${orden})` : ""}`
+      : orden
+        ? `su cargue de la orden ${orden}`
+        : "su vehículo"
+
+    return enviarAvisoEstandar({
+      telefono: payload.telefono,
+      nombreReporte: payload.titulo,
+      usuario: payload.conductor || "conductor",
+      contenido: `${contexto} ${limpiar(payload.detalle)}`.trim(),
+      empresaId: payload.empresaId,
+      origen: payload.origen,
+      nombre: payload.conductor,
+    })
+  }
+
+  // El orden es el del texto de la plantilla, y es lo que importa cuando las
+  // variables son posicionales ({{1}}, {{2}}...).
+  const body = [
+    limpiar(payload.conductor) || "conductor",
+    limpiar(payload.placa) || "—",
+    limpiar(payload.orden) || "—",
+    limpiar(payload.detalle),
+  ]
+
+  // Los nombres se toman de lo que Meta reporta, no de una lista escrita aquí:
+  // si alguien renombra una variable al crear la plantilla, esto la sigue.
+  const nombresBody = propia.conNombre
+    ? propia.varsBody.length === body.length
+      ? propia.varsBody
+      : ["conductor", "placa", "orden", "detalle"]
+    : undefined
+
+  return enviarPlantilla({
+    empresaId: payload.empresaId ?? null,
+    telefono: payload.telefono,
+    plantilla: PLANTILLA_CONDUCTOR,
+    idioma: propia.idioma,
+    // El encabezado es texto fijo: no lleva parámetros.
+    body,
+    nombresBody,
+    origen: payload.origen,
+    nombre: payload.conductor,
+  })
+}
+
 export async function enviarAvisoEstandar(payload: {
   telefono: string
   /** Título del aviso. Va en el encabezado. */
