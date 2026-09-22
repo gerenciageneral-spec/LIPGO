@@ -416,6 +416,31 @@ function Historial() {
         </Button>
       </div>
 
+      {/* Un resumen antes de la lista.
+          Con muchos cargues sin celular, la lista de 50 se llena de "Sin
+          enviar" y esconde los que sí salieron. El conteo dice de un vistazo
+          si el problema es puntual o general. */}
+      {!cargando && filas.length > 0 && (
+        <div className="flex flex-wrap gap-4 border-b border-border px-4 py-2.5 text-xs">
+          <span>
+            <strong className="text-emerald-700">
+              {filas.filter((f) => f.estado && f.estado !== "fallido" && f.estado !== "error").length}
+            </strong>{" "}
+            <span className="text-muted-foreground">enviados</span>
+          </span>
+          <span>
+            <strong className="text-amber-700">{filas.filter((f) => !f.estado).length}</strong>{" "}
+            <span className="text-muted-foreground">sin enviar</span>
+          </span>
+          <span>
+            <strong className="text-red-700">
+              {filas.filter((f) => f.estado === "fallido" || f.estado === "error").length}
+            </strong>{" "}
+            <span className="text-muted-foreground">fallidos</span>
+          </span>
+        </div>
+      )}
+
       {cargando ? (
         <div className="flex h-32 items-center justify-center">
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
