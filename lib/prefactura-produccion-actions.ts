@@ -572,7 +572,17 @@ async function armarIndupan(desde: string, hasta: string) {
     porOp.set(opTarifa, g)
 
     const nombre = String(r.nombreproducto || "(sin producto)")
-    const k = `${r.lote}|${nombre}`
+    // BUG REAL encontrado y corregido 2026-09-21: la clave de agrupación no
+    // incluía la tarifa (`opTarifa`) -- un mismo (lote, producto) puede tener
+    // AMBAS tarifas mezcladas ahora que la tarifa real de la orden manda
+    // sobre "domingo de la fecha del lote" (ver arriba): parte de la
+    // producción de un lote de domingo puede ser realmente "Tolva" (turno
+    // normal que se cerró tarde) y otra parte "Tolva f". Sin la tarifa en la
+    // clave, ambas porciones se fusionaban en una sola línea del soporte que
+    // mostraba la tarifa de la PRIMERA fila procesada -- el $ total seguía
+    // siendo correcto (se sigue sumando por fila, antes de fusionar), pero
+    // el anexo mostraba una tarifa que no correspondía a todo ese renglón.
+    const k = `${r.lote}|${nombre}|${opTarifa}`
     const existente = porLoteProducto.get(k)
     if (existente) {
       existente.bultos = (existente.bultos ?? 0) + bultos
