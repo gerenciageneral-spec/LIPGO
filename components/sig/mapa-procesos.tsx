@@ -19,39 +19,8 @@ import { useCallback, useEffect, useState } from "react"
 import { X } from "lucide-react"
 import { DocumentosProceso } from "@/components/sig/documentos-proceso"
 import { getConteoDocumentosPorProceso } from "@/lib/mapa-procesos-actions"
-
-type TipoProceso = "Estratégico" | "Misional" | "Apoyo" | "Interfaz"
-
-interface Proceso {
-  id: string
-  codigo: string
-  nombre: string
-  tipo: TipoProceso
-}
-
-/** Los tres grupos del mapa. El prefijo arma el código (E-01, M-01, A-01…). */
-const GRUPOS: Record<"estrategicos" | "misionales" | "apoyo", { tipo: TipoProceso; pref: string; items: string[] }> = {
-  estrategicos: {
-    tipo: "Estratégico",
-    pref: "E",
-    items: ["Proceso Estratégico", "Proceso SGI", "Proceso Gestión IT (Innovación y Tecnología)"],
-  },
-  misionales: {
-    tipo: "Misional",
-    pref: "M",
-    items: ["Gestión Proceso Comercial", "Gestión de Operaciones y Prestación de Servicio"],
-  },
-  apoyo: {
-    tipo: "Apoyo",
-    pref: "A",
-    items: [
-      "Gestión de Talento Humano",
-      "Gestión de Mantenimiento",
-      "Gestión de Compras",
-      "Gestión Financiera y Contable",
-    ],
-  },
-}
+import { getMisProcesosPermitidos } from "@/lib/permisos-mapa-actions"
+import { GRUPOS, PROCESOS, type Proceso, type TipoProceso } from "@/lib/mapa-procesos-tipos"
 
 const PALETA: Record<TipoProceso, { fondo: string; tinta: string; meta: string }> = {
   Estratégico: { fondo: "linear-gradient(155deg, #0a6f6f, #05494c)", tinta: "#ffffff", meta: "#a8dedd" },
@@ -60,35 +29,7 @@ const PALETA: Record<TipoProceso, { fondo: string; tinta: string; meta: string }
   Interfaz: { fondo: "linear-gradient(155deg, #44A6B0, #2d8c96)", tinta: "#ffffff", meta: "#e8f7f7" },
 }
 
-/** Los once procesos: los nueve del mapa más la entrada y la salida. */
-function construirProcesos(): Proceso[] {
-  const out: Proceso[] = []
-  for (const g of Object.values(GRUPOS)) {
-    g.items.forEach((nombre, i) => {
-      out.push({
-        id: `${g.pref}-${String(i + 1).padStart(2, "0")}`,
-        codigo: `${g.pref}-${String(i + 1).padStart(2, "0")}`,
-        nombre,
-        tipo: g.tipo,
-      })
-    })
-  }
-  out.push({
-    id: "IN-01",
-    codigo: "IN-01",
-    nombre: "Requerimientos del usuario y partes interesadas",
-    tipo: "Interfaz",
-  })
-  out.push({
-    id: "OUT-01",
-    codigo: "OUT-01",
-    nombre: "Satisfacción del usuario y partes interesadas",
-    tipo: "Interfaz",
-  })
-  return out
-}
 
-const PROCESOS = construirProcesos()
 
 export function MapaProcesos() {
   const [activoId, setActivoId] = useState<string | null>(null)
@@ -101,8 +42,18 @@ export function MapaProcesos() {
     if (res.success && res.data) setConteos(res.data)
   }, [])
 
+  // Procesos que este usuario puede abrir. `null` mientras se averigua: así
+  // los botones no parpadean de bloqueados a habilitados al cargar.
+  const [permitidos, setPermitidos] = useState<Set<string> | null>(null)
+
   useEffect(() => {
     cargarConteos()
+    getMisProcesosPermitidos().then((r) => {
+      // `todos` es el respaldo de cuando falta el script: el módulo ya está
+      // protegido por `sig_matriz`, así que se deja pasar en vez de dejar el
+      // mapa inservible sin decir por qué.
+      setPermitidos(r.todos ? null : new Set(r.procesos))
+    })
   }, [cargarConteos])
   // Los códigos (E-01, M-02…) se ocultan por defecto: en el mapa impreso son
   // ruido, pero sirven al auditor. Se muestran con el interruptor.
@@ -110,22 +61,37 @@ export function MapaProcesos() {
 
   const activo = PROCESOS.find((p) => p.id === activoId) ?? null
 
+  /** Sin lista todavía (o con el respaldo activo) se deja pasar. */
+  const puedeAbrir = (id: string) => permitidos === null || permitidos.has(id)
+
   const botonProceso = (proc: Proceso, alto: string) => {
     const p = PALETA[proc.tipo]
     const seleccionado = activoId === proc.id
+    const abre = puedeAbrir(proc.id)
     return (
       <button
         key={proc.id}
         type="button"
-        onClick={() => setActivoId(proc.id)}
-        aria-label={`Ver ficha de ${proc.nombre}`}
-        className="group flex cursor-pointer flex-col justify-center gap-2 rounded-xl border p-4 text-left transition-transform hover:-translate-y-0.5"
+        disabled={!abre}
+        onClick={() => abre && setActivoId(proc.id)}
+        aria-label={
+          abre ? `Ver ficha de ${proc.nombre}` : `${proc.nombre} — sin permiso para abrirlo`
+        }
+        title={abre ? undefined : "No tienes permiso para abrir este proceso."}
+        className={`group flex flex-col justify-center gap-2 rounded-xl border p-4 text-left transition-transform ${
+          abre ? "cursor-pointer hover:-translate-y-0.5" : "cursor-not-allowed"
+        }`}
         style={{
           minHeight: alto,
           borderColor: "rgba(0, 102, 102, 0.14)",
           borderWidth: 1.5,
           background: p.fondo,
           color: p.tinta,
+          // El mapa es un documento del SIG: muestra cómo opera la empresa, así
+          // que los procesos sin permiso se ven --atenuados-- en vez de
+          // desaparecer. Ocultarlos daría un mapa distinto a cada persona.
+          opacity: abre ? 1 : 0.45,
+          filter: abre ? undefined : "saturate(0.6)",
           boxShadow: seleccionado
             ? "0 0 0 3px #006666, 0 14px 30px rgba(0,70,70,0.22)"
             : "0 4px 14px rgba(16,40,40,0.09)",
@@ -143,11 +109,13 @@ export function MapaProcesos() {
           {proc.nombre}
         </span>
         <span className="text-[11px] uppercase tracking-wide" style={{ color: p.meta }}>
-          {seleccionado
-            ? "Abierto"
-            : conteos[proc.id]
-              ? `${conteos[proc.id]} documento(s) →`
-              : "Ver documentos →"}
+          {!abre
+            ? "🔒 Sin acceso"
+            : seleccionado
+              ? "Abierto"
+              : conteos[proc.id]
+                ? `${conteos[proc.id]} documento(s) →`
+                : "Ver documentos →"}
         </span>
       </button>
     )
@@ -316,8 +284,14 @@ export function MapaProcesos() {
         {/* Salida */}
         <button
           type="button"
-          onClick={() => setActivoId(salida.id)}
-          aria-label={`Ver ficha de ${salida.nombre}`}
+          disabled={!puedeAbrir(salida.id)}
+          onClick={() => puedeAbrir(salida.id) && setActivoId(salida.id)}
+          aria-label={
+            puedeAbrir(salida.id)
+              ? `Ver ficha de ${salida.nombre}`
+              : `${salida.nombre} — sin permiso para abrirlo`
+          }
+          title={puedeAbrir(salida.id) ? undefined : "No tienes permiso para abrir este proceso."}
           className="flex cursor-pointer items-center justify-center border-0 py-6 transition-transform hover:translate-x-0.5"
           style={{
             background: "linear-gradient(200deg, #006666, #0c4f52)",

@@ -12,6 +12,7 @@
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { SIG_EMPRESA_LIP } from "@/lib/sig-types"
 import { getCurrentUsuarioForInsert } from "@/lib/user-context"
+import { puedeAbrirProceso } from "@/lib/permisos-mapa-actions"
 // Los tipos y constantes viven en su propio archivo: este es `"use server"` y
 // aqui SOLO se pueden exportar funciones async.
 import {
@@ -68,6 +69,15 @@ export async function getDocumentosDeProceso(
   procesoId: string,
 ): Promise<Resultado<DocumentoProceso[]>> {
   if (!procesoId) return { success: false, message: "No se indicó el proceso." }
+
+  // Esta es la comprobación que cuenta. Que el botón del mapa no abra es
+  // comodidad para quien mira la pantalla, pero un server action es un
+  // endpoint: se puede llamar sin pasar por el botón. Sin esto, el permiso por
+  // proceso sería decorativo.
+  if (!(await puedeAbrirProceso(procesoId))) {
+    return { success: false, message: "No tienes permiso para ver los documentos de este proceso." }
+  }
+
   try {
     const admin: any = await getSupabaseAdmin()
     const { data, error } = await admin
@@ -138,6 +148,12 @@ export async function subirArchivoDocumento(
   categoria: CategoriaDoc,
 ): Promise<Resultado<{ url: string; nombre: string }>> {
   if (!file) return { success: false, message: "No se seleccionó ningún archivo." }
+  // Escribir en un proceso exige el mismo permiso que leerlo: sin esto, quien
+  // no puede abrir la ficha podría igual subirle o cambiarle documentos.
+  if (!(await puedeAbrirProceso(procesoId))) {
+    return { success: false, message: "No tienes permiso para modificar este proceso." }
+  }
+
   if (file.size > MAX_MB_DOCUMENTO * 1024 * 1024) {
     return {
       success: false,
@@ -182,6 +198,12 @@ export async function guardarDocumentoProceso(
   const version = String(input?.version ?? "").trim()
 
   if (!input?.procesoId) return { success: false, message: "No se indicó el proceso." }
+  // Escribir en un proceso exige el mismo permiso que leerlo: sin esto, quien
+  // no puede abrir la ficha podría igual subirle o cambiarle documentos.
+  if (!(await puedeAbrirProceso(input.procesoId))) {
+    return { success: false, message: "No tienes permiso para modificar este proceso." }
+  }
+
   if (!input?.categoria) return { success: false, message: "Indica si es formato, información documentada o registro." }
   if (!codigo) return { success: false, message: "El código del documento es obligatorio." }
   if (!nombre) return { success: false, message: "El nombre del documento es obligatorio." }
@@ -450,6 +472,11 @@ export async function clasificarDocumentos(
 ): Promise<Resultado<number>> {
   if (!documentoIds?.length) return { success: false, message: "No se seleccionó ningún documento." }
   if (!procesoId) return { success: false, message: "No se indicó el proceso." }
+  // Escribir en un proceso exige el mismo permiso que leerlo: sin esto, quien
+  // no puede abrir la ficha podría igual subirle o cambiarle documentos.
+  if (!(await puedeAbrirProceso(procesoId))) {
+    return { success: false, message: "No tienes permiso para modificar este proceso." }
+  }
   if (!["formato", "informacion", "registro"].includes(categoria)) {
     return { success: false, message: "Categoría no válida." }
   }

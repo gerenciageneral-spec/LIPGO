@@ -51,6 +51,8 @@ import {
 // con la directiva "use server".
 import type { UserPermissions } from "@/lib/permissions-map"
 import { MODULE_PERMISSION_MAP } from "@/lib/permissions-map"
+import { PROCESOS } from "@/lib/mapa-procesos-tipos"
+import { getProcesosDeUsuario, guardarProcesosDeUsuario } from "@/lib/permisos-mapa-actions"
 import { groups } from "@/lib/dashboard-data"
 import {
   Loader2,
@@ -261,6 +263,12 @@ export function UserPermissionsManagement() {
     setLoading(false)
   }
 
+  // Procesos del Mapa de Procesos. Van aparte de `permissions` porque no son
+  // columnas de `permisos_usuarios` sino filas de `permisos_mapa_procesos`.
+  const [procesos, setProcesos] = useState<string[]>([])
+  const [procesosOriginal, setProcesosOriginal] = useState<string[]>([])
+  const [faltaScriptMapa, setFaltaScriptMapa] = useState(false)
+
   const handleSelectUser = async (u: UserWithPermissions) => {
     setSelectedUser(u)
     setPermSearch("")
@@ -272,11 +280,18 @@ export function UserPermissionsManagement() {
 
     // Accesos
     setLoadingAccess(true)
-    const [emp, own] = await Promise.all([getUserAccess(u.id), getUserOwnerAccess(u.id)])
+    const [emp, own, proc] = await Promise.all([
+      getUserAccess(u.id),
+      getUserOwnerAccess(u.id),
+      getProcesosDeUsuario(u.id),
+    ])
     setEmpresaAccess(emp)
     setEmpresaOriginal(emp)
     setOwnerAccess(own)
     setOwnerOriginal(own)
+    setProcesos(proc.procesos)
+    setProcesosOriginal(proc.procesos)
+    setFaltaScriptMapa(!!proc.faltaMigracion)
     setLoadingAccess(false)
   }
 
@@ -326,8 +341,12 @@ export function UserPermissionsManagement() {
   const permsDirty = useMemo(() => {
     const keys = new Set([...Object.keys(permissions), ...Object.keys(permOriginal)])
     for (const k of keys) if ((permissions as any)[k] !== (permOriginal as any)[k]) return true
+    // Los procesos del mapa se guardan con el mismo botón, así que también
+    // cuentan como cambio pendiente.
+    if (procesos.length !== procesosOriginal.length) return true
+    if (procesos.some((p) => !procesosOriginal.includes(p))) return true
     return false
-  }, [permissions, permOriginal])
+  }, [permissions, permOriginal, procesos, procesosOriginal])
 
   const accessDirty = useMemo(() => {
     const eqSet = (a: (string | number)[], b: (string | number)[]) =>
@@ -385,8 +404,24 @@ export function UserPermissionsManagement() {
   const handleSavePerms = async () => {
     if (!selectedUser) return
     setSavingPerms(true)
-    const result = await updateUserPermissions(selectedUser.id, permissions)
+    const [result, resProc] = await Promise.all([
+      updateUserPermissions(selectedUser.id, permissions),
+      guardarProcesosDeUsuario(selectedUser.id, procesos),
+    ])
     setSavingPerms(false)
+
+    // Se avisa aparte: los permisos de módulo pueden haberse guardado bien y
+    // los del mapa no. Un solo "listo" escondería la mitad que falló.
+    if (!resProc.success) {
+      toast({
+        title: "Los procesos del mapa no se guardaron",
+        description: resProc.message,
+        variant: "destructive",
+      })
+    } else {
+      setProcesosOriginal(procesos)
+    }
+
     if (result.success) {
       toast({ title: "Permisos guardados", description: "Los cambios se aplicaron correctamente." })
       setPermOriginal(permissions)
@@ -877,6 +912,81 @@ export function UserPermissionsManagement() {
                               )
                             })}
                           </Accordion>
+                        )}
+                      </div>
+
+                      {/* ===== Procesos del Mapa de Procesos =====
+                          No salen del árbol derivado del menú: no son módulos,
+                          son los botones DENTRO del Mapa de Procesos. Por eso
+                          van en su propia sección. */}
+                      <div className="rounded-lg border p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <h4 className="text-sm font-semibold">Mapa de Procesos — acceso por proceso</h4>
+                            <p className="text-[11px] text-muted-foreground">
+                              A qué procesos puede entrar dentro del mapa. Los demás los ve, pero no
+                              los abre. Requiere además el permiso del módulo Mapa de Procesos.
+                            </p>
+                          </div>
+                          <div className="flex gap-1.5">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => setProcesos(PROCESOS.map((p) => p.id))}
+                            >
+                              Todos
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => setProcesos([])}
+                            >
+                              Ninguno
+                            </Button>
+                          </div>
+                        </div>
+
+                        {faltaScriptMapa ? (
+                          <p className="mt-2 rounded border border-amber-300 bg-amber-50 p-2 text-[11px] text-amber-900">
+                            Falta correr{" "}
+                            <code className="font-mono">scripts/189_permisos_mapa_procesos.sql</code>.
+                            Mientras tanto, quien vea el mapa puede abrir todos los procesos.
+                          </p>
+                        ) : (
+                          <div className="mt-3 grid gap-x-4 gap-y-2 sm:grid-cols-2">
+                            {PROCESOS.map((proc) => {
+                              const marcado = procesos.includes(proc.id)
+                              const htmlId = `proc-${proc.id}`
+                              return (
+                                <div key={proc.id} className="flex items-start gap-2">
+                                  <Checkbox
+                                    id={htmlId}
+                                    checked={marcado}
+                                    onCheckedChange={(v) =>
+                                      setProcesos((prev) =>
+                                        v === true
+                                          ? [...prev, proc.id]
+                                          : prev.filter((x) => x !== proc.id),
+                                      )
+                                    }
+                                  />
+                                  <Label
+                                    htmlFor={htmlId}
+                                    className={`flex-1 cursor-pointer text-sm leading-tight ${
+                                      marcado ? "font-medium text-primary" : ""
+                                    }`}
+                                  >
+                                    {proc.nombre}
+                                    <span className="ml-1.5 font-mono text-[10px] text-muted-foreground">
+                                      {proc.codigo} · {proc.tipo}
+                                    </span>
+                                  </Label>
+                                </div>
+                              )
+                            })}
+                          </div>
                         )}
                       </div>
 
