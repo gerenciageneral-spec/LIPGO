@@ -84,6 +84,28 @@ function TarjetaEvento({ cfg, onGuardar }: { cfg: ConfigInterno; onGuardar: () =
   const [empresas, setEmpresas] = useState<number[]>(cfg.empresas)
   const [guardando, setGuardando] = useState(false)
 
+  /*
+   * Volver a tomar lo que dice la base cuando llegan datos nuevos.
+   *
+   * `useState(cfg.activo)` solo lee el valor en el primer render: si la tarjeta
+   * se reutiliza tras recargar, se quedaría mostrando lo de antes. Se compara
+   * contra `cfg` --no contra el estado-- para no pisar lo que alguien esté
+   * escribiendo.
+   */
+  useEffect(() => {
+    setActivo(cfg.activo)
+    setDetalle(cfg.detalle)
+    setEmpresas(cfg.empresas)
+  }, [cfg.activo, cfg.detalle, cfg.empresas])
+
+  // Hay cambios sin guardar. La casilla NO guarda sola: marcarla y salirse
+  // dejaba el evento apagado sin que nada lo dijera.
+  const sinGuardar =
+    activo !== cfg.activo ||
+    detalle !== cfg.detalle ||
+    empresas.length !== cfg.empresas.length ||
+    empresas.some((e) => !cfg.empresas.includes(e))
+
   const marcadores = MARCADORES_POR_EVENTO[cfg.evento] ?? []
 
   async function guardar() {
@@ -107,10 +129,17 @@ function TarjetaEvento({ cfg, onGuardar }: { cfg: ConfigInterno; onGuardar: () =
           </span>
           <h3 className="text-sm font-semibold">{cfg.nombre}</h3>
         </div>
-        <label className="flex cursor-pointer items-center gap-2">
-          <Checkbox checked={activo} onCheckedChange={(v) => setActivo(v === true)} />
-          <span className="text-sm font-medium">{activo ? "Activo" : "Desactivado"}</span>
-        </label>
+        <div className="flex items-center gap-2">
+          {sinGuardar && (
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800">
+              sin guardar
+            </span>
+          )}
+          <label className="flex cursor-pointer items-center gap-2">
+            <Checkbox checked={activo} onCheckedChange={(v) => setActivo(v === true)} />
+            <span className="text-sm font-medium">{activo ? "Activo" : "Desactivado"}</span>
+          </label>
+        </div>
       </div>
 
       <div className="space-y-3 p-4">
@@ -183,9 +212,14 @@ function TarjetaEvento({ cfg, onGuardar }: { cfg: ConfigInterno; onGuardar: () =
           )}
         </div>
 
-        <Button className="w-full gap-1.5" onClick={guardar} disabled={guardando}>
+        <Button
+          className="w-full gap-1.5"
+          onClick={guardar}
+          disabled={guardando || !sinGuardar}
+          variant={sinGuardar ? "default" : "outline"}
+        >
           {guardando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-          Guardar
+          {sinGuardar ? "Guardar cambios" : "Guardado"}
         </Button>
       </div>
     </section>
@@ -589,6 +623,15 @@ export default function ReporteInterno() {
           mensajes al día
           {estimado.mensajesDia > 200 && " — conviene revisar si todos hacen falta"}
         </p>
+        {/* Este conteo sale de la BASE, no de las casillas. Marcar una casilla
+            no guarda: sin decirlo, ver "0 activos" después de marcar las cinco
+            parece que el sistema no registra nada. */}
+        {estimado.activos === 0 && (
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Marcar la casilla de un evento no basta: hay que pulsar{" "}
+            <strong>Guardar cambios</strong> en su tarjeta.
+          </p>
+        )}
       </div>
 
       <Destinatarios lista={destinatarios} eventos={eventos} onCambio={cargar} />
