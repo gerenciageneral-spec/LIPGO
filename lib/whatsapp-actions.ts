@@ -109,6 +109,68 @@ export async function getEstadoWhatsapp(): Promise<EstadoConfigWhatsapp> {
   return base
 }
 
+/**
+ * Sube una imagen a Meta y devuelve su identificador.
+ *
+ * Es el paso previo a mandar una plantilla con encabezado de imagen: el
+ * encabezado no acepta una URL, solo un `id` de algo ya subido.
+ *
+ * El identificador vive 30 días, pero eso no importa aquí: se sube y se envía
+ * en el mismo momento. Guardarlo para reusarlo sería una optimización que
+ * introduce una fecha de caducidad silenciosa.
+ *
+ * Meta acepta JPEG y PNG de hasta 5 MB, en 8 bits RGB o RGBA.
+ */
+export async function subirImagenAMeta(
+  imagen: Buffer | Uint8Array,
+  tipo: "image/png" | "image/jpeg" = "image/png",
+): Promise<{ success: boolean; mediaId?: string; message?: string }> {
+  const token = process.env.WHATSAPP_TOKEN
+  const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID
+  if (!token || !phoneId) {
+    return { success: false, message: "Falta configurar el token o el identificador del número." }
+  }
+
+  const MAX_MB = 5
+  if (imagen.byteLength > MAX_MB * 1024 * 1024) {
+    // Se avisa ANTES de subir: Meta responde con un error genérico de tamaño
+    // que no dice cuál es el tope ni cuánto pesaba.
+    return {
+      success: false,
+      message: `La imagen pesa ${(imagen.byteLength / 1024 / 1024).toFixed(1)} MB y el tope de WhatsApp son ${MAX_MB} MB.`,
+    }
+  }
+
+  try {
+    const form = new FormData()
+    form.append("messaging_product", "whatsapp")
+    form.append("type", tipo)
+    form.append(
+      "file",
+      new Blob([imagen as unknown as BlobPart], { type: tipo }),
+      tipo === "image/png" ? "imagen.png" : "imagen.jpg",
+    )
+
+    const r = await fetch(`https://graph.facebook.com/${API_VERSION}/${phoneId}/media`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    })
+    const j = await r.json()
+    if (!r.ok) {
+      return {
+        success: false,
+        message: j?.error?.error_data?.details ?? j?.error?.message ?? `Meta respondió ${r.status}.`,
+      }
+    }
+    if (!j?.id) return { success: false, message: "Meta aceptó la imagen pero no devolvió su id." }
+
+    return { success: true, mediaId: String(j.id) }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "No se pudo subir la imagen." }
+  }
+}
+
 /** Plantillas registradas en LIPgo. */
 export async function getPlantillas(): Promise<{
   success: boolean
@@ -254,6 +316,18 @@ export async function enviarPlantilla(input: EnviarPlantillaInput): Promise<Resu
     componentes.push({
       type: "header",
       parameters: input.header.map((v, i) => param(v, input.nombresHeader?.[i])),
+    })
+  }
+  // Encabezado de IMAGEN. Va como `image.id`, no como URL: el encabezado no
+  // acepta enlaces, solo algo ya subido con `subirImagenAMeta`.
+  //
+  // El `else if` importa: una plantilla tiene UN encabezado. Mandar dos
+  // componentes `header` hace que Meta rechace el mensaje con un error que no
+  // dice cuál de los dos sobra. El de texto manda, porque es el que existía.
+  else if (input.headerImagenId) {
+    componentes.push({
+      type: "header",
+      parameters: [{ type: "image", image: { id: input.headerImagenId } }],
     })
   }
   if (input.body?.length) {

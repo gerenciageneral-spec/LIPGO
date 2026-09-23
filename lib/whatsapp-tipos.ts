@@ -72,6 +72,17 @@ export interface EnviarPlantillaInput {
    */
   nombresHeader?: string[]
   nombresBody?: string[]
+  /**
+   * Identificador de una imagen ya subida a Meta, para plantillas cuyo
+   * encabezado es de tipo IMAGE.
+   *
+   * Solo sirve si la plantilla se CREÓ con encabezado de imagen: no se le
+   * puede poner una a un encabezado de texto. Y al revés, una plantilla de
+   * encabezado imagen enviada sin esto falla.
+   *
+   * Excluyente con `header`, que es para encabezados de texto.
+   */
+  headerImagenId?: string
   /** Qué flujo lo dispara. Sirve para medir volumen y costo. */
   origen?: string
   identificacion?: string | null
