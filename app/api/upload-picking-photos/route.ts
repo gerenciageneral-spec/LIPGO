@@ -5,6 +5,7 @@ import { getColombiaTime } from "@/lib/date-utils"
 import { generarIngresoProduccionDesdeDescargue } from "@/lib/orders-actions"
 import { computarRosterPagoGlobal, esDescargueSinPersonalRequerido } from "@/lib/picking-actions"
 import { esModoCargaRequerido } from "@/lib/sla-acordados"
+import { reportarInterno } from "@/lib/reporte-interno-actions"
 
 // Subimos un solo archivo (o pocos) por request para evitar el limite
 // duro de ~4.5MB por body en Vercel serverless. Cuando un movil envia
@@ -230,6 +231,14 @@ export async function POST(request: NextRequest) {
           await notificarConductor("cargue_finalizado", orderIdNum)
         } catch (e: any) {
           console.error("[v0] aviso cargue_finalizado:", e?.message ?? e)
+        }
+        // El reporte interno sigue la misma regla que el aviso al conductor:
+        // el clon "+D" no es otro camión, así que contarlo dos veces daría un
+        // cierre de más en la bandeja de quien lo recibe.
+        try {
+          await reportarInterno("cargue_cerrado", orderIdNum)
+        } catch (e: any) {
+          console.error("[v0] reporte interno cargue_cerrado:", e?.message ?? e)
         }
       }
 

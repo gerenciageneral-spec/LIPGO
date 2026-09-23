@@ -11,6 +11,7 @@ import { generateAndUploadLoadOrderPDF } from "./pdf-actions" // Added for gener
 import { esPlacaDistribucion, numeroOrdenDistribucion, getPlacasEmpresa, cargarPlacasDistribucion } from "@/lib/distribucion-placas"
 import { cediDeDestino, PLANTAS_ORIGEN, type CediDestino } from "@/lib/cedis-destino"
 import { esProductoPorUnidad } from "@/lib/facturacion-billed-party"
+import { reportarInterno } from "@/lib/reporte-interno-actions"
 
 /**
  * Obtiene los IDs de empresa accesibles para el usuario actual desde perfil_acceso_empresas
@@ -1186,6 +1187,14 @@ export async function generateLoadOrder(orderData: {
 
     console.log("[v0] Cabeceraoc inserted successfully")
 
+    // Reporte interno. Va aquí, con la orden ya insertada, y nunca lanza: un
+    // problema de WhatsApp no puede impedir crear una orden de cargue.
+    try {
+      await reportarInterno("orden_creada", nextId)
+    } catch (e: any) {
+      console.error("[v0] reporte interno orden_creada:", e?.message ?? e)
+    }
+
     // La inspección deja de estar huérfana: queda amarrada a esta orden.
     await vincularRegistroSanitario(supabase, horaSanitaria.registroId, orderCode)
 
@@ -1626,6 +1635,27 @@ export async function updateBasculaData(orderData: {
     // siempre en el clon. NO toca iniciocargue/fincargue/status: esos los
     // llena el coordinador al tramitar el Packing de la propia distribución.
     await sincronizarBasculaAClon(orderData.orderId)
+
+    /*
+     * Reporte interno del pesaje.
+     *
+     * Solo cuando llega `pesovascula`: esta función también se usa para
+     * corregir un tiquete o ajustar una hora, y avisar en cada corrección
+     * mandaría varios mensajes por el mismo pesaje.
+     *
+     * El peso y el tiquete se pasan explícitos porque acaban de escribirse y
+     * releer la fila podría traer el valor anterior.
+     */
+    if (orderData.pesovascula !== undefined) {
+      try {
+        await reportarInterno("pesaje", orderData.orderId, {
+          peso: orderData.pesovascula ?? null,
+          tiquete: orderData.tiquetebascula ?? null,
+        })
+      } catch (e: any) {
+        console.error("[v0] reporte interno pesaje:", e?.message ?? e)
+      }
+    }
 
     return { success: true }
   } catch (error) {

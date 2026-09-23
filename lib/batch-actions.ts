@@ -5,6 +5,7 @@ import { generateAndUploadBatchAssignmentPDF } from "@/lib/pdf-actions"
 import { getColombiaDate, getColombiaISO, getColombiaTime } from "@/lib/date-utils"
 import { getCurrentUserContext } from "@/lib/company-filter"
 import { generarDistribucionAutomatica, autoGenerarDescarguesCedi } from "@/lib/orders-actions"
+import { reportarInterno } from "@/lib/reporte-interno-actions"
 
 export interface LoadOrder {
   id: number
@@ -390,6 +391,18 @@ export async function approveBatchAllocation(data: BatchApprovalData, selectedEm
       if (madre?.id) {
         await generarDistribucionAutomatica(null, madre.id)
         await autoGenerarDescarguesCedi(null, madre.id)
+
+        // Reporte interno. Se reaprovecha el id que ya se resolvió arriba: la
+        // asignación de lote trabaja con `ordendecargue` (el código) y el
+        // reporte necesita el id numérico.
+        //
+        // El lote va explícito porque vive en `historicolotes`, no en la
+        // cabecera: releer la orden no lo encontraría. Si hay varios, se
+        // nombran todos los distintos.
+        const lotes = [...new Set((data.allocations ?? []).map((a) => a.lote).filter(Boolean))]
+        await reportarInterno("lote_asignado", madre.id, {
+          lote: lotes.join(", ") || null,
+        })
       }
     } catch (distErr) {
       console.error("[+D/auto-descargue] generar clones tras aprobar lote (no bloquea):", distErr)

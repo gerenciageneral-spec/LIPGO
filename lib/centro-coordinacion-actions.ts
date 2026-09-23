@@ -16,6 +16,7 @@ import { getColombiaDateTime, getColombiaTime } from "@/lib/date-utils"
 import { pesoBaseCalculo, excluirAvimolDistribucion } from "@/lib/nomina-calculo-utils"
 import { getSlaCargueMin, esNombreSubproducto, esModoCargaRequerido, type TipologiaProducto } from "@/lib/sla-acordados"
 import { esProductoPorUnidad } from "@/lib/facturacion-billed-party"
+import { reportarInterno } from "@/lib/reporte-interno-actions"
 import {
   TON_MES_CARGUE_DESCARGUE,
   DIAS_OPERACION_MES,
@@ -998,6 +999,10 @@ export async function asignarOrdenAMuelle(
   // coordinador no puede quedarse esperando. `notificarConductor` nunca lanza.
   try {
     await notificarConductor("muelle_asignado", orderId)
+    // El reporte interno va aparte del aviso al conductor: son mensajes
+    // distintos a destinatarios distintos, y que uno falle no debe cancelar el
+    // otro.
+    await reportarInterno("muelle_asignado", orderId)
   } catch (e: any) {
     console.error("[v0] aviso muelle_asignado:", e?.message ?? e)
   }
