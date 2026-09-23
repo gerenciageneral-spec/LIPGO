@@ -9,6 +9,7 @@ import { getParos, type ParoComentario } from "@/lib/paros-actions"
 import { getHorarioTolva, getHorarioTolvaPorFecha } from "@/lib/horario-tolva-actions"
 import { detectarParosEnVentana, utcDateStr } from "@/lib/paros-produccion"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import EnviarCierreDia from "@/components/produccion/enviar-cierre-dia"
 import {
   Activity,
   AlertOctagon,
@@ -362,6 +363,9 @@ export default function ControlPiso() {
             <TabsTrigger value="reporte" className="data-[state=active]:bg-card data-[state=active]:text-primary">
               Reporte
             </TabsTrigger>
+            <TabsTrigger value="enviar" className="data-[state=active]:bg-card data-[state=active]:text-primary">
+              Enviar cierre
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="vivo" className="mt-6">
@@ -375,6 +379,9 @@ export default function ControlPiso() {
           </TabsContent>
           <TabsContent value="reporte" className="mt-6">
             <ReportTab nombreProducto={nombreProducto} />
+          </TabsContent>
+          <TabsContent value="enviar" className="mt-6">
+            <EnviarCierreDia />
           </TabsContent>
         </Tabs>
       </div>
