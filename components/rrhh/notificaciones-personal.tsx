@@ -17,6 +17,7 @@ import { ClipboardList, Send, Users, CalendarClock, MessageSquare, AlertCircle, 
 // usa este modulo para enviar, y tenerlas en dos sitios distintos hacia que
 // nadie supiera cual era la fuente de verdad.
 import WhatsappConfig from "@/components/configuration/whatsapp-config"
+import WhatsappGrupos from "@/components/configuration/whatsapp-grupos"
 import NotificacionConductor from "@/components/rrhh/notificacion-conductor"
 import ReporteInterno from "@/components/rrhh/reporte-interno"
 
@@ -513,8 +514,11 @@ export default function NotificacionesPersonal() {
           <ReporteInterno />
         </TabsContent>
 
-        <TabsContent value="conexion" className="mt-4">
+        <TabsContent value="conexion" className="mt-4 space-y-6">
           <WhatsappConfig />
+          {/* La prueba de grupos vive aquí y no en su propia pestaña: es una
+              prueba de la plataforma, no un flujo de la operación. */}
+          <WhatsappGrupos />
         </TabsContent>
       </Tabs>
     </div>
