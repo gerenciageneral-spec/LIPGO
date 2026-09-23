@@ -122,6 +122,46 @@ export async function guardarConfigInterno(payload: {
   }
 }
 
+/**
+ * Estado de la plantilla en Meta, para la pantalla.
+ *
+ * Que exista el registro en LIPgo no significa que Meta la tenga aprobada, ni
+ * que el idioma coincida. Sin esto, un aviso que no sale obliga a revisar en
+ * WhatsApp Manager para saber por qué.
+ */
+export async function getEstadoPlantillaInterna(): Promise<{
+  aprobada: boolean
+  idioma: string | null
+  categoria: string | null
+  estado: string | null
+  message?: string
+}> {
+  try {
+    const meta = await getPlantillasDeMeta()
+    if (!meta.success) {
+      return { aprobada: false, idioma: null, categoria: null, estado: null, message: meta.message }
+    }
+    const t = meta.data?.find((x) => x.nombre === PLANTILLA)
+    if (!t) {
+      return {
+        aprobada: false,
+        idioma: null,
+        categoria: null,
+        estado: null,
+        message: `No existe una plantilla llamada "${PLANTILLA}" en Meta.`,
+      }
+    }
+    return {
+      aprobada: t.estado === "APPROVED",
+      idioma: t.idioma,
+      categoria: t.categoria,
+      estado: t.estado,
+    }
+  } catch (e: any) {
+    return { aprobada: false, idioma: null, categoria: null, estado: null, message: e?.message }
+  }
+}
+
 /** A quiénes les llegan los avisos. */
 export async function getDestinatarios(): Promise<{
   success: boolean
@@ -329,13 +369,34 @@ export async function reportarInterno(
 
     if (!destinatarios.length) return { enviados: 0, motivo: "No hay destinatarios para este evento." }
 
-    // --- 4) Cómo está la plantilla en Meta ---------------------------------
+    /*
+     * --- 4) Cómo está la plantilla en Meta ---------------------------------
+     *
+     * El idioma se LEE de Meta, no se asume. `en`, `es` y `es_CO` son
+     * plantillas DISTINTAS para Meta: pedir una en el idioma equivocado falla
+     * con el error 132001, que dice "no existe" aunque esté aprobada. Esta
+     * quedó aprobada en inglés --el texto es español, pero el código declarado
+     * es `en`-- y funciona porque esto lo consulta antes de cada envío.
+     *
+     * También de ahí sale si las variables llevan nombre ({{evento}}) o son
+     * posicionales ({{1}}): mandar el formato equivocado falla con el 100.
+     */
     const meta = await getPlantillasDeMeta()
-    const propia = meta.success
-      ? meta.data?.find((t) => t.nombre === PLANTILLA && t.estado === "APPROVED")
-      : null
+    if (!meta.success) {
+      // Sin respuesta de Meta no se envía: mandar con el idioma o el formato
+      // equivocado gasta un mensaje que se cobra y nunca llega.
+      return { enviados: 0, motivo: `No se pudo consultar a Meta: ${meta.message ?? "sin detalle"}` }
+    }
+
+    const propia = meta.data?.find((t) => t.nombre === PLANTILLA && t.estado === "APPROVED")
     if (!propia) {
-      return { enviados: 0, motivo: `La plantilla "${PLANTILLA}" no está aprobada en Meta todavía.` }
+      const otra = meta.data?.find((t) => t.nombre === PLANTILLA)
+      return {
+        enviados: 0,
+        motivo: otra
+          ? `La plantilla "${PLANTILLA}" está en estado ${otra.estado} en Meta, no aprobada.`
+          : `La plantilla "${PLANTILLA}" no existe en Meta con ese nombre exacto.`,
+      }
     }
 
     const nombresBody = propia.conNombre

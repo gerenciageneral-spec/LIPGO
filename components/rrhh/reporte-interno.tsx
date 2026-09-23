@@ -31,6 +31,7 @@ import {
   eliminarDestinatario,
   getConfigInterno,
   getDestinatarios,
+  getEstadoPlantillaInterna,
   getHistorialInterno,
   guardarConfigInterno,
   guardarDestinatario,
@@ -464,13 +465,25 @@ export default function ReporteInterno() {
   const [eventos, setEventos] = useState<ConfigInterno[]>([])
   const [destinatarios, setDestinatarios] = useState<DestinatarioInterno[]>([])
   const [faltaMigracion, setFaltaMigracion] = useState(false)
+  const [plantilla, setPlantilla] = useState<{
+    aprobada: boolean
+    idioma: string | null
+    categoria: string | null
+    estado: string | null
+    message?: string
+  } | null>(null)
   const [cargando, setCargando] = useState(true)
 
   const cargar = useCallback(async () => {
     setCargando(true)
-    const [cfg, dest] = await Promise.all([getConfigInterno(), getDestinatarios()])
+    const [cfg, dest, plt] = await Promise.all([
+      getConfigInterno(),
+      getDestinatarios(),
+      getEstadoPlantillaInterna(),
+    ])
     if (cfg.success && cfg.data) setEventos(cfg.data)
     if (dest.success && dest.data) setDestinatarios(dest.data)
+    setPlantilla(plt)
     setFaltaMigracion(!!cfg.faltaMigracion)
     setCargando(false)
   }, [])
@@ -524,6 +537,37 @@ export default function ReporteInterno() {
 
   return (
     <div className="space-y-4">
+      {/* Estado real en Meta. Que el registro exista en LIPgo no significa que
+          Meta la tenga aprobada: sin esto, un aviso que no sale obliga a ir a
+          WhatsApp Manager para saber por qué. */}
+      {plantilla && !plantilla.aprobada && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-3">
+          <p className="flex items-center gap-1.5 text-sm font-medium text-amber-900">
+            <AlertTriangle className="h-4 w-4" />
+            La plantilla no está lista en Meta
+          </p>
+          <p className="mt-1 text-[11px] text-amber-900">
+            {plantilla.message ??
+              `Está en estado ${plantilla.estado}. Hasta que Meta la apruebe no sale ningún aviso.`}
+          </p>
+        </div>
+      )}
+
+      {plantilla?.aprobada && (
+        <p className="text-[11px] text-muted-foreground">
+          Plantilla <code className="font-mono">reporte_interno_operacion</code> · aprobada ·
+          categoría <strong>{plantilla.categoria}</strong> · idioma{" "}
+          <strong>{plantilla.idioma}</strong>
+          {plantilla.idioma !== "es_CO" && plantilla.idioma !== "es" && (
+            <>
+              {" "}
+              — quedó registrada en ese idioma aunque el texto esté en español. No afecta el envío:
+              el sistema lee el idioma real antes de cada mensaje.
+            </>
+          )}
+        </p>
+      )}
+
       <div
         className={`rounded-lg border p-3 ${
           estimado.mensajesDia > 200

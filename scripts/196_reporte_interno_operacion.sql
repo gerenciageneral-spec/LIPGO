@@ -47,7 +47,21 @@
 --
 -- Nombre:    reporte_interno_operacion
 -- Categoría: UTILITY  (Utilidad)
--- Idioma:    Español (COL)   -> es_CO
+-- Idioma:    INGLÉS (en)
+--
+--   APROBADA EN INGLÉS POR ACCIDENTE (23/09/2026), y se deja así: el texto
+--   está en español y funciona igual. Meta no valida que el contenido coincida
+--   con el idioma declarado; ese código solo identifica la plantilla.
+--
+--   LO QUE SÍ IMPORTA es que `es` y `es_CO` y `en` son plantillas DISTINTAS
+--   para Meta. Pedir una en el idioma equivocado falla con el error 132001
+--   ("template name does not exist in <idioma>"), que se lee como si la
+--   plantilla no existiera. Ya pasó con `toneladas_del_dia`.
+--
+--   El código NO asume el idioma: lo lee de Meta antes de cada envío
+--   (`getPlantillasDeMeta` en lib/whatsapp-actions.ts). Por eso esto funciona
+--   sin tocar nada. El valor de abajo es solo el respaldo para cuando Meta no
+--   responde, y por eso también dice `en`.
 --
 -- ENCABEZADO (texto):
 --     Reporte Interno Operación
@@ -103,7 +117,9 @@ insert into public.whatsapp_plantillas
   (nombre, idioma, descripcion, uso, variables)
 values (
   'reporte_interno_operacion',
-  'es_CO',
+  -- Aprobada en Meta como 'en' (ver PASO 1). El codigo lee el idioma real
+  -- antes de enviar; esto es el respaldo para cuando Meta no responde.
+  'en',
   'Reporte interno de la operación: pesaje, orden, lote, muelle y cierre de cargue.',
   'Los cinco avisos internos de la línea de tiempo del cargue. Es UTILITY, así que no tiene el tope por destinatario de las de MARKETING.',
   '{"header": [], "body": ["evento", "vehiculo", "detalle"]}'::jsonb
