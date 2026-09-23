@@ -49,6 +49,60 @@ function armarResumen(r: Awaited<ReturnType<typeof getResumenProduccionDia>>["da
   return partes.join(" · ")
 }
 
+/**
+ * Estado de la plantilla en Meta.
+ *
+ * La pantalla lo muestra ANTES de que alguien pulse enviar: el fallo más
+ * probable es que la plantilla se haya aprobado con otro nombre, y Meta lo
+ * reporta como "no existe", que se lee como si nunca se hubiera creado.
+ */
+export async function getEstadoPlantillaProduccion(): Promise<{
+  aprobada: boolean
+  nombreBuscado: string
+  idioma: string | null
+  categoria: string | null
+  estado: string | null
+  /** Otras plantillas aprobadas, por si quedó con un nombre distinto. */
+  candidatas: string[]
+  message?: string
+}> {
+  const base = {
+    aprobada: false,
+    nombreBuscado: PLANTILLA,
+    idioma: null,
+    categoria: null,
+    estado: null,
+    candidatas: [] as string[],
+  }
+  try {
+    const meta = await getPlantillasDeMeta()
+    if (!meta.success) return { ...base, message: meta.message }
+
+    const t = meta.data?.find((x) => x.nombre === PLANTILLA)
+    const candidatas = (meta.data ?? [])
+      .filter((x) => x.estado === "APPROVED" && x.nombre !== PLANTILLA)
+      .map((x) => x.nombre)
+
+    if (!t) {
+      return {
+        ...base,
+        candidatas,
+        message: `No existe una plantilla llamada "${PLANTILLA}" en Meta.`,
+      }
+    }
+    return {
+      aprobada: t.estado === "APPROVED",
+      nombreBuscado: PLANTILLA,
+      idioma: t.idioma,
+      categoria: t.categoria,
+      estado: t.estado,
+      candidatas,
+    }
+  } catch (e: any) {
+    return { ...base, message: e?.message }
+  }
+}
+
 /** El PDF del día, para descargarlo desde la pantalla. */
 export async function getPdfResumenProduccion(
   fecha?: string,

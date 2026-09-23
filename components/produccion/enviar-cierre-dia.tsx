@@ -17,6 +17,7 @@ import { AlertTriangle, Download, FileText, Loader2, Send } from "lucide-react"
 import {
   enviarResumenProduccion,
   getCifrasProduccionDia,
+  getEstadoPlantillaProduccion,
   getPdfResumenProduccion,
 } from "@/lib/reporte-produccion-actions"
 import { utcDateStr } from "@/lib/paros-produccion"
@@ -43,6 +44,16 @@ export default function EnviarCierreDia() {
   const [bajando, setBajando] = useState(false)
   const [enviando, setEnviando] = useState(false)
   const [telefono, setTelefono] = useState(TELEFONO_PRUEBAS)
+  // Qué se mandó y cuándo. Al probar se repite el envío varias veces y sin
+  // esto no se distingue "ya salió" de "no pasó nada".
+  const [ultimoEnvio, setUltimoEnvio] = useState<{
+    fecha: string
+    telefono: string
+    hora: string
+  } | null>(null)
+  const [plantilla, setPlantilla] = useState<Awaited<
+    ReturnType<typeof getEstadoPlantillaProduccion>
+  > | null>(null)
 
   const cargar = useCallback(async () => {
     setCargando(true)
@@ -60,6 +71,11 @@ export default function EnviarCierreDia() {
   useEffect(() => {
     cargar()
   }, [cargar])
+
+  // El estado de la plantilla se consulta una vez: no cambia al cambiar de día.
+  useEffect(() => {
+    getEstadoPlantillaProduccion().then(setPlantilla)
+  }, [])
 
   async function descargar() {
     setBajando(true)
@@ -93,13 +109,50 @@ export default function EnviarCierreDia() {
       toast({ title: "No se pudo enviar", description: r.message, variant: "destructive" })
       return
     }
-    toast({ title: "Enviado", description: "Revisa el WhatsApp del número de pruebas." })
+    setUltimoEnvio({
+      fecha,
+      telefono,
+      hora: new Date().toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" }),
+    })
+    toast({ title: "Enviado", description: `Revisa el WhatsApp de ${telefono}.` })
   }
 
   const sinProduccion = cifras != null && cifras.totalBultos === 0
 
   return (
     <div className="space-y-4">
+      {/* El fallo más probable al probar es que la plantilla se haya aprobado
+          con otro nombre. Meta lo reporta como "no existe", que se lee como si
+          nunca se hubiera creado. Conviene decirlo antes de pulsar enviar. */}
+      {plantilla && !plantilla.aprobada && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-3">
+          <p className="flex items-center gap-1.5 text-sm font-medium text-amber-900">
+            <AlertTriangle className="h-4 w-4" />
+            La plantilla no está lista
+          </p>
+          <p className="mt-1 text-[11px] text-amber-900">
+            {plantilla.message ??
+              `"${plantilla.nombreBuscado}" está en estado ${plantilla.estado} en Meta.`}{" "}
+            Hasta que Meta la apruebe, el envío falla. Descargar el PDF sí funciona.
+          </p>
+          {plantilla.candidatas.length > 0 && (
+            <p className="mt-1 text-[11px] text-amber-900">
+              Plantillas aprobadas que sí existen:{" "}
+              <span className="font-mono">{plantilla.candidatas.join(", ")}</span>. Si la creaste
+              con otro nombre, dímelo y lo ajusto.
+            </p>
+          )}
+        </div>
+      )}
+
+      {plantilla?.aprobada && (
+        <p className="text-[11px] text-muted-foreground">
+          Plantilla <code className="font-mono">{plantilla.nombreBuscado}</code> · aprobada ·
+          categoría <strong>{plantilla.categoria}</strong> · idioma{" "}
+          <strong>{plantilla.idioma}</strong>
+        </p>
+      )}
+
       <div className="rounded-lg border border-border bg-muted/30 p-3">
         <p className="text-sm font-medium">Cierre diario por WhatsApp</p>
         <p className="mt-1 text-[11px] text-muted-foreground">
@@ -140,13 +193,21 @@ export default function EnviarCierreDia() {
           </Button>
           <Button
             onClick={enviar}
-            disabled={enviando || cargando || sinProduccion}
+            disabled={enviando || cargando || sinProduccion || plantilla?.aprobada === false}
             className="h-9 gap-1.5"
           >
             {enviando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            Enviar
+            Enviar por WhatsApp
           </Button>
         </div>
+
+        {ultimoEnvio && (
+          <p className="border-b border-border bg-emerald-50 px-4 py-2 text-[11px] text-emerald-900">
+            Último envío: cierre del <strong>{ultimoEnvio.fecha}</strong> a{" "}
+            <strong>{ultimoEnvio.telefono}</strong> a las {ultimoEnvio.hora}. El estado de
+            entrega queda en el historial de Notificaciones al Personal.
+          </p>
+        )}
 
         <div className="p-4">
           {cargando ? (
