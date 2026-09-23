@@ -116,10 +116,27 @@ export default function WhatsappGrupos() {
 
   return (
     <div className="space-y-4">
-      {/* Las condiciones van ARRIBA: son la razón más probable de que esto no
-          funcione, y descubrirlas después de intentarlo cuesta tiempo. */}
+      {/* El resultado de la prueba va ARRIBA del todo: sin esto, alguien
+          vuelve a intentarlo dentro de unos meses y repite el camino. */}
+      <div className="rounded-lg border border-amber-300 bg-amber-50 p-3">
+        <p className="flex items-center gap-1.5 text-sm font-medium text-amber-900">
+          <AlertTriangle className="h-4 w-4" />
+          Meta no tiene habilitada esta función para nuestro número
+        </p>
+        <p className="mt-1 text-[11px] text-amber-900">
+          Probado el 23/09/2026: <em>“Groups APIs are only available for eligible phone
+          numbers.”</em> Hace falta que la cuenta sea <strong>Official Business Account</strong>,
+          una marca que Meta otorga y que no se solicita desde el panel. Los botones siguen aquí
+          por si algún día cambia.
+        </p>
+        <p className="mt-1 text-[11px] text-amber-900">
+          Mientras tanto, los avisos llegan a cada destinatario por separado —sin tope de 8, sin
+          invitaciones— desde la pestaña <strong>Reporte interno</strong>.
+        </p>
+      </div>
+
       <div className="rounded-lg border border-border bg-muted/30 p-3">
-        <p className="text-sm font-medium">Enviar avisos a un grupo</p>
+        <p className="text-sm font-medium">Qué exigiría la función, si se habilitara</p>
         <ul className="mt-1.5 space-y-1 text-[11px] text-muted-foreground">
           <li>
             · <strong>Máximo 8 participantes.</strong> Es un tope de Meta, no configurable.

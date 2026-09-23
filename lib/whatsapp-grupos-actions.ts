@@ -15,8 +15,17 @@
 //   · EXIGE Official Business Account. Es un estado distinto de tener la
 //     empresa verificada, y si no se tiene, todo esto responde error.
 //
-// Por eso esto es una PRUEBA, aparte del flujo de destinatarios que ya
-// funciona. Si el grupo resulta útil, se conecta después.
+// PROBADO EL 23/09/2026 Y NO ESTÁ DISPONIBLE. Meta respondió:
+//
+//     "Groups APIs are only available for eligible phone numbers."
+//
+// El número de LIP no es elegible: la documentación dice que hace falta ser
+// Official Business Account, y no explica cómo pedirlo. Se deja el código
+// porque la elegibilidad puede cambiar --es una marca que Meta otorga con el
+// tiempo-- y entonces solo hay que volver a pulsar el botón.
+//
+// Mientras tanto el flujo real son los destinatarios uno a uno, que no tienen
+// ninguna de estas restricciones.
 //
 // El envío usa el MISMO endpoint de siempre: cambia `recipient_type` a "group"
 // y `to` pasa a ser el id del grupo en vez de un teléfono.
@@ -59,6 +68,16 @@ function traducir(err: any, status: number): string {
     return (
       `${detalle} — la Groups API exige que la cuenta sea Official Business Account (OBA), ` +
       `que es un estado distinto de tener la empresa verificada. Se solicita en WhatsApp Manager.`
+    )
+  }
+  // El error real que dio este número (23/09/2026). Meta enlaza a una página
+  // que solo dice "hay que ser OBA", sin explicar cómo conseguirlo.
+  if (/eligible phone number|not eligible/i.test(String(detalle))) {
+    return (
+      `Meta no tiene habilitada la función de grupos para este número. ` +
+      `Exige que la cuenta sea Official Business Account (OBA), una marca que Meta otorga y que ` +
+      `no se puede solicitar desde el panel. Mientras tanto, los avisos van a cada destinatario ` +
+      `por separado, que no tiene esa restricción.`
     )
   }
   if (codigo === "100" && /unknown path|nonexisting field/i.test(String(detalle))) {
