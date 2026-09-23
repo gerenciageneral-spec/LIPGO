@@ -83,6 +83,15 @@ export interface EnviarPlantillaInput {
    * Excluyente con `header`, que es para encabezados de texto.
    */
   headerImagenId?: string
+  /**
+   * Identificador de un PDF ya subido, para plantillas cuyo encabezado es de
+   * tipo DOCUMENT. Mismas reglas que `headerImagenId`.
+   *
+   * `headerDocNombre` es el nombre que verá quien lo reciba: sin él, WhatsApp
+   * muestra el identificador interno, que no dice nada.
+   */
+  headerDocId?: string
+  headerDocNombre?: string
   /** Qué flujo lo dispara. Sirve para medir volumen y costo. */
   origen?: string
   identificacion?: string | null

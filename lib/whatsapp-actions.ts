@@ -110,20 +110,21 @@ export async function getEstadoWhatsapp(): Promise<EstadoConfigWhatsapp> {
 }
 
 /**
- * Sube una imagen a Meta y devuelve su identificador.
+ * Sube un archivo a Meta y devuelve su identificador.
  *
- * Es el paso previo a mandar una plantilla con encabezado de imagen: el
- * encabezado no acepta una URL, solo un `id` de algo ya subido.
+ * Es el paso previo a mandar una plantilla con encabezado de imagen o de
+ * documento: el encabezado no acepta una URL, solo un `id` de algo ya subido.
  *
  * El identificador vive 30 días, pero eso no importa aquí: se sube y se envía
  * en el mismo momento. Guardarlo para reusarlo sería una optimización que
  * introduce una fecha de caducidad silenciosa.
  *
- * Meta acepta JPEG y PNG de hasta 5 MB, en 8 bits RGB o RGBA.
+ * Los topes de Meta son muy distintos según el tipo: 5 MB para imágenes,
+ * 100 MB para documentos. Por eso el límite se elige según lo que se manda.
  */
-export async function subirImagenAMeta(
-  imagen: Buffer | Uint8Array,
-  tipo: "image/png" | "image/jpeg" = "image/png",
+export async function subirArchivoAMeta(
+  archivo: Buffer | Uint8Array,
+  tipo: "image/png" | "image/jpeg" | "application/pdf" = "image/png",
 ): Promise<{ success: boolean; mediaId?: string; message?: string }> {
   const token = process.env.WHATSAPP_TOKEN
   const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID
@@ -131,13 +132,14 @@ export async function subirImagenAMeta(
     return { success: false, message: "Falta configurar el token o el identificador del número." }
   }
 
-  const MAX_MB = 5
-  if (imagen.byteLength > MAX_MB * 1024 * 1024) {
+  const esDocumento = tipo === "application/pdf"
+  const MAX_MB = esDocumento ? 100 : 5
+  if (archivo.byteLength > MAX_MB * 1024 * 1024) {
     // Se avisa ANTES de subir: Meta responde con un error genérico de tamaño
     // que no dice cuál es el tope ni cuánto pesaba.
     return {
       success: false,
-      message: `La imagen pesa ${(imagen.byteLength / 1024 / 1024).toFixed(1)} MB y el tope de WhatsApp son ${MAX_MB} MB.`,
+      message: `El archivo pesa ${(archivo.byteLength / 1024 / 1024).toFixed(1)} MB y el tope de WhatsApp son ${MAX_MB} MB.`,
     }
   }
 
@@ -145,11 +147,12 @@ export async function subirImagenAMeta(
     const form = new FormData()
     form.append("messaging_product", "whatsapp")
     form.append("type", tipo)
-    form.append(
-      "file",
-      new Blob([imagen as unknown as BlobPart], { type: tipo }),
-      tipo === "image/png" ? "imagen.png" : "imagen.jpg",
-    )
+    const nombre = esDocumento
+      ? "reporte.pdf"
+      : tipo === "image/png"
+        ? "imagen.png"
+        : "imagen.jpg"
+    form.append("file", new Blob([archivo as unknown as BlobPart], { type: tipo }), nombre)
 
     const r = await fetch(`https://graph.facebook.com/${API_VERSION}/${phoneId}/media`, {
       method: "POST",
@@ -163,11 +166,11 @@ export async function subirImagenAMeta(
         message: j?.error?.error_data?.details ?? j?.error?.message ?? `Meta respondió ${r.status}.`,
       }
     }
-    if (!j?.id) return { success: false, message: "Meta aceptó la imagen pero no devolvió su id." }
+    if (!j?.id) return { success: false, message: "Meta aceptó el archivo pero no devolvió su id." }
 
     return { success: true, mediaId: String(j.id) }
   } catch (e: any) {
-    return { success: false, message: e?.message || "No se pudo subir la imagen." }
+    return { success: false, message: e?.message || "No se pudo subir el archivo." }
   }
 }
 
@@ -319,7 +322,7 @@ export async function enviarPlantilla(input: EnviarPlantillaInput): Promise<Resu
     })
   }
   // Encabezado de IMAGEN. Va como `image.id`, no como URL: el encabezado no
-  // acepta enlaces, solo algo ya subido con `subirImagenAMeta`.
+  // acepta enlaces, solo algo ya subido con `subirArchivoAMeta`.
   //
   // El `else if` importa: una plantilla tiene UN encabezado. Mandar dos
   // componentes `header` hace que Meta rechace el mensaje con un error que no
@@ -328,6 +331,21 @@ export async function enviarPlantilla(input: EnviarPlantillaInput): Promise<Resu
     componentes.push({
       type: "header",
       parameters: [{ type: "image", image: { id: input.headerImagenId } }],
+    })
+  } else if (input.headerDocId) {
+    componentes.push({
+      type: "header",
+      parameters: [
+        {
+          type: "document",
+          document: {
+            id: input.headerDocId,
+            // Sin `filename`, WhatsApp muestra el id interno como nombre del
+            // archivo, que no le dice nada a quien lo recibe.
+            filename: input.headerDocNombre || "reporte.pdf",
+          },
+        },
+      ],
     })
   }
   if (input.body?.length) {
