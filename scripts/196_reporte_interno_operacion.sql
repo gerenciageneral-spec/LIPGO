@@ -17,15 +17,18 @@
 -- mezclarlas obligaría a que cada consulta filtrara por "para quién es".
 --
 -- UNA SOLA PLANTILLA PARA LOS CINCO
--- La plantilla nombra el cargue en su texto fijo --placa y orden-- y deja una
--- variable para qué pasó. Eso es lo que sostiene la categoría UTILITY: Meta
--- clasifica por el texto visible, y aquí puede verificar que cada mensaje
--- habla de un servicio concreto.
+-- Tres variables --qué pasó, de qué vehículo y los datos del momento-- dentro
+-- de un cuerpo con bastante texto fijo. La proporción importa tanto como el
+-- contenido: Meta rechaza como UTILITY una plantilla donde las variables pesan
+-- más que lo verificable, porque entonces puede decir cualquier cosa.
 --
--- Ya se intentó con una plantilla totalmente genérica (`plantilla_estandar`,
--- cuerpo «Hola {{usuario}}, {{contenido}}») y Meta advirtió que la rechazaría
--- como UTILITY: sin nada fijo que verificar, una plantilla que puede decir
--- cualquier cosa se lee como promocional. Ver scripts/193.
+-- Se llegó aquí por dos rechazos. `plantilla_estandar` (cuerpo entero «Hola
+-- {{usuario}}, {{contenido}}») no tenía nada fijo que verificar --ver
+-- scripts/193--. Y la primera versión de ESTA, con seis variables, dio:
+--
+--     "Esta plantilla tiene demasiadas variables en relación con su longitud."
+--
+-- El PASO 1 tiene el detalle de qué se cambió y por qué.
 --
 -- CADA EVENTO SE ENCIENDE POR SEPARADO
 -- Con ~35 cargues al día, los cinco eventos serían ~175 mensajes diarios por
@@ -53,27 +56,40 @@
 --   variable sin su parámetro.
 --
 -- CUERPO:
---     {{evento}}
+--     Novedad de operación registrada en LIPgo.
 --
---     Vehículo {{placa}} · Orden {{orden}}
---     {{detalle}}
+--     Evento: {{evento}}
+--     Vehículo y orden: {{vehiculo}}
+--     Detalle: {{detalle}}
 --
---     {{hora}} · {{sede}}
+--     Este reporte corresponde a la operación de cargue de LIP Progressive
+--     Integral Logistics.
 --
---   Cinco variables, todas datos verificables de un cargue real. `evento` dice
---   qué pasó ("Muelle asignado"), `detalle` los datos propios de ese momento
---   ("Muelle 3 · Conductor: Jorge Ramírez").
+-- POR QUÉ SOLO TRES VARIABLES
+-- La primera versión llevaba seis (evento, placa, orden, detalle, hora, sede)
+-- y Meta la rechazó:
+--
+--     "Esta plantilla tiene demasiadas variables en relación con su longitud.
+--      Reduce el número de variables o aumenta la longitud del mensaje. Las
+--      variables no pueden estar al principio ni al final de la plantilla."
+--
+-- Dos problemas distintos. Uno, la proporción: seis variables sostenidas por
+-- poco texto fijo se parece a una plantilla que puede decir cualquier cosa, que
+-- es justo lo que Meta no aprueba como UTILITY. Dos, `{{evento}}` abría el
+-- cuerpo, y una variable al principio no deja nada verificable antes de ella.
+--
+-- Esta versión tiene 165 caracteres de texto fijo para 3 variables --55 por
+-- variable-- y ni empieza ni termina con una. `placa` y `orden` se fusionan en
+-- `vehiculo` ("ABC123 · IND20260922001"); `hora` y `sede` se van dentro de
+-- `detalle`, donde además solo aparecen cuando aportan algo.
 --
 -- PIE DE PÁGINA:
 --     Mensaje automático de LIPgo.
 --
 -- EJEMPLOS que pide Meta al crearla (los usa para revisar):
---     evento  -> Muelle asignado
---     placa   -> ABC123
---     orden   -> IND20260922001
---     detalle -> Muelle 3 · Conductor: Jorge Ramirez
---     hora    -> 22/09/2026 14:35
---     sede    -> Harinera Indupan
+--     evento   -> Muelle asignado
+--     vehiculo -> ABC123 · Orden IND20260922001
+--     detalle  -> Muelle 3 · Conductor: Jorge Ramirez · 14:35 · Harinera Indupan
 --
 -- OJO CON LOS SALTOS DE LÍNEA: van en el TEXTO FIJO de la plantilla, nunca
 -- dentro de una variable. WhatsApp rechaza una variable que traiga saltos.
@@ -90,7 +106,7 @@ values (
   'es_CO',
   'Reporte interno de la operación: pesaje, orden, lote, muelle y cierre de cargue.',
   'Los cinco avisos internos de la línea de tiempo del cargue. Es UTILITY, así que no tiene el tope por destinatario de las de MARKETING.',
-  '{"header": [], "body": ["evento", "placa", "orden", "detalle", "hora", "sede"]}'::jsonb
+  '{"header": [], "body": ["evento", "vehiculo", "detalle"]}'::jsonb
 )
 on conflict (nombre) do update
   set idioma      = excluded.idioma,
@@ -122,8 +138,11 @@ create table if not exists public.reporte_interno_config (
    * Admite marcadores que se reemplazan al enviar. Los disponibles dependen
    * del evento --no hay muelle en el pesaje, ni peso al crear la orden-- y la
    * pantalla solo ofrece los que aplican:
-   *   {placa} {orden} {conductor} {cliente} {muelle} {lote}
-   *   {peso} {tiquete} {hora} {transporte}
+   *   {conductor} {cliente} {muelle} {lote} {peso} {tiquete}
+   *   {transporte} {hora} {sede}
+   *
+   * `placa` y `orden` NO están aquí: van en la variable `vehiculo` de la
+   * plantilla, siempre, y repetirlos los diría dos veces.
    *
    * Un marcador sin dato se reemplaza por vacío, no rompe el envío.
    *
@@ -210,15 +229,15 @@ insert into public.reporte_interno_config
   (evento, nombre, orden_linea, activo, detalle, empresas)
 values
   ('pesaje',          'Pesaje del vehículo', 1, false,
-   'Peso: {peso} kg · Tiquete: {tiquete} · Conductor: {conductor}', '{}'),
+   'Peso: {peso} kg · Tiquete: {tiquete} · Conductor: {conductor} · {hora} · {sede}', '{}'),
   ('orden_creada',    'Orden de cargue creada', 2, false,
-   'Conductor: {conductor} · Transporte: {transporte} · Peso programado: {peso} kg', '{}'),
+   'Conductor: {conductor} · Transporte: {transporte} · Peso programado: {peso} kg · {hora} · {sede}', '{}'),
   ('lote_asignado',   'Lote asignado', 3, false,
-   'Lote: {lote} · Cliente: {cliente}', '{}'),
+   'Lote: {lote} · Cliente: {cliente} · {hora} · {sede}', '{}'),
   ('muelle_asignado', 'Muelle asignado', 4, false,
-   'Muelle {muelle} · Conductor: {conductor}', '{}'),
+   'Muelle {muelle} · Conductor: {conductor} · {hora} · {sede}', '{}'),
   ('cargue_cerrado',  'Cargue finalizado', 5, false,
-   'Conductor: {conductor} · Peso: {peso} kg', '{}')
+   'Conductor: {conductor} · Peso: {peso} kg · {hora} · {sede}', '{}')
 on conflict (evento) do nothing;
 
 
