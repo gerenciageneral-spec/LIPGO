@@ -103,15 +103,20 @@ export function numeroOrdenDistribucion(ordenCargue: string): string {
  * proyecto, sin importar el producto que lleve (confirmado 2026-08-02 para
  * ID4/Molinos del Atlántico — LWY393 mezcla productos de Molinos y Avimol
  * pero el viaje completo es un servicio que se le vende solo a Molinos).
+ *
  * ID3/Avimol (LWY354 en CEDI Funza) tuvo esta misma regla del 2026-08-06 al
- * 2026-09-09: se REVIRTIÓ a pedido explícito porque CEDI Funza recibe y
- * despacha mercancía de TODOS los ID en la misma bodega, así que LWY354 no
- * es exclusiva de Avimol — forzar el owner mal-atribuía a Avimol cualquier
- * viaje que en realidad llevara producto de otro owner (Molinos, Indupan).
- * En ID3 se factura de nuevo al owner real del producto, como Avimol id2
- * (QHC437/QHQ434/GQV639) siempre ha hecho.
+ * 2026-09-09 (REVERTIDA entonces porque CEDI Funza recibe y despacha
+ * mercancía de TODOS los ID en la misma bodega, y forzar el owner
+ * mal-atribuía a Avimol viajes que en realidad llevaban producto de otro
+ * owner). **Reactivada el 2026-09-23**, a pedido explícito y confirmado del
+ * cliente pese a conocer ese antecedente: Avimol asumió/acordó pagar TODO el
+ * servicio de LWY354 en Funza (Cargue, Descargue y Distribución — incluidas
+ * las Distribución que no son clon "+D" de un Cargue propio), sin importar
+ * de quién sea el producto que mueva. Aplica también retroactivo (no hay
+ * backfill: `ownerDeLinea` se calcula en vivo en cada consulta).
  */
 export const OWNER_DE_PLACA_PROPIA: Record<number, string> = {
+  3: "AVIMOL",
   4: "Molinos del Atlántico",
 }
 
