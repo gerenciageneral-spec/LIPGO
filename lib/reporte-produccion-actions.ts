@@ -17,6 +17,8 @@ import { getSupabaseAdmin } from "@/lib/supabase-admin"
 import { construirPdfResumenProduccion } from "@/lib/resumen-produccion-pdf"
 import { getResumenProduccionDia } from "@/lib/resumen-produccion-dia"
 import { enviarPlantilla, getPlantillasDeMeta, subirArchivoAMeta } from "@/lib/whatsapp-actions"
+import { normalizarTelefono } from "@/lib/whatsapp-actions"
+import { getCurrentUsuarioForInsert } from "@/lib/user-context"
 import { utcDateStr } from "@/lib/paros-produccion"
 
 const PLANTILLA = "resumen_produccion_dia"
@@ -47,6 +49,183 @@ function armarResumen(r: Awaited<ReturnType<typeof getResumenProduccionDia>>["da
     partes.push(`${r.parosTotal} paros (${h > 0 ? `${h}h ${m}m` : `${m}m`})`)
   }
   return partes.join(" · ")
+}
+
+export interface ConfigCierre {
+  activo: boolean
+  horaEnvio: string
+  empresaId: number
+  actualizadoPor: string | null
+}
+
+export interface DestinatarioCierre {
+  id: number
+  nombre: string
+  telefono: string
+  activo: boolean
+}
+
+function faltaTabla(msg: string | undefined): boolean {
+  const m = String(msg ?? "").toLowerCase()
+  return m.includes("does not exist") || m.includes("schema cache") || m.includes("relation")
+}
+
+/** La configuración del envío automático. */
+export async function getConfigCierre(): Promise<{
+  success: boolean
+  data?: ConfigCierre
+  faltaMigracion?: boolean
+  message?: string
+}> {
+  try {
+    const sb: any = await getSupabaseAdmin()
+    const { data, error } = await sb
+      .from("cierre_produccion_config")
+      .select("*")
+      .eq("id", 1)
+      .maybeSingle()
+
+    if (error) {
+      if (faltaTabla(error.message)) return { success: true, faltaMigracion: true }
+      return { success: false, message: error.message }
+    }
+    if (!data) return { success: true, faltaMigracion: true }
+
+    return {
+      success: true,
+      data: {
+        activo: data.activo === true,
+        // Postgres devuelve "20:00:00"; en la pantalla sobra el segundo campo.
+        horaEnvio: String(data.hora_envio ?? "20:00").slice(0, 5),
+        empresaId: Number(data.empresa_id ?? 1),
+        actualizadoPor: data.actualizado_por ?? null,
+      },
+    }
+  } catch (e: any) {
+    return { success: false, message: e?.message }
+  }
+}
+
+export async function guardarConfigCierre(payload: {
+  activo: boolean
+  horaEnvio: string
+}): Promise<{ success: boolean; message?: string }> {
+  try {
+    const sb: any = await getSupabaseAdmin()
+
+    // Activar sin destinatarios no enviaría nada y parecería roto.
+    if (payload.activo) {
+      const { data: dest } = await sb
+        .from("cierre_produccion_destinatarios")
+        .select("id")
+        .eq("activo", true)
+        .limit(1)
+      if (!dest?.length) {
+        return { success: false, message: "Agrega al menos un destinatario antes de activar." }
+      }
+    }
+
+    const usuario = await getCurrentUsuarioForInsert().catch(() => null)
+    const { error } = await sb
+      .from("cierre_produccion_config")
+      .update({
+        activo: payload.activo,
+        hora_envio: payload.horaEnvio,
+        actualizado_por: usuario ?? null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", 1)
+
+    if (error) {
+      if (faltaTabla(error.message)) {
+        return { success: false, message: "Falta correr scripts/197_cierre_produccion_automatico.sql." }
+      }
+      return { success: false, message: error.message }
+    }
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, message: e?.message }
+  }
+}
+
+export async function getDestinatariosCierre(): Promise<{
+  success: boolean
+  data?: DestinatarioCierre[]
+  message?: string
+}> {
+  try {
+    const sb: any = await getSupabaseAdmin()
+    const { data, error } = await sb
+      .from("cierre_produccion_destinatarios")
+      .select("*")
+      .order("nombre", { ascending: true })
+    if (error) {
+      if (faltaTabla(error.message)) return { success: true, data: [] }
+      return { success: false, message: error.message }
+    }
+    return {
+      success: true,
+      data: (data ?? []).map((d: any) => ({
+        id: Number(d.id),
+        nombre: d.nombre,
+        telefono: d.telefono,
+        activo: d.activo !== false,
+      })),
+    }
+  } catch (e: any) {
+    return { success: false, message: e?.message }
+  }
+}
+
+export async function guardarDestinatarioCierre(payload: {
+  nombre: string
+  telefono: string
+}): Promise<{ success: boolean; message?: string }> {
+  try {
+    if (!payload.nombre?.trim()) return { success: false, message: "Ponle un nombre." }
+
+    // Se normaliza al guardar, no al enviar: un número mal escrito aquí haría
+    // fallar el envío de esa persona todos los días, y el fallo aparecería
+    // mucho después.
+    const telefono = await normalizarTelefono(payload.telefono)
+    if (!telefono) {
+      return {
+        success: false,
+        message: `"${payload.telefono}" no es un número válido. En Colombia son 10 dígitos empezando por 3.`,
+      }
+    }
+
+    const sb: any = await getSupabaseAdmin()
+    const { error } = await sb
+      .from("cierre_produccion_destinatarios")
+      .insert({ nombre: payload.nombre.trim(), telefono, activo: true })
+
+    if (error) {
+      if (String(error.message).includes("uq_cierre_prod_telefono")) {
+        return { success: false, message: "Ese número ya está en la lista." }
+      }
+      if (faltaTabla(error.message)) {
+        return { success: false, message: "Falta correr scripts/197_cierre_produccion_automatico.sql." }
+      }
+      return { success: false, message: error.message }
+    }
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, message: e?.message }
+  }
+}
+
+export async function eliminarDestinatarioCierre(
+  id: number,
+): Promise<{ success: boolean; message?: string }> {
+  try {
+    const sb: any = await getSupabaseAdmin()
+    const { error } = await sb.from("cierre_produccion_destinatarios").delete().eq("id", id)
+    if (error) return { success: false, message: error.message }
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, message: e?.message }
+  }
 }
 
 /**
@@ -210,5 +389,111 @@ export async function enviarResumenProduccion(payload: {
   } catch (e: any) {
     console.error("[v0] enviarResumenProduccion:", e?.message ?? e)
     return { success: false, message: e?.message || "No se pudo enviar el resumen." }
+  }
+}
+
+/**
+ * Manda el cierre a TODOS los destinatarios activos.
+ *
+ * La usa el cron y también el botón de "enviar a todos" de la pantalla.
+ *
+ * `origen` distingue las pruebas de lo programado. Los automáticos llevan un
+ * índice único por día y destinatario --un cron que corriera dos veces no
+ * duplica el cobro-- y las pruebas no, porque repetirlas es justo lo que se
+ * hace al probar.
+ */
+export async function enviarCierreATodos(payload?: {
+  fecha?: string
+  origen?: "manual" | "automatico"
+}): Promise<{ enviados: number; fallidos: number; message?: string }> {
+  const origen = payload?.origen ?? "manual"
+  try {
+    const sb: any = await getSupabaseAdmin()
+    const dia = payload?.fecha || utcDateStr()
+
+    const { data: dest } = await sb
+      .from("cierre_produccion_destinatarios")
+      .select("*")
+      .eq("activo", true)
+
+    if (!dest?.length) return { enviados: 0, fallidos: 0, message: "No hay destinatarios activos." }
+
+    let enviados = 0
+    let fallidos = 0
+
+    for (const d of dest) {
+      if (origen === "automatico") {
+        // Ya se mandó hoy a esta persona: no se repite ni se cobra otra vez.
+        const { data: ya } = await sb
+          .from("cierre_produccion_enviados")
+          .select("id")
+          .eq("fecha", dia)
+          .eq("telefono", d.telefono)
+          .eq("origen", "automatico")
+          .maybeSingle()
+        if (ya) continue
+      }
+
+      const r = await enviarResumenProduccion({ telefono: d.telefono, fecha: dia })
+
+      try {
+        await sb.from("cierre_produccion_enviados").insert({
+          fecha: dia,
+          telefono: d.telefono,
+          motivo: r.success ? null : r.message ?? null,
+          origen,
+        })
+      } catch {
+        // El índice único lo rechaza si otra llamada ya lo registró.
+      }
+
+      if (r.success) enviados++
+      else fallidos++
+    }
+
+    return { enviados, fallidos }
+  } catch (e: any) {
+    console.error("[v0] enviarCierreATodos:", e?.message ?? e)
+    return { enviados: 0, fallidos: 0, message: e?.message }
+  }
+}
+
+/** Historial de envíos del cierre, para la pantalla. */
+export async function getHistorialCierre(limite = 30): Promise<{
+  success: boolean
+  data?: Array<{
+    id: number
+    fecha: string
+    telefono: string
+    motivo: string | null
+    origen: string
+    creadoEn: string
+  }>
+  message?: string
+}> {
+  try {
+    const sb: any = await getSupabaseAdmin()
+    const { data, error } = await sb
+      .from("cierre_produccion_enviados")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(limite)
+    if (error) {
+      if (faltaTabla(error.message)) return { success: true, data: [] }
+      return { success: false, message: error.message }
+    }
+    return {
+      success: true,
+      data: (data ?? []).map((e: any) => ({
+        id: Number(e.id),
+        fecha: e.fecha,
+        telefono: e.telefono,
+        motivo: e.motivo ?? null,
+        origen: e.origen ?? "automatico",
+        creadoEn: e.created_at,
+      })),
+    }
+  } catch (e: any) {
+    return { success: false, message: e?.message }
   }
 }
