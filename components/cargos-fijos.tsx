@@ -44,7 +44,7 @@ import {
 } from "@/lib/cargos-fijos-actions"
 
 const money = (n: number) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO")
-const ton = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { maximumFractionDigits: 2 })
+const ton = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { minimumFractionDigits: 3, maximumFractionDigits: 3 })
 
 function hoyISO(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota" }).format(new Date())

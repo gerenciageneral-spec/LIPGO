@@ -914,7 +914,7 @@ export function FacturacionProyectos() {
                         <TableCell className="text-xs font-medium">{record.placa}</TableCell>
               <TableCell className="text-xs">{record.producto}</TableCell>
               <TableCell className="text-xs text-right">{record.pesobascula?.toFixed(2) || "0.00"}</TableCell>
-              <TableCell className="text-xs text-right">{record.toneladas.toFixed(2)}</TableCell>
+              <TableCell className="text-xs text-right">{record.toneladas.toFixed(3)}</TableCell>
                         <TableCell className="text-xs">{record.owner}</TableCell>
                         <TableCell className="text-xs">{record.subcategoria}</TableCell>
                         <TableCell className="text-xs">{record.idempresa}</TableCell>

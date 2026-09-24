@@ -60,6 +60,10 @@ const moneyTarifa = (n: number) => {
   return Number.isInteger(v) ? money(v) : "$" + v.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 const cant = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { maximumFractionDigits: 2 })
+// Separado de cant() a propósito: toneladas siempre a 3 decimales (mismo
+// criterio que el anexo de facturación); cant() sigue en 2 para cantidades
+// por unidad (bultos, kg, Huevos) que no deben ganar decimales de más.
+const ton = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { minimumFractionDigits: 3, maximumFractionDigits: 3 })
 
 /** Hoy en Colombia (el servidor puede estar en otra zona). */
 function hoyISO(): string {
@@ -361,7 +365,7 @@ export default function PrefacturaProduccion({ idempresaFija }: { idempresaFija?
 
           {/* KPIs */}
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Kpi label="Toneladas" value={cant(tonSel)} hint="de los conceptos marcados" />
+            <Kpi label="Toneladas" value={ton(tonSel)} hint="de los conceptos marcados" />
             <Kpi label="Subtotal producción" value={money(prodSel.reduce((a, l) => a + l.total, 0))} />
             <Kpi
               label="Subtotal horas extra"
@@ -544,7 +548,7 @@ export default function PrefacturaProduccion({ idempresaFija }: { idempresaFija?
                     <TableCell className="whitespace-nowrap text-xs">
                       {String(p.periodo_desde).slice(0, 10)} a {String(p.periodo_hasta).slice(0, 10)}
                     </TableCell>
-                    <TableCell className="text-right">{cant(p.toneladas)}</TableCell>
+                    <TableCell className="text-right">{ton(p.toneladas)}</TableCell>
                     <TableCell className="text-right font-medium">{money(p.total)}</TableCell>
                     <TableCell>
                       <span

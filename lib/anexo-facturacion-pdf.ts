@@ -42,7 +42,7 @@ interface SoporteGrupoPdf {
 }
 
 const money = (n: number) => "$ " + (Number(n) || 0).toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-const cantidadFmt = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { maximumFractionDigits: 2 })
+const cantidadFmt = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { minimumFractionDigits: 3, maximumFractionDigits: 3 })
 const uLabel = (u?: UnidadCobro) => (u === "h" ? "h" : u === "turno" ? "turnos" : u === "u" ? "u" : "t")
 const esTon = (u?: UnidadCobro) => u !== "h" && u !== "turno" && u !== "u"
 const fmtFecha = (s: string | null) => {

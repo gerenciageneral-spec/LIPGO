@@ -65,7 +65,7 @@ const moneyTarifa = (n: number) => {
   const v = Number(n) || 0
   return Number.isInteger(v) ? money(v) : "$" + v.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
-const ton = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { maximumFractionDigits: 2 })
+const ton = (n: number) => (Number(n) || 0).toLocaleString("es-CO", { minimumFractionDigits: 3, maximumFractionDigits: 3 })
 // La columna de cantidad es una sola para toneladas, horas, turnos y unidades:
 // la unidad va al lado del número y SOLO las toneladas suman al tonelaje del documento.
 const uLabel = (u?: UnidadCobro) => (u === "h" ? "h" : u === "turno" ? "turnos" : u === "u" ? "u" : "t")
