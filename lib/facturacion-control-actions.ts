@@ -1004,7 +1004,7 @@ export async function getPrefactura(
         // por operación. Ver esVehiculoPropioAgrupable: agrupar el viaje es
         // independiente de a quién se factura (ese es OWNER_DE_PLACA_PROPIA).
         const opNorm = String(r.tipooperacion ?? "").trim().toLowerCase()
-        const esVehiculoPropioConRegla = esVehiculoPropioAgrupable(idempresa, r.placa, r.tipooperacion)
+        const esVehiculoPropioConRegla = esVehiculoPropioAgrupable(idempresa, r.placa, r.tipooperacion, owner)
         const grupoResumen = esVehiculoPropioConRegla
           ? "Cargue + Distribución (vehículo propio)"
           : r.tipooperacion || "(sin operación)"

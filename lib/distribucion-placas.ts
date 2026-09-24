@@ -149,18 +149,28 @@ export const VEHICULO_PROPIO_AGRUPA_CARGUE_DISTRIBUCION = new Set<number>([3, 4]
  * que agrupa ese viaje en un solo resumen/anexo? Usado tanto por Prefactura
  * (`grupoResumen`) como por el Anexo de Facturación en PDF, para que ambos
  * agrupen exactamente igual.
+ *
+ * Requiere el owner YA resuelto (post `ownerDeLinea`) para que la agrupación
+ * especial solo aplique cuando la línea de verdad se factura al dueño del
+ * vehículo. Si no, un Cargue de LWY354 (ID3) cuyo producto es de Molinos o
+ * INDUPAN saldría en su propio mini-anexo aparte en vez de sumarse al Cargue
+ * normal de ese owner (corregido 2026-09-24, pedido explícito: "no es
+ * necesario, únelo a los cargues del owner que corresponda").
  */
 export function esVehiculoPropioAgrupable(
   idempresa: number | null | undefined,
   placa: string | null | undefined,
   tipooperacion: string | null | undefined,
+  owner: string | null | undefined,
 ): boolean {
   const opNorm = String(tipooperacion ?? "").trim().toLowerCase()
-  return (
+  const base =
     VEHICULO_PROPIO_AGRUPA_CARGUE_DISTRIBUCION.has(Number(idempresa)) &&
     esPlacaDistribucion(idempresa, placa) &&
     (opNorm === "cargue" || opNorm === "distribucion")
-  )
+  if (!base) return false
+  const ownerPropio = OWNER_DE_PLACA_PROPIA[Number(idempresa)]
+  return !ownerPropio || String(owner ?? "").trim() === ownerPropio
 }
 
 /**

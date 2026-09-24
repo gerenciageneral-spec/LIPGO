@@ -773,7 +773,7 @@ export function CuadroControlFacturacion() {
     // tipo de operación porque `cubierto_por_fijo` solo aplica a id2.
     const grupos = new Map<string, { owner: string; op: string; unidad: UnidadCobro; filas: typeof data.filas }>()
     for (const f of data.filas) {
-      const esCargueDistribucionId3 = empresaId === 3 && esVehiculoPropioAgrupable(empresaId, f.placa, f.tipooperacion)
+      const esCargueDistribucionId3 = empresaId === 3 && esVehiculoPropioAgrupable(empresaId, f.placa, f.tipooperacion, f.owner)
       const op = f.cubierto_por_fijo
         ? "Cargue/Descargue propio"
         : esCargueDistribucionId3
