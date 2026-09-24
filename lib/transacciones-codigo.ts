@@ -104,6 +104,35 @@ export interface EjecutarPayload {
   // Referencia (reversos 102/602/552/312 · 653 opcional)
   refInvtransId?: number | null
   ocargueRef?: string | null
+  // Interno: solo lo pone `aprobarAjustePendiente` al reejecutar un payload YA
+  // aprobado por Gerencia. Nunca lo envía la UI. Ver CODIGOS_REQUIEREN_APROBACION.
+  __aprobado?: boolean
+}
+
+// Códigos que NO se aplican de inmediato: son salida sin orden de cargue y sin
+// ser una categoría reconocida (avería/reproceso = 551, que queda sin cambio).
+// Quedan "pendiente" en inv_ajustes_pendientes hasta que Gerencia los apruebe
+// con la clave de inv_clave_aprobacion_ajustes (SQL 62, incidente 2026-09-23:
+// Descargue duplicado en Cedi Funza + ajuste 702 que lo tapó sin resolverlo).
+export const CODIGOS_REQUIEREN_APROBACION = new Set(["601", "702"])
+
+export interface AjustePendiente {
+  id: number
+  idempresa: number
+  codigo: "601" | "702"
+  payload: EjecutarPayload
+  producto: string | null
+  lote: string | null
+  location: string | null
+  cantidad: number
+  motivo: string | null
+  solicitado_por: string
+  estado: "pendiente" | "aprobado" | "rechazado"
+  aprobado_por: string | null
+  aprobado_en: string | null
+  motivo_rechazo: string | null
+  invtrans_ids: number[] | null
+  created_at: string
 }
 
 // ---------------------------------------------------------------------------

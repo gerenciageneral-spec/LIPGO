@@ -21,8 +21,9 @@ import {
   getCatalogoTransacciones,
   buscarMovimientoOriginal,
   ejecutarTransaccionPorCodigo,
+  solicitarAjustePendiente,
 } from "@/lib/transacciones-codigo-actions"
-import { FIELDSETS, type CatalogoTransaccion, type MovimientoOriginal } from "@/lib/transacciones-codigo"
+import { FIELDSETS, CODIGOS_REQUIEREN_APROBACION, type CatalogoTransaccion, type MovimientoOriginal } from "@/lib/transacciones-codigo"
 import {
   getLocationsFromSaldoInvDetalle,
   getDestinationLocationsFromLocationsTable,
@@ -102,6 +103,7 @@ export function TransaccionesPorCodigo() {
 
   const fs = FIELDSETS[codigo] ?? null
   const info = useMemo(() => catalogo.find((c) => c.codigo === codigo) ?? null, [catalogo, codigo])
+  const requiereAprobacion = CODIGOS_REQUIEREN_APROBACION.has(codigo)
 
   useEffect(() => {
     getCatalogoTransacciones().then((r) => {
@@ -229,17 +231,18 @@ export function TransaccionesPorCodigo() {
     const c = Number(cantidad)
     if (!Number.isFinite(c) || c <= 0) return false
     if (fs.requiereClave && (!clave.trim() || !motivo.trim())) return false
+    if (requiereAprobacion && !motivo.trim()) return false
     if (fs.referencia && fs.referencia !== "ocargueOpcional") return !!refSel
     if (!producto.trim() || !lote.trim() || !location.trim()) return false
     if (fs.destino === "ubicacion" && !locationDestino.trim()) return false
     if (fs.destino === "loteProductoUbicacion" && !loteDestino.trim() && !locationDestino.trim() && !productoDestino.trim()) return false
     return true
-  }, [fs, selectedEmpresaId, cantidad, clave, motivo, refSel, producto, lote, location, locationDestino, loteDestino, productoDestino])
+  }, [fs, requiereAprobacion, selectedEmpresaId, cantidad, clave, motivo, refSel, producto, lote, location, locationDestino, loteDestino, productoDestino])
 
   const ejecutar = async () => {
     if (!fs || !selectedEmpresaId) return
     setEjecutando(true)
-    const r = await ejecutarTransaccionPorCodigo({
+    const payload = {
       codigo,
       selectedEmpresaId,
       clave: clave || null,
@@ -253,11 +256,19 @@ export function TransaccionesPorCodigo() {
       productoDestino: productoDestino || null,
       refInvtransId: refSel?.id ?? null,
       ocargueRef: ocargueRef || null,
-    })
+    }
+    // 601/702 (salida sin orden de cargue, sin ser avería/reproceso) nunca se
+    // aplican de una: quedan pendientes de aprobación de Gerencia (SQL 62).
+    const r = requiereAprobacion ? await solicitarAjustePendiente(payload) : await ejecutarTransaccionPorCodigo(payload)
     setEjecutando(false)
     setConfirmando(false)
     if (r.success) {
-      toast({ title: `Movimiento ${codigo} registrado`, description: `${r.message} Movimientos invtrans: ${r.invtransIds?.join(", ")}` })
+      if (requiereAprobacion) {
+        toast({ title: `Solicitud ${codigo} enviada a Gerencia`, description: r.message })
+      } else {
+        const conInvtrans = r as { invtransIds?: number[] }
+        toast({ title: `Movimiento ${codigo} registrado`, description: `${r.message} Movimientos invtrans: ${conInvtrans.invtransIds?.join(", ")}` })
+      }
       limpiarCampos()
       setCodigo("")
       // El movimiento acaba de cambiar el saldo. Hoy `limpiarCampos` borra
@@ -266,7 +277,7 @@ export function TransaccionesPorCodigo() {
       // despues de mover inventario es peor que no mostrar ninguno.
       setRefrescoSaldo((n) => n + 1)
     } else {
-      toast({ title: "No se pudo ejecutar", description: r.message, variant: "destructive" })
+      toast({ title: requiereAprobacion ? "No se pudo enviar la solicitud" : "No se pudo ejecutar", description: r.message, variant: "destructive" })
     }
   }
 
@@ -308,6 +319,11 @@ export function TransaccionesPorCodigo() {
             {fs?.requiereClave && (
               <Badge variant="outline" className="ml-auto gap-1 text-[10px]" style={{ color: "#C0392B", borderColor: "#C0392B" }}>
                 <ShieldCheck className="h-3 w-3" /> Requiere clave
+              </Badge>
+            )}
+            {requiereAprobacion && (
+              <Badge variant="outline" className="ml-auto gap-1 text-[10px]" style={{ color: "#C0392B", borderColor: "#C0392B" }}>
+                <ShieldCheck className="h-3 w-3" /> Requiere aprobación de Gerencia
               </Badge>
             )}
           </div>
@@ -621,7 +637,7 @@ export function TransaccionesPorCodigo() {
                 )}
               </div>
               <div className={fs.requiereClave ? "" : "sm:col-span-2"}>
-                <Label className="text-xs uppercase text-muted-foreground">Motivo{fs.requiereClave ? "" : " (opcional)"}</Label>
+                <Label className="text-xs uppercase text-muted-foreground">Motivo{fs.requiereClave || requiereAprobacion ? "" : " (opcional)"}</Label>
                 <Textarea value={motivo} onChange={(e) => setMotivo(e.target.value)} rows={1} className="mt-1" placeholder="Por qué se hace este movimiento" />
               </div>
               {fs.requiereClave && (
@@ -634,7 +650,7 @@ export function TransaccionesPorCodigo() {
 
             <div className="flex justify-end">
               <Button disabled={!listo || ejecutando} onClick={() => setConfirmando(true)}>
-                Revisar y ejecutar <ArrowRight className="ml-1 h-4 w-4" />
+                {requiereAprobacion ? "Revisar y enviar a Gerencia" : "Revisar y ejecutar"} <ArrowRight className="ml-1 h-4 w-4" />
               </Button>
             </div>
           </Card>
@@ -690,7 +706,7 @@ export function TransaccionesPorCodigo() {
       {/* ==================== CONFIRMACIÓN ==================== */}
       <Dialog open={confirmando} onOpenChange={(o) => !o && setConfirmando(false)}>
         <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle className="text-base">Confirmar movimiento {codigo}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="text-base">{requiereAprobacion ? `Enviar a Gerencia · movimiento ${codigo}` : `Confirmar movimiento ${codigo}`}</DialogTitle></DialogHeader>
           <div className="space-y-2 text-sm">
             <p className="font-medium">{info?.nombre}</p>
             <div className="rounded-md border bg-muted/30 p-3 text-xs leading-relaxed">
@@ -708,13 +724,21 @@ export function TransaccionesPorCodigo() {
               <p className="mt-1">Cantidad: <b className="tabular-nums">{cantidad}</b></p>
               {motivo && <p className="mt-1">Motivo: {motivo}</p>}
             </div>
-            <p className="text-xs text-muted-foreground">
-              El movimiento queda en el inventario real (invtrans, saldo recalculado por el sistema) y en el Historial de correcciones con tu usuario. Esta acción no se puede deshacer desde aquí — un error se corrige con otro movimiento (reverso).
-            </p>
+            {requiereAprobacion ? (
+              <p className="text-xs font-medium" style={{ color: "#C0392B" }}>
+                Este código saca producto sin una orden de cargue detrás y sin ser avería/reproceso — NO se aplica todavía. Queda pendiente hasta que alguien de Gerencia lo apruebe con su clave; el stock no se mueve hasta entonces.
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                El movimiento queda en el inventario real (invtrans, saldo recalculado por el sistema) y en el Historial de correcciones con tu usuario. Esta acción no se puede deshacer desde aquí — un error se corrige con otro movimiento (reverso).
+              </p>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setConfirmando(false)}>Cancelar</Button>
-            <Button onClick={ejecutar} disabled={ejecutando}>{ejecutando ? "Ejecutando…" : "Ejecutar movimiento"}</Button>
+            <Button onClick={ejecutar} disabled={ejecutando}>
+              {ejecutando ? "Enviando…" : requiereAprobacion ? "Enviar a Gerencia" : "Ejecutar movimiento"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

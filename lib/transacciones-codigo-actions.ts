@@ -18,10 +18,12 @@ import { getCurrentUsuarioForInsert } from "@/lib/company-filter"
 import { getColombiaDateTime } from "@/lib/inventory-actions"
 import {
   FIELDSETS,
+  CODIGOS_REQUIEREN_APROBACION,
   type CatalogoTransaccion,
   type MovimientoOriginal,
   type EjecutarPayload,
   type CorreccionLogRow,
+  type AjustePendiente,
 } from "@/lib/transacciones-codigo"
 
 // ---------------------------------------------------------------------------
@@ -232,6 +234,18 @@ export async function ejecutarTransaccionPorCodigo(payload: EjecutarPayload): Pr
   logId?: number
 }> {
   try {
+    // Blindaje 2026-09-23 (incidente Descargue duplicado + 702 que lo tapó,
+    // Cedi Funza): 601/702 son salida sin orden de cargue y sin ser una
+    // categoría reconocida (551 Merma/Reproceso sí lo es) -- nunca se aplican
+    // directo. `__aprobado` solo lo pone `aprobarAjustePendiente`, después de
+    // verificar la clave de Gerencia; la UI y cualquier otro llamador deben
+    // usar `solicitarAjustePendiente` para estos dos códigos.
+    if (CODIGOS_REQUIEREN_APROBACION.has(payload.codigo) && !payload.__aprobado) {
+      return {
+        success: false,
+        message: `El código ${payload.codigo} requiere aprobación de Gerencia antes de aplicarse. Usa "Solicitar aprobación" en vez de "Ejecutar" -- quedará pendiente hasta que se apruebe.`,
+      }
+    }
     const fs = FIELDSETS[payload.codigo]
     if (!fs) return { success: false, message: `Código ${payload.codigo} no soportado.` }
     const empresaId = Number(payload.selectedEmpresaId)
@@ -446,6 +460,172 @@ export async function ejecutarTransaccionPorCodigo(payload: EjecutarPayload): Pr
     return { success: true, message: `Movimiento ${payload.codigo} registrado.`, invtransIds, logId: logRow?.id }
   } catch (e: any) {
     return { success: false, message: e?.message || "Error al ejecutar la transacción." }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Aprobación de Gerencia para 601/702 (SQL 62). Clave DEDICADA en
+// inv_clave_aprobacion_ajustes -- distinta de inv_clave_movimiento (esa es
+// "quién ejecuta" una corrección; esta es "quién autoriza" la solicitud de
+// otra persona, un control más guardado a propósito).
+// ---------------------------------------------------------------------------
+
+async function resolverClaveAprobacion(sb: any, clave: string): Promise<{ ok: boolean; responsable?: string; error?: string }> {
+  const limpia = String(clave || "").trim()
+  if (!limpia) return { ok: false, error: "Ingresa la clave de aprobación de Gerencia." }
+  const { data, error } = await sb
+    .from("inv_clave_aprobacion_ajustes")
+    .select("responsable")
+    .eq("clave", limpia)
+    .eq("activo", true)
+    .limit(1)
+    .maybeSingle()
+  if (error) return { ok: false, error: error.message }
+  if (!data) return { ok: false, error: "Clave de aprobación incorrecta o inactiva." }
+  return { ok: true, responsable: data.responsable }
+}
+
+/**
+ * Punto de entrada de la UI para 601/702 (nunca `ejecutarTransaccionPorCodigo`
+ * directo -- esa función los rechaza salvo que vengan ya aprobados). Valida
+ * lo mínimo para darle feedback inmediato al coordinador (empresa, cantidad,
+ * producto/lote/ubicación, stock suficiente) y deja la solicitud en
+ * `inv_ajustes_pendientes`. NO toca invtrans ni el stock -- eso solo pasa en
+ * `aprobarAjustePendiente`.
+ */
+export async function solicitarAjustePendiente(payload: EjecutarPayload): Promise<{
+  success: boolean
+  message: string
+  id?: number
+}> {
+  try {
+    if (!CODIGOS_REQUIEREN_APROBACION.has(payload.codigo)) {
+      return { success: false, message: `El código ${payload.codigo} no requiere aprobación -- usa "Ejecutar" directamente.` }
+    }
+    const empresaId = Number(payload.selectedEmpresaId)
+    if (!empresaId) return { success: false, message: "Selecciona un proyecto en el selector global." }
+    const cantidad = Math.abs(Number(payload.cantidad) || 0)
+    if (!cantidad) return { success: false, message: "Indica la cantidad." }
+    const producto = payload.producto?.trim() || ""
+    const lote = payload.lote?.trim() || ""
+    const location = payload.location?.trim() || ""
+    if (!producto || !lote || !location) return { success: false, message: "Faltan producto, lote o ubicación." }
+    if (!String(payload.motivo || "").trim()) return { success: false, message: "Indica el motivo del ajuste." }
+
+    const sb: any = await getSupabaseAdmin()
+    const stock = await stockDeLote(sb, empresaId, producto, lote, location)
+    if (cantidad > stock) return { success: false, message: `La cantidad (${cantidad}) supera el stock del lote en esa ubicación (${stock}).` }
+
+    const usuario = await getCurrentUsuarioForInsert()
+    const { data, error } = await sb
+      .from("inv_ajustes_pendientes")
+      .insert({
+        idempresa: empresaId,
+        codigo: payload.codigo,
+        payload,
+        producto,
+        lote,
+        location,
+        cantidad,
+        motivo: String(payload.motivo || "").trim(),
+        solicitado_por: usuario,
+        estado: "pendiente",
+      })
+      .select("id")
+      .single()
+    if (error) return { success: false, message: error.message }
+    return { success: true, message: `Solicitud enviada a Gerencia para aprobación (código ${payload.codigo}). No se aplicó todavía.`, id: data?.id }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al enviar la solicitud." }
+  }
+}
+
+/** Lista de solicitudes 601/702 para la pantalla de aprobación de Gerencia. */
+export async function getAjustesPendientes(filtros?: {
+  selectedEmpresaId?: number | null
+  estado?: "pendiente" | "aprobado" | "rechazado"
+}): Promise<{ success: boolean; data: AjustePendiente[]; message?: string }> {
+  try {
+    const sb: any = await getSupabaseAdmin()
+    let q = sb.from("inv_ajustes_pendientes").select("*").order("created_at", { ascending: false })
+    if (filtros?.selectedEmpresaId) q = q.eq("idempresa", filtros.selectedEmpresaId)
+    q = q.eq("estado", filtros?.estado ?? "pendiente")
+    const { data, error } = await q
+    if (error) return { success: false, data: [], message: error.message }
+    return { success: true, data: (data ?? []) as AjustePendiente[] }
+  } catch (e: any) {
+    return { success: false, data: [], message: e?.message || "Error al listar las solicitudes." }
+  }
+}
+
+/** Gerencia aprueba: verifica la clave y RECIÉN AHÍ ejecuta el ajuste real (reusa ejecutarTransaccionPorCodigo con el payload guardado, sin reinterpretarlo). */
+export async function aprobarAjustePendiente(id: number, claveAprobacion: string): Promise<{
+  success: boolean
+  message: string
+}> {
+  try {
+    const sb: any = await getSupabaseAdmin()
+    const auth = await resolverClaveAprobacion(sb, claveAprobacion)
+    if (!auth.ok) return { success: false, message: auth.error || "Clave inválida." }
+
+    const { data: pendiente, error: errGet } = await sb.from("inv_ajustes_pendientes").select("*").eq("id", id).maybeSingle()
+    if (errGet) return { success: false, message: errGet.message }
+    if (!pendiente) return { success: false, message: "La solicitud no existe." }
+    if (pendiente.estado !== "pendiente") return { success: false, message: `Esta solicitud ya quedó "${pendiente.estado}" -- no se puede volver a aprobar.` }
+
+    const resultado = await ejecutarTransaccionPorCodigo({ ...pendiente.payload, __aprobado: true })
+    if (!resultado.success) {
+      // No se marca aprobado si la ejecución real falló (ej. el stock cambió
+      // entre la solicitud y la aprobación) -- queda pendiente para reintentar.
+      return { success: false, message: `La aprobación no se pudo aplicar: ${resultado.message}` }
+    }
+
+    await sb
+      .from("inv_ajustes_pendientes")
+      .update({
+        estado: "aprobado",
+        aprobado_por: auth.responsable,
+        aprobado_en: new Date().toISOString(),
+        invtrans_ids: resultado.invtransIds ?? null,
+        log_id: resultado.logId ?? null,
+      })
+      .eq("id", id)
+
+    return { success: true, message: `Aprobado por ${auth.responsable}. ${resultado.message}` }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al aprobar la solicitud." }
+  }
+}
+
+/** Gerencia rechaza: la solicitud queda cerrada, NUNCA toca invtrans/stock. */
+export async function rechazarAjustePendiente(id: number, claveAprobacion: string, motivoRechazo: string): Promise<{
+  success: boolean
+  message: string
+}> {
+  try {
+    const sb: any = await getSupabaseAdmin()
+    const auth = await resolverClaveAprobacion(sb, claveAprobacion)
+    if (!auth.ok) return { success: false, message: auth.error || "Clave inválida." }
+    if (!String(motivoRechazo || "").trim()) return { success: false, message: "Indica el motivo del rechazo." }
+
+    const { data: pendiente, error: errGet } = await sb.from("inv_ajustes_pendientes").select("id, estado").eq("id", id).maybeSingle()
+    if (errGet) return { success: false, message: errGet.message }
+    if (!pendiente) return { success: false, message: "La solicitud no existe." }
+    if (pendiente.estado !== "pendiente") return { success: false, message: `Esta solicitud ya quedó "${pendiente.estado}".` }
+
+    const { error } = await sb
+      .from("inv_ajustes_pendientes")
+      .update({
+        estado: "rechazado",
+        aprobado_por: auth.responsable,
+        aprobado_en: new Date().toISOString(),
+        motivo_rechazo: String(motivoRechazo).trim(),
+      })
+      .eq("id", id)
+    if (error) return { success: false, message: error.message }
+    return { success: true, message: `Solicitud rechazada por ${auth.responsable}.` }
+  } catch (e: any) {
+    return { success: false, message: e?.message || "Error al rechazar la solicitud." }
   }
 }
 

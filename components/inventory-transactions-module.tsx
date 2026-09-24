@@ -19,11 +19,20 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/components/auth-provider"
 import { Loader2, Download, Search } from "lucide-react"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
+import { Textarea } from "@/components/ui/textarea"
 import { InventoryTransactionsForm } from "@/components/inventory-transactions-form"
 import { TransaccionesPorCodigo } from "@/components/transacciones-por-codigo"
-import { getConsultaMovimientos, getHistorialCorrecciones, getProductosDeEmpresa } from "@/lib/transacciones-codigo-actions"
-import { FIELDSETS, GUIA_TRANSACCIONES, type CorreccionLogRow } from "@/lib/transacciones-codigo"
-import { ShieldCheck, BookOpen } from "lucide-react"
+import {
+  getConsultaMovimientos,
+  getHistorialCorrecciones,
+  getProductosDeEmpresa,
+  getAjustesPendientes,
+  aprobarAjustePendiente,
+  rechazarAjustePendiente,
+} from "@/lib/transacciones-codigo-actions"
+import { FIELDSETS, GUIA_TRANSACCIONES, type CorreccionLogRow, type AjustePendiente } from "@/lib/transacciones-codigo"
+import { ShieldCheck, BookOpen, Check, X } from "lucide-react"
 
 const hoyColombia = () =>
   new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date())
@@ -365,6 +374,174 @@ function HistorialCorrecciones() {
 }
 
 // ---------------------------------------------------------------------------
+// Pestaña — Aprobaciones pendientes (601/702, SQL 62)
+// ---------------------------------------------------------------------------
+// Incidente 2026-09-23 (Cedi Funza): un coordinador generó un Descargue
+// manual duplicado (el clon automático desde Avimol ya existía) -- la nómina
+// pagó doble a los mismos auxiliares, y para "cuadrar" el inventario generó
+// una salida por código (702) que no resolvió nada y quedó invisible para
+// Facturación. 601 ("Despacho manual") y 702 ("Faltante") son los únicos
+// códigos que sacan producto sin orden de cargue y sin ser avería/reproceso
+// (551, que sigue igual) -- ahora quedan pendientes de aprobación de Gerencia
+// con una clave dedicada (distinta de la clave de responsable de movimiento).
+
+const NOMBRE_EMPRESA: Record<number, string> = {
+  1: "Harinera Indupan",
+  2: "Avimol",
+  3: "Cedi Funza",
+  4: "Cedi Medellín",
+}
+
+function AprobacionesPendientes() {
+  const { toast } = useToast()
+  const [filas, setFilas] = useState<AjustePendiente[]>([])
+  const [cargando, setCargando] = useState(false)
+  const [seleccion, setSeleccion] = useState<AjustePendiente | null>(null)
+  const [accion, setAccion] = useState<"aprobar" | "rechazar" | null>(null)
+  const [clave, setClave] = useState("")
+  const [motivoRechazo, setMotivoRechazo] = useState("")
+  const [enviando, setEnviando] = useState(false)
+
+  const cargar = async () => {
+    setCargando(true)
+    const r = await getAjustesPendientes({})
+    setCargando(false)
+    if (r.success) setFilas(r.data)
+    else toast({ title: "No se pudo cargar", description: r.message, variant: "destructive" })
+  }
+
+  useEffect(() => {
+    cargar()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const cerrarDialogo = () => {
+    setSeleccion(null)
+    setAccion(null)
+    setClave("")
+    setMotivoRechazo("")
+  }
+
+  const confirmar = async () => {
+    if (!seleccion || !accion) return
+    setEnviando(true)
+    const r =
+      accion === "aprobar"
+        ? await aprobarAjustePendiente(seleccion.id, clave)
+        : await rechazarAjustePendiente(seleccion.id, clave, motivoRechazo)
+    setEnviando(false)
+    if (r.success) {
+      toast({ title: accion === "aprobar" ? "Ajuste aprobado" : "Ajuste rechazado", description: r.message })
+      cerrarDialogo()
+      cargar()
+    } else {
+      toast({ title: "No se pudo completar", description: r.message, variant: "destructive" })
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <Card className="p-3 text-sm text-muted-foreground">
+        Los códigos <b>601</b> (Despacho manual) y <b>702</b> (Faltante) sacan producto sin una orden de cargue detrás y
+        sin ser avería/reproceso — quedan aquí, sin tocar el inventario, hasta que Gerencia los apruebe o los rechace
+        con su clave.
+      </Card>
+
+      <Card className="overflow-hidden">
+        <div className="max-h-[65vh] overflow-auto">
+          <table className="w-full min-w-[900px] text-sm">
+            <thead className="sticky top-0 bg-background">
+              <tr className="border-b text-left text-[11px] uppercase text-muted-foreground">
+                <th className="px-2 py-2">Fecha</th>
+                <th className="px-2 py-2">Proyecto</th>
+                <th className="px-2 py-2">Cód.</th>
+                <th className="px-2 py-2">Producto</th>
+                <th className="px-2 py-2">Lote · Ubic.</th>
+                <th className="px-2 py-2 text-right">Cantidad</th>
+                <th className="px-2 py-2">Motivo</th>
+                <th className="px-2 py-2">Solicitó</th>
+                <th className="px-2 py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filas.map((f) => (
+                <tr key={f.id} className="border-b last:border-0 align-top">
+                  <td className="px-2 py-1.5 text-xs">{fmtFechaHora(f.created_at)}</td>
+                  <td className="px-2 py-1.5 text-xs">{NOMBRE_EMPRESA[f.idempresa] || f.idempresa}</td>
+                  <td className="px-2 py-1.5"><Badge variant="outline" className="font-mono text-[10px]">{f.codigo}</Badge></td>
+                  <td className="px-2 py-1.5 text-xs">{f.producto}</td>
+                  <td className="px-2 py-1.5 text-xs">{f.lote} · {f.location}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{Number(f.cantidad).toLocaleString("es-CO")}</td>
+                  <td className="max-w-[220px] px-2 py-1.5 text-xs text-muted-foreground">{f.motivo || "—"}</td>
+                  <td className="px-2 py-1.5 text-xs">{f.solicitado_por}</td>
+                  <td className="px-2 py-1.5 text-right">
+                    <div className="flex justify-end gap-1">
+                      <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" style={{ color: "#1E8449", borderColor: "#1E8449" }} onClick={() => { setSeleccion(f); setAccion("aprobar") }}>
+                        <Check className="h-3.5 w-3.5" /> Aprobar
+                      </Button>
+                      <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" style={{ color: "#C0392B", borderColor: "#C0392B" }} onClick={() => { setSeleccion(f); setAccion("rechazar") }}>
+                        <X className="h-3.5 w-3.5" /> Rechazar
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {!cargando && filas.length === 0 && (
+                <tr><td colSpan={9} className="px-3 py-6 text-center text-sm text-muted-foreground">No hay solicitudes pendientes.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Dialog open={!!seleccion} onOpenChange={(o) => !o && cerrarDialogo()}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base">
+              {accion === "aprobar" ? "Aprobar ajuste" : "Rechazar ajuste"} {seleccion?.codigo}
+            </DialogTitle>
+          </DialogHeader>
+          {seleccion && (
+            <div className="space-y-3 text-sm">
+              <div className="rounded-md border bg-muted/30 p-3 text-xs leading-relaxed">
+                <p>{NOMBRE_EMPRESA[seleccion.idempresa] || seleccion.idempresa} · {seleccion.producto} · Lote {seleccion.lote} · {seleccion.location}</p>
+                <p className="mt-1">Cantidad: <b className="tabular-nums">{seleccion.cantidad}</b></p>
+                <p className="mt-1">Motivo: {seleccion.motivo || "—"}</p>
+                <p className="mt-1">Solicitó: {seleccion.solicitado_por}</p>
+              </div>
+              {accion === "rechazar" && (
+                <div>
+                  <Label className="text-xs uppercase text-muted-foreground">Motivo del rechazo</Label>
+                  <Textarea value={motivoRechazo} onChange={(e) => setMotivoRechazo(e.target.value)} rows={2} className="mt-1" />
+                </div>
+              )}
+              <div>
+                <Label className="text-xs uppercase text-muted-foreground">Clave de aprobación de Gerencia</Label>
+                <Input type="password" value={clave} onChange={(e) => setClave(e.target.value)} className="mt-1" placeholder="••••" />
+              </div>
+              {accion === "aprobar" && (
+                <p className="text-xs font-medium" style={{ color: "#C0392B" }}>
+                  Al aprobar, el ajuste se aplica de inmediato al inventario real (invtrans) — no se puede deshacer desde aquí.
+                </p>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={cerrarDialogo}>Cancelar</Button>
+            <Button
+              onClick={confirmar}
+              disabled={enviando || !clave.trim() || (accion === "rechazar" && !motivoRechazo.trim())}
+            >
+              {enviando ? "Enviando…" : accion === "aprobar" ? "Aprobar" : "Rechazar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Pestaña 5 — Guía / Capacitación (misma fuente que usa LIPbot)
 // ---------------------------------------------------------------------------
 
@@ -435,6 +612,7 @@ export function InventoryTransactionsModule() {
       { v: "clasico", l: "Formulario clásico" },
       { v: "consulta", l: "Consulta de movimientos" },
       { v: "historial", l: "Historial de correcciones" },
+      { v: "aprobaciones", l: "Aprobaciones pendientes" },
       { v: "guia", l: "Guía" },
     ],
     [],
@@ -455,6 +633,7 @@ export function InventoryTransactionsModule() {
         <TabsContent value="clasico" className="pt-3"><InventoryTransactionsForm /></TabsContent>
         <TabsContent value="consulta" className="pt-3"><ConsultaMovimientos /></TabsContent>
         <TabsContent value="historial" className="pt-3"><HistorialCorrecciones /></TabsContent>
+        <TabsContent value="aprobaciones" className="pt-3"><AprobacionesPendientes /></TabsContent>
         <TabsContent value="guia" className="pt-3"><GuiaTransacciones /></TabsContent>
       </Tabs>
     </div>
