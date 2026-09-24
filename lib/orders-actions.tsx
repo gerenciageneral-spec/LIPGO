@@ -2641,6 +2641,9 @@ export async function generateUnloadOrder(orderData: {
   }>
   pesoTotalOrden: number
   pesoBrutoTotalOrden?: number
+  // Confirmación explícita de que ya se avisó de un posible duplicado y el
+  // coordinador quiere crear el Descargue de todos modos (ver chequeo abajo).
+  forzarDuplicado?: boolean
 }) {
   const supabase = await createClient()
 
@@ -2708,6 +2711,37 @@ export async function generateUnloadOrder(orderData: {
     const currentDate = await getColombiaDate()
     const currentTime = await getColombiaTime()
     const fechaDescargueFormatted = await dateInputToColombiaDate(orderData.fechaDescargue)
+
+    // Blindaje 2026-09-23 (incidente Cedi Funza: un coordinador generó un
+    // Descargue manual para un camión que YA tenía su clon automático desde
+    // Avimol -- duplicó el registro, dobló el pago de nómina a los mismos
+    // auxiliares, y "tapó" el inventario con un ajuste 702 que no arregló
+    // nada). El clon automático (autoGenerarDescarguesCedi) sí se protege a
+    // sí mismo por `ordenorigen`, pero el formulario manual nunca cruzaba
+    // contra eso. Aviso, no bloqueo duro (decisión del cliente): si ya existe
+    // un Descargue para esta placa el mismo día en este proyecto, se avisa
+    // ANTES de crear -- el coordinador puede confirmar si de verdad es una
+    // segunda entrega real del mismo camión el mismo día.
+    if (!orderData.forzarDuplicado) {
+      const { data: existentes } = await supabase
+        .from("cabeceraoc")
+        .select("id, ordendecargue, tiquetebascula, pesovascula, horaorden")
+        .eq("idempresa", sessionEmpresaId)
+        .eq("tipooperacion", "Descargue")
+        .eq("placa", orderData.placa)
+        .eq("fechacargue", fechaDescargueFormatted)
+      if (existentes && existentes.length > 0) {
+        const detalle = existentes
+          .map((o: any) => `orden ${o.ordendecargue} (tiquete ${o.tiquetebascula || "—"}, ${o.pesovascula ?? "—"} ton, ${o.horaorden || ""})`)
+          .join("; ")
+        return {
+          success: false,
+          duplicado: true,
+          message: `Ya existe ${existentes.length === 1 ? "un Descargue" : `${existentes.length} Descargues`} para la placa ${orderData.placa} el ${orderData.fechaDescargue}: ${detalle}. ¿Seguro que quieres crear otro?`,
+          existentes,
+        }
+      }
+    }
 
     // Mismo caso que en la orden de cargue: el vehiculo pudo inspeccionarse
     // antes de que existiera la orden, y esa hora hay que conservarla.

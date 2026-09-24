@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { DatePickerField } from "@/components/ui/date-picker-field"
 import { Command, CommandList, CommandGroup, CommandInput, CommandItem } from "@/components/ui/command"
 import { Check, ChevronsUpDown } from "lucide-react"
@@ -71,6 +72,9 @@ export function GenerateUnloadOrders() {
   const [openProductCombobox, setOpenProductCombobox] = useState<Record<string, boolean>>({})
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  // Aviso (no bloqueo) cuando ya existe un Descargue para la misma placa el
+  // mismo día — ver el chequeo en generateUnloadOrder (lib/orders-actions.tsx).
+  const [avisoDuplicado, setAvisoDuplicado] = useState<string | null>(null)
 
   const [orderData, setOrderData] = useState<UnloadOrderData>({
     fechaDescargue: new Date().toISOString().split("T")[0],
@@ -271,6 +275,13 @@ console.log("[v0] selectedEmpresaId:", selectedEmpresaId)
       return
     }
 
+    await guardarOrden(false)
+  }
+
+  // Separado de handleSaveOrder para poder reintentar con `forzarDuplicado:
+  // true` desde el diálogo de aviso, sin repetir las validaciones de arriba.
+  const guardarOrden = async (forzarDuplicado: boolean) => {
+    const lineasConProducto = orderData.lineas.filter((line) => line.producto && line.cantidad > 0)
     try {
       setSaving(true)
 
@@ -292,7 +303,13 @@ console.log("[v0] selectedEmpresaId:", selectedEmpresaId)
         })),
         pesoTotalOrden: getTotalPeso(),
         pesoBrutoTotalOrden: getTotalPesoBruto(),
+        forzarDuplicado,
       })
+
+      if ((result as any).duplicado) {
+        setAvisoDuplicado(result.message)
+        return
+      }
 
       if (result.success) {
         // Update vehicle appointment status to "Procesado"
@@ -622,6 +639,30 @@ console.log("[v0] selectedEmpresaId:", selectedEmpresaId)
           </div>
         </CardContent>
       </Card>
+
+      <Dialog open={!!avisoDuplicado} onOpenChange={(o) => !o && setAvisoDuplicado(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base">Posible Descargue duplicado</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm">{avisoDuplicado}</p>
+          <p className="text-xs text-muted-foreground">
+            Si es una segunda entrega real del mismo camión el mismo día, puedes continuar. Si no estás seguro, cancela y
+            revisa el Descargue existente antes de crear otro (un duplicado paga doble en nómina).
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAvisoDuplicado(null)}>Cancelar</Button>
+            <Button
+              onClick={() => {
+                setAvisoDuplicado(null)
+                guardarOrden(true)
+              }}
+            >
+              Crear de todos modos
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
