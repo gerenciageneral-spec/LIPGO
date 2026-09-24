@@ -163,6 +163,7 @@ export function SatisfaccionPQRSF() {
                 <thead>
                   <tr className="border-b text-left text-[11px] uppercase text-muted-foreground">
                     <th className="px-3 py-2">Fecha</th><th className="px-3 py-2">Tipo</th><th className="px-3 py-2">Encuestado</th>
+                    <th className="px-3 py-2">Origen</th>
                     <th className="px-3 py-2">Cliente</th><th className="px-3 py-2">Calificación</th><th className="px-3 py-2">Comentario</th><th className="px-3 py-2"></th>
                   </tr>
                 </thead>
@@ -172,6 +173,28 @@ export function SatisfaccionPQRSF() {
                       <td className="px-3 py-1.5">{e.fecha}</td>
                       <td className="px-3 py-1.5"><Badge variant="outline">{e.tipo}</Badge></td>
                       <td className="px-3 py-1.5">{e.encuestado}</td>
+                      {/* De dónde vino la respuesta. Sin esto no se distingue
+                          lo que contestó el conductor por WhatsApp de lo que
+                          alguien transcribió, y son cosas distintas: una es su
+                          palabra, la otra una interpretación. */}
+                      <td className="px-3 py-1.5 text-xs">
+                        {e.canal === "encuesta_conductor" ? (
+                          <span className="rounded-full bg-teal-50 px-2 py-0.5 text-[11px] font-medium text-teal-800">
+                            respondió el conductor
+                          </span>
+                        ) : e.canal === "kiosko" ? (
+                          <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[11px] text-sky-800">
+                            kiosko
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">{e.canal || "—"}</span>
+                        )}
+                        {e.ref_orden && (
+                          <span className="ml-1 font-mono text-[10px] text-muted-foreground">
+                            {e.ref_orden}
+                          </span>
+                        )}
+                      </td>
                       <td className="px-3 py-1.5 text-xs text-muted-foreground">{nombreCliente[e.proyecto_id ?? 0]}</td>
                       <td className="px-3 py-1.5" style={{ color: SST_TOKENS.warn }} title={`${e.calificacion}/5`}>{estrellas(e.calificacion)}</td>
                       <td className="px-3 py-1.5 text-xs text-muted-foreground">{e.comentario}</td>

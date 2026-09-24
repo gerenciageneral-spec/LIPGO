@@ -285,6 +285,15 @@ export interface SigSatisfaccion {
   canal: string | null
   responsable: string | null
   activo: boolean
+  /**
+   * Orden de cargue que se calificó (`cabeceraoc.ordendecargue`).
+   *
+   * NULL en las encuestas digitadas a mano. Lo escriben el kiosko (scripts/sig/33)
+   * y el enlace público de WhatsApp (scripts/183), que comparten columna para
+   * compartir también el candado de una respuesta por cargue.
+   */
+  ref_orden?: string | null
+  placa?: string | null
 }
 
 // PQRSF (Peticiones, Quejas, Reclamos, Sugerencias, Felicitaciones).
