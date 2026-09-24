@@ -1290,7 +1290,9 @@ function ConciliacionBascula() {
   const r = data?.resumen
   const cobertura = r && r.tonBase > 0 ? (r.tonAsignada / r.tonBase) * 100 : 0
   const deltaPagonomina = r ? r.tonPagonomina - r.tonAsignada : 0
-  const totalAlertas = r ? r.ordenesSinAux + r.ordenesSinTarifa + r.ordenesNoFacturar + r.auxiliaresHuerfanos.length : 0
+  const totalAlertas = r
+    ? r.ordenesSinAux + r.ordenesSinTarifa + r.ordenesNoFacturar + r.auxiliaresHuerfanos.length + r.ordenesPagadasSinFacturar
+    : 0
 
   const TablaOrdenes = ({ rows, mostrarAux }: { rows: OrdenConciliada[]; mostrarAux?: boolean }) => (
     <Table>
@@ -1436,7 +1438,7 @@ function ConciliacionBascula() {
             <Kpi
               label="Alertas de conciliación"
               value={String(totalAlertas)}
-              hint={`${r.ordenesSinAux} sin aux · ${r.ordenesSinTarifa} sin tarifa · ${r.ordenesNoFacturar} no facturar · ${r.auxiliaresHuerfanos.length} huérfanos`}
+              hint={`${r.ordenesSinAux} sin aux · ${r.ordenesSinTarifa} sin tarifa · ${r.ordenesNoFacturar} no facturar · ${r.ordenesPagadasSinFacturar} pagadas sin facturar · ${r.auxiliaresHuerfanos.length} huérfanos`}
               tone={totalAlertas > 0 ? "down" : "up"}
             />
           </div>
@@ -1527,6 +1529,27 @@ function ConciliacionBascula() {
                 <p className="mt-2 text-xs text-muted-foreground">
                   Se desmarcó "Facturar" en estas órdenes: no se cobran al cliente, pero su tonelaje sí entra al
                   reparto de destajo. Es costo asumido — verificar que el motivo registrado lo justifique.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+          {r.ordenesPagadasSinFacturar > 0 && (
+            <Card className="border-destructive/60">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-base text-destructive">
+                  <AlertTriangle className="h-4 w-4" />
+                  Pagadas en nómina y NUNCA facturadas de verdad — {money(r.valorPagadasSinFacturar)} para revisar
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="overflow-x-auto">
+                <TablaOrdenes rows={data.ordenesPagadasSinFacturar} mostrarAux />
+                <p className="mt-2 text-xs text-muted-foreground">
+                  "Regla de oro": lo que se paga en nómina debe terminar facturado. Estas órdenes SÍ pagaron destajo a
+                  sus auxiliares y el período en el que caen YA tiene un anexo de facturación generado — pero la orden
+                  nunca apareció adentro. No es normal que un período recién cerrado tenga faltantes aquí: revisar si
+                  es un duplicado (mismo camión, dos registros), una orden que se borró después de pagarse, o un
+                  ajuste de inventario que tapó el problema sin resolverlo (ver Transacciones de Inventario ›
+                  Historial de correcciones).
                 </p>
               </CardContent>
             </Card>

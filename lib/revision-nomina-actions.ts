@@ -1265,6 +1265,8 @@ export interface OrdenConciliada {
   facturar: boolean
   tarifa: number
   valorPago: number // tonBase × tarifa (0 si no hay auxiliares)
+  facturasiigo: string | null // señal REAL de "facturado" (igual criterio que categoriaDeFactura en facturacion-control-actions.ts)
+  estadofactura: string | null
 }
 
 export interface DetalleOrdenColaborador {
@@ -1312,12 +1314,47 @@ export interface ConciliacionData {
     ordenesConDiferencia: number
     difProductoBase: number // Σ (tonBase − tonProducto) en órdenes con pesaje físico
     auxiliaresHuerfanos: string[]
+    // "Regla de oro: pago lo que facturo" (pedido 2026-09-23, incidente Cedi
+    // Funza: Descargue duplicado pagó nómina de más y nunca se facturó de
+    // verdad, tapado con un ajuste de inventario). Distinto de
+    // ordenesNoFacturar (esa mira el flag `cabeceraoc.facturar`): esto
+    // verifica la señal REAL de facturación (`cabeceraoc.facturasiigo` /
+    // `estadofactura`, el mismo criterio de categoriaDeFactura del Cuadro de
+    // Control -- corregido 2026-09-24, un primer intento miraba
+    // `prefacturas.soporte`, que NO es confiable). Solo marca "sin_gestionar"
+    // (nadie ha tocado el trámite de facturación) -- "en_proceso" no cuenta,
+    // es trámite normal en curso. Excluye órdenes cuyos auxiliares son
+    // 100% registros de prueba (nunca se pagó nada real).
+    ordenesPagadasSinFacturar: number
+    valorPagadasSinFacturar: number
   }
   ordenesConDiferencia: OrdenConciliada[]
   ordenesSinAux: OrdenConciliada[]
   ordenesSinTarifa: OrdenConciliada[]
   ordenesNoFacturar: OrdenConciliada[]
+  ordenesPagadasSinFacturar: OrdenConciliada[]
   colaboradores: ColaboradorConciliado[]
+}
+
+// Corrección 2026-09-24 (el cliente detectó que el primer intento miraba el
+// lugar equivocado): la membresía en `prefacturas.soporte` NO es la señal
+// real de "facturado" -- hay órdenes con `facturasiigo` real (PDF de la
+// factura ya adjunto) que nunca quedaron registradas dentro de ningún anexo
+// guardado. Se replica aquí EXACTO el mismo criterio de 3 categorías que ya
+// usa `categoriaDeFactura` en lib/facturacion-control-actions.ts para el
+// Cuadro de Control (no se puede importar esa función sync directo -- ese
+// archivo es "use server", solo exporta async):
+//   - "facturado": ya tiene facturasiigo -- de verdad se cobró.
+//   - "en_proceso": el coordinador ya la validó (estadofactura con algo
+//     distinto de "pendiente"), solo falta que llegue el Siigo -- NO es una
+//     fuga, es trámite normal en curso.
+//   - "sin_gestionar": nadie ha tocado el trámite de facturación de esta
+//     orden para NADA -- si además ya se pagó nómina, ESA es la fuga real.
+function categoriaFacturaOrden(facturasiigo: string | null, estadofactura: string | null): "facturado" | "en_proceso" | "sin_gestionar" {
+  if (String(facturasiigo ?? "").trim() !== "") return "facturado"
+  const e = String(estadofactura ?? "").trim()
+  if (e !== "" && !/pendiente/i.test(e)) return "en_proceso"
+  return "sin_gestionar"
 }
 
 export async function getConciliacionQuincena(
@@ -1344,7 +1381,7 @@ export async function getConciliacionQuincena(
     for (let off = 0; ; off += 1000) {
       const { data, error } = await admin
         .from("cabeceraoc")
-        .select("id, ordendecargue, fechacargue, idempresa, tipooperacion, pesovascula, pesoorden, auxiliares, facturar")
+        .select("id, ordendecargue, fechacargue, idempresa, tipooperacion, pesovascula, pesoorden, auxiliares, facturar, facturasiigo, estadofactura")
         .in("idempresa", emps)
         .gte("fechacargue", desde)
         .lte("fechacargue", hasta)
@@ -1408,6 +1445,15 @@ export async function getConciliacionQuincena(
       if (!data || data.length < 1000) break
     }
 
+    // 4b) Auxiliares de PRUEBA (hallazgo 2026-09-24, confirmado con el
+    //     cliente): quedan registrados en headcount como placeholders de
+    //     prueba (ej. "AUXILIAR PRUEBA AVIMOL 1", salario null) y NUNCA
+    //     aparecen en pagonomina -- nunca se les pagó nada real. Si TODOS los
+    //     auxiliares de una orden son de prueba, esa orden no pagó nómina de
+    //     verdad y no debe contar en "pagadas sin facturar".
+    const nombresPrueba = new Set<string>()
+    for (const n of nombresHc) if (/\bPRUEBA\b/.test(n)) nombresPrueba.add(n)
+
     // 5) Procesar órdenes: reparto EXACTO de pagonomina (báscula ÷ n auxiliares).
     const ordenes: OrdenConciliada[] = []
     const porPersona = new Map<string, ColaboradorConciliado>()
@@ -1444,6 +1490,8 @@ export async function getConciliacionQuincena(
         facturar: o.facturar !== false,
         tarifa,
         valorPago,
+        facturasiigo: o.facturasiigo ?? null,
+        estadofactura: o.estadofactura ?? null,
       }
       ordenes.push(orden)
 
@@ -1521,6 +1569,37 @@ export async function getConciliacionQuincena(
       .filter((o) => o.fuente === "bascula" && o.tonProducto > 0 && Math.abs(o.tonBase - o.tonProducto) > 0.05)
       .sort((a, b) => Math.abs(b.tonBase - b.tonProducto) - Math.abs(a.tonBase - a.tonProducto))
 
+    // "Pago lo que facturo": de las órdenes que SÍ se pagaron (nAux > 0, con
+    // auxiliares REALES -- ver exclusión de auxiliares de prueba abajo) y que
+    // no están marcadas explícitamente NO facturar, marcar solo las que
+    // quedaron en "sin_gestionar" -- nadie ha tocado NADA de su trámite de
+    // facturación. Las que ya están "en_proceso" (coordinador ya las validó,
+    // falta Siigo) NO son una fuga, es trámite normal en curso.
+    // Margen de gracia: el trámite de facturación nunca es el mismo día --
+    // sin esto, cualquier orden de ayer/hoy sale marcada como "fuga" solo por
+    // ser reciente (confirmado 2026-09-24: las 5 de ID3 que salían eran TODAS
+    // del día anterior). 5 días corridos de margen antes de considerar que
+    // "ya debieron haberla tocado".
+    const hoyColombia = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota" }).format(new Date())
+    const fechaLimite = new Date(hoyColombia)
+    fechaLimite.setDate(fechaLimite.getDate() - 5)
+    const fechaLimiteStr = fechaLimite.toISOString().slice(0, 10)
+
+    const pagadasSinFacturar = ordenes.filter((o) => {
+      if (o.nAux === 0 || !o.facturar) return false
+      if (o.fecha > fechaLimiteStr) return false // muy reciente -- todavia no le toca su ciclo normal
+      // Tolva/Tolva f (Indupan) se factura en BLOQUE por Prefactura de
+      // Producción, no orden por orden -- confirmado 2026-09-24: de 377
+      // órdenes Tolva históricas, solo 1 tiene facturasiigo puesto, y la
+      // prefactura de producción ni siquiera guarda numeroorden en su
+      // detalle. No hay señal confiable a nivel de ORDEN para este tipo; se
+      // excluye para no generar falsos positivos sistemáticos.
+      if (/^tolva/i.test(o.tipooperacion)) return false
+      const hayAuxReal = o.auxiliares.some((a) => !nombresPrueba.has(a.trim().toUpperCase()))
+      if (!hayAuxReal) return false // 100% auxiliares de prueba -- no se pagó nada real
+      return categoriaFacturaOrden(o.facturasiigo, o.estadofactura) === "sin_gestionar"
+    })
+
     const colaboradores = Array.from(porPersona.values()).sort((a, b) => b.tonAsignada - a.tonAsignada)
     for (const c of colaboradores) c.detalle.sort((a, b) => (a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0))
 
@@ -1544,11 +1623,14 @@ export async function getConciliacionQuincena(
         ordenesConDiferencia: conDif.length,
         difProductoBase: conDif.reduce((a, o) => a + (o.tonBase - o.tonProducto), 0),
         auxiliaresHuerfanos: Array.from(huerfanos).sort(),
+        ordenesPagadasSinFacturar: pagadasSinFacturar.length,
+        valorPagadasSinFacturar: pagadasSinFacturar.reduce((a, o) => a + o.valorPago, 0),
       },
       ordenesConDiferencia: conDif,
       ordenesSinAux: sinAux,
       ordenesSinTarifa: sinTarifa,
       ordenesNoFacturar: noFacturar,
+      ordenesPagadasSinFacturar: pagadasSinFacturar,
       colaboradores,
     }
     return { success: true, data }
