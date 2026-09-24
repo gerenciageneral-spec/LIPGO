@@ -932,7 +932,7 @@ export async function getPrefactura(
         const servicioPre = servicioDe(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa)
         if (soloProduccion) continue
         if (hayFiltroOps && servicioPre !== "Susanita" && !opSet.has(String(r.tipooperacion ?? "").trim().toLowerCase())) continue
-        const owner = ownerDeLinea(idempresa, r.placa, String(r.owner || "SIN OWNER"))
+        const owner = ownerDeLinea(idempresa, r.placa, String(r.owner || "SIN OWNER"), r.tipooperacion)
         const ton = num(r.toneladas)
         const tarifa = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
         const kProd = `${on}|||${owner}`
@@ -974,7 +974,7 @@ export async function getPrefactura(
         // Owner por el id_empresa del PRODUCTO (dueño real), incluido el propio.
         // SALVO en id4: el vehículo propio (LWY393) factura TODO su viaje al
         // owner del proyecto sin importar el producto (ver ownerDeLinea).
-        const owner = ownerDeLinea(idempresa, r.placa, String(r.owner || "SIN OWNER"))
+        const owner = ownerDeLinea(idempresa, r.placa, String(r.owner || "SIN OWNER"), r.tipooperacion)
         const est = estadoPorOrden.get(on)
         const estadofactura = est?.estado ?? null
         let tServicio: number
@@ -1510,7 +1510,7 @@ export async function getControlFacturacion(
       if (esEmpaque(r.subcategoria)) continue
       const servicio = servicioDe(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa)
       if (filtraOperacion(r, servicio)) continue
-      const owner = ownerDeLinea(idempresa, r.placa, String(r.owner || "SIN OWNER"))
+      const owner = ownerDeLinea(idempresa, r.placa, String(r.owner || "SIN OWNER"), r.tipooperacion)
       const ton = num(r.toneladas)
       const tarifa = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
       const k = key(on, owner)
@@ -1523,7 +1523,7 @@ export async function getControlFacturacion(
       if (esExcluida(r)) continue
       const servicio = servicioDe(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa)
       if (filtraOperacion(r, servicio)) continue
-      const owner = ownerDeLinea(idempresa, r.placa, String(r.owner || "SIN OWNER"))
+      const owner = ownerDeLinea(idempresa, r.placa, String(r.owner || "SIN OWNER"), r.tipooperacion)
       const ton = num(r.toneladas)
       let tarifa: number
       if (esEmpaque(r.subcategoria)) {
@@ -1923,7 +1923,7 @@ export async function getValoresNetosOrden(
         const placa = String(r.placa ?? "").trim().toUpperCase()
         const cl = String(r.cliente ?? "").toUpperCase()
         if (placasExcluidas.has(placa) && !cl.includes("SUSANITA")) continue
-        const owner = ownerDeLinea(idempresa, r.placa, String(r.owner || "SIN OWNER"))
+        const owner = ownerDeLinea(idempresa, r.placa, String(r.owner || "SIN OWNER"), r.tipooperacion)
         const ton = num(r.toneladas)
         const tarifa = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
         productoTonPorOrden.set(on, (productoTonPorOrden.get(on) || 0) + ton)
@@ -1952,7 +1952,7 @@ export async function getValoresNetosOrden(
         const placa = String(r.placa ?? "").trim().toUpperCase()
         const cl = String(r.cliente ?? "").toUpperCase()
         if (placasExcluidas.has(placa) && !cl.includes("SUSANITA")) continue // WMP446 salvo Susanita
-        const owner = ownerDeLinea(idempresa, r.placa, String(r.owner || "SIN OWNER"))
+        const owner = ownerDeLinea(idempresa, r.placa, String(r.owner || "SIN OWNER"), r.tipooperacion)
         const ton = num(r.toneladas)
         let tarifa: number
         if (esEmpaque(r.subcategoria)) {

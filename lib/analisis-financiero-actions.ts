@@ -429,7 +429,7 @@ async function realPorCodigo(
     const placa = String(r.placa ?? "").trim().toUpperCase()
     const cl = norm(r.cliente)
     if (placasExcluidas.has(placa) && !cl.includes("SUSANITA")) continue
-    const owner = ownerDeLinea(idempresa, r.placa, String(r.owner || "SIN OWNER"))
+    const owner = ownerDeLinea(idempresa, r.placa, String(r.owner || "SIN OWNER"), r.tipooperacion)
     const ton = num(r.toneladas)
     const tarifa = tarifaDeServicio(idempresa, r.tipooperacion, r.transporte, r.cliente, r.placa, owner, r.subcategoria, tarifas)
     const kProd = `${on}|||${owner}`
@@ -450,7 +450,7 @@ async function realPorCodigo(
     const cl = norm(r.cliente)
     if (placasExcluidas.has(placa) && !cl.includes("SUSANITA")) continue // WMP446 salvo Susanita
     const op = norm(r.tipooperacion)
-    const owner = ownerDeLinea(idempresa, r.placa, String(r.owner || "SIN OWNER"))
+    const owner = ownerDeLinea(idempresa, r.placa, String(r.owner || "SIN OWNER"), r.tipooperacion)
     const codigos = codigoDe(op, r.transporte, r.subcategoria, r.placa, r.cliente, owner)
     const ton = num(r.toneladas)
     ordenTotalDet.set(on, (ordenTotalDet.get(on) || 0) + ton)

@@ -108,17 +108,30 @@ export function numeroOrdenDistribucion(ordenCargue: string): string {
  * 2026-09-09 (REVERTIDA entonces porque CEDI Funza recibe y despacha
  * mercancía de TODOS los ID en la misma bodega, y forzar el owner
  * mal-atribuía a Avimol viajes que en realidad llevaban producto de otro
- * owner). **Reactivada el 2026-09-23**, a pedido explícito y confirmado del
- * cliente pese a conocer ese antecedente: Avimol asumió/acordó pagar TODO el
- * servicio de LWY354 en Funza (Cargue, Descargue y Distribución — incluidas
- * las Distribución que no son clon "+D" de un Cargue propio), sin importar
- * de quién sea el producto que mueva. Aplica también retroactivo (no hay
- * backfill: `ownerDeLinea` se calcula en vivo en cada consulta).
+ * owner). **Reactivada el 2026-09-23**, a pedido del cliente: Avimol, como
+ * dueña del vehículo, asumió/acordó pagar la Distribución de LWY354 en
+ * Funza sin importar de quién sea el producto que reparte. **Corregido el
+ * 2026-09-24**: el alcance real es SOLO Distribución (las órdenes clon
+ * "+D"), no el viaje completo — ver `OWNER_DE_PLACA_PROPIA_SOLO_DISTRIBUCION`.
+ * El Cargue de este vehículo sigue facturándose a cada owner dueño del
+ * producto, como cualquier otro vehículo. Aplica también retroactivo (no
+ * hay backfill: `ownerDeLinea` se calcula en vivo en cada consulta).
  */
 export const OWNER_DE_PLACA_PROPIA: Record<number, string> = {
   3: "AVIMOL",
   4: "Molinos del Atlántico",
 }
+
+/**
+ * Empresas donde `OWNER_DE_PLACA_PROPIA` se aplica SOLO a la operación
+ * Distribución (las órdenes clon "+D"), no al Cargue del mismo vehículo.
+ * ID3/Avimol: el Cargue de LWY354 se factura a cada owner dueño del
+ * producto; solo la Distribución se factura entera a Avimol como dueña del
+ * vehículo. Una empresa que NO esté en este set (ej. ID4/Molinos) sigue la
+ * regla original: el viaje completo (Cargue + Distribución) va al owner del
+ * proyecto.
+ */
+export const OWNER_DE_PLACA_PROPIA_SOLO_DISTRIBUCION = new Set<number>([3])
 
 /**
  * Empresas donde el Cargue y su clon de Distribución "+D" del vehículo
@@ -153,15 +166,23 @@ export function esVehiculoPropioAgrupable(
 /**
  * Owner real de una línea de facturación. Si el proyecto tiene la regla de
  * arriba y la placa es su vehículo propio, se IGNORA el owner del producto
- * que trae la vista `facturacion` y se factura entero al owner del proyecto.
+ * que trae la vista `facturacion` y se factura entero al owner del proyecto
+ * — salvo que el proyecto esté en `OWNER_DE_PLACA_PROPIA_SOLO_DISTRIBUCION`,
+ * en cuyo caso esto solo aplica cuando `tipooperacion` es Distribución; el
+ * Cargue de ese mismo vehículo respeta el owner del producto tal como viene.
  * En cualquier otro caso se respeta el owner tal como viene (de siempre).
  */
 export function ownerDeLinea(
   idempresa: number | null | undefined,
   placa: string | null | undefined,
   ownerDeLaVista: string,
+  tipooperacion?: string | null,
 ): string {
   const ownerPropio = OWNER_DE_PLACA_PROPIA[Number(idempresa)]
-  if (ownerPropio && esPlacaDistribucion(idempresa, placa)) return ownerPropio
-  return ownerDeLaVista
+  if (!ownerPropio || !esPlacaDistribucion(idempresa, placa)) return ownerDeLaVista
+  if (OWNER_DE_PLACA_PROPIA_SOLO_DISTRIBUCION.has(Number(idempresa))) {
+    const opNorm = String(tipooperacion ?? "").trim().toLowerCase()
+    if (opNorm !== "distribucion") return ownerDeLaVista
+  }
+  return ownerPropio
 }
