@@ -70,6 +70,7 @@ function ConsultaMovimientos() {
   const [tipomov, setTipomov] = useState("")
   const [codigo, setCodigo] = useState("")
   const [usuario, setUsuario] = useState("")
+  const [orden, setOrden] = useState("")
   const [filas, setFilas] = useState<any[]>([])
   const [truncado, setTruncado] = useState(false)
   const [cargando, setCargando] = useState(false)
@@ -87,6 +88,7 @@ function ConsultaMovimientos() {
       tipomov: tipomov || null,
       codigo: codigo || null,
       usuario: usuario || null,
+      ocargue: orden || null,
     })
     setCargando(false)
     setConsultado(true)
@@ -169,6 +171,10 @@ function ConsultaMovimientos() {
         <div>
           <Label className="text-[11px] uppercase text-muted-foreground">Usuario</Label>
           <Input value={usuario} onChange={(e) => setUsuario(e.target.value)} placeholder="Quién lo hizo" className="mt-1 h-9 w-36" />
+        </div>
+        <div>
+          <Label className="text-[11px] uppercase text-muted-foreground">Orden</Label>
+          <Input value={orden} onChange={(e) => setOrden(e.target.value)} placeholder="Ej: MOL2026…" className="mt-1 h-9 w-40 font-mono" />
         </div>
         <Button onClick={consultar} disabled={cargando} className="h-9">
           {cargando ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Search className="mr-1 h-4 w-4" />} Consultar

@@ -367,6 +367,51 @@ export async function generatePackingPDF(
       margin: { left: 15, right: 15 },
     })
 
+    // Lo RECIBIDO de verdad en un descargue: el ingreso automático por lote
+    // (invtrans › Entradas con `ocargue` = esta orden). La tabla de arriba es el
+    // detalle PLANEADO de la orden, sin lotes; sola no servía para ver qué entró
+    // en un descargue de paso (caso MOL202609299667, Cedi Funza). Solo los
+    // descargues a un CEDI tienen estas filas, así que el PDF de un cargue no cambia.
+    const { data: recibido, error: recibidoError } = await supabase
+      .from("invtrans")
+      .select("nombreproducto, lote, cantidad, status")
+      .eq("tipomov", "Entrada")
+      .eq("ocargue", ordenDescargue)
+      .order("id", { ascending: true })
+    if (recibidoError) {
+      console.error("[packing-pdf] no se pudo leer lo recibido en inventario:", recibidoError.message)
+    }
+    if (recibido && recibido.length) {
+      const y2 = (doc.lastAutoTable?.finalY ?? y) + 10
+      doc.setTextColor(0, 0, 0)
+      doc.setFontSize(11)
+      doc.setFont(undefined, "bold")
+      doc.text("Recibido en inventario (por lote)", 15, y2)
+      const total = recibido.reduce((s: number, r: any) => s + (Number(r.cantidad) || 0), 0)
+      autoTable(doc, {
+        startY: y2 + 4,
+        head: [["Producto", "Lote", "Cantidad", "Estado"]],
+        body: recibido.map((r: any) => [
+          String(r.nombreproducto || ""),
+          String(r.lote || "Sin lote"),
+          String(Number(r.cantidad) || 0),
+          r.status ? String(r.status) : "Pendiente por aprobar",
+        ]),
+        foot: [["Total recibido", "", String(total), ""]],
+        theme: "grid",
+        headStyles: { fillColor: [44, 82, 130], textColor: 255, fontStyle: "bold", fontSize: 10 },
+        footStyles: { fillColor: [235, 235, 235], textColor: 0, fontStyle: "bold", fontSize: 9 },
+        bodyStyles: { fontSize: 9 },
+        columnStyles: {
+          0: { cellWidth: 90 },
+          1: { cellWidth: 35 },
+          2: { cellWidth: 25, halign: "center" },
+          3: { cellWidth: 30 },
+        },
+        margin: { left: 15, right: 15 },
+      })
+    }
+
     // Footer
     doc.setTextColor(100, 100, 100)
     doc.setFontSize(7)

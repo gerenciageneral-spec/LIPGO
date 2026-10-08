@@ -843,6 +843,8 @@ export async function getConsultaMovimientos(filtros: {
   tipomov?: string | null
   codigo?: string | null
   usuario?: string | null
+  /** Orden de cargue/descargue a la que pertenece el movimiento (ej. el ingreso automático de un descargue). */
+  ocargue?: string | null
 }): Promise<{ success: boolean; data: any[]; truncado: boolean; error?: string }> {
   try {
     if (!filtros.selectedEmpresaId) return { success: false, data: [], truncado: false, error: "Selecciona un proyecto en el selector global." }
@@ -871,6 +873,7 @@ export async function getConsultaMovimientos(filtros: {
       if (filtros.tipomov?.trim()) q = q.eq("tipomov", filtros.tipomov.trim())
       if (filtros.codigo?.trim()) q = q.eq("cod_movimiento", filtros.codigo.trim())
       if (filtros.usuario?.trim()) q = q.ilike("creadopor", `%${filtros.usuario.trim()}%`)
+      if (filtros.ocargue?.trim()) q = q.ilike("ocargue", `%${filtros.ocargue.trim()}%`)
       const { data, error } = await q.order("id", { ascending: false }).range(from, from + 999)
       if (error) return { success: false, data: [], truncado: false, error: error.message }
       filas.push(...(data ?? []))

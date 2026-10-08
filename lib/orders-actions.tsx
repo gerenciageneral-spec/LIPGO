@@ -26,6 +26,7 @@ import {
 } from "@/lib/pedido-ordenes"
 import { autorizarAccion, motivoSinAccion } from "@/lib/puerta-modulo"
 import { resumenPedidosDeLaOrden } from "@/lib/pedido-de-la-orden"
+import { filasDeIngreso, norm as normIngreso, type LoteOrigen } from "@/lib/ingreso-descargue-regla"
 
 /**
  * Obtiene los IDs de empresa accesibles para el usuario actual desde perfil_acceso_empresas
@@ -4412,10 +4413,10 @@ export async function generarIngresoProduccionDesdeDescargue(supabase: any, orde
     const { data: det } = await supabase.from("detalleoc").select("producto, cantidad, cliente, lote").eq("idorden", orderId)
     if (!det || det.length === 0) return
 
-    const norm = (s: any) => String(s ?? "").trim().toUpperCase()
+    const norm = normIngreso
 
     // Lotes del cargue madre por (producto+cliente) — SOLO si viene de planta (ordenorigen).
-    const lotesPorLinea = new Map<string, { lote: string; cantidad: number }[]>()
+    const lotesPorLinea = new Map<string, LoteOrigen[]>()
     if (oh.ordenorigen) {
       const { data: hl } = await supabase
         .from("historicolotes").select("producto, cliente, lote, cantidad").eq("ordendecargue", oh.ordenorigen)
@@ -4439,7 +4440,7 @@ export async function generarIngresoProduccionDesdeDescargue(supabase: any, orde
     // idempresa y corresponde a la empresa ORIGEN, mientras que `oh.idempresa` es
     // la RECEPTORA (3 o 4). Filtrar por la receptora no traeria nada. El
     // `ocargue` ya identifica el despacho de forma univoca.
-    const lotesPorProducto = new Map<string, { lote: string; cantidad: number }[]>()
+    const lotesPorProducto = new Map<string, LoteOrigen[]>()
     if (oh.ordenorigen) {
       const { data: dt } = await supabase
         .from("despachotraslados").select("nombreproducto, lote, cantidad").eq("ocargue", oh.ordenorigen)
@@ -4460,51 +4461,39 @@ export async function generarIngresoProduccionDesdeDescargue(supabase: any, orde
       for (const p of prods ?? []) prodByNombre.set(norm(p.nombre), { id: p.id, codigo: p.codigo })
     }
 
+    // Qué filas nacen (una por lote, cada pool de lotes UNA sola vez aunque el detalle
+    // traiga varias líneas del mismo producto y cliente): regla pura y probada en
+    // lib/ingreso-descargue-regla.ts. Ahí está contado el caso MOL202609299667.
+    const { filas: filasRegla, avisos } = filasDeIngreso(det, lotesPorProducto, lotesPorLinea)
+    for (const a of avisos) {
+      // Se conservan las cantidades por lote (son el dato real) y se avisa: un
+      // descuadre aquí significa que el despacho y el detalle de la orden no
+      // cuentan lo mismo, y eso hay que mirarlo.
+      console.warn(
+        `[ingreso-descargue] ${oh.ordendecargue}: "${a.producto}" (${a.cliente ?? "sin cliente"}) suma ` +
+          `${a.sumaLotes} por lote pero el detalle dice ${a.sumaDetalle}. Se usan las cantidades por lote.`,
+      )
+    }
+    if (!filasRegla.length) return
+
     const creado = await getColombiaDateTime()
-    const filas: any[] = []
-    for (const d of det) {
-      const cant = Number(d.cantidad) || 0
-      if (cant <= 0) continue
-      const p = prodByNombre.get(norm(d.producto))
-      const base = {
+    const filas = filasRegla.map((f) => {
+      const p = prodByNombre.get(norm(f.producto))
+      return {
         idempresa: oh.idempresa,
         idproducto: p?.id ?? null,
         codproducto: p?.codigo ?? null,
-        nombreproducto: d.producto,
+        nombreproducto: f.producto,
         tipomov: "Entrada",
         status: null, // PENDIENTE por aprobar
         origen: `descargue ${oh.ordendecargue}`,
         ocargue: oh.ordendecargue,
         creado,
         creadopor: "Auto (descargue PT)",
+        lote: f.lote,
+        cantidad: f.cantidad,
       }
-      // Orden de preferencia: el despacho del traslado manda sobre el cargue
-      // madre, porque es el registro de lo que REALMENTE salio de la bodega.
-      const lotes =
-        lotesPorProducto.get(norm(d.producto)) ??
-        lotesPorLinea.get(norm(d.producto) + "|" + norm(d.cliente))
-
-      if (lotes && lotes.length) {
-        // Un ingreso por lote, con su cantidad.
-        const sumaLotes = lotes.reduce((s, l) => s + l.cantidad, 0)
-        if (sumaLotes !== cant) {
-          // Se conservan las cantidades por lote (son el dato real) y se avisa:
-          // un descuadre aqui significa que el despacho y el detalle de la orden
-          // no cuentan lo mismo, y eso hay que mirarlo.
-          console.warn(
-            `[ingreso-descargue] ${oh.ordendecargue}: "${d.producto}" suma ${sumaLotes} por lote ` +
-              `pero el detalle dice ${cant}. Se usan las cantidades por lote.`,
-          )
-        }
-        for (const l of lotes) filas.push({ ...base, lote: l.lote, cantidad: l.cantidad })
-      } else {
-        // Sin traslado ni cargue madre: el lote propio de la línea (capturado a
-        // mano al generar la orden), si lo hay. Si tampoco, sin lote (manual).
-        const loteLinea = String(d.lote ?? "").trim()
-        filas.push({ ...base, lote: loteLinea || null, cantidad: cant })
-      }
-    }
-    if (!filas.length) return
+    })
 
     const { data: maxT } = await supabase.from("invtrans").select("id").order("id", { ascending: false }).limit(1).maybeSingle()
     let nid = (maxT?.id || 0) + 1
