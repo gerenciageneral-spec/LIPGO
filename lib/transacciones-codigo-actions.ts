@@ -36,6 +36,18 @@ import {
   type AjustePendiente,
 } from "@/lib/transacciones-codigo"
 import { motivoSinAccion } from "@/lib/puerta-modulo"
+import { registrarErrorServidor } from "@/lib/errores-servidor"
+import {
+  armarLineas,
+  clasificar,
+  codigoDelSentido,
+  esAprobado,
+  esRechazado,
+  resumirMovimientos,
+  sentidoDe,
+  type OrdenCuadre,
+  type ResumenMovimientos,
+} from "@/lib/cuadre-por-orden"
 
 // ---------------------------------------------------------------------------
 // Catálogo (nomenclatura) — columna real: codigo_sap (verificado 2026-08-08)
@@ -339,6 +351,24 @@ async function ejecutarTransaccion(
     if (!prodInfo) return { success: false, message: `Producto "${producto}" no encontrado.` }
     if (!prodDestinoInfo) return { success: false, message: `Producto destino "${productoDestino}" no encontrado.` }
 
+    // Orden de referencia (101 recepción, 653 devolución): se guarda en `ocargue` para
+    // que el Cuadre por orden cruce el movimiento con su orden. Antes el número solo
+    // quedaba escrito en observaciones y nada cruzaba. Se exige que exista en el proyecto
+    // para no amarrar un ingreso a un número mal digitado.
+    let ordenRef: string | null = null
+    if ((payload.codigo === "101" || payload.codigo === "653") && payload.ocargueRef?.trim()) {
+      const { data: cab, error: cabErr } = await sb
+        .from("cabeceraoc")
+        .select("ordendecargue")
+        .eq("idempresa", empresaId)
+        .ilike("ordendecargue", payload.ocargueRef.trim())
+        .limit(1)
+        .maybeSingle()
+      if (cabErr) return { success: false, message: cabErr.message }
+      if (!cab) return { success: false, message: `La orden ${payload.ocargueRef.trim()} no existe en este proyecto. Revisa el número o deja el campo vacío.` }
+      ordenRef = String(cab.ordendecargue)
+    }
+
     // Armar la(s) fila(s) de invtrans según el código.
     const { data: maxRow } = await sb.from("invtrans").select("id").order("id", { ascending: false }).limit(1).maybeSingle()
     let nextId = maxRow ? Number(maxRow.id) + 1 : 1
@@ -379,7 +409,7 @@ async function ejecutarTransaccion(
       case "561":
       case "653":
       case "701":
-        filas.push(base({ tipomov: "Entrada" }))
+        filas.push(base({ tipomov: "Entrada", ...(ordenRef ? { ocargue: ordenRef } : {}) }))
         break
       case "601":
       case "702":
@@ -883,6 +913,213 @@ export async function getConsultaMovimientos(filtros: {
     return { success: true, data: filas.slice(0, MAX), truncado: filas.length >= MAX }
   } catch (e: any) {
     return { success: false, data: [], truncado: false, error: e?.message || "Error en la consulta." }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Cuadre por orden: cada orden del proyecto contra lo que movió en el inventario,
+// y todo lo que entró o salió SIN orden en el período. Solo lectura. La regla
+// (sentido, líneas, estado, resumen) es pura y probada: lib/cuadre-por-orden.ts.
+// ---------------------------------------------------------------------------
+
+export interface MovSinOrden {
+  id: number
+  creado: string | null
+  nombreproducto: string | null
+  lote: string | null
+  location: string | null
+  cantidad: number
+  cod_movimiento: string | null
+  creadopor: string | null
+  observaciones: string | null
+}
+
+export interface CuadrePorOrdenData {
+  ordenes: OrdenCuadre[]
+  sinOrden: { entradas: MovSinOrden[]; salidas: MovSinOrden[] }
+  /** Movimientos del período que citan una orden con fecha de cargue fuera del rango. */
+  deOtroPeriodo: { filas: number; unidades: number; ordenes: string[] }
+  resumen: ResumenMovimientos
+  truncado: boolean
+}
+
+export async function getCuadrePorOrden(filtros: {
+  selectedEmpresaId: number
+  desde: string // YYYY-MM-DD (fecha de cargue de la orden / día calendario Colombia del movimiento)
+  hasta: string
+}): Promise<{ success: boolean; data?: CuadrePorOrdenData; error?: string }> {
+  try {
+    if (!filtros.selectedEmpresaId) return { success: false, error: "Selecciona un proyecto en el selector global." }
+    if (!filtros.desde || !filtros.hasta) return { success: false, error: "Indica el rango de fechas (desde y hasta)." }
+    const sb: any = await getSupabaseAdmin()
+    const emp = filtros.selectedEmpresaId
+    const MAX = 5000
+    let truncado = false
+
+    // 1) Órdenes del período por fecha de cargue, paginadas por id.
+    const ordenes: any[] = []
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await sb
+        .from("cabeceraoc")
+        .select("id, ordendecargue, tipooperacion, status, ordenorigen, cliente, placa, fechacargue, idpedido, pedidos_n")
+        .eq("idempresa", emp)
+        .gte("fechacargue", filtros.desde)
+        .lte("fechacargue", filtros.hasta)
+        .order("id", { ascending: true })
+        .range(from, from + 999)
+      if (error) return { success: false, error: error.message }
+      ordenes.push(...(data ?? []))
+      if (!data || data.length < 1000) break
+      if (ordenes.length >= MAX) { truncado = true; break }
+    }
+
+    // 2) Detalle de esas órdenes (lo autorizado), por lotes de ids.
+    const detallePorOrden = new Map<number, { producto: string; cantidad: number }[]>()
+    const ids = ordenes.map((o) => Number(o.id))
+    for (let i = 0; i < ids.length; i += 200) {
+      const grupo = ids.slice(i, i + 200)
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await sb
+          .from("detalleoc")
+          .select("id, idorden, producto, cantidad")
+          .in("idorden", grupo)
+          .order("id", { ascending: true })
+          .range(from, from + 999)
+        if (error) return { success: false, error: error.message }
+        for (const d of data ?? []) {
+          const k = Number(d.idorden)
+          if (!detallePorOrden.has(k)) detallePorOrden.set(k, [])
+          detallePorOrden.get(k)!.push({ producto: String(d.producto ?? ""), cantidad: Number(d.cantidad) || 0 })
+        }
+        if (!data || data.length < 1000) break
+      }
+    }
+
+    // 3) Movimientos que citan esas órdenes (sin importar su fecha: el movimiento de
+    //    una orden del 30 puede registrarse el 1).
+    const codigos = [...new Set(ordenes.map((o) => String(o.ordendecargue ?? "")).filter(Boolean))]
+    const movPorOrden = new Map<string, any[]>()
+    for (let i = 0; i < codigos.length; i += 100) {
+      const grupo = codigos.slice(i, i + 100)
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await sb
+          .from("invtrans")
+          .select("id, ocargue, nombreproducto, cantidad, tipomov, cod_movimiento, status")
+          .in("ocargue", grupo)
+          .order("id", { ascending: true })
+          .range(from, from + 999)
+        if (error) return { success: false, error: error.message }
+        for (const m of data ?? []) {
+          const k = String(m.ocargue)
+          if (!movPorOrden.has(k)) movPorOrden.set(k, [])
+          movPorOrden.get(k)!.push(m)
+        }
+        if (!data || data.length < 1000) break
+      }
+    }
+
+    // 4) Todos los movimientos del período (día calendario de Colombia, UTC-5): el
+    //    universo de lo que entró y salió, con o sin orden.
+    const desdeUtc = `${filtros.desde}T05:00:00Z`
+    const hastaD = new Date(`${filtros.hasta}T00:00:00Z`)
+    hastaD.setUTCDate(hastaD.getUTCDate() + 1)
+    const hastaUtc = `${hastaD.toISOString().slice(0, 10)}T04:59:59Z`
+    const periodo: any[] = []
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await sb
+        .from("invtrans")
+        .select("id, creado, nombreproducto, lote, location, cantidad, tipomov, cod_movimiento, status, ocargue, creadopor, observaciones")
+        .eq("idempresa", emp)
+        .gte("creado", desdeUtc)
+        .lte("creado", hastaUtc)
+        .order("id", { ascending: true })
+        .range(from, from + 999)
+      if (error) return { success: false, error: error.message }
+      periodo.push(...(data ?? []))
+      if (!data || data.length < 1000) break
+      if (periodo.length >= MAX * 4) { truncado = true; break }
+    }
+
+    // 5) Armar el cuadre de cada orden.
+    const resultado: OrdenCuadre[] = ordenes.map((o) => {
+      const sentido = sentidoDe(o.tipooperacion)
+      const mueve = codigoDelSentido(sentido)
+      const movs = movPorOrden.get(String(o.ordendecargue ?? "")) ?? []
+      const aprobados = mueve
+        ? movs.filter((m) => esAprobado(m.status) && String(m.tipomov) === mueve.tipomov && String(m.cod_movimiento ?? "") === mueve.codigo)
+        : []
+      const pendientes = mueve
+        ? movs.filter((m) => !esAprobado(m.status) && !esRechazado(m.status) && String(m.tipomov) === mueve.tipomov).length
+        : 0
+      const rechazados = movs.filter((m) => esRechazado(m.status)).length
+      const lineas = armarLineas(
+        detallePorOrden.get(Number(o.id)) ?? [],
+        aprobados.map((m) => ({ producto: m.nombreproducto, cantidad: m.cantidad })),
+      )
+      const cantOrden = lineas.reduce((s, l) => s + l.orden, 0)
+      const cantInventario = lineas.reduce((s, l) => s + l.inventario, 0)
+      const pedidosN = Number(o.pedidos_n) || 0
+      return {
+        id: Number(o.id),
+        orden: String(o.ordendecargue ?? ""),
+        tipo: String(o.tipooperacion ?? ""),
+        sentido,
+        automatica: !!o.ordenorigen,
+        ordenorigen: o.ordenorigen ?? null,
+        fecha: o.fechacargue ?? null,
+        placa: o.placa ?? null,
+        cliente: o.cliente ?? null,
+        pedidos: o.idpedido ? String(o.idpedido) : pedidosN > 1 ? `${pedidosN} pedidos` : null,
+        status: o.status ?? null,
+        cantOrden,
+        cantInventario,
+        diferencia: cantInventario - cantOrden,
+        pendientes,
+        rechazados,
+        estado: clasificar({ sentido, status: o.status, lineas, pendientes }),
+        lineas,
+      }
+    })
+
+    // 6) Lo que no cruza con ninguna orden del período.
+    const setCodigos = new Set(codigos)
+    const aFila = (m: any): MovSinOrden => ({
+      id: Number(m.id),
+      creado: m.creado ?? null,
+      nombreproducto: m.nombreproducto ?? null,
+      lote: m.lote ?? null,
+      location: m.location ?? null,
+      cantidad: Number(m.cantidad) || 0,
+      cod_movimiento: m.cod_movimiento == null ? null : String(m.cod_movimiento),
+      creadopor: m.creadopor ?? null,
+      observaciones: m.observaciones ?? null,
+    })
+    const sinOrdenEntradas = periodo
+      .filter((m) => esAprobado(m.status) && String(m.tipomov) === "Entrada" && String(m.cod_movimiento ?? "") === "101" && !String(m.ocargue ?? "").trim())
+      .map(aFila)
+    const sinOrdenSalidas = periodo
+      .filter((m) => esAprobado(m.status) && String(m.tipomov) === "Salida" && String(m.cod_movimiento ?? "") === "601" && !String(m.ocargue ?? "").trim())
+      .map(aFila)
+    const otros = periodo.filter((m) => esAprobado(m.status) && String(m.ocargue ?? "").trim() && !setCodigos.has(String(m.ocargue)))
+    const deOtroPeriodo = {
+      filas: otros.length,
+      unidades: otros.reduce((s, m) => s + (Number(m.cantidad) || 0), 0),
+      ordenes: [...new Set(otros.map((m) => String(m.ocargue)))].slice(0, 20),
+    }
+
+    return {
+      success: true,
+      data: {
+        ordenes: resultado,
+        sinOrden: { entradas: sinOrdenEntradas, salidas: sinOrdenSalidas },
+        deOtroPeriodo,
+        resumen: resumirMovimientos(periodo),
+        truncado,
+      },
+    }
+  } catch (e: any) {
+    void registrarErrorServidor("inventario.getCuadrePorOrden", e)
+    return { success: false, error: e?.message || "Error en la consulta." }
   }
 }
 

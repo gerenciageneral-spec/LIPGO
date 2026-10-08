@@ -690,8 +690,13 @@ export function TransaccionesPorCodigo() {
             {/* Referencia opcional a orden (653) */}
             {fs.referencia === "ocargueOpcional" && (
               <div>
-                <Label className="text-xs uppercase text-muted-foreground">Orden de cargue de la devolución (opcional)</Label>
-                <Input value={ocargueRef} onChange={(e) => setOcargueRef(e.target.value)} placeholder="Ej: IND202607247162" className="mt-1 max-w-xs" />
+                <Label className="text-xs uppercase text-muted-foreground">
+                  {codigo === "101" ? "Orden de descargue que se recibe (opcional)" : "Orden de cargue de la devolución (opcional)"}
+                </Label>
+                <Input value={ocargueRef} onChange={(e) => setOcargueRef(e.target.value)} placeholder={codigo === "101" ? "Ej: 107215 o MOL202609299667" : "Ej: IND202607247162"} className="mt-1 max-w-xs" />
+                {codigo === "101" && (
+                  <p className="mt-1 text-xs text-muted-foreground">Con el número, este ingreso cruza con la orden en «Cuadre por orden». Sin él queda como ingreso a mano.</p>
+                )}
               </div>
             )}
 

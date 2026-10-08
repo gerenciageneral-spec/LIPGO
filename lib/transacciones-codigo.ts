@@ -26,7 +26,9 @@ export interface FieldSet {
 
 export const FIELDSETS: Record<string, FieldSet> = {
   // Movimientos normales (sin clave — igual que el formulario clásico)
-  "101": { requiereClave: false, origen: "libre", destino: null, referencia: null, cantidadContra: null },
+  // 101 puede citar la orden de descargue que se recibe: así el ingreso a mano cruza con
+  // la orden en el Cuadre por orden (antes el número solo quedaba en observaciones).
+  "101": { requiereClave: false, origen: "libre", destino: null, referencia: "ocargueOpcional", cantidadContra: null },
   "561": { requiereClave: false, origen: "libre", destino: null, referencia: null, cantidadContra: null },
   "653": { requiereClave: false, origen: "libre", destino: null, referencia: "ocargueOpcional", cantidadContra: null },
   "601": { requiereClave: false, origen: "conStock", destino: null, referencia: null, cantidadContra: "stock" },
