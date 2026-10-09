@@ -67,6 +67,7 @@ import { getMetaDiaForEmpresa } from "@/lib/empresa-meta-dia"
 import { getSlaCargueMin, esNombreSubproducto, PLANTA_ACORDADA, factorTiempoSitio } from "@/lib/sla-acordados"
 import { esCodigoTrasladoNetoCero, nombreMovimientoPorCodigo } from "@/lib/transacciones-codigo"
 import { saldoCorrido } from "@/lib/kardex-saldo"
+import { clasificarMovimiento } from "@/lib/kardex-clasificacion"
 import { excluirNoFacturable } from "@/lib/facturas-exclusiones"
 import { categoriaDeNovedad, diasActivosEnPeriodo, diasAusenciaDistintos } from "@/lib/ausentismo-categorias"
 import { codigosOrdenPorUnidad } from "@/lib/ordenes-por-unidad"
@@ -3774,30 +3775,27 @@ export async function getKardexInventario(
       if (!String(r.status || "").toLowerCase().startsWith("aprob")) continue
       if (!dentro(r)) continue
       const cod = r.codproducto || "(sin código)"
-      if (!map[cod]) map[cod] = { codproducto: cod, producto: r.nombreproducto || "", entradas: 0, salidas: 0, ajustes: 0, traslados: 0, merma: 0 }
+      if (!map[cod]) map[cod] = { codproducto: cod, producto: r.nombreproducto || "", entradas: 0, salidas: 0, ajustes: 0, traslados: 0, merma: 0, adivinados: 0 }
       const c = Math.abs(Number(r.cantidad) || 0)
       if (r.nombreproducto && !map[cod].producto) map[cod].producto = r.nombreproducto
-      // Clasificación con SIGNO EXACTO respecto al stock: el saldo de la fila
-      // es base + entradas − salidas + ajustes − merma + reclasificaciones,
-      // transacción por transacción. 309/311/312/344/343 (reclasificar,
-      // trasladar, bloquear) son pareja salida+entrada: dentro del mismo
-      // producto suman 0; si un 309 cruzó de producto, cada producto ve su
-      // pata y el saldo la aplica, igual que el stock — es una transacción
-      // con código y soporte, no una diferencia (regla de gerencia
-      // 2026-10-02: "toda diferencia debe tener un soporte"). La columna
-      // muestra el NETO.
-      if (esCodigoTrasladoNetoCero(r.cod_movimiento) || has(r.origen, "traslado entre localizaciones")) map[cod].traslados += r.tipomov === "Entrada" ? c : -c
-      else if (r.tipomov === "Reproceso" || (r.tipomov === "Salida" && has(r.origen, "reproceso"))) map[cod].merma += c
-      else if (r.tipomov === "Entrada" && (has(r.origen, "producc") || has(r.origen, "aprob") || has(r.origen, "descarg") || has(r.origen, "logo") || has(r.origen, "reproceso"))) map[cod].entradas += c
-      else if (r.tipomov === "Salida" && has(r.origen, "orden de cargue")) map[cod].salidas += c
-      else map[cod].ajustes += r.tipomov === "Entrada" ? c : -c // 701/702, devoluciones 653, inicial 561, otros
+      // En qué columna entra cada movimiento: lo dice su CÓDIGO, no el texto de `origen`.
+      // La regla es la de gerencia (2026-10-08): "aumenta con todos los códigos que generen
+      // ingresos —descargue, producción, LOGO, devoluciones—; le restan las órdenes de cargue
+      // y las averías; nada más lo puede afectar". Está en lib/kardex-clasificacion.ts con 17
+      // pruebas. Antes se adivinaba por texto y todo lo hecho por código (que graba
+      // origen="transaccion manual") caía en "Ajustes": las devoluciones 653, el desecho 555 y
+      // los reversos 102/602 salían donde no eran.
+      const { columna, signo, adivinado } = clasificarMovimiento(r)
+      const destino = columna === "ingresos" ? "entradas" : columna === "averias" ? "merma" : columna
+      map[cod][destino] += signo * c
+      if (adivinado) map[cod].adivinados += 1
     }
 
     // Filas = unión de productos con base, con movimientos o con cierre/stock.
     const codigos = new Set<string>([...Object.keys(map), ...Object.keys(base?.porProducto ?? {}), ...Object.keys(cierre.porProducto ?? vivo)])
     const filas = [...codigos]
       .map((cod) => {
-        const p = map[cod] ?? { codproducto: cod, producto: "", entradas: 0, salidas: 0, ajustes: 0, traslados: 0, merma: 0 }
+        const p = map[cod] ?? { codproducto: cod, producto: "", entradas: 0, salidas: 0, ajustes: 0, traslados: 0, merma: 0, adivinados: 0 }
         const saldoInicial = base ? Math.round(base.porProducto[cod] ?? 0) : null
         const saldo = Math.round((saldoInicial ?? 0) + p.entradas - p.salidas + p.ajustes - p.merma + p.traslados)
         const saldoCierre = Math.round((cierre.porProducto ? cierre.porProducto[cod] : vivo[cod]) ?? 0)
