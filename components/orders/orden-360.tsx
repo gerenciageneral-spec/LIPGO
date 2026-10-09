@@ -204,16 +204,42 @@ export function Orden360Dialog({
               ) : (
                 <ul className="divide-y divide-border">
                   {data.pedidos.map((p) => (
-                    <li key={p.idpedido} className="flex flex-wrap items-center justify-between gap-2 px-5 py-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold">Pedido #{p.idpedido}{p.cliente ? ` · ${p.cliente}` : ""}</p>
-                        <p className="lg-num text-xs text-muted-foreground">
-                          {p.unidades ? `${NUM.format(p.unidades)} unidades` : "sin unidades"}
-                          {p.fechaProgramada ? ` · prometido para el ${p.fechaProgramada}` : ""}
-                          {p.fecha ? ` · registrado el ${p.fecha}` : ""}
-                        </p>
+                    <li key={p.idpedido} className="px-5 py-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold">Pedido #{p.idpedido}{p.cliente ? ` · ${p.cliente}` : ""}</p>
+                          <p className="lg-num text-xs text-muted-foreground">
+                            {p.unidades ? `${NUM.format(p.unidades)} unidades en esta orden` : "sin unidades"}
+                            {p.fechaProgramada ? ` · prometido para el ${p.fechaProgramada}` : ""}
+                            {p.fecha ? ` · registrado el ${p.fecha}` : ""}
+                          </p>
+                        </div>
+                        {p.estado && <Chip tono={String(p.estado).toLowerCase() === "entregado" ? "ok" : "neutro"}>{p.estado}</Chip>}
                       </div>
-                      {p.estado && <Chip tono={String(p.estado).toLowerCase() === "entregado" ? "ok" : "neutro"}>{p.estado}</Chip>}
+                      {/* El pedido tal cual lo hizo el cliente: lo pedido, lo ya cargado (en esta y otras
+                          órdenes) y lo que falta. Así la orden se lee contra su origen. */}
+                      {p.lineas.length > 0 && (
+                        <table className="mt-2 w-full text-xs">
+                          <thead className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                            <tr>
+                              <th className="py-1 text-left font-semibold">Producto del pedido</th>
+                              <th className="py-1 text-right font-semibold">Pidió</th>
+                              <th className="py-1 text-right font-semibold">Cargado</th>
+                              <th className="py-1 text-right font-semibold">Pendiente</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {p.lineas.map((l, i) => (
+                              <tr key={i} className="border-t border-border/40">
+                                <td className="py-1 pr-2">{l.producto}</td>
+                                <td className="lg-num py-1 text-right">{NUM.format(l.pedidas)}</td>
+                                <td className="lg-num py-1 text-right">{NUM.format(l.cargadas)}</td>
+                                <td className={`lg-num py-1 text-right ${l.pendientes > 0 ? "font-semibold text-atencion-fg" : "text-muted-foreground"}`}>{NUM.format(l.pendientes)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
                     </li>
                   ))}
                 </ul>

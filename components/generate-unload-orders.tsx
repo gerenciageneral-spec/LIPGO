@@ -494,10 +494,10 @@ console.log("[v0] selectedEmpresaId:", selectedEmpresaId)
             </div>
 
             <div className="space-y-1">
-              <Label htmlFor="numero-orden" className="text-xs">Número de orden</Label>
+              <Label htmlFor="numero-orden" className="text-xs">Remisión / número del cliente (opcional)</Label>
               <Input
                 id="numero-orden"
-                placeholder="Si viene del cliente; si no, se genera"
+                placeholder="El número de la orden lo genera LIPgo"
                 value={orderData.numeroOrden}
                 onChange={(e) =>
                   setOrderData((prev) => ({

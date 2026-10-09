@@ -14,6 +14,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Label } from "@/components/ui/label"
 import { AyudaClaveAutorizacion } from "@/components/mi-clave-autorizacion"
 import { Orden360Dialog } from "@/components/orders/orden-360"
+import { Ingreso360Dialog } from "@/components/inventario/ingreso-360"
+import { CuadrePorOrden } from "@/components/inventario/cuadre-por-orden"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { useToast } from "@/hooks/use-toast"
 import { SST_TOKENS } from "@/components/sst/sst-utils"
@@ -101,6 +103,7 @@ export function PanelInventarioLIP() {
   const [modoEdicion, setModoEdicion] = useState(false)
   // Ciclo completo de una orden (pidió · asignó · despachó), abierto desde la conciliación.
   const [orden360, setOrden360] = useState<string | null>(null)
+  const [ingreso360, setIngreso360] = useState<string | null>(null)
   // Cuadre manual con clave personal (gerencia 2026-10-04): líneas pendientes de confirmar.
   const [pendienteCuadre, setPendienteCuadre] = useState<any[] | null>(null)
   const [claveCuadre, setClaveCuadre] = useState("")
@@ -587,6 +590,7 @@ export function PanelInventarioLIP() {
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
+          <TabsTrigger value="cuadre_orden">Cuadre por orden</TabsTrigger>
           <TabsTrigger value="conciliacion">Conciliación mensual</TabsTrigger>
           <TabsTrigger value="kardex">Inventario detalle (Kardex)</TabsTrigger>
           <TabsTrigger value="diario">Cuadre diario</TabsTrigger>
@@ -696,6 +700,13 @@ export function PanelInventarioLIP() {
         </TabsContent>
 
         {/* CONCILIACIÓN MENSUAL — depuración mes a mes (mes del código de orden) */}
+        {/* Cuadre por orden (gerencia 2026-10-08): cada orden del período contra lo que movió
+            en el inventario —cargue = salida, descargue manual o autodescargue = ingreso— y
+            todo lo que entró o salió sin número de orden. Cada fila abre su ciclo 360. */}
+        <TabsContent value="cuadre_orden" className="space-y-3 pt-3">
+          <CuadrePorOrden onAbrirOrden={(oc) => setOrden360(oc)} onAbrirIngreso={(ref) => setIngreso360(ref)} />
+        </TabsContent>
+
         <TabsContent value="conciliacion" className="space-y-3 pt-3">
           {!selectedEmpresaId ? (
             <Card className="p-8 text-center text-sm text-muted-foreground">
@@ -1758,6 +1769,7 @@ export function PanelInventarioLIP() {
 
       {/* Ciclo completo de la orden, abierto desde una línea de la conciliación. */}
       <Orden360Dialog ordendecargue={orden360} open={orden360 !== null} onOpenChange={(v) => !v && setOrden360(null)} />
+      <Ingreso360Dialog referencia={ingreso360} open={ingreso360 !== null} onOpenChange={(v) => !v && setIngreso360(null)} />
 
       {/* CUADRE MANUAL: exige la clave personal (proceso inv_cuadre_manual, SQL 224).
           Gerencia 2026-10-04: "esta acción sí debería estar con clave, la mía, solo esa acción". */}

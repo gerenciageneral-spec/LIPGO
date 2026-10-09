@@ -1041,10 +1041,16 @@ export async function getCuadrePorOrden(filtros: {
     }
 
     // 5) Armar el cuadre de cada orden.
+    //    Un descargue solo genera ingreso al inventario en los CEDIs que reciben PT (ID3,
+    //    ID4): en planta (ID1) o Avimol (ID2) el descargue es materia prima y no mueve
+    //    `invtrans`, salvo que alguien lo haya citado a mano. Sin esto, todo descargue de
+    //    ID1/ID2 saldría "sin inventario" sin ser una diferencia.
+    const CEDIS_RECEPTORES = new Set([3, 4])
     const resultado: OrdenCuadre[] = ordenes.map((o) => {
-      const sentido = sentidoDe(o.tipooperacion)
-      const mueve = codigoDelSentido(sentido)
+      let sentido = sentidoDe(o.tipooperacion)
       const movs = movPorOrden.get(String(o.ordendecargue ?? "")) ?? []
+      if (sentido === "ingreso" && !CEDIS_RECEPTORES.has(emp) && movs.length === 0) sentido = "ninguno"
+      const mueve = codigoDelSentido(sentido)
       const aprobados = mueve
         ? movs.filter((m) => esAprobado(m.status) && String(m.tipomov) === mueve.tipomov && String(m.cod_movimiento ?? "") === mueve.codigo)
         : []

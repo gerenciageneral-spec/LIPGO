@@ -653,8 +653,79 @@ export async function checkCicloFacturacion(sb: SB, dias = 7): Promise<Resultado
   }
 }
 
+// ───────────────────────────── Ingresos a un CEDI ─────────────────────────────
+
+const CHK_INGRESOS_SIN_CRUCE = {
+  clave: "ingresos_sin_cruce",
+  titulo: "Descargues sin ingreso al inventario, e ingresos a mano sin orden (CEDI)",
+  regla:
+    "En un CEDI todo lo que entra viene de un descargue (o es devolución / ajuste de conteo): cada descargue finalizado debe tener su ingreso 101 aprobado citando la orden, y ningún 101 debe digitarse sin número de orden. Si no, la orden queda 'sin inventario', el ingreso 'sin orden', y nada cruza.",
+  gravedad: "alerta" as const,
+}
+/** Proyectos que reciben PT por descargue y no producen: ID3 Cedi Funza (ID4 Medellín, entregado). */
+const CEDIS_RECEPTORES = [3, 4]
+export async function checkIngresosSinCruce(sb: SB, dias = 7): Promise<ResultadoCheck> {
+  // Encontrado el 2026-10-08 en Cedi Funza: 16.453 unidades de "ingreso producción" digitadas
+  // a mano sin el número de orden desde septiembre, porque al aprobar el ingreso automático no
+  // se podía corregir la cantidad y el CEDI rechazaba y volvía a digitar. Esto avisa al día
+  // siguiente, no al mes.
+  const desdeISO = diasAtrasISO(dias)
+  const desdeFecha = desdeISO.slice(0, 10)
+  try {
+    const ords = await fetchAllRows((from, to) =>
+      sb
+        .from("cabeceraoc")
+        .select("id, idempresa, ordendecargue, status, fechacargue")
+        .in("idempresa", CEDIS_RECEPTORES)
+        .eq("tipooperacion", "Descargue")
+        .gte("fechacargue", desdeFecha)
+        .order("id", { ascending: true })
+        .range(from, to),
+    )
+    const finalizadas = ords.filter((o: any) => norm(o.status).startsWith("final") || norm(o.status).startsWith("cerrad"))
+    const codigos = [...new Set(finalizadas.map((o: any) => String(o.ordendecargue ?? "")).filter(Boolean))]
+    const conIngreso = new Set<string>()
+    for (let i = 0; i < codigos.length; i += 100) {
+      const filas = await fetchAllRows((from, to) =>
+        sb
+          .from("invtrans")
+          .select("id, ocargue, status")
+          .eq("tipomov", "Entrada")
+          .eq("cod_movimiento", "101")
+          .in("ocargue", codigos.slice(i, i + 100))
+          .order("id", { ascending: true })
+          .range(from, to),
+      )
+      for (const f of filas) if (norm(f.status).startsWith("apr")) conIngreso.add(String(f.ocargue))
+    }
+    const casos = finalizadas
+      .filter((o: any) => !conIngreso.has(String(o.ordendecargue)))
+      .map((o: any) => `ID${n0(o.idempresa)} · descargue ${o.ordendecargue} del ${o.fechacargue}: finalizado y sin ningún ingreso 101 aprobado que lo cite`)
+
+    const aMano = await fetchAllRows((from, to) =>
+      sb
+        .from("invtrans")
+        .select("id, idempresa, nombreproducto, cantidad, creadopor, creado, status, ocargue")
+        .in("idempresa", CEDIS_RECEPTORES)
+        .eq("tipomov", "Entrada")
+        .eq("cod_movimiento", "101")
+        .is("ocargue", null)
+        .gte("creado", desdeISO)
+        .order("id", { ascending: true })
+        .range(from, to),
+    )
+    for (const m of aMano) {
+      if (!norm(m.status).startsWith("apr")) continue
+      casos.push(`ID${n0(m.idempresa)} · ingreso 101 #${m.id} a mano sin orden: ${m.nombreproducto} ${n0(m.cantidad)} und (${m.creadopor ?? "sin usuario"}, ${String(m.creado).slice(0, 10)})`)
+    }
+    return resultadoDe(CHK_INGRESOS_SIN_CRUCE, casos)
+  } catch (e: any) {
+    return sinDatos(CHK_INGRESOS_SIN_CRUCE, e?.message ?? String(e))
+  }
+}
+
 export async function correrChecks(sb: SB): Promise<ResultadoCheck[]> {
-  const [dup, mas, pend, stock, ped, err, rastro, vinculo, ciclo] = await Promise.all([
+  const [dup, mas, pend, stock, ped, err, rastro, vinculo, ciclo, ingresos] = await Promise.all([
     checkSalidasDuplicadas(sb),
     checkSalioMasQueOrden(sb),
     checkPendientesInventario(sb),
@@ -664,6 +735,7 @@ export async function correrChecks(sb: SB): Promise<ResultadoCheck[]> {
     checkRastroSinOrden(sb),
     checkVinculoPorId(sb),
     checkCicloFacturacion(sb),
+    checkIngresosSinCruce(sb),
   ])
-  return [dup, mas, ...pend, ...stock, ...ped, err, rastro, vinculo, ciclo]
+  return [dup, mas, ...pend, ...stock, ...ped, err, rastro, vinculo, ciclo, ingresos]
 }

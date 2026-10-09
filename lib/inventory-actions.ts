@@ -1591,6 +1591,8 @@ export interface ProductionEntryPending {
   creadopor: string
   observaciones: string | null
   origen: string | null
+  /** Orden de descargue que generó el ingreso (autodescargue); null en producción. */
+  ocargue?: string | null
 }
 
 // selectedEmpresaId: id de empresa elegido en el filtro dinamico de la barra superior.
@@ -1611,7 +1613,7 @@ export async function getPendingProductionEntries(
     const { data, error } = await supabase
       .from("invtrans")
       .select(
-        "id, idproducto, codproducto, nombreproducto, lote, location, almacen, qrestiba, cantidad, creado, creadopor, observaciones, origen, tipo_produccion",
+        "id, idproducto, codproducto, nombreproducto, lote, location, almacen, qrestiba, cantidad, creado, creadopor, observaciones, origen, tipo_produccion, ocargue",
       )
       .eq("tipomov", "Entrada")
       .eq("idempresa", empresaId) // Filter by empresa ID from session
@@ -1638,6 +1640,14 @@ export async function approveProductionEntry(
   almacen: string,
   observaciones?: string,
   selectedEmpresaId?: number | null,
+  /**
+   * Lo que DE VERDAD llegó (gerencia 2026-10-08). Si la cantidad o el lote reales difieren
+   * de lo que traía el ingreso (lo que decía la orden), se corrige aquí y queda escrito.
+   * Antes la única forma de registrar lo recibido era rechazar y re-digitar a mano, sin el
+   * número de orden: así nacieron 16.453 unidades "sin orden" en Cedi Funza y el inventario
+   * dejó de cruzar con los descargues.
+   */
+  real?: { cantidad?: number | null; lote?: string | null },
 ): Promise<{ success: boolean; message: string }> {
   // Política por acción (catálogo lib/politicas-modulos.ts).
   const motivoAccion = await motivoSinAccion(["Aprobación de ingreso de producción"], "aprobar")
@@ -1647,7 +1657,7 @@ export async function approveProductionEntry(
 
     const { data: entryData, error: fetchError } = await supabase
       .from("invtrans")
-      .select("id, codproducto, nombreproducto, lote, cantidad, observaciones, fechaprod")
+      .select("id, codproducto, nombreproducto, lote, cantidad, observaciones, fechaprod, status")
       .eq("id", id)
       .single()
 
@@ -1658,6 +1668,21 @@ export async function approveProductionEntry(
         message: "Error al obtener los datos del ingreso: " + (fetchError?.message || "No encontrado"),
       }
     }
+    if (String(entryData.status ?? "").trim() !== "") {
+      return { success: false, message: `Este ingreso ya no está pendiente (está "${entryData.status}"). Recarga la lista.` }
+    }
+
+    const cantidadOriginal = Number(entryData.cantidad) || 0
+    const cantidadReal = real?.cantidad != null && Number.isFinite(Number(real.cantidad)) ? Number(real.cantidad) : null
+    if (cantidadReal != null && cantidadReal <= 0) return { success: false, message: "La cantidad recibida debe ser mayor que cero." }
+    const loteReal = String(real?.lote ?? "").trim() || null
+    const cantidadFinal = cantidadReal != null && Math.abs(cantidadReal - cantidadOriginal) > 0.001 ? cantidadReal : cantidadOriginal
+    const loteFinal = loteReal && loteReal !== String(entryData.lote ?? "").trim() ? loteReal : entryData.lote
+    const cambios: string[] = []
+    if (cantidadFinal !== cantidadOriginal) cambios.push(`recibido ${cantidadFinal} (decía ${cantidadOriginal})`)
+    if (loteFinal !== entryData.lote) cambios.push(`lote ${loteFinal} (decía ${entryData.lote ?? "sin lote"})`)
+    const observacionesFinal =
+      [String(observaciones ?? "").trim() || null, cambios.length ? `Al aprobar: ${cambios.join(" · ")}` : null].filter(Boolean).join(" · ") || null
 
     const { error: updateError } = await supabase
       .from("invtrans")
@@ -1665,7 +1690,9 @@ export async function approveProductionEntry(
         status: "Aprobado",
         location: location,
         almacen: almacen,
-        observaciones: observaciones || null,
+        observaciones: observacionesFinal,
+        cantidad: cantidadFinal,
+        lote: loteFinal,
       })
       .eq("id", id)
 
@@ -1685,11 +1712,11 @@ export async function approveProductionEntry(
       empresaid: empresaIdForApproval,
       codigo: entryData.codproducto,
       producto: entryData.nombreproducto,
-      lote: entryData.lote,
+      lote: loteFinal,
       almacen: almacen,
       location: location,
-      cantidad: entryData.cantidad,
-      observaciones: observaciones || entryData.observaciones || null,
+      cantidad: cantidadFinal,
+      observaciones: observacionesFinal || entryData.observaciones || null,
       fechahorafab: entryData.fechaprod || null,
       fechahoraaprob: await getColombiaDateTime(), // MUST await: es async; sin await se
       // insertaba una Promise -> el registro en historialaprobaciones fallaba en silencio.
@@ -1705,7 +1732,7 @@ export async function approveProductionEntry(
 
     return {
       success: true,
-      message: "Ingreso aprobado exitosamente",
+      message: cambios.length ? `Ingreso aprobado con lo recibido: ${cambios.join(" · ")}.` : "Ingreso aprobado exitosamente",
     }
   } catch (error) {
     console.error("[v0] Unexpected error approving production entry:", error)

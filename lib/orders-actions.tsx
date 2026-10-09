@@ -3345,6 +3345,32 @@ export async function generateUnloadOrder(orderData: {
     // un Descargue para esta placa el mismo día en este proyecto, se avisa
     // ANTES de crear -- el coordinador puede confirmar si de verdad es una
     // segunda entrega real del mismo camión el mismo día.
+    // CONSECUTIVO AUTOMÁTICO (gerencia 2026-10-08: "crear un consecutivo automático de
+    // órdenes de descargue manuales, para evitar que las repitan"). El número de la orden
+    // lo genera SIEMPRE LIPgo (`orderCode`); lo que traiga el cliente (remisión, número de
+    // su orden) se conserva como referencia en observaciones, y también se vigila que no se
+    // repita en el proyecto. Antes el número digitado reemplazaba al consecutivo.
+    const remisionCliente = String(orderData.numeroOrden ?? "").trim() || null
+    if (remisionCliente && !orderData.forzarDuplicado) {
+      const limpia = remisionCliente.replace(/[,()]/g, "")
+      const { data: repetidas } = await supabase
+        .from("cabeceraoc")
+        .select("id, ordendecargue, fechacargue, placa, observaciones")
+        .eq("idempresa", sessionEmpresaId)
+        .eq("tipooperacion", "Descargue")
+        .or(`ordendecargue.ilike.${limpia},observaciones.ilike.%Remisión del cliente: ${limpia}%`)
+        .limit(3)
+      if (repetidas && repetidas.length > 0) {
+        const detalle = repetidas.map((o: any) => `orden ${o.ordendecargue} (${o.fechacargue ?? "sin fecha"}, placa ${o.placa ?? "—"})`).join("; ")
+        return {
+          success: false,
+          duplicado: true,
+          message: `La remisión ${remisionCliente} ya está registrada en este proyecto: ${detalle}. ¿Seguro que es otra entrega?`,
+          existentes: repetidas,
+        }
+      }
+    }
+
     if (!orderData.forzarDuplicado) {
       const { data: existentes } = await supabase
         .from("cabeceraoc")
@@ -3402,7 +3428,8 @@ export async function generateUnloadOrder(orderData: {
     const { error: headerInsertError } = await supabase.from("cabeceraoc").insert({
       id: nextId,
       idempresa: sessionEmpresaId,
-      ordendecargue: orderData.numeroOrden || orderCode,
+      ordendecargue: orderCode,
+      observaciones: remisionCliente ? `Remisión del cliente: ${remisionCliente}` : null,
       fechaorden: currentDate,
       placa: orderData.placa,
       conductor: orderData.nombreConductor || null,
@@ -3425,9 +3452,7 @@ export async function generateUnloadOrder(orderData: {
 
     console.log("[v0] Cabeceraoc inserted successfully")
 
-    await vincularRegistroSanitario(
-      supabase, horaSanitariaDesc.registroId, orderData.numeroOrden || orderCode,
-    )
+    await vincularRegistroSanitario(supabase, horaSanitariaDesc.registroId, orderCode)
 
     // Get next detail ID
     const { data: lastDetail, error: lastDetailError } = await supabase
@@ -3449,7 +3474,7 @@ export async function generateUnloadOrder(orderData: {
     const detailsToInsert = lineasValidas.map((line, idx) => ({
       id: nextDetailId++,
       idorden: nextId,
-      numeroorden: (orderData as any).numeroOrden || orderCode,
+      numeroorden: orderCode,
       producto: line.producto!.nombre,
       cantidad: line.cantidad,
       toneladas: toneladasPorLinea[idx],
@@ -3502,7 +3527,7 @@ export async function generateUnloadOrder(orderData: {
 
     return {
       success: true,
-      message: "Orden de descargue generada exitosamente",
+      message: `Orden de descargue ${orderCode} generada${remisionCliente ? ` (remisión del cliente ${remisionCliente})` : ""}`,
       orderId: nextId,
       orderCode,
     }

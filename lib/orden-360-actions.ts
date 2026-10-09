@@ -39,6 +39,15 @@ export interface Linea360 {
   lotes: { lote: string; location: string; cantidad: number; estiba: number | null; estado: string }[]
 }
 
+export interface LineaPedido360 {
+  producto: string
+  /** Lo que el cliente pidió en esa línea. */
+  pedidas: number
+  /** Lo que ya se cargó (en esta y otras órdenes). */
+  cargadas: number
+  pendientes: number
+}
+
 export interface Pedido360 {
   idpedido: number
   cliente: string | null
@@ -46,6 +55,8 @@ export interface Pedido360 {
   fechaProgramada: string | null
   estado: string | null
   unidades: number
+  /** El pedido tal cual lo hizo el cliente, línea por línea (gerencia 2026-10-08: "que contenga el pedido"). */
+  lineas: LineaPedido360[]
 }
 
 export interface Orden360 {
@@ -148,6 +159,26 @@ export async function getOrden360(ordendecargue: string, empresaId: number | nul
         acceso,
       )
       const unidadesDe = new Map<number, number>(ligados.map((l) => [l.idpedido, l.unidades]))
+      // El pedido completo, línea por línea: lo pedido, lo ya cargado y lo pendiente.
+      const idsPedidos = (pcab ?? []).map((c: any) => Number(c.idpedido))
+      const lineasPorPedido = new Map<number, LineaPedido360[]>()
+      if (idsPedidos.length) {
+        const { data: plin } = await sb
+          .from("pedidosdetalle")
+          .select("transid, idpedido, producto, unidades, unidadescargadas, unidadespendientes")
+          .in("idpedido", idsPedidos)
+          .order("transid", { ascending: true })
+        for (const l of plin ?? []) {
+          const k = Number(l.idpedido)
+          if (!lineasPorPedido.has(k)) lineasPorPedido.set(k, [])
+          lineasPorPedido.get(k)!.push({
+            producto: String(l.producto ?? ""),
+            pedidas: n0(l.unidades),
+            cargadas: n0(l.unidadescargadas),
+            pendientes: n0(l.unidadespendientes),
+          })
+        }
+      }
       pedidos = (pcab ?? [])
         .map((c: any) => ({
           idpedido: Number(c.idpedido),
@@ -156,6 +187,7 @@ export async function getOrden360(ordendecargue: string, empresaId: number | nul
           fechaProgramada: c.fecha_programada ?? null,
           estado: c.estado ?? null,
           unidades: unidadesDe.get(Number(c.idpedido)) ?? 0,
+          lineas: lineasPorPedido.get(Number(c.idpedido)) ?? [],
         }))
         .sort((a: Pedido360, b: Pedido360) => a.idpedido - b.idpedido)
     }

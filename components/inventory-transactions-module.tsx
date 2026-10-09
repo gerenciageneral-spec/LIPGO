@@ -23,7 +23,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Textarea } from "@/components/ui/textarea"
 import { InventoryTransactionsForm } from "@/components/inventory-transactions-form"
 import { TransaccionesPorCodigo } from "@/components/transacciones-por-codigo"
-import { CuadrePorOrden } from "@/components/inventario/cuadre-por-orden"
 import {
   getConsultaMovimientos,
   getHistorialCorrecciones,
@@ -732,7 +731,6 @@ export function InventoryTransactionsModule() {
       { v: "codigo", l: "Movimiento por código" },
       { v: "clasico", l: "Formulario clásico" },
       { v: "consulta", l: "Consulta de movimientos" },
-      { v: "cuadre", l: "Cuadre por orden" },
       { v: "historial", l: "Historial de correcciones" },
       { v: "aprobaciones", l: "Aprobaciones pendientes" },
       { v: "cuarentena", l: "Cuarentena (calidad)" },
@@ -755,7 +753,6 @@ export function InventoryTransactionsModule() {
         <TabsContent value="codigo" className="pt-3"><TransaccionesPorCodigo /></TabsContent>
         <TabsContent value="clasico" className="pt-3"><InventoryTransactionsForm /></TabsContent>
         <TabsContent value="consulta" className="pt-3"><ConsultaMovimientos /></TabsContent>
-        <TabsContent value="cuadre" className="pt-3"><CuadrePorOrden /></TabsContent>
         <TabsContent value="historial" className="pt-3"><HistorialCorrecciones /></TabsContent>
         <TabsContent value="aprobaciones" className="pt-3"><AprobacionesPendientes /></TabsContent>
         <TabsContent value="cuarentena" className="pt-3"><StockCuarentena /></TabsContent>

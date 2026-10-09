@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import { Input } from "@/components/ui/input"
 import { Building2, CheckCircle2, XCircle, Loader2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import {
@@ -49,6 +50,10 @@ export function ProductionApproval() {
   const [selectedAlmacenes, setSelectedAlmacenes] = useState<Record<number, string>>({})
   const [observaciones, setObservaciones] = useState<Record<number, string>>({})
   const [approvingId, setApprovingId] = useState<number | null>(null)
+  // Lo que DE VERDAD llegó: cantidad y lote, prellenados con lo que decía el ingreso. Si
+  // difieren, se corrige al aprobar y queda escrito (no hay que rechazar y re-digitar).
+  const [cantidadReal, setCantidadReal] = useState<Record<number, string>>({})
+  const [loteReal, setLoteReal] = useState<Record<number, string>>({})
   const { toast } = useToast()
 
   const loadEntries = async () => {
@@ -98,6 +103,8 @@ export function ProductionApproval() {
   // la opción ya seleccionada.
   const handleStartApprove = async (entry: ProductionEntryPending) => {
     setApprovingId(entry.id)
+    setCantidadReal((prev) => ({ ...prev, [entry.id]: String(entry.cantidad ?? "") }))
+    setLoteReal((prev) => ({ ...prev, [entry.id]: entry.lote ?? "" }))
 
     if (entry.almacen) {
       setSelectedAlmacenes((prev) => ({ ...prev, [entry.id]: entry.almacen as string }))
@@ -138,9 +145,18 @@ export function ProductionApproval() {
       return
     }
 
+    const cantidad = Number(String(cantidadReal[id] ?? "").replace(",", "."))
+    if (!Number.isFinite(cantidad) || cantidad <= 0) {
+      toast({ title: "Cantidad recibida", description: "Escribe la cantidad que de verdad llegó (mayor que cero).", variant: "destructive" })
+      return
+    }
+
     setProcessingId(id)
     // Pasar el empresaId del filtro dinamico para que el historial quede asociado a la empresa activa
-    const result = await approveProductionEntry(id, location, almacen, obs, selectedEmpresaId)
+    const result = await approveProductionEntry(id, location, almacen, obs, selectedEmpresaId, {
+      cantidad,
+      lote: loteReal[id] ?? null,
+    })
 
     if (result.success) {
       toast({
@@ -243,6 +259,7 @@ export function ProductionApproval() {
                   <TableHead>Código</TableHead>
                   <TableHead>Producto</TableHead>
                   <TableHead>Lote</TableHead>
+                  <TableHead>Orden</TableHead>
                   <TableHead>QR Estiba</TableHead>
                   <TableHead>Almacén</TableHead>
                   <TableHead>Localización</TableHead>
@@ -260,7 +277,19 @@ export function ProductionApproval() {
                   <TableRow key={entry.id}>
                     <TableCell className="font-mono text-sm">{entry.codproducto}</TableCell>
                     <TableCell>{entry.nombreproducto}</TableCell>
-                    <TableCell className="font-mono text-sm">{entry.lote}</TableCell>
+                    <TableCell className="font-mono text-sm">
+                      {approvingId === entry.id ? (
+                        <Input
+                          value={loteReal[entry.id] ?? ""}
+                          onChange={(e) => setLoteReal((prev) => ({ ...prev, [entry.id]: e.target.value }))}
+                          className="h-8 w-[120px] font-mono text-sm"
+                          placeholder="Lote real"
+                        />
+                      ) : (
+                        entry.lote
+                      )}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">{entry.ocargue || "—"}</TableCell>
                     <TableCell className="font-mono text-sm">{entry.qrestiba ?? "N/A"}</TableCell>
                     <TableCell>
                       {approvingId === entry.id ? (
@@ -305,7 +334,25 @@ export function ProductionApproval() {
                         entry.location || "Sin asignar"
                       )}
                     </TableCell>
-                    <TableCell className="text-right font-medium">{entry.cantidad.toLocaleString()}</TableCell>
+                    <TableCell className="text-right font-medium">
+                      {approvingId === entry.id ? (
+                        <div className="flex flex-col items-end gap-0.5">
+                          <Input
+                            type="number"
+                            min="0.01"
+                            step="0.01"
+                            value={cantidadReal[entry.id] ?? ""}
+                            onChange={(e) => setCantidadReal((prev) => ({ ...prev, [entry.id]: e.target.value }))}
+                            className="h-8 w-[110px] text-right"
+                          />
+                          {Number(cantidadReal[entry.id]) !== Number(entry.cantidad) && (
+                            <span className="text-[10px] text-amber-700">decía {entry.cantidad.toLocaleString()}</span>
+                          )}
+                        </div>
+                      ) : (
+                        entry.cantidad.toLocaleString()
+                      )}
+                    </TableCell>
                     <TableCell>
                       {approvingId === entry.id ? (
                         <Textarea

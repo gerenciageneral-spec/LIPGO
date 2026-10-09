@@ -43,7 +43,15 @@ function tipoDeOrden(o: OrdenCuadre) {
   return o.tipo || "—"
 }
 
-export function CuadrePorOrden() {
+export function CuadrePorOrden({
+  onAbrirOrden,
+  onAbrirIngreso,
+}: {
+  /** Abre el ciclo 360 de una orden de cargue (salida). */
+  onAbrirOrden?: (ordendecargue: string) => void
+  /** Abre el ciclo 360 de un descargue (ingreso). */
+  onAbrirIngreso?: (ordendecargue: string) => void
+} = {}) {
   const { toast } = useToast()
   const { selectedEmpresaId } = useAuth()
   const [desde, setDesde] = useState(primeroDelMes())
@@ -226,8 +234,14 @@ export function CuadrePorOrden() {
                     const abierta = abiertas.has(o.id)
                     const et = ETIQUETA_ESTADO[o.estado]
                     const noMueve = o.sentido === "ninguno"
+                    const onVer360 =
+                      o.sentido === "salida" && onAbrirOrden
+                        ? () => onAbrirOrden(o.orden)
+                        : o.sentido === "ingreso" && onAbrirIngreso
+                          ? () => onAbrirIngreso(o.orden)
+                          : undefined
                     return (
-                      <FilaOrden key={o.id} o={o} abierta={abierta} et={et} noMueve={noMueve} onToggle={() => alternar(o.id)} />
+                      <FilaOrden key={o.id} o={o} abierta={abierta} et={et} noMueve={noMueve} onToggle={() => alternar(o.id)} onVer360={onVer360} />
                     )
                   })}
                   {ordenes.length === 0 && (
@@ -254,14 +268,43 @@ export function CuadrePorOrden() {
   )
 }
 
-function FilaOrden({ o, abierta, et, noMueve, onToggle }: { o: OrdenCuadre; abierta: boolean; et: { texto: string; tono: "ok" | "atencion" | "critico" | "info" | "neutro" }; noMueve: boolean; onToggle: () => void }) {
+function FilaOrden({
+  o,
+  abierta,
+  et,
+  noMueve,
+  onToggle,
+  onVer360,
+}: {
+  o: OrdenCuadre
+  abierta: boolean
+  et: { texto: string; tono: "ok" | "atencion" | "critico" | "info" | "neutro" }
+  noMueve: boolean
+  onToggle: () => void
+  onVer360?: () => void
+}) {
   return (
     <>
       <tr className="cursor-pointer border-b align-top hover:bg-muted/40" onClick={onToggle}>
         <td className="px-2 py-1.5 text-muted-foreground">{abierta ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</td>
         <td className="px-2 py-1.5 text-xs">{o.fecha || "—"}</td>
         <td className="px-2 py-1.5 font-mono text-xs">
-          {o.orden}
+          <div className="flex items-center gap-1.5">
+            <span>{o.orden}</span>
+            {onVer360 && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onVer360()
+                }}
+                className="rounded border px-1.5 py-0.5 font-sans text-[10px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+                title="Ver el ciclo completo"
+              >
+                360
+              </button>
+            )}
+          </div>
           {o.ordenorigen && <div className="text-[10px] text-muted-foreground">de {o.ordenorigen}</div>}
         </td>
         <td className="px-2 py-1.5 text-xs">{tipoDeOrden(o)}</td>
