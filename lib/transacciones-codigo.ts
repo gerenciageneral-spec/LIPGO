@@ -34,7 +34,10 @@ export const FIELDSETS: Record<string, FieldSet> = {
   "601": { requiereClave: false, origen: "conStock", destino: null, referencia: null, cantidadContra: "stock" },
   "551": { requiereClave: false, origen: "conStock", destino: null, referencia: null, cantidadContra: "stock" },
   "311": { requiereClave: false, origen: "conStock", destino: "ubicacion", referencia: null, cantidadContra: "stock" },
-  // Ajustes (sin clave, igual que hoy en el formulario clásico)
+  // Correcciones del conteo físico. Nacen del Cuadre (fechadas la víspera del conteo); a mano
+  // pasan por APROBACIÓN DE GERENCIA, que es el control que pidió gerencia el 2026-10-08
+  // ("si el 701 y el 702 ya están por aprobación de gerencia, déjalo"). Ver
+  // CODIGOS_REQUIEREN_APROBACION.
   "701": { requiereClave: false, origen: "libre", destino: null, referencia: null, cantidadContra: null },
   "702": { requiereClave: false, origen: "conStock", destino: null, referencia: null, cantidadContra: "stock" },
   // Correcciones (CON clave del responsable)
@@ -141,7 +144,15 @@ export interface EjecutarPayload {
 // Descargue duplicado en Cedi Funza + ajuste 702 que lo tapó sin resolverlo).
 // 555 (desecho por calidad) también: salida definitiva, la aprueba la
 // gerencia del proyecto (inv_clave_gerencia_proyecto) o la general.
-export const CODIGOS_REQUIEREN_APROBACION = new Set(["601", "702", "555"])
+// Movimientos que NO se aplican de una: quedan en "Aprobaciones pendientes" esperando a la
+// gerencia del proyecto (o se ejecutan en el acto con "Ejecutar ahora con mi clave", que es el
+// mismo control con el rastro del responsable).
+// El 701 entró el 2026-10-08: es la otra mitad de la corrección del conteo y era el único
+// código que subía inventario sin que nadie lo aprobara, mientras su pareja (el 702, que lo
+// baja) sí pasaba por gerencia. Regla de gerencia ese día: las correcciones de conteo van por
+// aprobación. Lo que nace del Cuadre no pasa por aquí: lo postea el cierre con su propia
+// autorización.
+export const CODIGOS_REQUIEREN_APROBACION = new Set(["601", "701", "702", "555"])
 
 export interface AjustePendiente {
   id: number

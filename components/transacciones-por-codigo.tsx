@@ -759,6 +759,9 @@ export function TransaccionesPorCodigo() {
                     <td className="px-3 py-2 align-top">
                       <span className={`font-mono text-sm font-bold ${c.codigo === codigo ? "text-primary" : ""}`}>{c.codigo}</span>
                       {FIELDSETS[c.codigo]?.requiereClave && <ShieldCheck className="ml-1 inline h-3 w-3 text-muted-foreground" />}
+                      {CODIGOS_REQUIEREN_APROBACION.has(c.codigo) && (
+                        <span className="ml-1.5 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground" title="Queda pendiente de aprobación de la gerencia del proyecto">gerencia</span>
+                      )}
                     </td>
                     <td className="px-2 py-2">
                       <p className="font-medium">{c.nombre}</p>

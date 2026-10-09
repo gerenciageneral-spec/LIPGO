@@ -201,15 +201,35 @@ export async function buscarMovimientoOriginal(params: {
 // Helpers internos del motor
 // ---------------------------------------------------------------------------
 
+/**
+ * Lo que se puede mover de un lote: el stock DISPONIBLE, no el total.
+ *
+ * Regla de gerencia (2026-10-08): "los códigos para reasignar lote solo deben permitirlo
+ * cuando el lote está en stock disponible; un lote despachado es un lote que ya no se puede
+ * modificar". `stock_actual` incluye lo que ya está comprometido con una orden
+ * (`stock_res`): mover eso con un 309/311 deja el lote en negativo cuando el picking se
+ * confirma. `stock_disp` = stock_actual − reservado, que es lo que de verdad está libre.
+ */
 async function stockDeLote(sb: any, empresaId: number, producto: string, lote: string, location: string): Promise<number> {
   const { data } = await sb
     .from("saldoinvdetalle")
-    .select("stock_actual")
+    .select("stock_disp, stock_actual")
     .eq("idempresa", empresaId)
     .eq("nombreproducto", producto)
     .eq("lote", lote)
     .eq("location", location)
-  return (data ?? []).reduce((s: number, r: any) => s + (Number(r.stock_actual) || 0), 0)
+  // stock_disp es la columna buena; si viniera nula (dato viejo) se cae a stock_actual.
+  return (data ?? []).reduce((s: number, r: any) => s + (Number(r.stock_disp ?? r.stock_actual) || 0), 0)
+}
+
+/** Los lotes que un movimiento tocó, para comprobar después que ninguno quedó en negativo. */
+function lotesTocados(filas: any[]): Array<{ producto: string; lote: string; location: string }> {
+  const vistos = new Map<string, { producto: string; lote: string; location: string }>()
+  for (const f of filas) {
+    const k = `${f.nombreproducto}|${f.lote}|${f.location}`
+    if (!vistos.has(k)) vistos.set(k, { producto: String(f.nombreproducto ?? ""), lote: String(f.lote ?? ""), location: String(f.location ?? "") })
+  }
+  return [...vistos.values()]
 }
 
 async function detalleProducto(sb: any, empresaId: number, nombre: string): Promise<{ id: number; codigo: string } | null> {
@@ -474,6 +494,35 @@ async function ejecutarTransaccion(
     const { error: errIns } = await sb.from("invtrans").insert(filas)
     if (errIns) return { success: false, message: `No se pudo registrar el movimiento: ${errIns.message}` }
     const invtransIds = filas.map((f) => Number(f.id))
+
+    // CANDADO FINAL: ningún lote puede quedar en negativo, venga por donde venga.
+    // La validación de arriba mira el stock ANTES de escribir; esta mira el resultado, que es
+    // lo único que no se puede discutir. Si algún lote quedó en rojo, el movimiento se
+    // deshace entero — un negativo en inventario no se "arregla después", se evita.
+    // (Regla de gerencia 2026-10-08, a partir del caso POLI PANADERIA: un 311 sobre un saldo
+    // inflado dejó tres lotes en negativo y costó tres scripts corregirlo.)
+    {
+      const tocados = lotesTocados(filas)
+      const enRojo: string[] = []
+      for (const t of tocados) {
+        const { data } = await sb
+          .from("saldoinvdetalle")
+          .select("stock_actual")
+          .eq("idempresa", empresaId)
+          .eq("nombreproducto", t.producto)
+          .eq("lote", t.lote)
+          .eq("location", t.location)
+        const saldo = (data ?? []).reduce((s: number, r: any) => s + (Number(r.stock_actual) || 0), 0)
+        if (saldo < 0) enRojo.push(`${t.producto} lote ${t.lote} ${t.location}: ${saldo}`)
+      }
+      if (enRojo.length) {
+        await sb.from("invtrans").delete().in("id", invtransIds)
+        return {
+          success: false,
+          message: `El movimiento dejaría ${enRojo.length === 1 ? "un lote" : `${enRojo.length} lotes`} en negativo (${enRojo.join("; ")}), así que se deshizo. Revisa el saldo real de ese lote antes de volver a intentarlo.`,
+        }
+      }
+    }
 
     // Reprocesos: 551 registra; 552 compensa (best-effort, tabla secundaria).
     if (payload.codigo === "551") {
