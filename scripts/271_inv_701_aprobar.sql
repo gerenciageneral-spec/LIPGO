@@ -54,11 +54,18 @@ values (
 )
 on conflict (codigo) do nothing;
 
--- Los MISMOS perfiles que ya aprueban el 702, para no inventar una regla nueva.
+-- Los MISMOS perfiles que ya aprueban el 702, DERIVADOS de él y no escritos a mano.
+--
+-- La primera versión de este script los listaba por nombre con los tres del SQL 203
+-- (Gerencia General LIPgo, Gerencia de proyecto, Coordinador LIP) y el candado del final lo
+-- paró: el 702 está en CUATRO. El cuarto es «JEFE DE BODEGA», un perfil creado después del
+-- 203 al que alguien le dio el 702 y el 601. Copiar la lista de nombres habría dejado al jefe
+-- de bodega aprobando faltantes pero no sobrantes, sin que nadie lo notara. Derivarlo del 702
+-- hace que coincidan siempre, hoy y cuando se cree el siguiente perfil.
 insert into public.autorizacion_perfil_procesos (perfil_id, proceso)
-select p.id, 'inv_701_aprobar'
-from public.autorizacion_perfiles p
-where p.nombre in ('Gerencia General LIPgo', 'Gerencia de proyecto', 'Coordinador LIP')
+select pp.perfil_id, 'inv_701_aprobar'
+from public.autorizacion_perfil_procesos pp
+where pp.proceso = 'inv_702_aprobar'
 on conflict do nothing;
 
 do $comprobar$
@@ -74,8 +81,14 @@ begin
 
   select count(*) into v_701 from public.autorizacion_perfil_procesos where proceso = 'inv_701_aprobar';
   select count(*) into v_702 from public.autorizacion_perfil_procesos where proceso = 'inv_702_aprobar';
-  if v_701 < v_702 then
-    raise exception 'El 701 quedó asignado a % perfiles y el 702 a %: deberían ser los mismos. Se deshace todo.', v_701, v_702;
+  -- Tienen que ser exactamente los mismos perfiles, no solo la misma cantidad.
+  if exists (
+    select 1 from public.autorizacion_perfil_procesos a
+     where a.proceso = 'inv_702_aprobar'
+       and not exists (select 1 from public.autorizacion_perfil_procesos b
+                        where b.proceso = 'inv_701_aprobar' and b.perfil_id = a.perfil_id)
+  ) then
+    raise exception 'Hay perfiles que aprueban el 702 y no el 701 (% contra %): se deshace todo.', v_702, v_701;
   end if;
 
   raise notice 'LISTO. inv_701_aprobar registrado y asignado a % perfiles (el 702 tiene %).', v_701, v_702;
