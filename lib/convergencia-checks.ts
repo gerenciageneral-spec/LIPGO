@@ -724,8 +724,79 @@ export async function checkIngresosSinCruce(sb: SB, dias = 7): Promise<Resultado
   }
 }
 
+const CHK_ASIGNACION = {
+  clave: "asignacion_vs_invtrans",
+  titulo: "La asignación de lotes dice una cosa y el inventario otra",
+  regla:
+    "invtrans es la FUENTE DE VERDAD del inventario: el saldo (saldoinvdetalle, invglobal) se deriva de ella sola. Pero `historicolotes` —la asignación de lotes que alimenta el picking y los PDF— se escribe aparte y NO se recalcula: si alguien corrige invtrans sin corregirla, los papeles del despacho mienten aunque el saldo esté bien.",
+  gravedad: "alerta" as const,
+}
+/**
+ * Vigila la única tabla de inventario que puede quedar desalineada de invtrans sin que el
+ * saldo lo note. Medido el 2026-10-08: CERO descuadres en ID1 (481 órdenes), ID2 (278) e
+ * ID3 (182) desde el 1-sep. Nace limpio, así que cualquier caso nuevo es real.
+ */
+export async function checkAsignacionVsInvtrans(sb: SB, dias = 30): Promise<ResultadoCheck> {
+  const desdeFecha = diasAtrasISO(dias).slice(0, 10)
+  try {
+    const ords = await fetchAllRows((from, to) =>
+      sb
+        .from("cabeceraoc")
+        .select("id, idempresa, ordendecargue, fechacargue")
+        .eq("tipooperacion", "Cargue")
+        .gte("fechacargue", desdeFecha)
+        .order("id", { ascending: true })
+        .range(from, to),
+    )
+    const empresaDe = new Map<string, number>()
+    for (const o of ords) empresaDe.set(String(o.ordendecargue ?? ""), n0(o.idempresa))
+    const codigos = [...empresaDe.keys()].filter(Boolean)
+
+    const salida = new Map<string, number>()
+    const asignado = new Map<string, number>()
+    const sumar = (m: Map<string, number>, k: string, v: number) => m.set(k, (m.get(k) ?? 0) + v)
+    for (let i = 0; i < codigos.length; i += 100) {
+      const grupo = codigos.slice(i, i + 100)
+      const movs = await fetchAllRows((from, to) =>
+        sb
+          .from("invtrans")
+          .select("id, ocargue, nombreproducto, cantidad, tipomov, cod_movimiento, status")
+          .in("ocargue", grupo)
+          .order("id", { ascending: true })
+          .range(from, to),
+      )
+      for (const m of movs) {
+        if (m.tipomov !== "Salida" || String(m.cod_movimiento ?? "") !== "601" || !norm(m.status).startsWith("apr")) continue
+        sumar(salida, `${m.ocargue}|${norm(m.nombreproducto)}`, n0(m.cantidad))
+      }
+      const hl = await fetchAllRows((from, to) =>
+        sb
+          .from("historicolotes")
+          .select("id, ordendecargue, producto, cantidad")
+          .in("ordendecargue", grupo)
+          .order("id", { ascending: true })
+          .range(from, to),
+      )
+      // OJO: `historicolotes.cantidad` es TEXTO (ver docs/diccionario-trampas.md §2).
+      for (const h of hl) sumar(asignado, `${h.ordendecargue}|${norm(h.producto)}`, n0(h.cantidad))
+    }
+
+    const casos: string[] = []
+    for (const k of new Set([...salida.keys(), ...asignado.keys()])) {
+      const inv = salida.get(k) ?? 0
+      const asg = asignado.get(k) ?? 0
+      if (Math.abs(inv - asg) <= 0.5) continue
+      const [oc, producto] = k.split("|")
+      casos.push(`ID${empresaDe.get(oc) ?? "?"} · ${oc} · ${producto}: inventario ${inv}, asignación de lotes ${asg} (dif ${asg - inv})`)
+    }
+    return resultadoDe(CHK_ASIGNACION, casos)
+  } catch (e: any) {
+    return sinDatos(CHK_ASIGNACION, e?.message ?? String(e))
+  }
+}
+
 export async function correrChecks(sb: SB): Promise<ResultadoCheck[]> {
-  const [dup, mas, pend, stock, ped, err, rastro, vinculo, ciclo, ingresos] = await Promise.all([
+  const [dup, mas, pend, stock, ped, err, rastro, vinculo, ciclo, ingresos, asignacion] = await Promise.all([
     checkSalidasDuplicadas(sb),
     checkSalioMasQueOrden(sb),
     checkPendientesInventario(sb),
@@ -736,6 +807,7 @@ export async function correrChecks(sb: SB): Promise<ResultadoCheck[]> {
     checkVinculoPorId(sb),
     checkCicloFacturacion(sb),
     checkIngresosSinCruce(sb),
+    checkAsignacionVsInvtrans(sb),
   ])
-  return [dup, mas, ...pend, ...stock, ...ped, err, rastro, vinculo, ciclo, ingresos]
+  return [dup, mas, ...pend, ...stock, ...ped, err, rastro, vinculo, ciclo, ingresos, asignacion]
 }

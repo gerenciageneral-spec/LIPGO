@@ -123,7 +123,35 @@ normaliza con `trim` + colapso de espacios + mayúsculas antes de comparar.
 
 ---
 
-## 6. Las seis tablas núcleo son de solo lectura para la IA
+## 6. `invtrans` es la fuente de verdad del inventario — y las tres tablas que NO se enteran
+
+Regla de gerencia, repetida el 2026-10-08: **todas las tablas de inventario salen de `invtrans`;
+ella actualiza todo.** Es cierto y está verificado:
+
+- `saldoinvdetalle` e `invglobal` son **vistas** sobre `invtrans`. Nadie las escribe —ni el
+  código ni los scripts (comprobado: cero `update`/`insert` contra ellas en todo el repo)—, y un
+  cambio en `invtrans` se refleja al instante. Si un saldo está mal, el movimiento está mal: se
+  corrige el movimiento, nunca el saldo.
+- Por eso una corrección de inventario se hace **siempre** sobre `invtrans`, por `id`, y lo demás
+  se acomoda solo. Anular un movimiento = `status = 'rechazado'` (la vista deja de contarlo) y
+  conserva el rastro; borrar la fila también sirve, pero no deja huella.
+
+**Las tres excepciones** se escriben en paralelo y NO se recalculan solas. Al corregir `invtrans`
+hay que mirarlas en el mismo script, o los papeles mentirán aunque el saldo esté bien:
+
+| Tabla | Qué guarda | Qué pasa si se olvida |
+|---|---|---|
+| `historicolotes` | La asignación de lotes de una orden (alimenta Picking y los PDF) | El despacho dice un lote y el inventario otro. Lo vigila el chequeo nocturno `asignacion_vs_invtrans`. |
+| `reprocesos` | Espejo de los 551 (módulo Reprocesos) | El módulo muestra mermas que ya no existen, o le faltan. |
+| `historialaprobaciones` | Quién aprobó cada ingreso y con qué cantidad | El 360 del ingreso pierde el "quién y cuándo". |
+
+Y al revés: el **Conteo total** (`sig_inventario_cuadre_detalle`) es una **foto congelada**, no se
+recalcula desde `invtrans` a propósito — es la base fija del mes. Corregir un movimiento viejo no
+cambia el conteo, y está bien que sea así.
+
+---
+
+## 7. Las seis tablas núcleo son de solo lectura para la IA
 
 `cabeceraoc`, `detalleoc`, `saldoinvdetalle`, `pedidoscabecera`, `pedidosdetalle` e `invtrans`
 están en `NUCLEO_PROHIBIDO` (`lib/lipbot-registry.ts`): LIPbot puede leerlas y nunca escribirlas.
@@ -131,7 +159,7 @@ Las tablas donde sí puede escribir, con su permiso y su llave, están en el mis
 
 ---
 
-## 7. Dónde está cada cosa
+## 8. Dónde está cada cosa
 
 | Qué | Dónde |
 |---|---|
