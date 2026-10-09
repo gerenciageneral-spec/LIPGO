@@ -41,7 +41,9 @@ import {
   armarLineas,
   clasificar,
   codigoDelSentido,
+  correccionesDeLaOrden,
   COD_DEVOLUCION_MAL_CARGUE,
+  type OrdenEliminada,
   esAprobado,
   esRechazado,
   resumirMovimientos,
@@ -987,6 +989,8 @@ export interface MovSinOrden {
 export interface CuadrePorOrdenData {
   ordenes: OrdenCuadre[]
   sinOrden: { entradas: MovSinOrden[]; salidas: MovSinOrden[] }
+  /** Órdenes BORRADAS que dejaron movimientos: invisibles en la lista y las más graves. */
+  eliminadas: OrdenEliminada[]
   /** Movimientos del período que citan una orden con fecha de cargue fuera del rango. */
   deOtroPeriodo: { filas: number; unidades: number; ordenes: string[] }
   resumen: ResumenMovimientos
@@ -1120,6 +1124,9 @@ export async function getCuadrePorOrden(filtros: {
         aprobados.map((m) => ({ producto: m.nombreproducto, cantidad: m.cantidad })),
         devoluciones.map((m) => ({ producto: m.nombreproducto, cantidad: m.cantidad })),
       )
+      // ¿A esta orden le corrigieron algo después de despachar? El rastro vive en la
+      // observación de cada movimiento (lote corregido, reclasificado, reversado, anulado).
+      const correcciones = correccionesDeLaOrden(movs)
       const cantOrden = lineas.reduce((s, l) => s + l.orden, 0)
       const cantInventario = lineas.reduce((s, l) => s + l.inventario, 0)
       const pedidosN = Number(o.pedidos_n) || 0
@@ -1142,6 +1149,7 @@ export async function getCuadrePorOrden(filtros: {
         rechazados,
         estado: clasificar({ sentido, status: o.status, lineas, pendientes }),
         lineas,
+        correcciones,
       }
     })
 
@@ -1165,10 +1173,39 @@ export async function getCuadrePorOrden(filtros: {
       .filter((m) => esAprobado(m.status) && String(m.tipomov) === "Salida" && String(m.cod_movimiento ?? "") === "601" && !String(m.ocargue ?? "").trim())
       .map(aFila)
     const otros = periodo.filter((m) => esAprobado(m.status) && String(m.ocargue ?? "").trim() && !setCodigos.has(String(m.ocargue)))
+
+    // ÓRDENES BORRADAS. De los movimientos que citan una orden fuera de la lista, algunos son
+    // de otro período (normal) y otros de una orden que YA NO EXISTE: esos movieron inventario
+    // sin documento que los respalde y el Cuadre, que lista órdenes, nunca los mostraría.
+    const codigosFuera = [...new Set(otros.map((m) => String(m.ocargue)))]
+    const existenFuera = new Set<string>()
+    for (let i = 0; i < codigosFuera.length; i += 100) {
+      const { data } = await sb.from("cabeceraoc").select("ordendecargue").in("ordendecargue", codigosFuera.slice(i, i + 100))
+      for (const c of data ?? []) existenFuera.add(String(c.ordendecargue))
+    }
+    const porEliminada = new Map<string, OrdenEliminada>()
+    for (const m of otros) {
+      const oc = String(m.ocargue)
+      if (existenFuera.has(oc)) continue
+      const g = porEliminada.get(oc) ?? { ocargue: oc, movimientos: 0, entradas: 0, salidas: 0, productos: [], primera: null, ultima: null }
+      g.movimientos++
+      const c = Number(m.cantidad) || 0
+      if (String(m.tipomov) === "Entrada") g.entradas += c
+      else g.salidas += c
+      const p = String(m.nombreproducto ?? "")
+      if (p && !g.productos.includes(p)) g.productos.push(p)
+      const f = m.creado ? String(m.creado) : null
+      if (f && (!g.primera || f < g.primera)) g.primera = f
+      if (f && (!g.ultima || f > g.ultima)) g.ultima = f
+      porEliminada.set(oc, g)
+    }
+    const eliminadas = [...porEliminada.values()].sort((a, b) => b.movimientos - a.movimientos)
+
+    const soloDeOtroPeriodo = otros.filter((m) => existenFuera.has(String(m.ocargue)))
     const deOtroPeriodo = {
-      filas: otros.length,
-      unidades: otros.reduce((s, m) => s + (Number(m.cantidad) || 0), 0),
-      ordenes: [...new Set(otros.map((m) => String(m.ocargue)))].slice(0, 20),
+      filas: soloDeOtroPeriodo.length,
+      unidades: soloDeOtroPeriodo.reduce((s, m) => s + (Number(m.cantidad) || 0), 0),
+      ordenes: [...new Set(soloDeOtroPeriodo.map((m) => String(m.ocargue)))].slice(0, 20),
     }
 
     return {
@@ -1176,6 +1213,7 @@ export async function getCuadrePorOrden(filtros: {
       data: {
         ordenes: resultado,
         sinOrden: { entradas: sinOrdenEntradas, salidas: sinOrdenSalidas },
+        eliminadas,
         deOtroPeriodo,
         resumen: resumirMovimientos(periodo),
         truncado,

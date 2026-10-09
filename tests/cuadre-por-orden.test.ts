@@ -2,7 +2,7 @@
 // (Cedi Funza) medidos el 2026-10-08. Ver lib/cuadre-por-orden.ts.
 
 import { describe, expect, it } from "vitest"
-import { armarLineas, clasificar, resumirMovimientos, sentidoDe } from "@/lib/cuadre-por-orden"
+import { armarLineas, clasificar, correccionesDeLaOrden, marcaDeCorreccion, resumirMovimientos, sentidoDe } from "@/lib/cuadre-por-orden"
 
 describe("sentido de la orden", () => {
   it("cargue = salida, descargue (manual o auto) = ingreso, distribución/tolva no mueven", () => {
@@ -124,6 +124,37 @@ describe("clasificación", () => {
   it("clon de distribución → no mueve inventario (no es una diferencia)", () => {
     const lineas = [{ producto: "A", orden: 190, inventario: 0, diferencia: -190 }]
     expect(clasificar({ sentido: "ninguno", status: "finalizado", lineas, pendientes: 0 })).toBe("no_mueve")
+  })
+})
+
+describe("¿a la orden le corrigieron algo después de despachar?", () => {
+  // Textos reales de las observaciones que dejaron los scripts 265/268/269 y la pantalla de
+  // movimientos por código, en octubre de 2026.
+  it("reconoce cada forma de corrección por su rastro", () => {
+    expect(marcaDeCorreccion("Movimiento por código 311 · traslado de producto")).toBe("reclasificado")
+    expect(marcaDeCorreccion(" · Lote corregido por 268 (8-oct-2026): el lote 20260917 era del ingreso borrado")).toBe("lote corregido")
+    expect(marcaDeCorreccion(" · Corregido por 265 (8-oct-2026): saldo inflado por el ingreso doble")).toBe("cantidad corregida")
+    expect(marcaDeCorreccion(" · Anulado por 269 (8-oct-2026): el conteo decía 840")).toBe("anulado")
+    expect(marcaDeCorreccion("Movimiento por código 102 · reversa invtrans #33251 [rev#33251]")).toBe("reversado")
+    expect(marcaDeCorreccion(" · Asignación rehecha por el coordinador el 2-oct")).toBe("asignación rehecha")
+  })
+
+  it("un despacho normal no lleva marca", () => {
+    expect(marcaDeCorreccion("orden de cargue MOL202610089979")).toBeNull()
+    expect(marcaDeCorreccion("")).toBeNull()
+    expect(marcaDeCorreccion(null)).toBeNull()
+  })
+
+  it("solo devuelve los movimientos que sí se corrigieron", () => {
+    const r = correccionesDeLaOrden([
+      { id: 35017, nombreproducto: "POLI", observaciones: "Movimiento por código 311 · Corregido por 265 (era 610)" },
+      { id: 35002, nombreproducto: "POLI", observaciones: "orden de cargue MOL202610089979" },
+    ])
+    expect(r).toEqual([{ invtransId: 35017, producto: "POLI", que: "cantidad corregida" }])
+  })
+
+  it("una orden sin correcciones devuelve lista vacía, no null", () => {
+    expect(correccionesDeLaOrden([{ id: 1, nombreproducto: "A", observaciones: "" }])).toEqual([])
   })
 })
 

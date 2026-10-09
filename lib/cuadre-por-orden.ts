@@ -70,6 +70,64 @@ export interface OrdenCuadre {
   rechazados: number
   estado: EstadoCuadre
   lineas: LineaCuadre[]
+  /** Movimientos de esta orden que se corrigieron después de despachar (lote, cantidad, reverso). */
+  correcciones: CorreccionDeOrden[]
+}
+
+/** Una corrección hecha sobre un movimiento de la orden DESPUÉS de despacharla. */
+export interface CorreccionDeOrden {
+  invtransId: number
+  producto: string
+  /** Lo que se le hizo, dicho en una línea. */
+  que: string
+}
+
+/**
+ * El rastro de una orden que ya no existe: alguien la borró y sus movimientos quedaron.
+ *
+ * El Cuadre lista órdenes de `cabeceraoc`, así que estos movimientos serían invisibles
+ * justamente ahí — y son los más graves, porque movieron inventario sin documento que los
+ * respalde. Caso real (ID3, sep-2026): T-030-2609007 con 691 unidades.
+ */
+export interface OrdenEliminada {
+  ocargue: string
+  movimientos: number
+  entradas: number
+  salidas: number
+  productos: string[]
+  primera: string | null
+  ultima: string | null
+}
+
+/**
+ * ¿A este movimiento lo corrigieron después? Se lee de su propia observación, que es donde
+ * queda el rastro: las correcciones por código escriben "Movimiento por código 309/311…", los
+ * reversos "reversa invtrans #…", y los scripts de corrección "Corregido por 2XX" o
+ * "Lote corregido por 2XX".
+ */
+export function marcaDeCorreccion(observaciones: unknown): string | null {
+  const o = String(observaciones ?? "")
+  if (!o.trim()) return null
+  if (/Lote corregido por \d+/i.test(o)) return "lote corregido"
+  if (/Corregido por \d+/i.test(o)) return "cantidad corregida"
+  if (/Anulado por \d+/i.test(o)) return "anulado"
+  if (/reversa invtrans #\d+/i.test(o)) return "reversado"
+  if (/Movimiento por código (309|311|312)/i.test(o)) return "reclasificado"
+  if (/Asignación rehecha/i.test(o)) return "asignación rehecha"
+  return null
+}
+
+/** Las correcciones de una orden, a partir de sus movimientos. */
+export function correccionesDeLaOrden(
+  movimientos: ReadonlyArray<{ id: unknown; nombreproducto: unknown; observaciones: unknown }>,
+): CorreccionDeOrden[] {
+  const out: CorreccionDeOrden[] = []
+  for (const m of movimientos) {
+    const que = marcaDeCorreccion(m.observaciones)
+    if (!que) continue
+    out.push({ invtransId: Number(m.id) || 0, producto: String(m.nombreproducto ?? ""), que })
+  }
+  return out
 }
 
 export interface MovimientoPeriodo {
