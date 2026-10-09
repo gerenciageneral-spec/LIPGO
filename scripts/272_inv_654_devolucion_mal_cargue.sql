@@ -108,10 +108,18 @@ where pp.proceso in ('inv_654', 'inv_309')
 order by pp.proceso, p.nombre;
 -- Esperado: los mismos perfiles para los dos códigos.
 
--- Quién tiene clave personal hoy y podría usar el 654 (los demás tendrán que crearla).
-select u.nombre, u.email, pf.nombre as perfil
+-- Quién puede usar el 654 y si ya tiene clave personal (los demás tendrán que crearla).
+--
+-- OJO: la tabla de usuarios de la app se llama `profiles` (columnas id, usuario, empresa_id),
+-- NO `usuarios`. La primera versión de este script usaba `usuarios` y la consulta falló con
+-- 42P01 — después del commit, así que el proceso ya había quedado registrado.
+select pf.nombre as perfil,
+       p.usuario,
+       up.idempresa as alcance,
+       case when c.usuario_id is null then 'SIN CLAVE: no podrá firmar el 654' else 'con clave' end as estado_clave
 from public.autorizacion_usuario_perfiles up
 join public.autorizacion_perfiles pf on pf.id = up.perfil_id
-join public.usuarios u on u.id = up.usuario_id
+left join public.profiles p on p.id = up.usuario_id
+left join public.autorizacion_claves c on c.usuario_id = up.usuario_id
 where pf.id in (select perfil_id from public.autorizacion_perfil_procesos where proceso = 'inv_654')
-order by pf.nombre, u.nombre;
+order by pf.nombre, p.usuario;
