@@ -39,9 +39,11 @@ import { motivoSinAccion } from "@/lib/puerta-modulo"
 import { registrarErrorServidor } from "@/lib/errores-servidor"
 import {
   armarLineas,
+  buscarCandidatos,
   clasificar,
   codigoDelSentido,
   correccionesDeLaOrden,
+  normProducto,
   COD_DEVOLUCION_MAL_CARGUE,
   type OrdenEliminada,
   esAprobado,
@@ -51,6 +53,7 @@ import {
   type OrdenCuadre,
   type ResumenMovimientos,
 } from "@/lib/cuadre-por-orden"
+import { sumarDiasISO as sumarDias } from "@/lib/pedidos-estado"
 
 // ---------------------------------------------------------------------------
 // Catálogo (nomenclatura) — columna real: codigo_sap (verificado 2026-08-08)
@@ -1153,7 +1156,61 @@ export async function getCuadrePorOrden(filtros: {
       }
     })
 
-    // 6) Lo que no cruza con ninguna orden del período.
+    // 6) ¿Lo que falta en una línea está en un ingreso a mano sin orden?
+    //
+    // Es el caso más repetido del CEDI: el ingreso automático se rechaza porque lo que llegó
+    // no coincide, y se vuelve a digitar a mano SIN el número de orden. El producto está en el
+    // inventario pero la orden figura "recibió menos" para siempre. Se busca el mismo producto
+    // entre el día anterior y cuatro días después del cargue, que es la ventana real en que se
+    // digita. Solo se mira si hay líneas con faltante, para no cobrarle a la consulta cuando
+    // todo cuadra.
+    const conFaltante = resultado.filter((o) => o.sentido === "ingreso" && o.lineas.some((l) => l.orden - l.inventario > 0.5))
+    if (conFaltante.length) {
+      const sueltos: any[] = []
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await sb
+          .from("invtrans")
+          .select("id, nombreproducto, lote, location, cantidad, creado, creadopor, status")
+          .eq("idempresa", emp)
+          .eq("tipomov", "Entrada")
+          .eq("cod_movimiento", "101")
+          .is("ocargue", null)
+          .gte("creado", `${sumarDias(filtros.desde, -1)}T00:00:00`)
+          .lte("creado", `${sumarDias(filtros.hasta, 5)}T23:59:59`)
+          .order("id", { ascending: true })
+          .range(from, from + 999)
+        if (error) break
+        sueltos.push(...(data ?? []))
+        if (!data || data.length < 1000) break
+      }
+      const libres = sueltos.filter((s: any) => esAprobado(s.status))
+      for (const o of conFaltante) {
+        if (!o.fecha) continue
+        const desde = sumarDias(String(o.fecha), -1)
+        const hasta = sumarDias(String(o.fecha), 4)
+        for (const l of o.lineas) {
+          const falta = l.orden - l.inventario
+          if (falta <= 0.5) continue
+          const delProducto = libres.filter(
+            (s: any) => normProducto(s.nombreproducto) === normProducto(l.producto) && String(s.creado).slice(0, 10) >= desde && String(s.creado).slice(0, 10) <= hasta,
+          )
+          if (!delProducto.length) continue
+          l.candidatos = buscarCandidatos(
+            falta,
+            delProducto.map((s: any) => ({
+              invtransId: Number(s.id),
+              cantidad: Number(s.cantidad) || 0,
+              lote: s.lote,
+              location: s.location,
+              creado: s.creado,
+              creadopor: s.creadopor,
+            })),
+          )
+        }
+      }
+    }
+
+    // 7) Lo que no cruza con ninguna orden del período.
     const setCodigos = new Set(codigos)
     const aFila = (m: any): MovSinOrden => ({
       id: Number(m.id),
@@ -1222,6 +1279,81 @@ export async function getCuadrePorOrden(filtros: {
   } catch (e: any) {
     void registrarErrorServidor("inventario.getCuadrePorOrden", e)
     return { success: false, error: e?.message || "Error en la consulta." }
+  }
+}
+
+/**
+ * ENLAZAR UN INGRESO A MANO CON SU ORDEN.
+ *
+ * Gerencia (2026-10-09), sobre el descargue 107215: "si llegó completa, debes quitar el
+ * ingreso manual y colocarlo como que llegó en esa orden; fue un error del coordinador".
+ *
+ * El producto SÍ llegó: lo que pasó es que el ingreso automático se rechazó y el coordinador
+ * lo digitó a mano sin el número de orden, así que la orden figura "recibió menos" aunque el
+ * inventario está correcto. Esto NO crea ni borra nada y NO mueve una sola unidad: le pone a
+ * ese movimiento el número de orden que le faltaba, y con eso el cuadre cierra solo.
+ *
+ * Candados: el movimiento tiene que ser un 101 aprobado, del mismo proyecto, SIN orden
+ * todavía, y la orden tiene que existir en ese proyecto. Queda escrito quién lo enlazó.
+ */
+export async function enlazarIngresoAOrden(args: {
+  invtransId: number
+  ocargue: string
+  selectedEmpresaId: number | null | undefined
+}): Promise<{ success: boolean; message: string }> {
+  const motivoAccion = await motivoSinAccion(["Transacciones de Inventario"], "editar", "Enlazar ingreso a su orden")
+  if (motivoAccion) return { success: false, message: motivoAccion }
+  try {
+    const empresaId = Number(args.selectedEmpresaId)
+    if (!empresaId) return { success: false, message: "Selecciona un proyecto en el selector global." }
+    const id = Number(args.invtransId)
+    const oc = String(args.ocargue ?? "").trim()
+    if (!id || !oc) return { success: false, message: "Falta el movimiento o la orden." }
+
+    const sb: any = await getSupabaseAdmin()
+    const { data: mov, error: errMov } = await sb
+      .from("invtrans")
+      .select("id, idempresa, nombreproducto, cantidad, tipomov, cod_movimiento, status, ocargue, observaciones")
+      .eq("id", id)
+      .maybeSingle()
+    if (errMov) return { success: false, message: errMov.message }
+    if (!mov) return { success: false, message: `No existe el movimiento #${id}.` }
+    if (Number(mov.idempresa) !== empresaId) return { success: false, message: `El movimiento #${id} no es de este proyecto.` }
+    if (String(mov.ocargue ?? "").trim()) return { success: false, message: `El movimiento #${id} ya está enlazado a la orden ${mov.ocargue}.` }
+    if (String(mov.tipomov) !== "Entrada" || String(mov.cod_movimiento ?? "") !== "101") {
+      return { success: false, message: `El movimiento #${id} no es un ingreso 101: no se puede enlazar a un descargue.` }
+    }
+    if (!esAprobado(mov.status)) return { success: false, message: `El movimiento #${id} no está aprobado.` }
+
+    const { data: cab } = await sb
+      .from("cabeceraoc")
+      .select("ordendecargue, tipooperacion")
+      .eq("idempresa", empresaId)
+      .ilike("ordendecargue", oc)
+      .limit(1)
+      .maybeSingle()
+    if (!cab) return { success: false, message: `No se encontró la orden ${oc} en este proyecto.` }
+
+    const usuario = await getCurrentUsuarioForInsert()
+    const hoy = await getColombiaDateTime()
+    const { error } = await sb
+      .from("invtrans")
+      .update({
+        ocargue: String(cab.ordendecargue),
+        observaciones:
+          String(mov.observaciones ?? "") +
+          ` · Enlazado a la orden ${cab.ordendecargue} el ${String(hoy).slice(0, 10)} por ${usuario}: el producto sí llegó con ese descargue y se había digitado a mano sin el número de orden. No se movió ninguna unidad.`,
+      })
+      .eq("id", id)
+    if (error) return { success: false, message: `No se pudo enlazar: ${error.message}` }
+
+    return {
+      success: true,
+      message: `El ingreso #${id} (${mov.nombreproducto}, ${Number(mov.cantidad) || 0} und) quedó atribuido a la orden ${cab.ordendecargue}. El inventario no cambió: solo ahora cruza.`,
+    }
+  } catch (e: any) {
+    void registrarErrorServidor("inventario.enlazarIngresoAOrden", e)
+    return { success: false, message: e?.message || "No se pudo enlazar el ingreso." }
   }
 }
 

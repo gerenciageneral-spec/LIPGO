@@ -44,6 +44,8 @@ export interface LineaCuadre {
   diferencia: number
   /** Unidades que volvieron por mal cargue (654). Ya están descontadas de `inventario`. */
   devuelto?: number
+  /** Ingresos a mano sin orden que podrían ser lo que falta en esta línea. */
+  candidatos?: CandidatoIngreso[]
 }
 
 /** Devolución por mal cargue: entra al inventario y resta de lo despachado por esa orden. */
@@ -72,6 +74,48 @@ export interface OrdenCuadre {
   lineas: LineaCuadre[]
   /** Movimientos de esta orden que se corrigieron después de despachar (lote, cantidad, reverso). */
   correcciones: CorreccionDeOrden[]
+}
+
+/**
+ * Un ingreso a mano (101 sin orden) que PROBABLEMENTE es de esta línea.
+ *
+ * Caso real y repetido (ID3): el ingreso automático del descargue se rechaza porque lo que
+ * llegó no coincide con la orden, y el CEDI lo vuelve a digitar a mano — sin el número de
+ * orden. El producto está en el inventario, pero la orden figura "recibió menos" para
+ * siempre. Medido el 2026-10-09: 12 líneas con candidato, varias con la cantidad exacta.
+ */
+export interface CandidatoIngreso {
+  invtransId: number
+  cantidad: number
+  lote: string | null
+  location: string | null
+  creado: string | null
+  creadopor: string | null
+  /** `exacto` = la cantidad es justo lo que falta; es el que se puede enlazar con confianza. */
+  calce: "exacto" | "parcial"
+}
+
+/**
+ * De los ingresos sueltos del mismo producto, cuáles podrían ser los que faltan.
+ * Primero los que calzan exacto, y dentro de cada grupo el más cercano en cantidad.
+ */
+export function buscarCandidatos(
+  falta: number,
+  sueltos: ReadonlyArray<{ invtransId: number; cantidad: number; lote?: string | null; location?: string | null; creado?: string | null; creadopor?: string | null }>,
+): CandidatoIngreso[] {
+  const f = Number(falta) || 0
+  if (f <= 0) return []
+  return sueltos
+    .map((s) => ({
+      invtransId: s.invtransId,
+      cantidad: Number(s.cantidad) || 0,
+      lote: s.lote ?? null,
+      location: s.location ?? null,
+      creado: s.creado ?? null,
+      creadopor: s.creadopor ?? null,
+      calce: (Math.abs((Number(s.cantidad) || 0) - f) <= 0.5 ? "exacto" : "parcial") as "exacto" | "parcial",
+    }))
+    .sort((a, b) => (a.calce === b.calce ? Math.abs(a.cantidad - f) - Math.abs(b.cantidad - f) : a.calce === "exacto" ? -1 : 1))
 }
 
 /** Una corrección hecha sobre un movimiento de la orden DESPUÉS de despacharla. */

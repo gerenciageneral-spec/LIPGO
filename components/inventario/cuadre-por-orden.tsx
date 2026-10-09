@@ -19,8 +19,8 @@ import { Input } from "@/components/ui/input"
 import { Chip, Cifra, Esqueleto, EstadoVacio, Eyebrow, Seccion } from "@/components/ui/lipgo"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/components/auth-provider"
-import { ChevronDown, ChevronRight, Download, Loader2, Search, Trash2, Wrench } from "lucide-react"
-import { getCuadrePorOrden, type CuadrePorOrdenData, type MovSinOrden } from "@/lib/transacciones-codigo-actions"
+import { ChevronDown, ChevronRight, Download, Link2, Loader2, Search, Trash2, Wrench } from "lucide-react"
+import { enlazarIngresoAOrden, getCuadrePorOrden, type CuadrePorOrdenData, type MovSinOrden } from "@/lib/transacciones-codigo-actions"
 import { ESTADOS_CON_DIFERENCIA, ETIQUETA_ESTADO, type OrdenCuadre, type OrdenEliminada } from "@/lib/cuadre-por-orden"
 import { etiquetaRango, PRESETS_PERIODO, rangoDe, validarRango, type PresetPeriodo } from "@/lib/periodo-rango"
 
@@ -300,7 +300,20 @@ export function CuadrePorOrden({
                   {ordenes.map((o) => {
                     const onVer360 =
                       o.sentido === "salida" && onAbrirOrden ? () => onAbrirOrden(o.orden) : o.sentido === "ingreso" && onAbrirIngreso ? () => onAbrirIngreso(o.orden) : undefined
-                    return <FilaOrden key={o.id} o={o} abierta={abiertas.has(o.id)} onToggle={() => alternar(o.id)} onVer360={onVer360} />
+                    return (
+                      <FilaOrden
+                        key={o.id}
+                        o={o}
+                        abierta={abiertas.has(o.id)}
+                        onToggle={() => alternar(o.id)}
+                        onVer360={onVer360}
+                        onEnlazar={async (invtransId) => {
+                          const r = await enlazarIngresoAOrden({ invtransId, ocargue: o.orden, selectedEmpresaId })
+                          toast({ title: r.success ? "Ingreso enlazado" : "No se pudo enlazar", description: r.message, variant: r.success ? undefined : "destructive" })
+                          if (r.success) await consultar()
+                        }}
+                      />
+                    )
                   })}
                   {ordenes.length === 0 && (
                     <tr>
@@ -372,9 +385,23 @@ export function CuadrePorOrden({
   )
 }
 
-function FilaOrden({ o, abierta, onToggle, onVer360 }: { o: OrdenCuadre; abierta: boolean; onToggle: () => void; onVer360?: () => void }) {
+function FilaOrden({
+  o,
+  abierta,
+  onToggle,
+  onVer360,
+  onEnlazar,
+}: {
+  o: OrdenCuadre
+  abierta: boolean
+  onToggle: () => void
+  onVer360?: () => void
+  onEnlazar?: (invtransId: number) => Promise<void>
+}) {
   const et = ETIQUETA_ESTADO[o.estado]
   const noMueve = o.sentido === "ninguno"
+  const [enlazando, setEnlazando] = useState<number | null>(null)
+  const tieneCandidato = o.lineas.some((l) => (l.candidatos?.length ?? 0) > 0)
   return (
     <>
       <tr className="cursor-pointer border-t border-border/60 align-top hover:bg-muted/40" onClick={onToggle}>
@@ -410,6 +437,11 @@ function FilaOrden({ o, abierta, onToggle, onVer360 }: { o: OrdenCuadre; abierta
                 <Wrench className="h-3 w-3" /> corregida
               </Chip>
             )}
+            {tieneCandidato && (
+              <Chip tono="info" title="Lo que falta parece estar en un ingreso digitado a mano: ábrela para enlazarlo">
+                <Link2 className="h-3 w-3" /> hay ingreso a mano
+              </Chip>
+            )}
           </div>
           {o.pendientes > 0 && <div className="mt-0.5 text-[10px] text-muted-foreground">{o.pendientes} por aprobar</div>}
         </td>
@@ -433,16 +465,58 @@ function FilaOrden({ o, abierta, onToggle, onVer360 }: { o: OrdenCuadre; abierta
                 </thead>
                 <tbody>
                   {o.lineas.map((l, i) => (
-                    <tr key={i} className={l.orden < 0.5 && l.inventario >= 0.5 ? "text-critico-fg" : ""}>
-                      <td className="px-2 py-1">
-                        {l.producto}
-                        {l.orden < 0.5 && l.inventario >= 0.5 && <span className="ml-2 text-[10px] uppercase">no estaba en la orden</span>}
-                      </td>
-                      <td className="lg-num px-2 py-1 text-right">{n(l.orden)}</td>
-                      <td className="lg-num px-2 py-1 text-right">{noMueve ? "—" : n(l.inventario)}</td>
-                      <td className="lg-num px-2 py-1 text-right">{l.devuelto ? n(l.devuelto) : "—"}</td>
-                      <td className={`lg-num px-2 py-1 text-right ${!noMueve && Math.abs(l.diferencia) >= 0.5 ? "font-semibold" : ""}`}>{noMueve ? "—" : dif(l.diferencia)}</td>
-                    </tr>
+                    <>
+                      <tr key={i} className={l.orden < 0.5 && l.inventario >= 0.5 ? "text-critico-fg" : ""}>
+                        <td className="px-2 py-1">
+                          {l.producto}
+                          {l.orden < 0.5 && l.inventario >= 0.5 && <span className="ml-2 text-[10px] uppercase">no estaba en la orden</span>}
+                        </td>
+                        <td className="lg-num px-2 py-1 text-right">{n(l.orden)}</td>
+                        <td className="lg-num px-2 py-1 text-right">{noMueve ? "—" : n(l.inventario)}</td>
+                        <td className="lg-num px-2 py-1 text-right">{l.devuelto ? n(l.devuelto) : "—"}</td>
+                        <td className={`lg-num px-2 py-1 text-right ${!noMueve && Math.abs(l.diferencia) >= 0.5 ? "font-semibold" : ""}`}>{noMueve ? "—" : dif(l.diferencia)}</td>
+                      </tr>
+                      {/* El producto sí llegó, pero se digitó a mano sin el número de orden
+                          (gerencia 9-oct: "fue un error del coordinador"). Enlazarlo no mueve
+                          ninguna unidad: solo le pone la orden que le faltaba. */}
+                      {(l.candidatos?.length ?? 0) > 0 && (
+                        <tr key={`c-${i}`}>
+                          <td colSpan={5} className="px-2 pb-1.5">
+                            <div className="rounded-md border border-info-bd bg-info-bg px-2.5 py-1.5 text-[11px] text-info-fg">
+                              <b>Lo que falta parece estar digitado a mano.</b> El producto llegó, pero el ingreso quedó sin el número de orden:
+                              <ul className="mt-1 space-y-1">
+                                {l.candidatos!.map((c) => (
+                                  <li key={c.invtransId} className="flex flex-wrap items-center gap-2">
+                                    <span className="lg-num">
+                                      #{c.invtransId} · {n(c.cantidad)} und · lote {c.lote ?? "—"} {c.location ?? ""} · {fmtFechaHora(c.creado)}
+                                      {c.creadopor ? ` · ${c.creadopor}` : ""}
+                                    </span>
+                                    {c.calce === "exacto" ? <Chip tono="ok">calza exacto</Chip> : <Chip tono="neutro">no calza exacto</Chip>}
+                                    {onEnlazar && (
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="h-6 gap-1 text-[11px]"
+                                        disabled={enlazando === c.invtransId}
+                                        onClick={async (e) => {
+                                          e.stopPropagation()
+                                          setEnlazando(c.invtransId)
+                                          await onEnlazar(c.invtransId)
+                                          setEnlazando(null)
+                                        }}
+                                      >
+                                        {enlazando === c.invtransId ? <Loader2 className="h-3 w-3 animate-spin" /> : <Link2 className="h-3 w-3" />} Enlazar a esta orden
+                                      </Button>
+                                    )}
+                                  </li>
+                                ))}
+                              </ul>
+                              <p className="mt-1 opacity-80">Enlazarlo no mueve ninguna unidad: el producto ya está en el inventario, solo le falta decir con qué orden llegó.</p>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </>
                   ))}
                 </tbody>
               </table>

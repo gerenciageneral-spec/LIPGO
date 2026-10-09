@@ -2,7 +2,7 @@
 // (Cedi Funza) medidos el 2026-10-08. Ver lib/cuadre-por-orden.ts.
 
 import { describe, expect, it } from "vitest"
-import { armarLineas, clasificar, correccionesDeLaOrden, marcaDeCorreccion, resumirMovimientos, sentidoDe } from "@/lib/cuadre-por-orden"
+import { armarLineas, buscarCandidatos, clasificar, correccionesDeLaOrden, marcaDeCorreccion, resumirMovimientos, sentidoDe } from "@/lib/cuadre-por-orden"
 
 describe("sentido de la orden", () => {
   it("cargue = salida, descargue (manual o auto) = ingreso, distribución/tolva no mueven", () => {
@@ -124,6 +124,39 @@ describe("clasificación", () => {
   it("clon de distribución → no mueve inventario (no es una diferencia)", () => {
     const lineas = [{ producto: "A", orden: 190, inventario: 0, diferencia: -190 }]
     expect(clasificar({ sentido: "ninguno", status: "finalizado", lineas, pendientes: 0 })).toBe("no_mueve")
+  })
+})
+
+describe("lo que falta está digitado a mano: buscar el ingreso suelto que calza", () => {
+  // Caso real: descargue 107215 del 8-oct, PT CONCHAS 500GR*24PQ. La orden decía 100, el
+  // ingreso automático se rechazó y el coordinador digitó 100 a mano sin el número de orden.
+  const suelto = (invtransId: number, cantidad: number) => ({ invtransId, cantidad, lote: "20260928", location: "A4", creado: "2026-10-08T16:53:00", creadopor: "Ander Fabian" })
+
+  it("el que coincide en cantidad calza exacto", () => {
+    const r = buscarCandidatos(100, [suelto(35045, 100)])
+    expect(r).toHaveLength(1)
+    expect(r[0].calce).toBe("exacto")
+    expect(r[0].invtransId).toBe(35045)
+  })
+
+  it("primero el exacto, después los aproximados por cercanía", () => {
+    const r = buscarCandidatos(100, [suelto(1, 300), suelto(2, 100), suelto(3, 110)])
+    expect(r.map((c) => c.invtransId)).toEqual([2, 3, 1])
+    expect(r.map((c) => c.calce)).toEqual(["exacto", "parcial", "parcial"])
+  })
+
+  it("media unidad de diferencia sigue siendo exacto", () => {
+    expect(buscarCandidatos(100, [suelto(1, 100.4)])[0].calce).toBe("exacto")
+    expect(buscarCandidatos(100, [suelto(1, 102)])[0].calce).toBe("parcial")
+  })
+
+  it("sin faltante no se sugiere nada, aunque haya ingresos sueltos", () => {
+    expect(buscarCandidatos(0, [suelto(1, 100)])).toEqual([])
+    expect(buscarCandidatos(-5, [suelto(1, 100)])).toEqual([])
+  })
+
+  it("sin ingresos sueltos no hay candidatos", () => {
+    expect(buscarCandidatos(100, [])).toEqual([])
   })
 })
 
