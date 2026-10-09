@@ -795,8 +795,64 @@ export async function checkAsignacionVsInvtrans(sb: SB, dias = 30): Promise<Resu
   }
 }
 
+const CHK_AJUSTE_HUERFANO = {
+  clave: "ajuste_conteo_sin_movimiento",
+  titulo: "Ajuste de un conteo que dice haber movido stock, y no lo movió",
+  regla:
+    "Un conteo vive en dos sitios: la línea (fija el inicial del mes) y su ajuste + movimiento en invtrans (mueve el stock). Si se borra el movimiento y el ajuste queda 'aprobado', el conteo cree que descontó algo que el inventario nunca descontó, y el Kardex del mes queda 'sin soporte' para siempre.",
+  gravedad: "critico" as const,
+}
+/**
+ * Encontrado el 2026-10-08 en ID3: 3 de los 29 ajustes del Conteo #39 habían perdido su
+ * movimiento (se borraron a mano para quitar lotes negativos, sin tocar el ajuste), y eso
+ * explicaba 316 unidades "sin soporte" en el Kardex de octubre: POLI PANADERIA −285,
+ * HARINA 24LB −30 y FIDEO A LA MESA −1. Nadie se enteró hasta que gerencia miró el Kardex.
+ *
+ * Mira SOLO los ajustes de un conteo (`cuadre_id` no nulo), que son los que fijan el inicial
+ * del mes. Las correcciones sueltas (309/311 registradas fuera de un conteo) viven en otro
+ * flujo y no mueven la base: medido el mismo día, ID1 tiene 206 así, en pares que se
+ * compensan; meterlas aquí ahogaría los casos que sí importan.
+ */
+export async function checkAjusteConteoSinMovimiento(sb: SB): Promise<ResultadoCheck> {
+  try {
+    const ajustes = await fetchAllRows((from, to) =>
+      sb
+        .from("sig_inventario_ajuste")
+        .select("id, proyecto_id, cuadre_id, producto, lote, location, cantidad, tipo, estado, invtrans_id")
+        .eq("activo", true)
+        .eq("estado", "aprobado")
+        .not("cuadre_id", "is", null)
+        .order("id", { ascending: true })
+        .range(from, to),
+    )
+    const ids = [...new Set(ajustes.map((a: any) => a.invtrans_id).filter(Boolean))]
+    const existen = new Set<number>()
+    for (let i = 0; i < ids.length; i += 200) {
+      const filas = await fetchAllRows((from, to) =>
+        sb.from("invtrans").select("id").in("id", ids.slice(i, i + 200)).order("id", { ascending: true }).range(from, to),
+      )
+      for (const f of filas) existen.add(Number(f.id))
+    }
+    const casos: string[] = []
+    for (const a of ajustes) {
+      const falta = !a.invtrans_id
+        ? "nunca se le registró el movimiento"
+        : !existen.has(Number(a.invtrans_id))
+          ? `su movimiento invtrans #${a.invtrans_id} ya no existe`
+          : null
+      if (!falta) continue
+      casos.push(
+        `ID${n0(a.proyecto_id)} · conteo #${n0(a.cuadre_id)} · aj#${n0(a.id)} ${a.producto} lote ${a.lote ?? "—"} ${a.location ?? ""}: ${n0(a.cantidad) === 0 ? "0" : a.cantidad} (${a.tipo}) — ${falta}`,
+      )
+    }
+    return resultadoDe(CHK_AJUSTE_HUERFANO, casos)
+  } catch (e: any) {
+    return sinDatos(CHK_AJUSTE_HUERFANO, e?.message ?? String(e))
+  }
+}
+
 export async function correrChecks(sb: SB): Promise<ResultadoCheck[]> {
-  const [dup, mas, pend, stock, ped, err, rastro, vinculo, ciclo, ingresos, asignacion] = await Promise.all([
+  const [dup, mas, pend, stock, ped, err, rastro, vinculo, ciclo, ingresos, asignacion, huerfano] = await Promise.all([
     checkSalidasDuplicadas(sb),
     checkSalioMasQueOrden(sb),
     checkPendientesInventario(sb),
@@ -808,6 +864,7 @@ export async function correrChecks(sb: SB): Promise<ResultadoCheck[]> {
     checkCicloFacturacion(sb),
     checkIngresosSinCruce(sb),
     checkAsignacionVsInvtrans(sb),
+    checkAjusteConteoSinMovimiento(sb),
   ])
-  return [dup, mas, ...pend, ...stock, ...ped, err, rastro, vinculo, ciclo, ingresos, asignacion]
+  return [dup, mas, ...pend, ...stock, ...ped, err, rastro, vinculo, ciclo, ingresos, asignacion, huerfano]
 }

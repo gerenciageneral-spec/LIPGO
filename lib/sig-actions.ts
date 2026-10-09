@@ -66,6 +66,7 @@ import type { AccesoPedidos } from "@/lib/acceso-empresa"
 import { getMetaDiaForEmpresa } from "@/lib/empresa-meta-dia"
 import { getSlaCargueMin, esNombreSubproducto, PLANTA_ACORDADA, factorTiempoSitio } from "@/lib/sla-acordados"
 import { esCodigoTrasladoNetoCero, nombreMovimientoPorCodigo } from "@/lib/transacciones-codigo"
+import { saldoCorrido } from "@/lib/kardex-saldo"
 import { excluirNoFacturable } from "@/lib/facturas-exclusiones"
 import { categoriaDeNovedad, diasActivosEnPeriodo, diasAusenciaDistintos } from "@/lib/ausentismo-categorias"
 import { codigosOrdenPorUnidad } from "@/lib/ordenes-por-unidad"
@@ -3512,6 +3513,8 @@ export async function getMovimientosProducto(
   saldoFinalPeriodo?: number
   saldoCierre?: number
   descuadre?: number
+  /** Por qué no cierra, dicho con su número. Vacío cuando cuadra o cuando la causa no es conocida. */
+  causasDescuadre?: string[]
   baseDescripcion?: string | null
   cierreDescripcion?: string
   error?: string
@@ -3534,16 +3537,8 @@ export async function getMovimientosProducto(
       .limit(5000)
     if (error) return { success: false, data: [], error: error.message }
 
-    // 309/311/312/344/343 NUNCA afectan el saldo, sin excepción — es la
-    // función misma del código (reclasificar/trasladar/bloquear), no un
-    // ingreso ni una salida real. Aunque un 309 pueda cambiar de producto
-    // (no solo lote/ubicación), un caso real (ID3, PT000080 recibiendo 212
-    // "de" PT000021) resultó ser justo eso: una corrección de lotes hecha
-    // por error, sin respaldo físico — el usuario confirmó que el físico
-    // real de PT000080 es 3.868, no 4.079. Tratar el cruce de producto como
-    // "ingreso real" habría escondido ese error dentro del cálculo en vez
-    // de dejarlo visible para corregirlo donde corresponde: la transacción
-    // puntual, no el reporte.
+    // 309/311/312/344/343 cambian DÓNDE está el producto o bajo qué lote, no
+    // CUÁNTO hay: no se pintan como ingreso ni como salida.
     const netoCeroProducto = (r: any) => esCodigoTrasladoNetoCero(r.cod_movimiento)
 
     // Saldo corrido — ÚNICO para todo el producto, en un solo hilo
@@ -3571,19 +3566,21 @@ export async function getMovimientosProducto(
     const cierreFecha = cierre.porProducto ? cierre.fecha : null
     const dentroPeriodo = (r: any) => (base ? enPeriodoBase(r, baseFecha, cierreFecha) : (!anio || yr(r.creado) === anio) && (!mes || mo(r.creado) === mes))
     const esAprobada = (r: any) => String(r.status || "").toLowerCase().startsWith("aprob")
-    const cronologico = [...(rows ?? [])].sort((a: any, b: any) => String(a.creado || "").localeCompare(String(b.creado || "")))
+    const cronologico = [...(rows ?? [])]
+      .filter((r: any) => dentroPeriodo(r))
+      .sort((a: any, b: any) => String(a.creado || "").localeCompare(String(b.creado || "")))
+    // El saldo que va quedando. Un TRASLADO no lo mueve: sus dos patas tienen el mismo
+    // instante, así que mostrarlas una tras otra hacía caer el saldo a un número que nunca
+    // existió (caso real: POLI PANADERIA en ID3, un 311 de 305 dejaba el saldo en −233 y el
+    // orden entre las patas es arbitrario). La regla —y el caso del 309 que cruza de
+    // producto, donde el remanente sí mueve— está en lib/kardex-saldo.ts, con 12 pruebas.
     const saldosPorFila = new Map<any, { antes: number; despues: number }>()
+    const efectoPorFila = new Map<any, number>()
     let corrido = base ? Math.round(base.porProducto[codproducto] ?? 0) : 0
-    for (const r of cronologico) {
-      if (!dentroPeriodo(r)) continue
-      const antes = corrido
-      // TODA transacción aprobada mueve el corrido, también las patas de un
-      // 309/311 (dentro del mismo producto suman 0; si cruzó de producto,
-      // es una reclasificación con soporte, igual que en el stock).
-      if (esAprobada(r)) {
-        corrido = Math.round((corrido + (r.tipomov === "Entrada" ? 1 : -1) * Math.abs(Number(r.cantidad) || 0)) * 100) / 100
-      }
-      saldosPorFila.set(r, { antes, despues: corrido })
+    for (const f of saldoCorrido(cronologico, corrido)) {
+      saldosPorFila.set(f.movimiento, { antes: f.antes, despues: f.despues })
+      efectoPorFila.set(f.movimiento, f.efecto)
+      corrido = f.despues
     }
 
     // Un ingreso SIN aprobar (ej. el auto-descargue antes de que alguien lo
@@ -3635,7 +3632,9 @@ export async function getMovimientosProducto(
           tipomov: r.tipomov,
           cantidad: Number(r.cantidad) || 0,
           status: r.status,
-          afectaSaldo: String(r.status || "").toLowerCase().startsWith("aprob"),
+          // Cuánto movió ESTA fila el saldo del producto: 0 en las patas de un traslado.
+          efectoEnSaldo: efectoPorFila.get(r) ?? 0,
+          afectaSaldo: (efectoPorFila.get(r) ?? 0) !== 0,
           saldoAntes: saldo?.antes ?? null,
           saldoDespues: saldo?.despues ?? null,
           usuario: r.creadopor || null, // quién realizó el movimiento (auditoría)
@@ -3655,6 +3654,46 @@ export async function getMovimientosProducto(
     const saldoInicialPeriodo = base ? Math.round(base.porProducto[codproducto] ?? 0) : undefined
     const saldoFinalPeriodo = base ? Math.round(corrido) : undefined
     const saldoCierre = Math.round((cierre.porProducto ? cierre.porProducto[codproducto] : stockVivo) ?? 0)
+    const descuadre = saldoFinalPeriodo === undefined ? undefined : saldoFinalPeriodo - saldoCierre
+
+    // POR QUÉ no cierra. Un "sin soporte" sin explicación obliga a llamar a alguien; con la
+    // causa escrita, el coordinador lo resuelve solo. Las dos causas conocidas (gerencia lo
+    // vio el 2026-10-08 con un −30 que nadie sabía de dónde salía):
+    //   1. Un ajuste del conteo dice haber movido stock y su movimiento ya no existe.
+    //   2. Salidas por descontar: el stock ya las bajó pero la transacción no está aprobada.
+    // Solo se consulta cuando hay descuadre, para no cobrarle a la pantalla cuando cuadra.
+    const causasDescuadre: string[] = []
+    if (descuadre !== undefined && descuadre !== 0) {
+      const { data: ajs } = await supabase
+        .from("sig_inventario_ajuste")
+        .select("id, cuadre_id, lote, location, cantidad, tipo, invtrans_id")
+        .eq("codproducto", codproducto)
+        .in("proyecto_id", clientes)
+        .eq("activo", true)
+        .eq("estado", "aprobado")
+        .not("cuadre_id", "is", null) // solo los de un conteo (los sueltos no mueven la base)
+      const idsAj = (ajs ?? []).map((a: any) => a.invtrans_id).filter(Boolean)
+      const existen = new Set<number>()
+      if (idsAj.length) {
+        const { data: hay } = await supabase.from("invtrans").select("id").in("id", idsAj)
+        for (const h of hay ?? []) existen.add(Number(h.id))
+      }
+      for (const a of ajs ?? []) {
+        if (a.invtrans_id && existen.has(Number(a.invtrans_id))) continue
+        causasDescuadre.push(
+          `La corrección aj#${a.id} del conteo #${a.cuadre_id} (${a.tipo} de ${a.cantidad} en el lote ${a.lote ?? "—"} ${a.location ?? ""}) ` +
+            (a.invtrans_id ? `apunta al movimiento #${a.invtrans_id}, que ya no existe` : "nunca registró su movimiento") +
+            ": el conteo lo dio por descontado y el inventario no lo descontó.",
+        )
+      }
+      const porDescontar = (rows ?? []).filter((r: any) => dentroPeriodo(r) && !esAprobada(r) && r.tipomov !== "Entrada")
+      if (porDescontar.length) {
+        const u = porDescontar.reduce((s: number, r: any) => s + Math.abs(Number(r.cantidad) || 0), 0)
+        causasDescuadre.push(
+          `${porDescontar.length} salida(s) por descontar (${u} unidades): el stock ya las bajó pero el picking no se ha confirmado.`,
+        )
+      }
+    }
 
     return {
       success: true,
@@ -3662,7 +3701,8 @@ export async function getMovimientosProducto(
       saldoInicialPeriodo,
       saldoFinalPeriodo,
       saldoCierre,
-      descuadre: saldoFinalPeriodo === undefined ? undefined : saldoFinalPeriodo - saldoCierre,
+      descuadre,
+      causasDescuadre,
       baseDescripcion: base?.descripcion ?? null,
       cierreDescripcion: cierre.descripcion,
     }
@@ -3905,6 +3945,44 @@ export async function crearCuadre(
             error:
               `Hay ${bloquean.length} salida(s) de orden de cargue sin confirmar (${Math.round(und)} und) en ${ords.length} orden(es) ya finalizada(s): ${ords.slice(0, 6).join(", ")}${ords.length > 6 ? "…" : ""}. ` +
               `Confírmalas en Centro de Coordinación (Confirmar Picking) antes de crear el Conteo total; si no, quedarían como diferencia sin soporte del mes.`,
+          }
+        }
+      }
+      // (2026-10-08) CONTROL: ningún conteo anterior puede tener una corrección
+      // que diga haber movido stock sin haberlo movido. Pasa cuando se borra el
+      // movimiento en invtrans (para quitar un lote negativo, por ejemplo) y el
+      // ajuste queda "aprobado": el conteo da por descontado algo que el
+      // inventario nunca descontó, y el Kardex de ese mes queda "sin soporte"
+      // para siempre. Caso real ID3 (8-oct-2026): 3 de los 29 ajustes del
+      // Conteo #39 habían perdido su movimiento y explicaban 316 unidades sin
+      // soporte. Abrir el mes nuevo encima de eso lo vuelve permanente, así que
+      // se exige cerrarlo antes.
+      {
+        const { data: ajs } = await supabase
+          .from("sig_inventario_ajuste")
+          .select("id, cuadre_id, producto, lote, location, cantidad, tipo, invtrans_id")
+          .eq("proyecto_id", proyectoId)
+          .eq("activo", true)
+          .eq("estado", "aprobado")
+          .not("cuadre_id", "is", null) // solo los de un conteo: son los que fijan el inicial del mes
+          .limit(2000)
+        const ids = (ajs ?? []).map((a: any) => a.invtrans_id).filter(Boolean)
+        const existen = new Set<number>()
+        for (let i = 0; i < ids.length; i += 200) {
+          const { data: hay } = await supabase.from("invtrans").select("id").in("id", ids.slice(i, i + 200))
+          for (const h of hay ?? []) existen.add(Number(h.id))
+        }
+        const huerfanos = (ajs ?? []).filter((a: any) => !a.invtrans_id || !existen.has(Number(a.invtrans_id)))
+        if (huerfanos.length > 0) {
+          const det = huerfanos
+            .slice(0, 5)
+            .map((a: any) => `aj#${a.id} (conteo #${a.cuadre_id}, ${a.producto} lote ${a.lote ?? "—"}, ${a.cantidad})`)
+            .join("; ")
+          return {
+            success: false,
+            error:
+              `Hay ${huerfanos.length} corrección(es) de conteos anteriores que dicen haber movido stock y su movimiento ya no existe: ${det}${huerfanos.length > 5 ? "…" : ""}. ` +
+              `El Kardex de ese mes queda "sin soporte" por esa cantidad. Resuélvelas antes de abrir el conteo nuevo: o se vuelve a registrar el movimiento, o se corrige la línea del conteo y se anula la corrección.`,
           }
         }
       }

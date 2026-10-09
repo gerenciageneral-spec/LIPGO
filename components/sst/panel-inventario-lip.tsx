@@ -71,6 +71,7 @@ export function PanelInventarioLIP() {
     saldoFinalPeriodo?: number
     saldoCierre?: number
     descuadre?: number
+    causasDescuadre?: string[]
     baseDescripcion?: string | null
     cierreDescripcion?: string
     resumen?: { entradas: number; salidas: number; traslados: number; ajustes: number; merma: number }
@@ -194,6 +195,7 @@ export function PanelInventarioLIP() {
         saldoFinalPeriodo: r.saldoFinalPeriodo,
         saldoCierre: r.saldoCierre,
         descuadre: r.descuadre,
+        causasDescuadre: r.causasDescuadre ?? [],
         baseDescripcion: r.baseDescripcion,
         cierreDescripcion: r.cierreDescripcion,
         resumen,
@@ -1506,9 +1508,24 @@ export function PanelInventarioLIP() {
                       </>
                     )}
                   </div>
+                  {/* Por qué no cierra, no solo cuánto: un "sin soporte" sin explicación obliga
+                      a preguntarle a alguien. Gerencia (2026-10-08) vio un −30 que nadie sabía
+                      de dónde salía; era un ajuste del conteo cuyo movimiento se había borrado. */}
+                  {drill.descuadre ? (
+                    <div className="rounded-md border px-3 py-2 text-[11px]" style={{ borderColor: SST_TOKENS.bad, background: "#fff5f5" }}>
+                      <b>Por qué no cierra:</b>
+                      {drill.causasDescuadre?.length ? (
+                        <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                          {drill.causasDescuadre.map((c: string, i: number) => <li key={i}>{c}</li>)}
+                        </ul>
+                      ) : (
+                        <span> no se encontró una causa conocida (ajuste de conteo sin movimiento o picking sin confirmar). Revisar los movimientos del periodo uno por uno.</span>
+                      )}
+                    </div>
+                  ) : null}
                   <p className="text-[11px] text-muted-foreground">
                     {drill.baseDescripcion ? <>Base: <b>{drill.baseDescripcion}</b> · cierre: <b>{drill.cierreDescripcion}</b>. </> : null}
-                    Saldo corrido único del producto, transacción por transacción — el lote y la ubicación de cada movimiento se ven en sus propias columnas (y en el soporte PDF), pero no cortan el hilo del saldo.
+                    Saldo corrido único del producto, transacción por transacción. Un <b>traslado o reclasificación</b> (309/311/312/343/344) no mueve el saldo: cambia dónde está el producto o bajo qué lote, no cuánto hay. El lote y la ubicación de cada movimiento se ven en sus propias columnas (y en el soporte PDF), pero no cortan el hilo del saldo.
                   </p>
                   <div className="max-h-[78vh] overflow-auto rounded-md border">
                     <table className="w-full min-w-[1000px] text-sm">
@@ -1546,11 +1563,28 @@ export function PanelInventarioLIP() {
                               <td className="px-2 py-1.5 text-right font-medium tabular-nums" style={{ color: SST_TOKENS.bad }} title={mv.netoCero ? "Traslado/reclasificación: no es una salida real, no cambia el total" : undefined}>
                                 {!mv.netoCero && mv.tipomov !== "Entrada" ? fmt(mv.cantidad) : ""}
                               </td>
-                              <td className="px-2 py-1.5 text-right tabular-nums" title={mv.afectaSaldo ? undefined : "No aprobado: no afectó el saldo"}>
-                                {mv.afectaSaldo ? (
-                                  <span className="font-semibold">{fmt(mv.saldoDespues)}</span>
-                                ) : (
+                              {/* El saldo que va quedando. Un traslado NO lo mueve (cambia la
+                                  ubicación o el lote, no el total), así que se muestra igual al
+                                  de la fila anterior y en tono suave: antes las dos patas lo
+                                  hacían subir y bajar, y como tienen el mismo instante el orden
+                                  entre ellas es arbitrario — en POLI PANADERIA se llegó a ver
+                                  un −233 que nunca existió. */}
+                              <td
+                                className="px-2 py-1.5 text-right tabular-nums"
+                                title={
+                                  !String(mv.status || "").toLowerCase().startsWith("aprob")
+                                    ? "No aprobado: no afectó el saldo"
+                                    : mv.netoCero
+                                      ? "Traslado o reclasificación: cambia dónde está el producto, no cuánto hay. El saldo no se mueve."
+                                      : undefined
+                                }
+                              >
+                                {!String(mv.status || "").toLowerCase().startsWith("aprob") ? (
                                   <span className="text-muted-foreground">{fmt(mv.saldoDespues)} *</span>
+                                ) : mv.netoCero ? (
+                                  <span className="text-muted-foreground">{fmt(mv.saldoDespues)}</span>
+                                ) : (
+                                  <span className="font-semibold">{fmt(mv.saldoDespues)}</span>
                                 )}
                               </td>
                               <td className="px-2 py-1.5 text-xs">{mv.usuario || "—"}</td>
