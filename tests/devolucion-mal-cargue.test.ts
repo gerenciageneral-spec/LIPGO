@@ -3,8 +3,12 @@
 
 import { describe, expect, it } from "vitest"
 import {
+  ajustaPesoElMotivo,
   decidirPeso,
+  esMotivoDevolucion,
+  etiquetaMotivo,
   lineasDevolvibles,
+  MOTIVOS_DEVOLUCION,
   observacionDevolucion,
   repartirEnPedidos,
   validarCantidad,
@@ -140,6 +144,64 @@ describe("el peso de la orden: solo si la quincena sigue abierta", () => {
   })
 })
 
+// Regla de gerencia del 2026-10-09: la cuadrilla cobra por el peso que cargó de verdad al
+// camión. De ahí sale la única diferencia entre los tres motivos.
+describe("el motivo decide el peso de la orden y con él la nómina", () => {
+  const base = { pesoOrden: 10, toneladasLinea: 1.95, cantidadLinea: 39, cantidadDevuelta: 10, fechaCargue: "2026-10-08", hoyISO: "2026-10-09" }
+
+  it("son tres, y solo 'cantidad de más' deja el peso quieto", () => {
+    expect(MOTIVOS_DEVOLUCION.map((m) => m.valor)).toEqual(["trocado", "cantidad_de_mas", "cantidad_de_menos"])
+    expect(ajustaPesoElMotivo("trocado")).toBe(true)
+    expect(ajustaPesoElMotivo("cantidad_de_menos")).toBe(true)
+    expect(ajustaPesoElMotivo("cantidad_de_mas")).toBe(false)
+  })
+
+  it("trocado: ese producto no se cargó, así que el peso baja", () => {
+    const r = decidirPeso({ ...base, motivo: "trocado" })
+    expect(r.ajustar).toBe(true)
+    expect(r.pesoNuevo).toBe(9.5)
+  })
+
+  it("cantidad de menos: tampoco se cargó, el peso baja", () => {
+    expect(decidirPeso({ ...base, motivo: "cantidad_de_menos" }).ajustar).toBe(true)
+  })
+
+  it("cantidad de más: volvió en el mismo camión, el peso NO se toca aunque la quincena esté abierta", () => {
+    const r = decidirPeso({ ...base, motivo: "cantidad_de_mas" })
+    expect(r.ajustar).toBe(false)
+    expect(r.pesoNuevo).toBeNull()
+    expect(r.motivo).toContain("Cantidad de más")
+    expect(r.motivo).toContain("cargó ese peso")
+  })
+
+  it("el motivo no le gana a una quincena pagada: con trocado viejo tampoco se toca", () => {
+    const r = decidirPeso({ ...base, fechaCargue: "2026-09-20", motivo: "trocado" })
+    expect(r.ajustar).toBe(false)
+    expect(r.motivo).toContain("ya se pagó")
+  })
+
+  it("sin motivo se comporta como antes (compatibilidad): manda la quincena", () => {
+    expect(decidirPeso(base).ajustar).toBe(true)
+  })
+
+  it("un motivo inventado no pasa la puerta del servidor", () => {
+    expect(esMotivoDevolucion("trocado")).toBe(true)
+    expect(esMotivoDevolucion("cantidad_de_mas")).toBe(true)
+    expect(esMotivoDevolucion("cantidad_de_menos")).toBe(true)
+    expect(esMotivoDevolucion("")).toBe(false)
+    expect(esMotivoDevolucion("sin_peso")).toBe(false)
+    expect(esMotivoDevolucion(undefined)).toBe(false)
+    expect(esMotivoDevolucion(654)).toBe(false)
+  })
+
+  it("cada motivo dice en una línea qué le hace al peso", () => {
+    for (const m of MOTIVOS_DEVOLUCION) {
+      expect(m.efectoCorto.length).toBeGreaterThan(0)
+      expect(etiquetaMotivo(m.valor)).toBe(m.etiqueta)
+    }
+  })
+})
+
 describe("el porqué viaja con el dato", () => {
   it("la observación dice orden, motivo, detalle, de qué salida viene y quién autorizó", () => {
     const o = observacionDevolucion({
@@ -159,5 +221,24 @@ describe("el porqué viaja con el dato", () => {
   it("sin detalle ni autorizador no deja separadores sueltos", () => {
     const o = observacionDevolucion({ ocargue: "X", motivo: "cantidad_de_mas", invtransOrigen: 1 })
     expect(o).toBe("Devolución por mal cargue (654) de la orden X · Cantidad de más · vuelve de la salida invtrans #1")
+  })
+
+  it("dice qué pasó con el peso, para poder auditar la nómina meses después", () => {
+    const peso = decidirPeso({ pesoOrden: 10, toneladasLinea: 1.95, cantidadLinea: 39, cantidadDevuelta: 10, fechaCargue: "2026-10-08", hoyISO: "2026-10-09", motivo: "cantidad_de_mas" })
+    const o = observacionDevolucion({ ocargue: "X", motivo: "cantidad_de_mas", invtransOrigen: 1, pesoNota: peso.motivo })
+    expect(o).toContain("peso:")
+    expect(o).toContain("no se toca")
+  })
+
+  it("la salida de la que viene se puede leer aunque el usuario escriba 'invtrans #' en su comentario", () => {
+    // `getOrdenParaDevolver` saca el id de la frase 'vuelve de la salida invtrans #N' para que
+    // el tope por línea no se mezcle por una coincidencia en el texto libre.
+    const o = observacionDevolucion({
+      ocargue: "X",
+      motivo: "trocado",
+      detalle: "ver invtrans #99999",
+      invtransOrigen: 35002,
+    })
+    expect(/vuelve de la salida invtrans #(\d+)/.exec(o)?.[1]).toBe("35002")
   })
 })

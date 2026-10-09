@@ -16,30 +16,99 @@
  * camión solo cargó 90. Esas 10 nunca salieron de la bodega — el inventario las tiene de menos
  * sin razón y el cliente quedó esperándolas.
  *
- * EL CASO CONTRARIO NO VA POR AQUÍ. Si el camión cargó MÁS de lo que la orden autoriza, el
- * sistema no lo deja registrar (candado del servidor, `lib/asignacion-lote-regla.ts`): esas
- * unidades salen sin respaldo y aparecen como faltante en el conteo. No se arreglan con un 654.
+ * CUIDADO CON DOS CASOS QUE SE LLAMAN PARECIDO Y NO SON LO MISMO:
+ *   · "Cantidad de más" (motivo de AQUÍ): salió más de lo que el destino necesitaba y **volvió
+ *     en el mismo camión**. Hay producto físico de vuelta en la bodega, así que sí entra.
+ *   · Cargar MÁS de lo que la orden autoriza y que **no vuelva**: eso no va por aquí. El candado
+ *     del servidor (`lib/asignacion-lote-regla.ts`) no deja registrar una salida mayor a la
+ *     orden, esas unidades salen sin respaldo y aparecen como faltante en el conteo. Gerencia,
+ *     textual: "por ley no se puede cargar más de lo que pide la orden".
  *
  * LOS TRES EFECTOS
- *   1. INVENTARIO: entra la cantidad devuelta, al mismo lote y producto del que salió.
+ *   1. INVENTARIO: entra la cantidad devuelta, al mismo lote y producto del que salió. Ocurre
+ *      con los TRES motivos: el producto está de vuelta en la bodega, lo tiene que decir.
  *   2. PEDIDO: baja lo cargado y sube lo pendiente, para que pueda volver a salir en otra orden.
- *   3. PESO DE LA ORDEN: baja en proporción... PERO SOLO SI LA QUINCENA SIGUE ABIERTA. En los
- *      CEDIs (ID3, ID4) la nómina de los auxiliares se calcula con `cabeceraoc.pesoorden`
- *      (no tienen báscula propia), así que bajarlo en una quincena ya pagada le quita plata a
- *      alguien por un trabajo que ya hizo. Regla de gerencia: ajustar solo si no se ha pagado.
+ *      También con los tres: lo que volvió no se le entregó al cliente.
+ *   3. PESO DE LA ORDEN: baja en proporción, pero solo si DOS cosas se cumplen — que el MOTIVO lo
+ *      pida (ver `MOTIVOS_DEVOLUCION`) y que la QUINCENA del cargue siga abierta. En los CEDIs
+ *      (ID3, ID4) la nómina de los auxiliares se calcula con `cabeceraoc.pesoorden` (no tienen
+ *      báscula propia), así que bajarlo en una quincena ya pagada le quita plata a alguien por un
+ *      trabajo que ya hizo. Regla de gerencia: ajustar solo si no se ha pagado.
+ *
+ * La facturación de LIP no se toca en ningún caso: va por `pesovascula` (el tiquete de báscula).
  */
 
 import { estadoQuincena } from "@/lib/quincena-abierta"
 
 export const CODIGO_DEVOLUCION_MAL_CARGUE = "654"
 
-/** Por qué volvió el producto. Queda escrito en el movimiento y en el pedido. */
-export type MotivoDevolucion = "trocado" | "cantidad_de_mas"
+/**
+ * Por qué volvió el producto. No es una etiqueta: decide si el peso de la orden —y con él la
+ * nómina de los auxiliares— se ajusta o no.
+ *
+ * La regla la dio gerencia el 2026-10-09, y detrás hay una lógica operativa simple: **la
+ * cuadrilla cobra por el peso que cargó de verdad al camión**.
+ *   · Trocado y cantidad de menos → esas unidades NUNCA se cargaron (o se cargó otra cosa),
+ *     así que el peso de la orden baja y el pago con él.
+ *   · Cantidad de más → sí se cargaron, el camión las llevó y volvieron: la cuadrilla hizo ese
+ *     trabajo, así que ni el peso ni la nómina se tocan.
+ * En los TRES el producto entra al inventario (la salida ya lo había descontado) y el pedido
+ * recupera esas unidades como pendientes.
+ */
+export type MotivoDevolucion = "trocado" | "cantidad_de_mas" | "cantidad_de_menos"
 
-export const MOTIVOS_DEVOLUCION: Array<{ valor: MotivoDevolucion; etiqueta: string; ayuda: string }> = [
-  { valor: "trocado", etiqueta: "Trocado", ayuda: "Se cargó un producto por otro: este no era el que iba." },
-  { valor: "cantidad_de_mas", etiqueta: "Cantidad de más", ayuda: "La orden descontó más de lo que el camión se llevó." },
+export const MOTIVOS_DEVOLUCION: Array<{
+  valor: MotivoDevolucion
+  etiqueta: string
+  ayuda: string
+  /** true = el peso de la orden (y con él la nómina de los auxiliares) baja en proporción. */
+  ajustaPeso: boolean
+  /** Lo que se le pinta al lado del nombre, para que el efecto se vea antes de firmar. */
+  efectoCorto: string
+}> = [
+  {
+    valor: "trocado",
+    etiqueta: "Trocado",
+    ayuda:
+      "Se cargó un producto por otro: este no era el que iba, así que vuelve a la bodega. Esas unidades no se cargaron al camión, " +
+      "de modo que el peso de la orden y el pago de la cuadrilla bajan con ellas.",
+    ajustaPeso: true,
+    efectoCorto: "baja el peso y la nómina",
+  },
+  {
+    valor: "cantidad_de_mas",
+    etiqueta: "Cantidad de más",
+    ayuda:
+      "Salió más de lo que el destino necesitaba y volvió en el mismo camión. El inventario y el pedido se corrigen, pero el peso " +
+      "de la orden NO se toca: la cuadrilla sí cargó ese peso y cobra por él.",
+    ajustaPeso: false,
+    efectoCorto: "no toca el peso ni la nómina",
+  },
+  {
+    valor: "cantidad_de_menos",
+    etiqueta: "Cantidad de menos / error de cargue",
+    ayuda:
+      "El camión llevó menos de lo que la orden descontó: esas unidades nunca salieron de la bodega. El peso de la orden y el pago " +
+      "de la cuadrilla bajan, porque ese peso no se cargó.",
+    ajustaPeso: true,
+    efectoCorto: "baja el peso y la nómina",
+  },
 ]
+
+/**
+ * ¿El motivo que llegó es uno de los tres? Se valida en el SERVIDOR, no solo en la pantalla:
+ * el motivo decide si la nómina de los auxiliares se mueve, así que no puede llegar un texto
+ * cualquiera desde el navegador.
+ */
+export function esMotivoDevolucion(v: unknown): v is MotivoDevolucion {
+  return MOTIVOS_DEVOLUCION.some((m) => m.valor === v)
+}
+
+export const etiquetaMotivo = (motivo: MotivoDevolucion | string) =>
+  MOTIVOS_DEVOLUCION.find((m) => m.valor === motivo)?.etiqueta ?? String(motivo)
+
+export const ajustaPesoElMotivo = (motivo: MotivoDevolucion) =>
+  MOTIVOS_DEVOLUCION.find((m) => m.valor === motivo)?.ajustaPeso ?? true
 
 /** Una línea de lo que la orden despachó, con lo que ya se devolvió antes. */
 export interface LineaDespachada {
@@ -148,10 +217,15 @@ export interface DecisionPeso {
 /**
  * ¿Se le baja el peso a la orden?
  *
- * Solo si la quincena del cargue sigue abierta. El peso baja en PROPORCIÓN a lo devuelto
- * dentro de su línea (`toneladas` de la línea ÷ `cantidad` de la línea × lo devuelto), que
- * funciona igual para los productos que se miden en toneladas y para los que se pagan por
- * unidad (Huevos/Empaque de ID2, donde `toneladas` ya viene en unidades).
+ * Dos condiciones, y las dos tienen que cumplirse:
+ *   1. EL MOTIVO lo pide. En "cantidad de más" no: la cuadrilla sí cargó ese peso al camión,
+ *      así que cobra por él aunque el producto haya vuelto (regla de gerencia 2026-10-09).
+ *   2. LA QUINCENA del cargue sigue abierta. Si ya se pagó, no se toca: bajar el peso le
+ *      quitaría plata a alguien por un trabajo hecho.
+ *
+ * El peso baja en PROPORCIÓN a lo devuelto dentro de su línea (`toneladas` ÷ `cantidad` ×
+ * lo devuelto), que funciona igual para los productos que se miden en toneladas y para los que
+ * se pagan por unidad (Huevos/Empaque de ID2, donde `toneladas` ya viene en unidades).
  */
 export function decidirPeso(args: {
   fechaCargue: string | null | undefined
@@ -160,8 +234,18 @@ export function decidirPeso(args: {
   toneladasLinea: number | null | undefined
   cantidadLinea: number | null | undefined
   cantidadDevuelta: number
+  /** Si no se pasa, se asume que el motivo sí ajusta (compatibilidad). */
+  motivo?: MotivoDevolucion
   hoyISO?: string
 }): DecisionPeso {
+  if (args.motivo && !ajustaPesoElMotivo(args.motivo)) {
+    const m = MOTIVOS_DEVOLUCION.find((x) => x.valor === args.motivo)
+    return {
+      ajustar: false,
+      pesoNuevo: null,
+      motivo: `"${m?.etiqueta ?? args.motivo}": el peso de la orden no se toca, porque la cuadrilla sí cargó ese peso al camión y cobra por él. Solo se corrigen el inventario y el pedido.`,
+    }
+  }
   const fecha = String(args.fechaCargue ?? "").trim()
   if (!fecha) return { ajustar: false, pesoNuevo: null, motivo: "La orden no tiene fecha de cargue: el peso no se toca." }
 
@@ -192,20 +276,28 @@ export function decidirPeso(args: {
   }
 }
 
-/** Texto del movimiento, para que el porqué viaje con el dato. */
+/**
+ * Texto del movimiento, para que el porqué viaje con el dato.
+ *
+ * Incluye qué pasó con el PESO. No es adorno: el peso de la orden es la base del pago de los
+ * auxiliares en los CEDIs, así que meses después hay que poder leer en el propio movimiento por
+ * qué la nómina se movió o por qué no.
+ */
 export function observacionDevolucion(args: {
   ocargue: string
   motivo: MotivoDevolucion
   detalle?: string | null
   invtransOrigen: number
   autorizadoPor?: string | null
+  /** El `motivo` que devolvió `decidirPeso`. */
+  pesoNota?: string | null
 }): string {
-  const etiqueta = MOTIVOS_DEVOLUCION.find((m) => m.valor === args.motivo)?.etiqueta ?? args.motivo
   return [
     `Devolución por mal cargue (654) de la orden ${args.ocargue}`,
-    `· ${etiqueta}`,
+    `· ${etiquetaMotivo(args.motivo)}`,
     String(args.detalle ?? "").trim() ? `· ${String(args.detalle).trim()}` : "",
     `· vuelve de la salida invtrans #${args.invtransOrigen}`,
+    String(args.pesoNota ?? "").trim() ? `· peso: ${String(args.pesoNota).trim()}` : "",
     args.autorizadoPor ? `· autoriza: ${args.autorizadoPor}` : "",
   ]
     .filter(Boolean)

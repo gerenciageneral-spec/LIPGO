@@ -24,7 +24,7 @@ import { useAuth } from "@/components/auth-provider"
 import { AlertTriangle, Loader2, RotateCcw, Search } from "lucide-react"
 import { getDestinationLocationsFromLocationsTable } from "@/lib/inventory-actions"
 import { getOrdenParaDevolver, registrarDevolucionMalCargue, type OrdenParaDevolver } from "@/lib/devolucion-mal-cargue-actions"
-import { MOTIVOS_DEVOLUCION, validarCantidad, type MotivoDevolucion } from "@/lib/devolucion-mal-cargue"
+import { ajustaPesoElMotivo, MOTIVOS_DEVOLUCION, validarCantidad, type MotivoDevolucion } from "@/lib/devolucion-mal-cargue"
 
 const NUM = new Intl.NumberFormat("es-CO")
 
@@ -38,7 +38,9 @@ export function DevolucionMalCargue({ onRegistrada }: { onRegistrada?: () => voi
   const [cantidad, setCantidad] = useState("")
   const [location, setLocation] = useState("")
   const [ubicaciones, setUbicaciones] = useState<string[]>([])
-  const [motivo, setMotivo] = useState<MotivoDevolucion>("cantidad_de_mas")
+  // Sin motivo por defecto, a propósito: el motivo decide si el peso de la orden —y el pago de
+  // los auxiliares— se mueve. Esa no es una casilla que pueda quedar marcada sola.
+  const [motivo, setMotivo] = useState<MotivoDevolucion | "">("")
   const [detalle, setDetalle] = useState("")
   const [clave, setClave] = useState("")
   const [guardando, setGuardando] = useState(false)
@@ -55,6 +57,7 @@ export function DevolucionMalCargue({ onRegistrada }: { onRegistrada?: () => voi
     setElegida(null)
     setCantidad("")
     setLocation("")
+    setMotivo("")
     setDetalle("")
     setClave("")
   }
@@ -79,10 +82,13 @@ export function DevolucionMalCargue({ onRegistrada }: { onRegistrada?: () => voi
 
   const linea = orden?.lineas.find((l) => l.invtransId === elegida)
   const chequeo = validarCantidad(linea, Number(cantidad))
-  const listo = !!linea && chequeo.ok && !!location && !!clave.trim() && !guardando
+  const listo = !!linea && chequeo.ok && !!location && !!motivo && !!clave.trim() && !guardando
+  // Lo que va a pasar con el peso, dicho antes de firmar: el motivo manda, y si el motivo lo
+  // pide, todavía puede frenarlo una quincena ya pagada.
+  const bajaElPeso = !!motivo && ajustaPesoElMotivo(motivo) && !!orden?.quincenaAbierta
 
   async function registrar() {
-    if (!linea) return
+    if (!linea || !motivo) return
     setGuardando(true)
     const r = await registrarDevolucionMalCargue({
       selectedEmpresaId,
@@ -126,8 +132,8 @@ export function DevolucionMalCargue({ onRegistrada }: { onRegistrada?: () => voi
             </Button>
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
-            Para cuando el camión cargó <b>menos</b> de lo que la orden descontó: lo que no salió vuelve al inventario y el pedido
-            recupera esas unidades como pendientes.
+            Para el producto que la orden descontó y el cliente no recibió: se trocó, volvió en el mismo camión o nunca se cargó.
+            Vuelve al inventario y el pedido recupera esas unidades como pendientes.
           </p>
         </div>
 
@@ -216,15 +222,32 @@ export function DevolucionMalCargue({ onRegistrada }: { onRegistrada?: () => voi
           </div>
 
           <div>
-            <Label className="text-xs uppercase text-muted-foreground">Motivo</Label>
-            <RadioGroup value={motivo} onValueChange={(v) => setMotivo(v as MotivoDevolucion)} className="mt-1 flex flex-wrap gap-4">
+            <Label className="text-xs uppercase text-muted-foreground">Motivo · por qué volvió</Label>
+            {/* El motivo no es una etiqueta: decide si el peso de la orden —y con él la nómina
+                de los auxiliares— se ajusta. Por eso cada opción dice qué hace. */}
+            <RadioGroup value={motivo} onValueChange={(v) => setMotivo(v as MotivoDevolucion)} className="mt-1.5 grid gap-2">
               {MOTIVOS_DEVOLUCION.map((m) => (
-                <div key={m.valor} className="flex items-center gap-2">
-                  <RadioGroupItem value={m.valor} id={`mot-${m.valor}`} />
-                  <Label htmlFor={`mot-${m.valor}`} className="cursor-pointer text-sm" title={m.ayuda}>{m.etiqueta}</Label>
-                </div>
+                <label
+                  key={m.valor}
+                  htmlFor={`mot-${m.valor}`}
+                  className={`flex cursor-pointer items-start gap-2.5 rounded-md border px-3 py-2 transition-colors ${motivo === m.valor ? "border-foreground/30 bg-muted/50" : "hover:bg-muted/30"}`}
+                >
+                  <RadioGroupItem value={m.valor} id={`mot-${m.valor}`} className="mt-0.5" />
+                  <span className="min-w-0">
+                    <span className="flex flex-wrap items-center gap-1.5 text-sm font-medium">
+                      {m.etiqueta}
+                      <span
+                        className={`rounded px-1.5 py-0.5 text-[10px] font-normal ${m.ajustaPeso ? "bg-[var(--color-atencion-bg)] text-[var(--color-atencion-fg)]" : "bg-muted text-muted-foreground"}`}
+                      >
+                        {m.efectoCorto}
+                      </span>
+                    </span>
+                    <span className="block text-xs text-muted-foreground">{m.ayuda}</span>
+                  </span>
+                </label>
               ))}
             </RadioGroup>
+            {!motivo && <p className="mt-1.5 text-xs text-muted-foreground">Marca el motivo: de él depende si el peso de la orden baja.</p>}
             <Textarea
               value={detalle}
               onChange={(e) => setDetalle(e.target.value)}
@@ -247,11 +270,28 @@ export function DevolucionMalCargue({ onRegistrada }: { onRegistrada?: () => voi
             </div>
           </div>
 
-          <p className="text-xs text-muted-foreground">
-            Al registrarla: entran {cantidad || "—"} al inventario en el lote {linea.lote}, el pedido recupera esas unidades como
-            pendientes y {orden?.quincenaAbierta ? "el peso de la orden baja en proporción" : "el peso de la orden NO se toca (quincena ya pagada)"}.
-            Lo que la orden <b>autorizó</b> no cambia: queda el rastro de que salió y volvió.
-          </p>
+          {/* Los tres efectos, dichos uno por uno antes de firmar. */}
+          <div className="rounded-md border bg-muted/20 px-3 py-2 text-xs">
+            <p className="font-medium">Al registrarla pasan tres cosas</p>
+            <ul className="mt-1 space-y-0.5 text-muted-foreground">
+              <li>· <b>Inventario:</b> entran {cantidad || "—"} unidades al lote {linea.lote} en {location || "la ubicación que elijas"}.</li>
+              <li>· <b>Pedido:</b> esas unidades vuelven a quedar pendientes y pueden salir en otra orden.</li>
+              <li>
+                · <b>Peso de la orden y nómina de los auxiliares:</b>{" "}
+                {!motivo
+                  ? "depende del motivo que marques."
+                  : !ajustaPesoElMotivo(motivo)
+                    ? "no se tocan. La cuadrilla sí cargó ese peso al camión y cobra por él."
+                    : bajaElPeso
+                      ? "bajan en proporción a lo devuelto, porque ese peso no se cargó."
+                      : "no se tocan: la quincena de esa orden ya se pagó."}
+              </li>
+            </ul>
+            <p className="mt-1.5 text-muted-foreground">
+              Lo que la orden <b>autorizó</b> no cambia, y la salida original queda con su rastro: en el 360 de la orden se ve que
+              salió y que volvió.
+            </p>
+          </div>
         </Card>
       )}
     </div>

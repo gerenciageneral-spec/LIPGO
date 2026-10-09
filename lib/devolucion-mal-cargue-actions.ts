@@ -26,7 +26,10 @@ import { registrarErrorServidor } from "@/lib/errores-servidor"
 import {
   CODIGO_DEVOLUCION_MAL_CARGUE,
   decidirPeso,
+  esMotivoDevolucion,
+  etiquetaMotivo,
   lineasDevolvibles,
+  MOTIVOS_DEVOLUCION,
   observacionDevolucion,
   repartirEnPedidos,
   validarCantidad,
@@ -97,7 +100,10 @@ export async function getOrdenParaDevolver(
     const devueltoPorSalida = new Map<number, number>()
     for (const m of movs ?? []) {
       if (m.tipomov !== "Entrada" || String(m.cod_movimiento ?? "") !== CODIGO_DEVOLUCION_MAL_CARGUE || !aprobado(m.status)) continue
-      const ref = /invtrans #(\d+)/.exec(String(m.observaciones ?? ""))
+      const texto = String(m.observaciones ?? "")
+      // Anclado a la frase que escribe `observacionDevolucion`: el usuario puede haber escrito
+      // "invtrans #…" en su propio comentario y no se le puede creer a esa coincidencia.
+      const ref = /vuelve de la salida invtrans #(\d+)/.exec(texto) ?? /invtrans #(\d+)/.exec(texto)
       const id = ref ? Number(ref[1]) : 0
       if (id) devueltoPorSalida.set(id, (devueltoPorSalida.get(id) ?? 0) + n0(m.cantidad))
     }
@@ -176,7 +182,14 @@ export async function registrarDevolucionMalCargue(payload: DevolucionPayload): 
   try {
     const empresaId = Number(payload.selectedEmpresaId)
     if (!empresaId) return { success: false, message: "Selecciona un proyecto en el selector global." }
-    if (!String(payload.detalle ?? "").trim() && !payload.motivo) return { success: false, message: "Indica el motivo de la devolución." }
+    // El motivo se valida aquí y no solo en la pantalla: de él depende que el peso de la orden
+    // —y con él el pago de la cuadrilla— se mueva o no. Un texto libre no puede decidir eso.
+    if (!esMotivoDevolucion(payload.motivo)) {
+      return {
+        success: false,
+        message: `Elige el motivo de la devolución: ${MOTIVOS_DEVOLUCION.map((m) => m.etiqueta).join(", ")}.`,
+      }
+    }
 
     const orden = await getOrdenParaDevolver(payload.ocargue, empresaId)
     if (!orden.success || !orden.data) return { success: false, message: orden.message ?? "No se encontró la orden." }
@@ -192,7 +205,9 @@ export async function registrarDevolucionMalCargue(payload: DevolucionPayload): 
       proceso: `inv_${CODIGO_DEVOLUCION_MAL_CARGUE}`,
       idempresa: empresaId,
       clave: payload.clave,
-      referencia: `devolución por mal cargue de ${o.ordendecargue}: ${cantidad} de ${linea!.producto} (lote ${linea!.lote})`,
+      referencia:
+        `devolución por mal cargue (${etiquetaMotivo(payload.motivo)}) de ${o.ordendecargue}: ` +
+        `${cantidad} de ${linea!.producto} (lote ${linea!.lote})`,
     })
     if (!auth.ok) return { success: false, message: auth.error || "Clave no autorizada." }
 
@@ -201,8 +216,30 @@ export async function registrarDevolucionMalCargue(payload: DevolucionPayload): 
     const ahora = await getColombiaDateTime()
     const location = String(payload.location ?? "").trim() || linea!.location
 
+    // LA DECISIÓN DEL PESO SE TOMA ANTES DE ESCRIBIR, aunque se aplique de última: así el propio
+    // movimiento de inventario nace diciendo qué pasó con el peso y por qué. Meses después, quien
+    // revise una nómina lo lee en el movimiento y no tiene que reconstruirlo.
+    const { data: det } = await sb
+      .from("detalleoc")
+      .select("cantidad, toneladas")
+      .eq("idorden", o.idorden)
+      .eq("producto", linea!.producto)
+      .limit(1)
+      .maybeSingle()
+    const peso = decidirPeso({
+      fechaCargue: o.fechacargue,
+      pesoOrden: o.pesoOrden,
+      toneladasLinea: det?.toneladas,
+      cantidadLinea: det?.cantidad,
+      cantidadDevuelta: cantidad,
+      // El motivo manda: en "cantidad de más" el peso no se toca, porque la cuadrilla sí cargó
+      // ese peso al camión (regla de gerencia 2026-10-09).
+      motivo: payload.motivo,
+    })
+
     // 1) EL INVENTARIO. Se fecha HOY, no el día del cargue: el producto vuelve hoy, y así una
     //    devolución de una orden vieja no le mete un ingreso a un mes ya conciliado.
+    //    Pasa con los TRES motivos: el producto está físicamente de vuelta en la bodega.
     const { data: maxRow } = await sb.from("invtrans").select("id").order("id", { ascending: false }).limit(1).maybeSingle()
     const nuevoId = (Number(maxRow?.id) || 0) + 1
     const { data: prod } = await sb.from("productos").select("id").eq("codigo", linea!.codproducto).limit(1).maybeSingle()
@@ -228,6 +265,7 @@ export async function registrarDevolucionMalCargue(payload: DevolucionPayload): 
         detalle: payload.detalle,
         invtransOrigen: linea!.invtransId,
         autorizadoPor: auth.autorizadoPor,
+        pesoNota: peso.motivo,
       }),
     })
     if (errIns) return { success: false, message: `No se pudo registrar la devolución: ${errIns.message}` }
@@ -278,21 +316,8 @@ export async function registrarDevolucionMalCargue(payload: DevolucionPayload): 
       }
     }
 
-    // 3) EL PESO DE LA ORDEN, solo si la quincena sigue abierta.
-    const { data: det } = await sb
-      .from("detalleoc")
-      .select("cantidad, toneladas")
-      .eq("idorden", o.idorden)
-      .eq("producto", linea!.producto)
-      .limit(1)
-      .maybeSingle()
-    const peso = decidirPeso({
-      fechaCargue: o.fechacargue,
-      pesoOrden: o.pesoOrden,
-      toneladasLinea: det?.toneladas,
-      cantidadLinea: det?.cantidad,
-      cantidadDevuelta: cantidad,
-    })
+    // 3) EL PESO DE LA ORDEN. Decidido más arriba: solo baja si el motivo lo pide Y la quincena
+    //    del cargue sigue abierta. Es lo único que distingue a los tres motivos entre sí.
     let pesoAjustado: { de: number; a: number } | null = null
     if (peso.ajustar && peso.pesoNuevo != null) {
       const { error } = await sb.from("cabeceraoc").update({ pesoorden: peso.pesoNuevo }).eq("id", o.idorden)

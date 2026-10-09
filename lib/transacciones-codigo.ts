@@ -290,17 +290,17 @@ export const GUIA_TRANSACCIONES: GuiaTransaccion[] = [
     codigo: "654",
     nombre: "Devolución por mal cargue",
     cuandoUsar:
-      "El camión cargó MENOS de lo que la orden descontó: se trocó un producto o salió menos cantidad. Esas unidades nunca salieron de la bodega, así que vuelven al inventario y el pedido las recupera como pendientes. Distinto del 653, que es una devolución del cliente y no toca el pedido.",
+      "La orden descontó producto que el cliente no recibió: se trocó, volvió en el mismo camión o nunca se cargó. Vuelve al inventario y el pedido lo recupera como pendiente. Distinto del 653, que es una devolución del cliente y no toca el pedido.",
     pasos: [
       "Escribe 654 y busca la orden de cargue",
       "Elige de qué línea vuelve el producto (el lote y el tope los pone la orden)",
       "Digita cuántas vuelven y a qué ubicación",
-      "Marca el motivo (trocado o cantidad de más) y firma con tu clave",
+      "Marca el motivo —trocado, cantidad de más o cantidad de menos— y firma con tu clave",
     ],
     ejemplo:
-      "La orden descontó 39 bultos de Poli Panadería y el camión solo cargó 29 → 654 por 10: entran al inventario en su lote, el pedido vuelve a tener 10 pendientes y, si la quincena sigue abierta, el peso de la orden baja en proporción.",
+      "La orden descontó 39 bultos de Poli Panadería y el camión solo cargó 29 → 654 por 10 con motivo «cantidad de menos»: entran al inventario en su lote, el pedido vuelve a tener 10 pendientes y, si la quincena sigue abierta, el peso de la orden baja en proporción.",
     advertencia:
-      "Si el camión cargó MÁS de lo que la orden autoriza, esto no aplica: el sistema no deja registrar una salida mayor a la orden, y esas unidades aparecen como faltante en el conteo.",
+      "EL MOTIVO DECIDE EL PAGO. Con «trocado» y «cantidad de menos» ese peso nunca se cargó al camión, así que el peso de la orden baja y la nómina de los auxiliares con él; con «cantidad de más» el peso NO se toca, porque la cuadrilla sí lo cargó. En los tres el producto entra al inventario y el pedido queda pendiente. Si el camión cargó MÁS de lo autorizado y no volvió, esto no aplica: el sistema no deja registrar una salida mayor a la orden y esas unidades aparecen como faltante en el conteo.",
   },
   {
     codigo: "309",
