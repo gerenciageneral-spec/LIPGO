@@ -161,6 +161,32 @@ export interface EjecutarPayload {
 // autorización.
 export const CODIGOS_REQUIEREN_APROBACION = new Set(["601", "701", "702", "555"])
 
+/**
+ * Proyectos donde un ingreso (101) SIEMPRE tiene que decir de qué orden viene.
+ *
+ * Regla de gerencia (2026-10-09): "en el ID3 no se permitan ingresos manuales, ya que en este
+ * proyecto no hay producción: todo llega procedente de órdenes manuales de descargue o
+ * autodescargue (de ID1 e ID2), más las devoluciones, que todas tienen su código de movimiento
+ * y sus permisos; por ende no debe haber ingresos manuales".
+ *
+ * Son los CEDIs: reciben producto terminado, no lo producen. Un 101 suelto ahí es siempre el
+ * mismo error — se rechaza el ingreso automático del descargue y se vuelve a digitar sin el
+ * número de orden, con lo que la orden queda "recibió menos" para siempre aunque el inventario
+ * esté bien. Medido el 2026-10-09 en ID3: 11 ingresos así en mes y medio.
+ *
+ * Una devolución NO se bloquea: va por el 653 (devolución de cliente) o el 654 (devolución por
+ * mal cargue), que son otros códigos con su propio permiso.
+ */
+export const CEDIS_SIN_INGRESO_MANUAL = [3, 4]
+
+export const exigeOrdenEnIngreso = (idempresa: unknown) => CEDIS_SIN_INGRESO_MANUAL.includes(Number(idempresa))
+
+export const MENSAJE_INGRESO_EXIGE_ORDEN =
+  "En este proyecto no hay producción: todo lo que entra viene de una orden de descargue (manual o autodescargue), así que el ingreso 101 tiene que decir de cuál. " +
+  "Escribe el número de la orden en «Orden de descargue que se recibe». " +
+  "Si el ingreso automático de ese descargue quedó mal, apruébalo con la cantidad y el lote reales en Producción › Aprobación de ingreso, en vez de rechazarlo y digitarlo a mano. " +
+  "Si lo que entra es una devolución, va por el 653 (devolución de cliente) o el 654 (devolución por mal cargue)."
+
 export interface AjustePendiente {
   id: number
   idempresa: number

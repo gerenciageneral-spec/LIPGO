@@ -33,6 +33,8 @@ import {
   CODIGOS_MAL_USADOS_PARA_CALIDAD,
   esMotivoDeCalidad,
   MENSAJE_REDIRECCION_CALIDAD,
+  MENSAJE_INGRESO_EXIGE_ORDEN,
+  exigeOrdenEnIngreso,
   type CatalogoTransaccion,
   type MovimientoOriginal,
 } from "@/lib/transacciones-codigo"
@@ -117,6 +119,8 @@ export function TransaccionesPorCodigo() {
   const fs = FIELDSETS[codigo] ?? null
   const info = useMemo(() => catalogo.find((c) => c.codigo === codigo) ?? null, [catalogo, codigo])
   const requiereAprobacion = CODIGOS_REQUIEREN_APROBACION.has(codigo)
+  // En los CEDIs un ingreso siempre viene de un descargue: el número de orden es obligatorio.
+  const ordenObligatoria = codigo === "101" && exigeOrdenEnIngreso(selectedEmpresaId)
 
   useEffect(() => {
     getCatalogoTransacciones().then((r) => {
@@ -278,6 +282,7 @@ export function TransaccionesPorCodigo() {
   const listo = useMemo(() => {
     if (!fs || !selectedEmpresaId) return false
     if (fs.pantallaPropia) return false // tiene su propio botón (654)
+    if (ordenObligatoria && !ocargueRef.trim()) return false
     const c = Number(cantidad)
     if (!Number.isFinite(c) || c <= 0) return false
     if (fs.requiereClave && (!clave.trim() || !motivo.trim())) return false
@@ -291,7 +296,7 @@ export function TransaccionesPorCodigo() {
     if (fs.destino === "ubicacion" && !locationDestino.trim()) return false
     if (fs.destino === "loteProductoUbicacion" && !loteDestino.trim() && !locationDestino.trim() && !productoDestino.trim()) return false
     return true
-  }, [fs, codigo, requiereAprobacion, selectedEmpresaId, cantidad, clave, motivo, refSel, producto, lote, location, locationDestino, loteDestino, productoDestino])
+  }, [fs, codigo, requiereAprobacion, ordenObligatoria, ocargueRef, selectedEmpresaId, cantidad, clave, motivo, refSel, producto, lote, location, locationDestino, loteDestino, productoDestino])
 
   const ejecutar = async (conMiClave = false) => {
     if (!fs || !selectedEmpresaId) return
@@ -698,12 +703,17 @@ export function TransaccionesPorCodigo() {
             {fs.referencia === "ocargueOpcional" && (
               <div>
                 <Label className="text-xs uppercase text-muted-foreground">
-                  {codigo === "101" ? "Orden de descargue que se recibe (opcional)" : "Orden de cargue de la devolución (opcional)"}
+                  {codigo === "101"
+                    ? `Orden de descargue que se recibe${ordenObligatoria ? "" : " (opcional)"}`
+                    : "Orden de cargue de la devolución (opcional)"}
                 </Label>
                 <Input value={ocargueRef} onChange={(e) => setOcargueRef(e.target.value)} placeholder={codigo === "101" ? "Ej: 107215 o MOL202609299667" : "Ej: IND202607247162"} className="mt-1 max-w-xs" />
-                {codigo === "101" && (
-                  <p className="mt-1 text-xs text-muted-foreground">Con el número, este ingreso cruza con la orden en «Cuadre por orden». Sin él queda como ingreso a mano.</p>
-                )}
+                {codigo === "101" &&
+                  (ordenObligatoria ? (
+                    <p className="mt-1 max-w-2xl text-xs text-amber-700">{MENSAJE_INGRESO_EXIGE_ORDEN}</p>
+                  ) : (
+                    <p className="mt-1 text-xs text-muted-foreground">Con el número, este ingreso cruza con la orden en «Cuadre por orden». Sin él queda como ingreso a mano.</p>
+                  ))}
               </div>
             )}
 

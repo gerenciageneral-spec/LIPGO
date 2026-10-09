@@ -6,7 +6,7 @@
 // Ver lib/transacciones-codigo.ts.
 
 import { describe, expect, it } from "vitest"
-import { CODIGOS_REQUIEREN_APROBACION, FIELDSETS } from "@/lib/transacciones-codigo"
+import { CEDIS_SIN_INGRESO_MANUAL, CODIGOS_REQUIEREN_APROBACION, exigeOrdenEnIngreso, FIELDSETS, MENSAJE_INGRESO_EXIGE_ORDEN } from "@/lib/transacciones-codigo"
 
 describe("las correcciones de conteo pasan por la gerencia del proyecto", () => {
   it("el 702 (faltante) y el 701 (sobrante) requieren aprobación", () => {
@@ -46,6 +46,34 @@ describe("qué códigos consumen stock y por eso se validan contra lo DISPONIBLE
 
   it("los reversos se validan contra lo que queda por reversar", () => {
     for (const c of ["102", "602", "552", "312"]) expect(FIELDSETS[c].cantidadContra).toBe("reversible")
+  })
+})
+
+describe("en un CEDI no hay ingresos manuales sueltos", () => {
+  // Gerencia (9-oct): "en el ID3 no se permitan ingresos manuales, ya que en este proyecto no
+  // hay producción: todo llega de órdenes de descargue o autodescargue, más las devoluciones".
+  it("ID3 y ID4 exigen el número de orden en un 101", () => {
+    expect(exigeOrdenEnIngreso(3)).toBe(true)
+    expect(exigeOrdenEnIngreso(4)).toBe(true)
+    expect(CEDIS_SIN_INGRESO_MANUAL.sort()).toEqual([3, 4])
+  })
+
+  it("ID1 e ID2 no: ahí sí hay producción propia", () => {
+    expect(exigeOrdenEnIngreso(1)).toBe(false)
+    expect(exigeOrdenEnIngreso(2)).toBe(false)
+  })
+
+  it("sin proyecto no exige nada (no se puede saber)", () => {
+    expect(exigeOrdenEnIngreso(null)).toBe(false)
+    expect(exigeOrdenEnIngreso(undefined)).toBe(false)
+  })
+
+  it("el mensaje dice el camino correcto, no solo el no", () => {
+    // Las dos salidas reales: aprobar el automático con la cantidad real, o usar el código de
+    // devolución que corresponda.
+    expect(MENSAJE_INGRESO_EXIGE_ORDEN).toContain("Aprobación de ingreso")
+    expect(MENSAJE_INGRESO_EXIGE_ORDEN).toContain("653")
+    expect(MENSAJE_INGRESO_EXIGE_ORDEN).toContain("654")
   })
 })
 

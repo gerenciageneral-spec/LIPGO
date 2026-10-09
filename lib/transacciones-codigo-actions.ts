@@ -29,6 +29,8 @@ import {
   CODIGOS_MAL_USADOS_PARA_CALIDAD,
   esMotivoDeCalidad,
   MENSAJE_REDIRECCION_CALIDAD,
+  MENSAJE_INGRESO_EXIGE_ORDEN,
+  exigeOrdenEnIngreso,
   type CatalogoTransaccion,
   type MovimientoOriginal,
   type EjecutarPayload,
@@ -382,6 +384,12 @@ async function ejecutarTransaccion(
     // quedaba escrito en observaciones y nada cruzaba. Se exige que exista en el proyecto
     // para no amarrar un ingreso a un número mal digitado.
     let ordenRef: string | null = null
+    // En los CEDIs no hay producción: todo lo que entra viene de un descargue, así que un 101
+    // tiene que decir de cuál (regla de gerencia 2026-10-09). Las devoluciones no se bloquean:
+    // van por el 653 o el 654, que son otros códigos.
+    if (payload.codigo === "101" && exigeOrdenEnIngreso(empresaId) && !payload.ocargueRef?.trim()) {
+      return { success: false, message: MENSAJE_INGRESO_EXIGE_ORDEN }
+    }
     if ((payload.codigo === "101" || payload.codigo === "653") && payload.ocargueRef?.trim()) {
       const { data: cab, error: cabErr } = await sb
         .from("cabeceraoc")
