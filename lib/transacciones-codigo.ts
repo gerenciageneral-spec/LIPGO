@@ -22,6 +22,8 @@ export interface FieldSet {
   /** Pide la clave de la GERENCIA DEL PROYECTO (inv_clave_gerencia_proyecto),
    *  no la clave general de movimientos: decisiones de calidad (343). */
   claveGerenciaProyecto?: boolean
+  /** El código tiene su propia pantalla: el formulario genérico no aplica. */
+  pantallaPropia?: boolean
 }
 
 export const FIELDSETS: Record<string, FieldSet> = {
@@ -31,6 +33,11 @@ export const FIELDSETS: Record<string, FieldSet> = {
   "101": { requiereClave: false, origen: "libre", destino: null, referencia: "ocargueOpcional", cantidadContra: null },
   "561": { requiereClave: false, origen: "libre", destino: null, referencia: null, cantidadContra: null },
   "653": { requiereClave: false, origen: "libre", destino: null, referencia: "ocargueOpcional", cantidadContra: null },
+  // 654 — Devolución por mal cargue. Tiene PANTALLA PROPIA (components/inventario/
+  // devolucion-mal-cargue.tsx) porque el flujo va al revés que los demás: primero la orden, y
+  // de ella salen el producto, el lote y el tope. El formulario genérico no sirve: aquí no se
+  // escribe el producto a mano, se elige de lo que esa orden despachó.
+  "654": { requiereClave: true, origen: null, destino: null, referencia: null, cantidadContra: null, pantallaPropia: true },
   "601": { requiereClave: false, origen: "conStock", destino: null, referencia: null, cantidadContra: "stock" },
   "551": { requiereClave: false, origen: "conStock", destino: null, referencia: null, cantidadContra: "stock" },
   "311": { requiereClave: false, origen: "conStock", destino: "ubicacion", referencia: null, cantidadContra: "stock" },
@@ -252,6 +259,22 @@ export const GUIA_TRANSACCIONES: GuiaTransaccion[] = [
     cuandoUsar: "El cliente devuelve producto que ya se le había despachado (distinto de la recepción 101).",
     pasos: ["Escribe 653", "Elige ubicación, producto, lote y cantidad devuelta", "Si la conoces, referencia la orden de cargue con la que salió", "Ejecuta"],
     ejemplo: "El cliente devuelve 20 bultos del despacho de ayer → 653 los reingresa dejando la referencia de la orden.",
+  },
+  {
+    codigo: "654",
+    nombre: "Devolución por mal cargue",
+    cuandoUsar:
+      "El camión cargó MENOS de lo que la orden descontó: se trocó un producto o salió menos cantidad. Esas unidades nunca salieron de la bodega, así que vuelven al inventario y el pedido las recupera como pendientes. Distinto del 653, que es una devolución del cliente y no toca el pedido.",
+    pasos: [
+      "Escribe 654 y busca la orden de cargue",
+      "Elige de qué línea vuelve el producto (el lote y el tope los pone la orden)",
+      "Digita cuántas vuelven y a qué ubicación",
+      "Marca el motivo (trocado o cantidad de más) y firma con tu clave",
+    ],
+    ejemplo:
+      "La orden descontó 39 bultos de Poli Panadería y el camión solo cargó 29 → 654 por 10: entran al inventario en su lote, el pedido vuelve a tener 10 pendientes y, si la quincena sigue abierta, el peso de la orden baja en proporción.",
+    advertencia:
+      "Si el camión cargó MÁS de lo que la orden autoriza, esto no aplica: el sistema no deja registrar una salida mayor a la orden, y esas unidades aparecen como faltante en el conteo.",
   },
   {
     codigo: "309",

@@ -29,10 +29,12 @@ export interface Linea360 {
   producto: string
   /** Lo que autorizó la orden. */
   pedido: number
-  /** Lo que de verdad salió del inventario (salidas aprobadas). */
+  /** Lo que de verdad salió del inventario (salidas aprobadas), ya sin lo devuelto. */
   despachado: number
   /** Unidades reportadas como avería durante el cargue (explican un despacho menor). */
   averias: number
+  /** Unidades que volvieron por mal cargue (654): la orden las descontó y el camión no las llevó. */
+  devuelto: number
   diferencia: number
   estado: "cuadra" | "menos" | "mas" | "sin_despachar"
   clientes: string[]
@@ -85,7 +87,7 @@ export interface Orden360 {
   linea: { paso: string; hora: string }[]
   pedidos: Pedido360[]
   lineas: Linea360[]
-  resumen: { pedido: number; despachado: number; averias: number; diferencia: number; cuadra: boolean }
+  resumen: { pedido: number; despachado: number; averias: number; devuelto: number; diferencia: number; cuadra: boolean }
   documentos: { nombre: string; url: string }[]
 }
 
@@ -116,7 +118,7 @@ export async function getOrden360(ordendecargue: string, empresaId: number | nul
     // --- Movimientos de inventario de esa orden ------------------------------------------
     const { data: mov } = await sb
       .from("invtrans")
-      .select("nombreproducto, lote, location, cantidad, tipomov, status, qrestiba, creado, creadopor")
+      .select("nombreproducto, lote, location, cantidad, tipomov, status, qrestiba, creado, creadopor, cod_movimiento, observaciones")
       .eq("ocargue", oc)
       .order("creado", { ascending: true })
 
@@ -198,7 +200,7 @@ export async function getOrden360(ordendecargue: string, empresaId: number | nul
       const k = norm(producto)
       let l = porProducto.get(k)
       if (!l) {
-        l = { producto, pedido: 0, despachado: 0, averias: 0, diferencia: 0, estado: "cuadra", clientes: [], lotes: [] }
+        l = { producto, pedido: 0, despachado: 0, averias: 0, devuelto: 0, diferencia: 0, estado: "cuadra", clientes: [], lotes: [] }
         porProducto.set(k, l)
       }
       return l
@@ -214,6 +216,13 @@ export async function getOrden360(ordendecargue: string, empresaId: number | nul
       const aprobada = String(m.status ?? "").toLowerCase().startsWith("aprob")
       if (m.tipomov === "Salida" && aprobada) l.despachado += n0(m.cantidad)
       if (m.tipomov === "Entrada" && String(m.status ?? "").toLowerCase() === "averia") l.averias += n0(m.cantidad)
+      // Devolución por mal cargue (654): la orden descontó y el camión no se lo llevó. No es
+      // un ingreso de la orden: es despacho que se deshizo, así que baja lo despachado y el
+      // neto queda en lo que el cliente recibió de verdad.
+      if (m.tipomov === "Entrada" && aprobada && String(m.cod_movimiento ?? "") === "654") {
+        l.devuelto += n0(m.cantidad)
+        l.despachado -= n0(m.cantidad)
+      }
       if (m.tipomov === "Salida") {
         l.lotes.push({
           lote: String(m.lote ?? "—"),
@@ -235,6 +244,7 @@ export async function getOrden360(ordendecargue: string, empresaId: number | nul
       pedido: lineas.reduce((s, l) => s + l.pedido, 0),
       despachado: lineas.reduce((s, l) => s + l.despachado, 0),
       averias: lineas.reduce((s, l) => s + l.averias, 0),
+      devuelto: lineas.reduce((s, l) => s + l.devuelto, 0),
       diferencia: 0,
       cuadra: false,
     }

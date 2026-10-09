@@ -115,8 +115,12 @@ export function Orden360Dialog({
               </div>
               <div className="mt-4 grid gap-4 sm:grid-cols-4">
                 <Cifra label="Pidió la orden" valor={NUM.format(data.resumen.pedido)} unidad="unidades" tamano="compacta" />
-                <Cifra label="Se despachó" valor={NUM.format(data.resumen.despachado)} unidad="unidades" tono={data.resumen.cuadra ? "ok" : data.resumen.diferencia < 0 ? "atencion" : "critico"} tamano="compacta" />
-                <Cifra label="Averías en el cargue" valor={NUM.format(data.resumen.averias)} unidad={data.resumen.averias > 0 ? "explican el faltante" : "ninguna"} tamano="compacta" />
+                <Cifra label={data.resumen.devuelto > 0 ? "Se entregó (neto)" : "Se despachó"} valor={NUM.format(data.resumen.despachado)} unidad="unidades" tono={data.resumen.cuadra ? "ok" : data.resumen.diferencia < 0 ? "atencion" : "critico"} tamano="compacta" />
+                {data.resumen.devuelto > 0 ? (
+                  <Cifra label="Volvió por mal cargue" valor={NUM.format(data.resumen.devuelto)} unidad="unidades · 654" tono="atencion" tamano="compacta" />
+                ) : (
+                  <Cifra label="Averías en el cargue" valor={NUM.format(data.resumen.averias)} unidad={data.resumen.averias > 0 ? "explican el faltante" : "ninguna"} tamano="compacta" />
+                )}
                 <Cifra label="Báscula" valor={data.pesoBascula != null ? T1.format(data.pesoBascula) : "—"} unidad={data.tiqueteBascula ? `t · tiquete ${data.tiqueteBascula}` : "t"} tamano="compacta" />
               </div>
             </section>
@@ -154,6 +158,7 @@ export function Orden360Dialog({
                       <th className="px-5 py-2 text-left font-semibold">Producto</th>
                       <th className="px-3 py-2 text-right font-semibold">Pidió</th>
                       <th className="px-3 py-2 text-right font-semibold">Despachó</th>
+                      <th className="px-3 py-2 text-right font-semibold">Devuelto</th>
                       <th className="px-3 py-2 text-right font-semibold">Avería</th>
                       <th className="px-3 py-2 text-right font-semibold">Diferencia</th>
                       <th className="px-5 py-2 text-left font-semibold">Estado</th>
@@ -173,6 +178,9 @@ export function Orden360Dialog({
                         </td>
                         <td className="lg-num px-3 py-2.5 text-right">{NUM.format(l.pedido)}</td>
                         <td className="lg-num px-3 py-2.5 text-right font-semibold">{NUM.format(l.despachado)}</td>
+                        <td className="lg-num px-3 py-2.5 text-right" title={l.devuelto ? "Volvió por mal cargue (654): la orden lo descontó y el camión no se lo llevó" : undefined}>
+                          {l.devuelto ? NUM.format(l.devuelto) : "—"}
+                        </td>
                         <td className="lg-num px-3 py-2.5 text-right">{l.averias ? NUM.format(l.averias) : "—"}</td>
                         <td className={`lg-num px-3 py-2.5 text-right font-semibold ${l.diferencia === 0 ? "text-muted-foreground" : l.diferencia < 0 ? "text-atencion-fg" : "text-critico-fg"}`}>
                           {l.diferencia === 0 ? "0" : l.diferencia > 0 ? `+${NUM.format(l.diferencia)}` : NUM.format(l.diferencia)}

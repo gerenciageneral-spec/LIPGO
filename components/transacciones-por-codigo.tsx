@@ -47,6 +47,7 @@ import {
   type SaldoEnUbicacion,
 } from "@/lib/inventory-actions"
 import { QRCameraScanner } from "@/components/qr-camera-scanner"
+import { DevolucionMalCargue } from "@/components/inventario/devolucion-mal-cargue"
 import { QrCode, Camera } from "lucide-react"
 
 const fmtFecha = (iso: any) => {
@@ -276,6 +277,7 @@ export function TransaccionesPorCodigo() {
 
   const listo = useMemo(() => {
     if (!fs || !selectedEmpresaId) return false
+    if (fs.pantallaPropia) return false // tiene su propio botón (654)
     const c = Number(cantidad)
     if (!Number.isFinite(c) || c <= 0) return false
     if (fs.requiereClave && (!clave.trim() || !motivo.trim())) return false
@@ -397,7 +399,12 @@ export function TransaccionesPorCodigo() {
           </div>
         </Card>
 
-        {fs && (
+        {/* 654 — Devolución por mal cargue: pantalla propia. El flujo va al revés (primero la
+            orden, y de ella salen producto, lote y tope), así que el formulario genérico no
+            aplica. */}
+        {fs?.pantallaPropia && codigo === "654" && <DevolucionMalCargue onRegistrada={() => setRefrescoSaldo((n) => n + 1)} />}
+
+        {fs && !fs.pantallaPropia && (
           <Card className="space-y-4 p-4">
             {/* Referencia al movimiento original (reversos) */}
             {fs.referencia && fs.referencia !== "ocargueOpcional" && (

@@ -19,6 +19,10 @@ describe("lo que AUMENTA el inventario", () => {
   it("el inventario inicial (561) también suma como ingreso", () => {
     expect(clasificarMovimiento(m("561", "Entrada"))).toEqual({ columna: "ingresos", signo: 1, adivinado: false })
   })
+
+  it("la devolución por mal cargue (654) entra como ingreso: 'entran como devolución'", () => {
+    expect(clasificarMovimiento(m("654", "Entrada", "devolución por mal cargue"))).toEqual({ columna: "ingresos", signo: 1, adivinado: false })
+  })
 })
 
 describe("lo que RESTA: órdenes de cargue y averías, nada más", () => {

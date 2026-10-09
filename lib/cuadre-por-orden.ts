@@ -39,9 +39,15 @@ export type EstadoCuadre =
 export interface LineaCuadre {
   producto: string
   orden: number
+  /** Lo que de verdad movió el inventario: en un cargue, lo despachado MENOS lo devuelto. */
   inventario: number
   diferencia: number
+  /** Unidades que volvieron por mal cargue (654). Ya están descontadas de `inventario`. */
+  devuelto?: number
 }
+
+/** Devolución por mal cargue: entra al inventario y resta de lo despachado por esa orden. */
+export const COD_DEVOLUCION_MAL_CARGUE = "654"
 
 export interface OrdenCuadre {
   id: number
@@ -175,6 +181,8 @@ export const ESTADOS_CON_DIFERENCIA: ReadonlySet<EstadoCuadre> = new Set([
 export function armarLineas(
   detalle: ReadonlyArray<{ producto: unknown; cantidad: unknown }>,
   movimientos: ReadonlyArray<{ producto: unknown; cantidad: unknown }>,
+  /** Lo que volvió por mal cargue (654), por producto: se resta de lo despachado. */
+  devoluciones: ReadonlyArray<{ producto: unknown; cantidad: unknown }> = [],
 ): LineaCuadre[] {
   const orden = new Map<string, { producto: string; cantidad: number }>()
   for (const d of detalle) {
@@ -192,14 +200,34 @@ export function armarLineas(
     g.cantidad += Number(m.cantidad) || 0
     inv.set(k, g)
   }
+  // Lo devuelto por mal cargue no es un ingreso de esa orden: es despacho que se deshizo.
+  const dev = new Map<string, number>()
+  for (const d of devoluciones) {
+    const k = normProducto(d.producto)
+    if (!k) continue
+    dev.set(k, (dev.get(k) ?? 0) + (Number(d.cantidad) || 0))
+  }
+
   const lineas: LineaCuadre[] = []
+  const conDevolucion = (k: string, base: LineaCuadre): LineaCuadre => {
+    const d = dev.get(k) ?? 0
+    if (d <= 0) return base
+    const neto = base.inventario - d
+    return { ...base, inventario: neto, diferencia: neto - base.orden, devuelto: d }
+  }
   for (const [k, g] of orden) {
     const i = inv.get(k)?.cantidad ?? 0
-    lineas.push({ producto: g.producto, orden: g.cantidad, inventario: i, diferencia: i - g.cantidad })
+    lineas.push(conDevolucion(k, { producto: g.producto, orden: g.cantidad, inventario: i, diferencia: i - g.cantidad }))
   }
   for (const [k, g] of inv) {
     if (orden.has(k)) continue
-    lineas.push({ producto: g.producto, orden: 0, inventario: g.cantidad, diferencia: g.cantidad })
+    lineas.push(conDevolucion(k, { producto: g.producto, orden: 0, inventario: g.cantidad, diferencia: g.cantidad }))
+  }
+  // Un producto que solo tiene devolución (la orden no lo traía y el despacho tampoco): raro,
+  // pero si pasa tiene que verse, no desaparecer.
+  for (const [k, d] of dev) {
+    if (orden.has(k) || inv.has(k)) continue
+    lineas.push({ producto: k, orden: 0, inventario: -d, diferencia: -d, devuelto: d })
   }
   return lineas
 }

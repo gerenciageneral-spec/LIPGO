@@ -39,6 +39,10 @@ const POR_CODIGO: Record<string, { columna: ColumnaKardex; signo: 1 | -1 }> = {
   "101": { columna: "ingresos", signo: 1 },
   "561": { columna: "ingresos", signo: 1 },
   "653": { columna: "ingresos", signo: 1 },
+  // 654 — devolución por mal cargue: lo que la orden descontó y el camión no se llevó. Entra
+  // como ingreso (gerencia: "entran como devolución"), y el Cuadre por orden lo resta del
+  // despachado de esa orden para que el neto sea lo que el cliente recibió de verdad.
+  "654": { columna: "ingresos", signo: 1 },
   "102": { columna: "ingresos", signo: -1 }, // reverso de un ingreso: deshace lo que entró
   // RESTAN: la orden de cargue.
   "601": { columna: "salidas", signo: 1 },

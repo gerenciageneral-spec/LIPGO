@@ -41,6 +41,7 @@ import {
   armarLineas,
   clasificar,
   codigoDelSentido,
+  COD_DEVOLUCION_MAL_CARGUE,
   esAprobado,
   esRechazado,
   resumirMovimientos,
@@ -1103,6 +1104,13 @@ export async function getCuadrePorOrden(filtros: {
       const aprobados = mueve
         ? movs.filter((m) => esAprobado(m.status) && String(m.tipomov) === mueve.tipomov && String(m.cod_movimiento ?? "") === mueve.codigo)
         : []
+      // Lo que volvió por mal cargue (654): no es un ingreso de esta orden, es despacho que se
+      // deshizo, así que se resta de lo despachado para que el neto sea lo que el cliente
+      // recibió de verdad.
+      const devoluciones =
+        sentido === "salida"
+          ? movs.filter((m) => esAprobado(m.status) && String(m.tipomov) === "Entrada" && String(m.cod_movimiento ?? "") === COD_DEVOLUCION_MAL_CARGUE)
+          : []
       const pendientes = mueve
         ? movs.filter((m) => !esAprobado(m.status) && !esRechazado(m.status) && String(m.tipomov) === mueve.tipomov).length
         : 0
@@ -1110,6 +1118,7 @@ export async function getCuadrePorOrden(filtros: {
       const lineas = armarLineas(
         detallePorOrden.get(Number(o.id)) ?? [],
         aprobados.map((m) => ({ producto: m.nombreproducto, cantidad: m.cantidad })),
+        devoluciones.map((m) => ({ producto: m.nombreproducto, cantidad: m.cantidad })),
       )
       const cantOrden = lineas.reduce((s, l) => s + l.orden, 0)
       const cantInventario = lineas.reduce((s, l) => s + l.inventario, 0)

@@ -40,6 +40,34 @@ describe("líneas: detalle contra inventario, producto normalizado", () => {
   })
 })
 
+describe("devoluciones por mal cargue (654): lo que volvió baja de lo despachado", () => {
+  it("la orden despachó 39 y volvieron 10: el neto entregado es 29", () => {
+    const lineas = armarLineas([{ producto: "POLI", cantidad: 39 }], [{ producto: "POLI", cantidad: 39 }], [{ producto: "POLI", cantidad: 10 }])
+    expect(lineas[0]).toEqual({ producto: "POLI", orden: 39, inventario: 29, diferencia: -10, devuelto: 10 })
+  })
+
+  it("sin devoluciones la línea no cambia ni gana el campo", () => {
+    const lineas = armarLineas([{ producto: "POLI", cantidad: 39 }], [{ producto: "POLI", cantidad: 39 }], [])
+    expect(lineas[0]).toEqual({ producto: "POLI", orden: 39, inventario: 39, diferencia: 0 })
+  })
+
+  it("devolver todo deja el despacho en cero", () => {
+    const lineas = armarLineas([{ producto: "A", cantidad: 50 }], [{ producto: "A", cantidad: 50 }], [{ producto: "A", cantidad: 50 }])
+    expect(lineas[0].inventario).toBe(0)
+    expect(lineas[0].diferencia).toBe(-50)
+  })
+
+  it("una devolución de un producto que la orden no traía igual se ve, no desaparece", () => {
+    const lineas = armarLineas([{ producto: "A", cantidad: 10 }], [{ producto: "A", cantidad: 10 }], [{ producto: "RARO", cantidad: 4 }])
+    expect(lineas.find((l) => l.producto === "RARO")).toEqual({ producto: "RARO", orden: 0, inventario: -4, diferencia: -4, devuelto: 4 })
+  })
+
+  it("una orden con devolución se clasifica como 'salió menos', que es lo que pasó", () => {
+    const lineas = armarLineas([{ producto: "POLI", cantidad: 39 }], [{ producto: "POLI", cantidad: 39 }], [{ producto: "POLI", cantidad: 10 }])
+    expect(clasificar({ sentido: "salida", status: "finalizado", lineas, pendientes: 0 })).toBe("salio_menos")
+  })
+})
+
 describe("clasificación", () => {
   const ok = [{ producto: "A", orden: 139, inventario: 139, diferencia: 0 }]
 
