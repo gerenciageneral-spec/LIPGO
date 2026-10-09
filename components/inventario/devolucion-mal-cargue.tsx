@@ -243,6 +243,11 @@ export function DevolucionMalCargue({ onRegistrada }: { onRegistrada?: () => voi
                       </span>
                     </span>
                     <span className="block text-xs text-muted-foreground">{m.ayuda}</span>
+                    {/* Lo que ese motivo NO cierra. Solo se muestra en el que está marcado, para
+                        que no compita con la decisión. */}
+                    {m.nota && motivo === m.valor && (
+                      <span className="mt-1 block text-xs text-[var(--color-atencion-fg)]">{m.nota}</span>
+                    )}
                   </span>
                 </label>
               ))}

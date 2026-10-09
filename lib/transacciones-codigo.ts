@@ -300,7 +300,7 @@ export const GUIA_TRANSACCIONES: GuiaTransaccion[] = [
     ejemplo:
       "La orden descontó 39 bultos de Poli Panadería y el camión solo cargó 29 → 654 por 10 con motivo «cantidad de menos»: entran al inventario en su lote, el pedido vuelve a tener 10 pendientes y, si la quincena sigue abierta, el peso de la orden baja en proporción.",
     advertencia:
-      "EL MOTIVO DECIDE EL PAGO. Con «trocado» y «cantidad de menos» ese peso nunca se cargó al camión, así que el peso de la orden baja y la nómina de los auxiliares con él; con «cantidad de más» el peso NO se toca, porque la cuadrilla sí lo cargó. En los tres el producto entra al inventario y el pedido queda pendiente. Si el camión cargó MÁS de lo autorizado y no volvió, esto no aplica: el sistema no deja registrar una salida mayor a la orden y esas unidades aparecen como faltante en el conteo.",
+      "EL MOTIVO DECIDE EL PAGO. Con «trocado» y «cantidad de menos» ese peso nunca se cargó al camión, así que el peso de la orden baja y la nómina de los auxiliares con él; con «cantidad de más» el peso NO se toca, porque la cuadrilla sí lo cargó. En los tres el producto entra al inventario y el pedido queda pendiente: si no se ajusta, sobran en la bodega unidades que el sistema dio por despachadas y el cliente queda esperando un envío que nadie anotó. En el trocado, el producto que salió EN SU LUGAR nunca se descontó: si volvió en el camión no hay nada más que registrar, y si se quedó donde el cliente aparecerá como faltante en el conteo, porque del inventario solo se sale con orden de cargue o por avería.",
   },
   {
     codigo: "309",

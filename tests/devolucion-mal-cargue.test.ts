@@ -200,6 +200,15 @@ describe("el motivo decide el peso de la orden y con él la nómina", () => {
       expect(etiquetaMotivo(m.valor)).toBe(m.etiqueta)
     }
   })
+
+  it("el trocado avisa de la mitad que el 654 no cierra: lo que salió en su lugar", () => {
+    // Gerencia (2026-10-09): "si no se ajusta el inventario con el troque, van a sobrar unidades
+    // del producto que no se envió". El 654 arregla ese lado; el producto que salió en su lugar
+    // nunca se descontó y queda como faltante hasta el conteo.
+    const trocado = MOTIVOS_DEVOLUCION.find((m) => m.valor === "trocado")!
+    expect(trocado.nota).toContain("faltante")
+    expect(MOTIVOS_DEVOLUCION.find((m) => m.valor === "cantidad_de_mas")!.nota).toBeUndefined()
+  })
 })
 
 describe("el porqué viaja con el dato", () => {

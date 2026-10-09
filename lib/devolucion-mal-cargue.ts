@@ -26,9 +26,16 @@
  *
  * LOS TRES EFECTOS
  *   1. INVENTARIO: entra la cantidad devuelta, al mismo lote y producto del que salió. Ocurre
- *      con los TRES motivos: el producto está de vuelta en la bodega, lo tiene que decir.
+ *      con los TRES motivos: el producto está de vuelta en la bodega, lo tiene que decir. Dicho
+ *      por gerencia para el trocado y el cargue de menos: "si no se ajusta el inventario, van a
+ *      sobrar unidades del producto que no se envió".
  *   2. PEDIDO: baja lo cargado y sube lo pendiente, para que pueda volver a salir en otra orden.
- *      También con los tres: lo que volvió no se le entregó al cliente.
+ *      También con los TRES, y por la misma razón: la orden depende del pedido, así que si no se
+ *      llevó lo que la orden decía, el cliente sigue esperando ese envío.
+ *      LA MITAD QUE EL 654 NO CIERRA (trocado): el producto que salió EN SU LUGAR nunca se
+ *      descontó. Si volvió en el camión no hay nada que registrar; si se quedó donde el cliente,
+ *      queda como faltante hasta el conteo, porque del inventario solo se sale con orden de
+ *      cargue o por avería (regla de gerencia) y no hay código para una salida sin orden.
  *   3. PESO DE LA ORDEN: baja en proporción, pero solo si DOS cosas se cumplen — que el MOTIVO lo
  *      pida (ver `MOTIVOS_DEVOLUCION`) y que la QUINCENA del cargue siga abierta. En los CEDIs
  *      (ID3, ID4) la nómina de los auxiliares se calcula con `cabeceraoc.pesoorden` (no tienen
@@ -65,15 +72,20 @@ export const MOTIVOS_DEVOLUCION: Array<{
   ajustaPeso: boolean
   /** Lo que se le pinta al lado del nombre, para que el efecto se vea antes de firmar. */
   efectoCorto: string
+  /** Lo que este motivo NO cierra, cuando hay algo que el 654 no alcanza. */
+  nota?: string
 }> = [
   {
     valor: "trocado",
     etiqueta: "Trocado",
     ayuda:
-      "Se cargó un producto por otro: este no era el que iba, así que vuelve a la bodega. Esas unidades no se cargaron al camión, " +
-      "de modo que el peso de la orden y el pago de la cuadrilla bajan con ellas.",
+      "Se cargó un producto por otro: el que la orden descontó no salió, así que vuelve al inventario y el pedido queda esperando " +
+      "el envío correcto. Si no se registra, van a sobrar en la bodega unidades que el sistema dio por despachadas.",
     ajustaPeso: true,
     efectoCorto: "baja el peso y la nómina",
+    nota:
+      "El producto que salió en su lugar nunca se descontó. Si volvió en el mismo camión no hay nada más que registrar; si se " +
+      "quedó donde el cliente, aparecerá como faltante en el conteo, porque del inventario solo se sale con orden o por avería.",
   },
   {
     valor: "cantidad_de_mas",
@@ -88,8 +100,8 @@ export const MOTIVOS_DEVOLUCION: Array<{
     valor: "cantidad_de_menos",
     etiqueta: "Cantidad de menos / error de cargue",
     ayuda:
-      "El camión llevó menos de lo que la orden descontó: esas unidades nunca salieron de la bodega. El peso de la orden y el pago " +
-      "de la cuadrilla bajan, porque ese peso no se cargó.",
+      "El camión llevó menos de lo que la orden descontó: esas unidades nunca salieron de la bodega, así que están de más en el " +
+      "inventario y el cliente las sigue esperando. El peso de la orden y el pago de la cuadrilla bajan, porque ese peso no se cargó.",
     ajustaPeso: true,
     efectoCorto: "baja el peso y la nómina",
   },
