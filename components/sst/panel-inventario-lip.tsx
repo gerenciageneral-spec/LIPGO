@@ -19,7 +19,8 @@ import { CuadrePorOrden } from "@/components/inventario/cuadre-por-orden"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { useToast } from "@/hooks/use-toast"
 import { SST_TOKENS } from "@/components/sst/sst-utils"
-import { SigHeader, SigFilterBar, SigField, SigKpi, sigControl } from "@/components/sst/sig-ui"
+import { SigField, sigControl } from "@/components/sst/sig-ui"
+import { Cifra, Eyebrow, type Tono } from "@/components/ui/lipgo"
 import { useAuth } from "@/components/auth-provider"
 import { getPanelInventarioLIP, getKardexInventario, getMovimientosProducto, getTiposMovimiento, getCuadreDiario, getPreservacionInventario, getConciliacionMensualInventario, guardarCierreMesInventario, getConciliacionPedidosVsSalidas, getConciliacionOrdenVsSalidas, getAuditoriaOrdenPedidoSalida, guardarCuadreManualPedidoSalida, getOrCrearActaCruce, corregirLineaActaCruce, firmarActaCruce, getProductosInventario, getConteoFisicoDelMes } from "@/lib/sig-actions"
 import { Truck, Loader2, Boxes, TrendingDown, ArrowDownToLine, AlertTriangle, RefreshCw, CalendarClock, Layers, FileText, BookOpen, ZoomIn, ClipboardList, ShieldAlert, FolderOpen, ExternalLink, CheckCircle2 } from "lucide-react"
@@ -28,8 +29,23 @@ import { useClaveAccion } from "@/components/clave-accion-provider"
 
 const DONUT_COLORS = ["#1E8449", "#0D3B6E", "#00B4CC", "#E0A800", "#7e57c2", "#C0392B"]
 
-function KPI({ label, valor, unidad, Icon, color, sub }: { label: string; valor: number | string; unidad?: string; Icon: any; color: string; sub?: string }) {
-  return <SigKpi label={label} value={valor} unit={unidad} Icon={Icon} accent={color} valueColor={color} sub={sub} />
+// El color que ya traía cada tarjeta se traduce al tono del sistema visual, para no decidir de
+// nuevo qué es bueno y qué es malo: la regla de cada cifra sigue siendo la que tenía.
+const tonoDeColor = (c?: string): Tono =>
+  c === SST_TOKENS.ok ? "ok" : c === SST_TOKENS.warn ? "atencion" : c === SST_TOKENS.bad ? "critico" : "neutro"
+
+/**
+ * Las 30 tarjetas de este panel pasan por aquí, así que cambiar este envoltorio las migra todas
+ * al sistema visual sin tocar un solo sitio de uso: misma etiqueta, mismo valor, misma unidad,
+ * mismo texto de apoyo y mismo criterio de color. Lo único que se va es el icono decorativo
+ * ("nada ilustrativo, todo real"). `Icon` se mantiene en la firma para no romper a quien lo pasa.
+ */
+function KPI({ label, valor, unidad, color, sub }: { label: string; valor: number | string; unidad?: string; Icon?: any; color?: string; sub?: string }) {
+  return (
+    <div className="rounded-lg border bg-card p-3 shadow-sm">
+      <Cifra label={label} valor={valor} unidad={unidad} sub={sub} tono={tonoDeColor(color)} tamano="compacta" />
+    </div>
+  )
 }
 
 // Fecha calendario en hora Colombia (invtrans.creado está en UTC, 5h
@@ -569,28 +585,41 @@ export function PanelInventarioLIP() {
 
   return (
     <div className="space-y-5">
-      <SigHeader
-        Icon={Boxes}
-        title="Panel LIP · Inventario — Exactitud y merma"
-        subtitle={<>Cuadre y exactitud de inventario · ISO 9001 8.5.1 — por año y mes a mes, por cliente/sitio. Las diferencias se concilian contra los movimientos; lo que reste se ajusta con documento soporte.</>}
-      />
-
-      <SigFilterBar cliente={selectedEmpresaNombre}>
-        <SigField label="Año">
-          <select value={anio} onChange={(e) => setAnio(e.target.value)} className={sigControl}>
-            {(data?.anios ?? []).map((a: string) => (<option key={a} value={a}>{a}</option>))}
-          </select>
-        </SigField>
-        <SigField label="Mes">
-          <select value={mes} onChange={(e) => setMes(e.target.value)} className={sigControl}>
-            {MESES.map((m) => (<option key={m.v} value={m.v}>{m.l}</option>))}
-          </select>
-        </SigField>
-        {loading && <Loader2 className="h-4 w-4 animate-spin" style={{ color: SST_TOKENS.teal }} />}
-      </SigFilterBar>
+      {/* Cabecera y filtro en el sistema visual LIPgo. Mismos nombres, mismos campos y mismas
+          opciones que antes; el filtro pasa de una barra propia a una línea, que es lo que pidió
+          gerencia ("ocupa mucho espacio"). El cliente sigue viniendo del selector global. */}
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
+          <Eyebrow>
+            {selectedEmpresaNombre || `ID ${selectedEmpresaId}`} · Exactitud y cierre · ISO 9001 8.5.1
+          </Eyebrow>
+          <h1 className="text-xl font-bold leading-tight sm:text-2xl">Panel LIP · Inventario — Exactitud y merma</h1>
+          <p className="mt-0.5 max-w-3xl text-xs text-muted-foreground">
+            Por año y mes a mes, por cliente o sitio. Las diferencias se concilian contra los movimientos; lo que reste se
+            ajusta con documento soporte.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-1.5">
+            <span className="lg-eyebrow">Año</span>
+            <select value={anio} onChange={(e) => setAnio(e.target.value)} className={sigControl}>
+              {(data?.anios ?? []).map((a: string) => (<option key={a} value={a}>{a}</option>))}
+            </select>
+          </label>
+          <label className="flex items-center gap-1.5">
+            <span className="lg-eyebrow">Mes</span>
+            <select value={mes} onChange={(e) => setMes(e.target.value)} className={sigControl}>
+              {MESES.map((m) => (<option key={m.v} value={m.v}>{m.l}</option>))}
+            </select>
+          </label>
+          {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+        </div>
+      </div>
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList>
+        {/* Nueve pestañas no caben en una pantalla angosta: la barra se desplaza en lugar de
+            apilarse, así el orden y los nombres no cambian. */}
+        <TabsList className="h-auto w-full flex-nowrap justify-start overflow-x-auto">
           <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
           <TabsTrigger value="cuadre_orden">Cuadre por orden</TabsTrigger>
           <TabsTrigger value="conciliacion">Conciliación mensual</TabsTrigger>
@@ -605,7 +634,7 @@ export function PanelInventarioLIP() {
         <TabsContent value="dashboard" className="space-y-5 pt-3">
       {!data ? (
         <div className="flex items-center justify-center py-16">
-          <Loader2 className="h-6 w-6 animate-spin" style={{ color: SST_TOKENS.navy }} />
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
       ) : (
         <>
@@ -634,7 +663,7 @@ export function PanelInventarioLIP() {
 
           <div className="grid gap-4 lg:grid-cols-3">
             <Card className="p-3">
-              <h3 className="mb-2 text-sm font-semibold" style={{ color: SST_TOKENS.ink }}>Distribución de movimientos</h3>
+              <h3 className="mb-2 text-sm font-semibold">Distribución de movimientos</h3>
               <ResponsiveContainer width="100%" height={240}>
                 <PieChart>
                   <Pie data={data.movimientos.filter((m: any) => m.cant > 0)} dataKey="cant" nameKey="tipo" cx="50%" cy="50%" outerRadius={80} label={(e: any) => e.tipo?.split(" ")[0]}>
@@ -646,7 +675,7 @@ export function PanelInventarioLIP() {
             </Card>
 
             <Card className="p-3 lg:col-span-2">
-              <h3 className="mb-2 text-sm font-semibold" style={{ color: SST_TOKENS.ink }}>Top productos por salidas (fast movers)</h3>
+              <h3 className="mb-2 text-sm font-semibold">Top productos por salidas (fast movers)</h3>
               <ResponsiveContainer width="100%" height={240}>
                 <BarChart data={data.topMovers} layout="vertical" margin={{ left: 10 }}>
                   <CartesianGrid strokeDasharray="3 3" />
@@ -661,7 +690,7 @@ export function PanelInventarioLIP() {
 
           <div className="grid gap-4 lg:grid-cols-3">
             <Card className="p-3">
-              <h3 className="mb-2 text-sm font-semibold" style={{ color: SST_TOKENS.ink }}>Clasificación ABC (Pareto)</h3>
+              <h3 className="mb-2 text-sm font-semibold">Clasificación ABC (Pareto)</h3>
               <div className="space-y-2">
                 {[
                   { c: "A", l: "Alto movimiento (≤80%)", v: data.abc.A, color: SST_TOKENS.ok },
@@ -677,7 +706,7 @@ export function PanelInventarioLIP() {
             </Card>
 
             <Card className="p-3 lg:col-span-2">
-              <h3 className="mb-2 text-sm font-semibold" style={{ color: SST_TOKENS.ink }}>Recepción vs Despacho por mes ({data.anio})</h3>
+              <h3 className="mb-2 text-sm font-semibold">Recepción vs Despacho por mes ({data.anio})</h3>
               <ResponsiveContainer width="100%" height={240}>
                 <BarChart data={data.porMes}>
                   <CartesianGrid strokeDasharray="3 3" />
@@ -721,7 +750,7 @@ export function PanelInventarioLIP() {
                 <b>{selectedEmpresaNombre}</b> · solo <b>Producto Terminado + Sub Producto</b> (el empaque y la materia prima se concilian aparte). <b>Saldo inicial</b> de cada mes = su <b>Conteo total aprobado</b> (si no hay, el sistema al corte del día 1). <b>Ingresos</b> = aprobación de ingresos + devoluciones · <b>Salidas</b> = cargue (601) + reproceso/avería (551) · <b>Ajustes</b> = 701/702. <b>Saldo final</b> = base del mes siguiente (stock vivo en el mes en curso). Todo por la fecha de cada transacción; la proyección no se cuenta (no es inventario) y los ingresos de producción por tolva sí. Lo que las transacciones no cubren queda en <b>"Sin soporte"</b> y debe llevarse a cero con su corrección documentada; nunca se fuerza el cuadre. Cada mes genera un acta PDF en <code>inventario/cierres/{selectedEmpresaId}/AAAA-MM/</code>.
               </p>
               {loadingConc ? (
-                <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin" style={{ color: SST_TOKENS.navy }} /></div>
+                <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
               ) : concFilas.length === 0 ? (
                 <Card className="p-8 text-center text-sm text-muted-foreground">Sin movimientos para el año seleccionado.</Card>
               ) : (
@@ -802,7 +831,7 @@ export function PanelInventarioLIP() {
 
               {concCierres.length > 0 && (
                 <Card className="p-3">
-                  <div className="mb-2 flex items-center gap-2 text-sm font-semibold" style={{ color: SST_TOKENS.ink }}>
+                  <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
                     <FolderOpen className="h-4 w-4" style={{ color: SST_TOKENS.navy }} />
                     Carpeta de cierres de mes · {selectedEmpresaNombre}
                   </div>
@@ -842,7 +871,7 @@ export function PanelInventarioLIP() {
             </div>
           )}
           {loadingKardex ? (
-            <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin" style={{ color: SST_TOKENS.navy }} /></div>
+            <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
           ) : kardex.length === 0 ? (
             <Card className="p-8 text-center text-sm text-muted-foreground">Sin movimientos para el periodo seleccionado.</Card>
           ) : (
@@ -910,7 +939,7 @@ export function PanelInventarioLIP() {
             </div>
           )}
           {loadingCD ? (
-            <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin" style={{ color: SST_TOKENS.navy }} /></div>
+            <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
           ) : cuadreD.length === 0 ? (
             <Card className="p-8 text-center text-sm text-muted-foreground">Sin movimientos para el periodo. Tip: selecciona un mes para ver el detalle diario.</Card>
           ) : (
@@ -949,7 +978,7 @@ export function PanelInventarioLIP() {
         {/* PRESERVACIÓN / FIFO — antigüedad y próximos a vencer (ISO 8.5.4) */}
         <TabsContent value="preservacion" className="space-y-3 pt-3">
           {loadingPres ? (
-            <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin" style={{ color: SST_TOKENS.navy }} /></div>
+            <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
           ) : !pres ? (
             <Card className="p-8 text-center text-sm text-muted-foreground">Cargando…</Card>
           ) : (
@@ -1004,7 +1033,7 @@ export function PanelInventarioLIP() {
           {!selectedEmpresaId ? (
             <Card className="p-8 text-center text-sm text-muted-foreground">Seleccione un cliente/sitio en el selector global para ver la conciliación.</Card>
           ) : loadingOrdSal ? (
-            <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin" style={{ color: SST_TOKENS.navy }} /></div>
+            <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
           ) : !ordSal ? (
             <Card className="p-8 text-center text-sm text-muted-foreground">Sin datos. Si la pantalla sigue vacía, falta correr <code>scripts/sig/63_orden_vs_salidas.sql</code>.</Card>
           ) : (
@@ -1140,7 +1169,7 @@ export function PanelInventarioLIP() {
           {!selectedEmpresaId ? (
             <Card className="p-8 text-center text-sm text-muted-foreground">Seleccione un cliente/sitio en el selector global para ver la conciliación.</Card>
           ) : loadingPedSal ? (
-            <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin" style={{ color: SST_TOKENS.navy }} /></div>
+            <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
           ) : !pedSal ? (
             <Card className="p-8 text-center text-sm text-muted-foreground">Sin datos.</Card>
           ) : (
@@ -1292,7 +1321,7 @@ export function PanelInventarioLIP() {
           {!selectedEmpresaId ? (
             <p className="py-6 text-center text-sm text-muted-foreground">Selecciona un cliente/sitio en el selector global.</p>
           ) : loadingCruce ? (
-            <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin" style={{ color: SST_TOKENS.navy }} /></div>
+            <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
           ) : !cruce?.acta ? (
             <p className="py-6 text-center text-sm text-muted-foreground">Aún no hay un cierre físico congelado del mes anterior para este proyecto — no hay cruce que armar todavía.</p>
           ) : (
@@ -1474,15 +1503,15 @@ export function PanelInventarioLIP() {
               <DialogHeader><DialogTitle className="text-base">Movimientos · {drill.producto}</DialogTitle></DialogHeader>
               {drill.resumen && (
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-                  <SigKpi label="Entradas del periodo" value={fmt(drill.resumen.entradas)} accent={SST_TOKENS.ok} valueColor={SST_TOKENS.ok} />
-                  <SigKpi label="Salidas del periodo" value={fmt(drill.resumen.salidas)} accent={SST_TOKENS.navy} valueColor={SST_TOKENS.navy} />
-                  <SigKpi label="Traslados" value={fmt(drill.resumen.traslados)} accent={SST_TOKENS.ink} />
-                  <SigKpi label="Ajustes" value={fmt(drill.resumen.ajustes)} accent={SST_TOKENS.ink} />
-                  <SigKpi label="Merma" value={fmt(drill.resumen.merma)} accent={SST_TOKENS.warn} valueColor={SST_TOKENS.warn} />
+                  <KPI label="Entradas del periodo" valor={fmt(drill.resumen.entradas)} color={SST_TOKENS.ok} />
+                  <KPI label="Salidas del periodo" valor={fmt(drill.resumen.salidas)} color={SST_TOKENS.navy} />
+                  <KPI label="Traslados" valor={fmt(drill.resumen.traslados)} />
+                  <KPI label="Ajustes" valor={fmt(drill.resumen.ajustes)} />
+                  <KPI label="Merma" valor={fmt(drill.resumen.merma)} color={SST_TOKENS.warn} />
                 </div>
               )}
               {loadingDrill ? (
-                <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin" style={{ color: SST_TOKENS.navy }} /></div>
+                <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
               ) : drill.movs.length === 0 ? (
                 <p className="py-6 text-center text-sm text-muted-foreground">Sin movimientos en el periodo.</p>
               ) : (
@@ -1617,7 +1646,7 @@ export function PanelInventarioLIP() {
             <DialogTitle className="text-base">Auditoría · orden <span className="font-mono">{auditoria?.ocargue}</span></DialogTitle>
           </DialogHeader>
           {loadingAud || !auditoria?.data ? (
-            <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin" style={{ color: SST_TOKENS.navy }} /></div>
+            <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
           ) : (
             <div className="space-y-4">
               <p className="text-[11px] text-muted-foreground">Filas crudas de <code>pedidosdetalle</code> e <code>invtrans</code> para este ocargue (todas las empresas). El producto en foco: <b>{auditoria.producto}</b>.</p>
