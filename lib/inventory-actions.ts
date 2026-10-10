@@ -8,6 +8,7 @@ import * as XLSX from "xlsx"
 import { generateAndUploadProductionEntryPDF } from "@/lib/pdf-actions"
 import { getColombiaDate } from "@/lib/date-utils"
 import { motivoSinAccion } from "@/lib/puerta-modulo"
+import { aplicarOrdenEstable } from "@/lib/orden-paginacion"
 import {
   getCurrentEmpresaIdForInsert,
   getCurrentUsuarioForInsert,
@@ -89,14 +90,10 @@ export async function getLocationsFromSaldoInvDetalleForTransactions(
     let data: any[]
     try {
       data = await fetchAllRows((from, to) =>
-        supabase
-          .from("saldoinvdetalle")
-          .select("location")
-          .eq("idempresa", empresaId)
-          .order("location", { ascending: true })
-          .order("idproducto")
-          .order("lote")
-          .range(from, to),
+        aplicarOrdenEstable(
+          supabase.from("saldoinvdetalle").select("location").eq("idempresa", empresaId),
+          "saldoinvdetalle",
+        ).range(from, to),
       )
     } catch (error) {
       console.error("[v0] Error fetching locations from saldoinvdetalle:", error)
@@ -144,16 +141,10 @@ export async function getLocationsByWarehouse(
     const conSaldo = new Set<string>()
     let from = 0
     while (true) {
-      const { data, error } = await supabase
-        .from("saldoinvdetalle")
-        .select("location")
-        .eq("idempresa", empresaId)
-        // Orden único y estable para paginar (ver lib/orden-paginacion.ts).
-        .order("idempresa")
-        .order("idproducto")
-        .order("lote")
-        .order("location")
-        .range(from, from + 999)
+      const { data, error } = await aplicarOrdenEstable(
+        supabase.from("saldoinvdetalle").select("location").eq("idempresa", empresaId),
+        "saldoinvdetalle",
+      ).range(from, from + 999)
       if (error) { console.error("[v0] getLocationsByWarehouse: error saldos:", error); break }
       for (const r of data ?? []) if (r.location) conSaldo.add(String(r.location))
       if (!data || data.length < 1000) break
@@ -787,15 +778,12 @@ export async function getInventoryBalanceDetails(
           "idproducto, codproducto, nombreproducto, lote, location, stock_disp, stock_res, stock_actual, categoria, subcategoria",
         )
         .gt("stock_disp", 0)
-        .order("idproducto", { ascending: true })
-        .order("lote", { ascending: true })
-        .order("location", { ascending: true })
       if (empresaId) query = query.eq("idempresa", empresaId)
       if (productFilter && productFilter.trim() !== "") query = query.ilike("nombreproducto", `%${productFilter}%`)
       if (locationFilter && locationFilter.trim() !== "" && locationFilter !== "all") query = query.eq("location", locationFilter)
       if (categoriaFilter && categoriaFilter !== "all") query = query.eq("categoria", categoriaFilter)
       if (subcategoriaFilter && subcategoriaFilter !== "all") query = query.eq("subcategoria", subcategoriaFilter)
-      return query.range(from, to)
+      return aplicarOrdenEstable(query, "saldoinvdetalle").range(from, to)
     }
 
     let data: any[]
@@ -2214,6 +2202,11 @@ export async function getLocationsFromSaldoInvDetalle(
           .order("location", { ascending: true })
           .order("idproducto")
           .order("lote")
+          // `nombreproducto` completa la llave única de saldoinvdetalle (ver
+          // lib/orden-paginacion.ts): sin ella, dos filas con el mismo
+          // idproducto pero nombreproducto distinto no se distinguen entre
+          // páginas. Va al final para no tocar el orden visible (por location).
+          .order("nombreproducto")
           .range(from, to),
       )
     } catch (error) {
@@ -2749,6 +2742,7 @@ export async function getWarehouseCapacities(selectedEmpresaId?: number | null):
           .order("idproducto")
           .order("lote")
           .order("location")
+          .order("nombreproducto")
           .range(from, from + 999)
         if (stockErr) {
           console.error("[v0] Error fetching stock (batch):", stockErr)

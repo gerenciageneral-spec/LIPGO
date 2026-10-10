@@ -388,9 +388,12 @@ async function realPorCodigo(
       // Orden único y estable para paginar (ver lib/orden-paginacion.ts).
       .order("numeroorden")
       .order("producto")
+      .order("cliente")
       .order("toneladas")
       .order("cantidad")
       .order("tiquetebascula")
+      .order("tarifa")
+      .order("valor_a_facturar")
       .range(off, off + 999)
     if (error) {
       notas.push(`No se pudo leer la facturación: ${error.message}`)

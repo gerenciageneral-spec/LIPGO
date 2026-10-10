@@ -16,6 +16,7 @@ import { getSupabaseAdmin, getSupabaseAdminAsSystem } from "@/lib/supabase-admin
 import { getCurrentUsuarioForInsert } from "@/lib/user-context"
 import { tieneModulo, autorizarAccion, motivoSinAccion } from "@/lib/puerta-modulo"
 import { registrarErrorServidor } from "@/lib/errores-servidor"
+import { aplicarOrdenEstable } from "@/lib/orden-paginacion"
 // `autorizar` vive en autorizaciones-core, que es `server-only`: se importa de
 // forma dinámica solo donde se valida una clave, para que los scripts de
 // mantenimiento (tsx) puedan seguir cargando este módulo.
@@ -2269,6 +2270,9 @@ async function _computeIndicadoresValores(
         .select("ocargue,tipovehiculo")
         .in("idempresa", clientes)
         .order("ocargue", { ascending: true })
+        // `ocargue` no es único (una orden puede tener más de una cita): se
+        // completa con `id` para que la paginación no pierda/repita filas.
+        .order("id", { ascending: true })
         .range(from, to),
     )
     const tipoPorOc: Record<string, string> = {}
@@ -3162,7 +3166,10 @@ export async function getPanelInventarioLIP(
     const saldosRows: any[] = []
     {
       const rS = await traerPaginasEnParalelo((desde, hasta) =>
-        supabase.from("saldoinvdetalle").select("codproducto,stock_actual").in("idempresa", clientes).order("codproducto").order("lote").order("location").range(desde, hasta),
+        aplicarOrdenEstable(
+          supabase.from("saldoinvdetalle").select("codproducto,stock_actual").in("idempresa", clientes),
+          "saldoinvdetalle",
+        ).range(desde, hasta),
       )
       saldosRows.push(...rS.data) // como antes: un error puntual aquí deja la lista vacía (es solo respaldo)
     }
@@ -3442,7 +3449,10 @@ export async function getPreservacionInventario(
     const saldos: any[] = []
     {
       const rS = await traerPaginasEnParalelo((desde, hasta) =>
-        supabase.from("saldoinvdetalle").select("codproducto,nombreproducto,lote,stock_actual").in("idempresa", clientes).order("codproducto").order("lote").order("location").range(desde, hasta),
+        aplicarOrdenEstable(
+          supabase.from("saldoinvdetalle").select("codproducto,nombreproducto,lote,stock_actual").in("idempresa", clientes),
+          "saldoinvdetalle",
+        ).range(desde, hasta),
       )
       saldos.push(...rS.data)
     }
@@ -3749,7 +3759,10 @@ export async function getKardexInventario(
     const nombrePorCod: Record<string, string> = {}
     {
       const rS = await traerPaginasEnParalelo((desde, hasta) =>
-        supabase.from("saldoinvdetalle").select("codproducto,nombreproducto,stock_actual").in("idempresa", clientes).order("codproducto").order("lote").order("location").range(desde, hasta),
+        aplicarOrdenEstable(
+          supabase.from("saldoinvdetalle").select("codproducto,nombreproducto,stock_actual").in("idempresa", clientes),
+          "saldoinvdetalle",
+        ).range(desde, hasta),
       )
       for (const r of rS.data) {
         vivo[r.codproducto] = (vivo[r.codproducto] || 0) + (Number(r.stock_actual) || 0)
@@ -4035,7 +4048,7 @@ export async function crearCuadre(
           .select("codproducto,nombreproducto,lote,location,stock_actual")
           .eq("idempresa", proyectoId)
         if (payload.codproductoUnico) q = q.eq("codproducto", payload.codproductoUnico)
-        const { data, error } = await q.order("codproducto").order("lote").order("location").range(from, from + 999)
+        const { data, error } = await aplicarOrdenEstable(q, "saldoinvdetalle").range(from, from + 999)
         if (error) return { success: false, error: error.message }
         saldos.push(...(data ?? []))
         if (!data || data.length < 1000) break
@@ -5058,14 +5071,10 @@ export async function getProductosInventario(
     const supabase: any = await getSupabaseAdmin()
     const rows: any[] = []
     for (let from = 0; from < 20000; from += 1000) {
-      const { data, error } = await supabase
-        .from("saldoinvdetalle")
-        .select("codproducto,nombreproducto,lote,location,stock_actual")
-        .eq("idempresa", proyectoId)
-        .order("codproducto")
-        .order("lote")
-        .order("location")
-        .range(from, from + 999)
+      const { data, error } = await aplicarOrdenEstable(
+        supabase.from("saldoinvdetalle").select("codproducto,nombreproducto,lote,location,stock_actual").eq("idempresa", proyectoId),
+        "saldoinvdetalle",
+      ).range(from, from + 999)
       if (error) return { success: false, data: [], error: error.message }
       if (!data || data.length === 0) break
       rows.push(...data)
@@ -5767,6 +5776,9 @@ export async function getPanelOperacionLIP(
         .select("ocargue,tipovehiculo")
         .in("idempresa", clientes)
         .order("ocargue", { ascending: true })
+        // `ocargue` no es único (una orden puede tener más de una cita): se
+        // completa con `id` para que la paginación no pierda/repita filas.
+        .order("id", { ascending: true })
         .range(from, to),
     )
     const tipoPorOc: Record<string, string> = {}
@@ -6152,7 +6164,10 @@ export async function getConciliacionMensualInventario(
     {
       const rS = await traerPaginasEnParalelo(
         (desde, hasta) =>
-          supabase.from("saldoinvdetalle").select("idproducto, nombreproducto, codproducto, categoria, subcategoria, lote, location, stock_actual").in("idempresa", clientes).order("codproducto").order("lote").order("location").range(desde, hasta),
+          aplicarOrdenEstable(
+            supabase.from("saldoinvdetalle").select("idproducto, nombreproducto, codproducto, categoria, subcategoria, lote, location, stock_actual").in("idempresa", clientes),
+            "saldoinvdetalle",
+          ).range(desde, hasta),
         { tope: 100000 },
       )
       saldosRows.push(...rS.data)
@@ -6640,14 +6655,10 @@ export async function calcularStockAlCorte(
   const nombrePorCod: Record<string, string> = {}
   let from = 0
   while (true) {
-    const { data } = await supabase
-      .from("saldoinvdetalle")
-      .select("codproducto,nombreproducto,lote,location,stock_actual")
-      .eq("idempresa", proyectoId)
-      .order("codproducto", { ascending: true })
-      .order("lote", { ascending: true })
-      .order("location", { ascending: true })
-      .range(from, from + 999)
+    const { data } = await aplicarOrdenEstable(
+      supabase.from("saldoinvdetalle").select("codproducto,nombreproducto,lote,location,stock_actual").eq("idempresa", proyectoId),
+      "saldoinvdetalle",
+    ).range(from, from + 999)
     for (const r of data ?? []) {
       const lote = r.lote ?? ""
       const location = r.location ?? ""

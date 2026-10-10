@@ -12,7 +12,7 @@ import { getSupabaseAdmin, getSupabaseAdminAsSystem } from "@/lib/supabase-admin
 import { getCurrentUser, getUserProfile } from "@/lib/auth-actions"
 import { exigirSegundoFactorSiActivo } from "@/lib/seguridad-servidor"
 import { checkModulePermission } from "@/lib/permissions-actions"
-import { aplicarOrdenEstable } from "@/lib/orden-paginacion"
+import { aplicarOrdenEstable, ordenEstable } from "@/lib/orden-paginacion"
 import { registrarErrorServidor } from "@/lib/errores-servidor"
 import { motivoSinAccion } from "@/lib/puerta-modulo"
 
@@ -225,14 +225,26 @@ async function enParaleloFin<T, R>(items: T[], limite: number, fn: (item: T) => 
 export async function leerToneladasAuxiliaresPago(empresaId: number): Promise<Fila[]> {
   await exigir(NOMINA)
   const sb: any = await getSupabaseAdminAsSystem()
-  return todas((from, to) => sb.from("toneladasauxiliarespago").select("*").eq("idempresa", empresaId).order("fechacargue", { ascending: false }).order("persona").range(from, to))
+  return todas((from, to) => sb.from("toneladasauxiliarespago").select("*").eq("idempresa", empresaId).order("fechacargue", { ascending: false }).order("persona").order("id").range(from, to))
 }
 
 /** toneladasauxiliares: todas las filas de la empresa (orden fechacargue desc, igual que la pantalla). */
 export async function leerToneladasAuxiliares(empresaId: number): Promise<Fila[]> {
   await exigir(NOMINA)
   const sb: any = await getSupabaseAdminAsSystem()
-  return todas((from, to) => sb.from("toneladasauxiliares").select("*").eq("idempresa", empresaId).order("fechacargue", { ascending: false }).range(from, to))
+  // El orden visible de la pantalla sigue siendo `fechacargue` descendente; detrás se completa
+  // la llave medida de la vista (ver lib/orden-paginacion.ts), porque sin ella TODAS las filas
+  // del mismo día empatan y en el corte de página una se repite y otra se pierde. Esta vista
+  // alimenta el pago por toneladas de los auxiliares.
+  return todas((from, to) =>
+    ordenEstable("toneladasauxiliares")
+      .filter((c) => c !== "fechacargue")
+      .reduce(
+        (q: any, c: string) => q.order(c),
+        sb.from("toneladasauxiliares").select("*").eq("idempresa", empresaId).order("fechacargue", { ascending: false }),
+      )
+      .range(from, to),
+  )
 }
 
 // ---------------------------------------------------------------- Personal (solo datos básicos)

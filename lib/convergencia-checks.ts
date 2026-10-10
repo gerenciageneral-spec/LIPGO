@@ -265,6 +265,11 @@ export async function checkPedidos(sb: SB): Promise<ResultadoCheck[]> {
         .select("transid, idpedido, id_empresa, producto, unidades, unidadescargadas")
         .not("unidadescargadas", "is", null)
         .order("transid", { ascending: true })
+        // `transid` solo no es la llave única comprobada de pedidosdetalle (ver
+        // lib/orden-paginacion.ts): se completa con idpedido/producto al final
+        // para no mover el orden visible de `casos`.
+        .order("idpedido", { ascending: true })
+        .order("producto", { ascending: true })
         .range(from, to),
     )
     const casos = (data ?? [])
@@ -302,7 +307,7 @@ export async function checkPedidos(sb: SB): Promise<ResultadoCheck[]> {
         )
         lineas.push(
           ...(await fetchAllRows((from, to) =>
-            sb.from("pedidosdetalle").select("transid, idpedido, producto, unidadescargadas, unidades_cargadas").in("transid", tanda).order("transid", { ascending: true }).range(from, to),
+            sb.from("pedidosdetalle").select("transid, idpedido, producto, unidadescargadas, unidades_cargadas").in("transid", tanda).order("transid", { ascending: true }).order("idpedido", { ascending: true }).order("producto", { ascending: true }).range(from, to),
           )),
         )
       }
@@ -355,6 +360,10 @@ export async function checkPedidos(sb: SB): Promise<ResultadoCheck[]> {
         .from("pedidosdetalle")
         .select("transid, idpedido, id_empresa, producto, unidades")
         .order("transid", { ascending: true })
+        // Completa la llave única de pedidosdetalle (ver lib/orden-paginacion.ts)
+        // sin tocar el orden visible primario (transid).
+        .order("idpedido", { ascending: true })
+        .order("producto", { ascending: true })
         .range(from, to),
     )
     const casos: string[] = []

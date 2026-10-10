@@ -348,6 +348,9 @@ export async function getBonos(
         .gte("fecha", desde)
         .lte("fecha", hasta)
         .order("fecha", { ascending: false })
+        // Desempate por llave única (id): sin él, dos bonos del mismo día pueden
+        // repetirse/perderse en el corte de página (ver lib/orden-paginacion.ts).
+        .order("id")
         .range(off, off + 999)
       if (filtros.estado && filtros.estado !== "todos") q = q.eq("estado", filtros.estado)
       if (filtros.tipo && filtros.tipo !== "todos") q = q.eq("tipo", filtros.tipo)

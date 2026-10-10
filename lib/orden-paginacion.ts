@@ -28,6 +28,20 @@ export const ORDEN_PAGINACION: Record<string, string[]> = {
   saldoinvdetalle: ["idempresa", "idproducto", "lote", "location", "nombreproducto"],
   v_pedidos_vs_salidas: ["ocargue", "producto", "idempresa_pedido", "idempresa_salida"],
   v_orden_vs_salidas: ["ocargue", "producto"],
+  // 73.507 filas (medido el 2026-10-10). La vista parte `cabeceraoc.auxiliares` por comas, así
+  // que produce una fila por auxiliar y NO expone ningún id. Ordenar solo por `fechacargue`
+  // —como estaba— significa que TODAS las filas del mismo día empatan: es justo el patrón del
+  // día duplicado de vacaciones, y aquí se paga por toneladas. Con esta llave los empates bajan
+  // de "todo el día" a 121, y vienen de códigos de orden repetidos en `cabeceraoc` (hay órdenes
+  // llamadas "01") y de nombres vacíos o repetidos dentro de la misma lista de auxiliares.
+  // Para cerrarlo del todo la vista tendría que exponer el id de `cabeceraoc`.
+  toneladasauxiliares: ["idempresa", "fechacargue", "ordendecargue", "tipooperacion", "nombre_auxiliar"],
+  // 9.170 filas cada una (medido el 2026-10-10). Son las dos vistas del tablero de recepción,
+  // sin id. Con esta llave quedan 7 empates, todos de clones "D" con el mismo código de orden
+  // repetido en `cabeceraoc`. Antes se paginaba solo por `fechacargue`: todas las filas del día
+  // empatadas.
+  dashboardoperaciones: ["idempresa", "ordendecargue", "tipooperacion", "placa", "fechacargue"],
+  dashboardoperacionesgerencia: ["idempresa", "ordendecargue", "tipooperacion", "placa", "fechacargue"],
   pedidoscabecera: ["idpedido"],
   pedidosdetalle: ["idpedido", "producto", "transid"],
   parametros_legales_anio: ["anio"],

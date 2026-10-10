@@ -32,13 +32,16 @@ export async function GET(request: Request) {
         .eq("idempresa", empresaId)
         .range(from, to)
         .order("fechacargue", { ascending: false })
-        // Desempate por llave única de la vista: sin él la paginación puede
-        // repetir/perder filas (ver lib/orden-paginacion.ts).
+        // Desempate por llave única de la vista (completa: ver lib/orden-paginacion.ts;
+        // la versión corta deja empates que repiten/pierden filas entre páginas).
         .order("numeroorden")
         .order("producto")
+        .order("cliente")
         .order("toneladas")
         .order("cantidad")
         .order("tiquetebascula")
+        .order("tarifa")
+        .order("valor_a_facturar")
 
       if (error) {
         console.error("[v0] Error fetching facturacion data:", error)

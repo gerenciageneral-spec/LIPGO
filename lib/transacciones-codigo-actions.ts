@@ -18,6 +18,7 @@
  */
 
 import { getSupabaseAdmin } from "@/lib/supabase-admin"
+import { aplicarOrdenEstable } from "@/lib/orden-paginacion"
 import { getCurrentUsuarioForInsert } from "@/lib/company-filter"
 import { getColombiaDateTime } from "@/lib/inventory-actions"
 import { autorizar, usuarioTienePermiso } from "@/lib/autorizaciones-core"
@@ -1379,12 +1380,10 @@ export async function getProductosDeEmpresa(
     const vistos = new Map<string, string>()
     let from = 0
     while (true) {
-      const { data, error } = await sb
-        .from("saldoinvdetalle")
-        .select("nombreproducto,codproducto")
-        .eq("idempresa", selectedEmpresaId)
-        .order("codproducto", { ascending: true })
-        .range(from, from + 999)
+      const { data, error } = await aplicarOrdenEstable(
+        sb.from("saldoinvdetalle").select("nombreproducto,codproducto").eq("idempresa", selectedEmpresaId),
+        "saldoinvdetalle",
+      ).range(from, from + 999)
       if (error) return { success: false, data: [], error: error.message }
       for (const r of data ?? []) {
         if (r.nombreproducto && !vistos.has(r.nombreproducto)) vistos.set(r.nombreproducto, r.codproducto ?? "")

@@ -629,6 +629,10 @@ export async function getHojaDeVida(idempresa: number, equipoId: number): Promis
         .select("*")
         .eq("idempresa", idempresa)
         .order("fecha", { ascending: false })
+        // Desempate por llave única (ver lib/orden-paginacion.ts): dos
+        // inspecciones pueden compartir `fecha` y sin esto una se repite
+        // y otra se pierde en el corte de página.
+        .order("id", { ascending: false })
         .range(off, off + 999)
       if (error) break
       if (!data || !data.length) break

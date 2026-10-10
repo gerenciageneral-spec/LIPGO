@@ -69,7 +69,7 @@ export async function getAnalisisCalificacionConductor(
         .select("idempresa,ordendecargue,fechaorden,conductor,placa,fincargue")
         .in("idempresa", clientes)
         .not("fincargue", "is", null)
-        .order("ordendecargue", { ascending: true })
+        .order("id", { ascending: true })
         .range(f, t)
       if (desde) q = q.gte("fechaorden", desde)
       if (hasta) q = q.lte("fechaorden", hasta)
@@ -293,7 +293,7 @@ export async function generarHistoricoCalificaciones(opts?: {
         .in("idempresa", clientes)
         .not("fincargue", "is", null)
         .lt("fechaorden", CALIFICACION_INICIO)
-        .order("ordendecargue", { ascending: true })
+        .order("id", { ascending: true })
         .range(f, t),
     )
 

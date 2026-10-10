@@ -11,6 +11,7 @@
 
 import { createClient } from "@/lib/supabase-client"
 import { fetchAllRows } from "@/lib/fetch-all-rows"
+import { aplicarOrdenEstable } from "@/lib/orden-paginacion"
 import { getCurrentEmpresaId } from "@/lib/company-filter"
 import { getMetaDiaForEmpresa, rewriteMetaDiaRows } from "@/lib/empresa-meta-dia"
 import { codigosOrdenPorUnidad } from "@/lib/ordenes-por-unidad"
@@ -224,15 +225,10 @@ async function fetchOcupacion(empresaId: number): Promise<OcupacionAlmacen> {
   // PAGINADO: saldoinvdetalle supera las 1.000 filas por empresa y Supabase
   // corta ahí en silencio -- la ocupación del almacén salía subestimada.
   const saldos = await fetchAllRows((from, to) =>
-    supabase
-      .from("saldoinvdetalle")
-      .select("location, stock_actual")
-      .eq("idempresa", empresaId)
-      .in("location", codigos)
-      .order("location")
-      .order("idproducto")
-      .order("lote")
-      .range(from, to),
+    aplicarOrdenEstable(
+      supabase.from("saldoinvdetalle").select("location, stock_actual").eq("idempresa", empresaId).in("location", codigos),
+      "saldoinvdetalle",
+    ).range(from, to),
   )
 
   // Stock actual agregado por location.

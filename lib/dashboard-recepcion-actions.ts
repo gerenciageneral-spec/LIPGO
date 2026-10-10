@@ -438,6 +438,13 @@ export async function getDashboardRecepcionData(
         .neq("tipooperacion", "Tolva")
         .neq("tipooperacion", "Tolva f")
         .order("fechacargue", { ascending: true })
+        // Estas vistas no tienen `id`, así que `fechacargue` deja empatadas TODAS las filas del
+        // mismo día y en el corte de página una se repite y otra se pierde. Se completa con la
+        // llave medida (ver lib/orden-paginacion.ts) detrás del orden que ya traía.
+        .order("ordendecargue", { ascending: true })
+        .order("tipooperacion", { ascending: true })
+        .order("placa", { ascending: true })
+        .order("idempresa", { ascending: true })
         .range(from, from + PAGE_SIZE - 1)
 
       if (queryError) {
