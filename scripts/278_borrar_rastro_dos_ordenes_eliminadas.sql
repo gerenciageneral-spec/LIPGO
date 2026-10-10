@@ -230,8 +230,12 @@ select idpedido, estado, aprobado, ocargue, vehiculo from public.pedidoscabecera
 where idpedido in (12138,12271,12291,12348) order by idpedido;
 -- Esperado: las 4 en AVI202610069897D, mismo vehículo QHC437.
 
+-- `valor_a_facturar` es TEXTO en la vista, así que hay que convertirlo (esta misma consulta se
+-- cayó con "42883: function sum(text) does not exist" el 2026-10-10; fue DESPUÉS del commit, así
+-- que el arreglo ya se había aplicado). El filtro nunca lanza: lo que no sea un número va a cero.
 select count(*) as facturacion_del_clon, coalesce(sum(toneladas),0) as toneladas,
-       coalesce(sum(valor_a_facturar),0) as valor
+       coalesce(sum(case when btrim(valor_a_facturar::text) ~ '^-?[0-9]+(\.[0-9]+)?$'
+                         then btrim(valor_a_facturar::text)::numeric else 0 end), 0) as valor
 from public.facturacion where numeroorden = 'AVI202610069897D';
 -- Esperado: 8 líneas, 4,4397 t, $183.324. Intacto.
 

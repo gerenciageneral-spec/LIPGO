@@ -184,7 +184,13 @@ begin
   -- 4) ¿Qué facturaba? La vista todavía ve la orden porque esto corre ANTES del borrado.
   begin
     if v_cod <> '' then
-      select coalesce(sum(f.toneladas), 0), coalesce(sum(f.valor_a_facturar), 0)
+      -- `facturacion.valor_a_facturar` es **TEXTO** en la vista (comprobado el 2026-10-10: el
+      -- 278 se cayó con "42883: function sum(text) does not exist"). Se convierte con un filtro
+      -- que nunca lanza excepción: lo que no sea un número se cuenta como cero, porque este
+      -- bloque no puede hacer fallar un borrado legítimo. `toneladas` sí es numérica.
+      select coalesce(sum(f.toneladas), 0),
+             coalesce(sum(case when btrim(f.valor_a_facturar::text) ~ '^-?[0-9]+(\.[0-9]+)?$'
+                               then btrim(f.valor_a_facturar::text)::numeric else 0 end), 0)
         into v_ton, v_valor
         from public.facturacion f where f.numeroorden = v_cod;
     end if;
