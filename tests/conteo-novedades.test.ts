@@ -1,7 +1,7 @@
 // Novedad del conteo físico → código de corrección (lib/conteo-novedades.ts).
 // Regla de gerencia 2026-10-02: el contador escribe la novedad, el sistema propone el código.
 import { describe, expect, it } from "vitest"
-import { codigoReversoDe, compilarPatron, normalizarNovedad, opcionesPara, proponerCodigo } from "@/lib/conteo-novedades"
+import { codigoPermitidoEnConteo, codigoReversoDe, compilarPatron, esConteoCiclico, normalizarNovedad, opcionesPara, proponerCodigo, propuestaParaConteo } from "@/lib/conteo-novedades"
 
 describe("proponerCodigo", () => {
   it("sin novedad: 701 si sobra, 702 si falta", () => {
@@ -50,5 +50,64 @@ describe("utilidades", () => {
     expect(codigoReversoDe("311", null)?.codigo).toBe("312")
     expect(codigoReversoDe("309", "salida")?.etiqueta).toContain("vuelve a entrar")
     expect(codigoReversoDe("102", null)).toBeNull()
+  })
+})
+
+// Los dos conteos no son lo mismo (gerencia, 2026-10-10): el TOTAL del primer día del mes fija
+// el inventario inicial y es el único donde el ajuste genérico tiene sentido; el CÍCLICO es de
+// todos los días y corrige SOLO con el código de la causa, porque un 701/702 ahí borra la
+// evidencia del problema que el conteo acababa de encontrar.
+describe("el conteo cíclico no admite el ajuste genérico", () => {
+  it("el selector de un cíclico no ofrece 701 ni 702", () => {
+    expect(opcionesPara(-1, "ciclico").map((o) => o.codigo)).toEqual(["309", "311", "551", "344"])
+    expect(opcionesPara(1, "ciclico").map((o) => o.codigo)).toEqual(["309", "311", "653", "344"])
+  })
+
+  it("el del total sigue ofreciéndolos, que es donde sí van", () => {
+    expect(opcionesPara(-1, "total")).toEqual(opcionesPara(-1))
+    expect(opcionesPara(1, "total").map((o) => o.codigo)).toContain("701")
+  })
+
+  it("codigoPermitidoEnConteo: 701 y 702 solo en el total", () => {
+    expect(codigoPermitidoEnConteo("702", "ciclico")).toBe(false)
+    expect(codigoPermitidoEnConteo("701", "ciclico")).toBe(false)
+    expect(codigoPermitidoEnConteo("551", "ciclico")).toBe(true)
+    expect(codigoPermitidoEnConteo("653", "ciclico")).toBe(true)
+    expect(codigoPermitidoEnConteo("309", "ciclico")).toBe(true)
+    expect(codigoPermitidoEnConteo("702", "total")).toBe(true)
+    expect(codigoPermitidoEnConteo("702", null)).toBe(true)
+  })
+
+  it("en un cíclico, una diferencia SIN causa queda como hallazgo y no se corrige", () => {
+    const p = propuestaParaConteo("", -10, "ciclico")
+    expect(p.requiereCausa).toBe(true)
+    expect(p.aviso).toContain("551")
+    expect(p.aviso).toContain("no se puede ajustar con 701 ni 702")
+  })
+
+  it("en un cíclico, una diferencia CON causa sí se corrige, con su código", () => {
+    const averia = propuestaParaConteo("bultos rotos y mojados", -3, "ciclico")
+    expect(averia.codigo).toBe("551")
+    expect(averia.requiereCausa).toBe(false)
+
+    const dev = propuestaParaConteo("devolución del cliente", 4, "ciclico")
+    expect(dev.codigo).toBe("653")
+    expect(dev.requiereCausa).toBe(false)
+
+    const lote = propuestaParaConteo("es del lote 20260920", -10, "ciclico")
+    expect(lote.codigo).toBe("309")
+    expect(lote.requiereCausa).toBe(false)
+  })
+
+  it("en el total, una diferencia sin causa sigue proponiendo el genérico como hoy", () => {
+    const p = propuestaParaConteo("", -10, "total")
+    expect(p.codigo).toBe("702")
+    expect(p.requiereCausa).toBe(false)
+  })
+
+  it("esConteoCiclico no se deja engañar por mayúsculas ni espacios", () => {
+    expect(esConteoCiclico(" Ciclico ")).toBe(true)
+    expect(esConteoCiclico("total")).toBe(false)
+    expect(esConteoCiclico(null)).toBe(false)
   })
 })

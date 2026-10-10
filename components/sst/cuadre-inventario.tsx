@@ -41,7 +41,7 @@ import {
   reversarAjusteInventario,
   reactivarAjusteInventario,
 } from "@/lib/sig-actions"
-import { proponerCodigo, opcionesPara, opcionDe, codigoReversoDe, OPCIONES_CODIGO, type ReglaNovedad } from "@/lib/conteo-novedades"
+import { proponerCodigo, propuestaParaConteo, opcionesPara, opcionDe, codigoReversoDe, esConteoCiclico, MOTIVO_CODIGO_NO_PERMITIDO, OPCIONES_CODIGO, type ReglaNovedad } from "@/lib/conteo-novedades"
 import { AyudaClaveAutorizacion } from "@/components/mi-clave-autorizacion"
 import { useAuth } from "@/components/auth-provider"
 import { SigHeader, SigFilterBar, SigKpi } from "@/components/sst/sig-ui"
@@ -549,13 +549,13 @@ export function CuadreInventario() {
         const pend = pendienteDe(d)
         if (pend === 0) { next.delete(d.id); continue }
         if (conservar && next.has(d.id)) continue
-        const p = proponerCodigo(d.observacion, pend, reglas)
+        const p = propuestaParaConteo(d.observacion, pend, sel?.tipo, reglas)
         let parejaId: number | null = null
         if (p.pareja) {
           const cands = candidatasPareja(d, p.pareja).sort((a, b) => Math.abs(Math.abs(pendienteDe(a)) - Math.abs(pend)) - Math.abs(Math.abs(pendienteDe(b)) - Math.abs(pend)))
           parejaId = cands[0]?.id ?? null
         }
-        next.set(d.id, { codigo: p.codigo, parejaId, aviso: p.aviso, coincidencia: p.coincidencia })
+        next.set(d.id, { codigo: p.requiereCausa ? "" : p.codigo, parejaId, aviso: p.aviso, coincidencia: p.coincidencia })
       }
       return next
     })
@@ -783,7 +783,10 @@ export function CuadreInventario() {
                                 setPropuestas((prev) => new Map(prev).set(d.id, { codigo, parejaId, aviso: null, coincidencia: p?.coincidencia ?? null }))
                               }}
                             >
-                              {opcionesPara(pend).map((o) => (
+                              {/* En un cíclico una línea sin causa arranca sin código: no se puede
+                                  aplicar hasta que alguien diga qué pasó. */}
+                              {!p?.codigo && <option value="">Elige la causa…</option>}
+                              {opcionesPara(pend, sel?.tipo).map((o) => (
                                 <option key={o.codigo} value={o.codigo}>{o.etiqueta}</option>
                               ))}
                             </select>
@@ -883,14 +886,17 @@ export function CuadreInventario() {
                 <ListChecks className="mr-1 h-4 w-4" /> Revisar diferencias ({pendientesCount})
               </Button>
             )}
+            {/* El cíclico no "ajusta stock": contabiliza las correcciones que ya llevan el código
+                de su causa (551, 653, 309, 311) y queda guardado como historial del día. El que
+                fija el inventario inicial del mes es el Conteo total. */}
             {sel.estado === "cerrado" && (
-              <Button size="sm" disabled={saving} onClick={cerrarMes} style={{ background: SST_TOKENS.ok, color: "white" }} title={sel.tipo === "total" ? "Aprueba las correcciones de este conteo y las registra como transacciones. Este conteo queda como inventario inicial del mes." : "Aprueba las correcciones de este conteo cíclico y las registra como transacciones del mes. No modifica el inventario inicial (Conteo total)."}>
-                {saving ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Lock className="mr-1 h-4 w-4" />} {sel.tipo === "total" ? "Cerrar mes (ajusta stock)" : "Cerrar conteo cíclico (ajusta stock)"}
+              <Button size="sm" disabled={saving} onClick={cerrarMes} style={{ background: SST_TOKENS.ok, color: "white" }} title={esConteoCiclico(sel.tipo) ? "Contabiliza las correcciones de este conteo cíclico, cada una con el código de su causa, y lo guarda como historial del día. No fija el inventario inicial del mes y no admite ajustes 701/702." : "Aprueba las correcciones de este conteo y las registra como transacciones. Este conteo queda como inventario inicial del mes."}>
+                {saving ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Lock className="mr-1 h-4 w-4" />} {esConteoCiclico(sel.tipo) ? "Cerrar conteo del día" : "Cerrar mes (ajusta stock)"}
               </Button>
             )}
             {sel.estado === "aprobado" && (
               <Badge style={{ background: SST_TOKENS.ok, color: "white" }} className="self-center">
-                {sel.tipo === "total" ? "Mes cerrado · inventario inicial del mes" : "Conteo cíclico cerrado · stock ajustado"}
+                {esConteoCiclico(sel.tipo) ? "Conteo del día cerrado · queda como historial" : "Mes cerrado · inventario inicial del mes"}
               </Badge>
             )}
           </div>

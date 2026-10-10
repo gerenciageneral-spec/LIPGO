@@ -21,7 +21,16 @@ import { aplicarOrdenEstable } from "@/lib/orden-paginacion"
 // forma dinámica solo donde se valida una clave, para que los scripts de
 // mantenimiento (tsx) puedan seguir cargando este módulo.
 import { procesoInventarioEjecutar } from "@/lib/autorizaciones"
-import { UMBRAL_CLAVE_UNIDADES_DEFECTO, REGLAS_FIJAS, codigoReversoDe, type ReglaNovedad } from "@/lib/conteo-novedades"
+import {
+  UMBRAL_CLAVE_UNIDADES_DEFECTO,
+  REGLAS_FIJAS,
+  MOTIVO_CODIGO_NO_PERMITIDO,
+  codigoPermitidoEnConteo,
+  codigoReversoDe,
+  esConteoCiclico,
+  proponerCodigo,
+  type ReglaNovedad,
+} from "@/lib/conteo-novedades"
 import { getResumenISO, type EstadoISO } from "@/lib/iso9001-actions"
 import { getMatrizEstandares } from "@/lib/sst-auditoria-actions"
 import { computar0312 } from "@/lib/sst-types"
@@ -4348,7 +4357,7 @@ export async function generarAjustesCuadre(cuadreId: number): Promise<{ success:
   if (motivoAccion) return { success: false, error: motivoAccion }
   try {
     const supabase: any = await getSupabaseAdmin()
-    const { data: cab } = await supabase.from("sig_inventario_cuadre").select("proyecto_id,fecha,responsable,estado").eq("id", cuadreId).single()
+    const { data: cab } = await supabase.from("sig_inventario_cuadre").select("proyecto_id,fecha,responsable,estado,tipo").eq("id", cuadreId).single()
     // Idempotente: si ya no esta en "contado" (ya se generaron ajustes antes,
     // dejandolo en "cerrado"), no repetir -- un doble clic o una carrera de red
     // (el boton solo deberia desaparecer DESPUES de que este mismo await
@@ -4359,6 +4368,27 @@ export async function generarAjustesCuadre(cuadreId: number): Promise<{ success:
     const { data: det } = await supabase.from("sig_inventario_cuadre_detalle").select("*").eq("cuadre_id", cuadreId)
     const conDif = (det ?? []).filter((d: any) => Number(d.diferencia) !== 0)
     if (conDif.length === 0) return { success: true, creados: 0 }
+
+    // UN CONTEO CÍCLICO NO GENERA AJUSTES GENÉRICOS (gerencia 2026-10-10). Este camino es el de
+    // "cerrar el mes": a toda diferencia le ponía 702 si era negativa y 701 si era positiva, sin
+    // mirar de qué tipo era el conteo ni qué novedad había escrito el contador. En el conteo
+    // diario eso es exactamente lo que no se puede hacer: la diferencia es el síntoma de una
+    // avería o una devolución que no se registró, y el ajuste la borra.
+    //
+    // Así que en un cíclico este camino no escribe nada. Las diferencias se corrigen una por una
+    // desde "Diferencias", donde cada línea lleva el código de su causa (551, 653, 309, 311), y
+    // las que no tienen causa quedan informadas como hallazgo hasta que alguien diga qué pasó.
+    if (esConteoCiclico((cab as any)?.tipo)) {
+      const sinCausa = conDif.filter((d: any) => proponerCodigo(d.observacion, Number(d.diferencia)).codigo.match(/^70[12]$/))
+      return {
+        success: false,
+        creados: 0,
+        error:
+          `Este es un conteo cíclico con ${conDif.length} diferencia(s)` +
+          (sinCausa.length ? `, ${sinCausa.length} de ellas sin causa escrita` : "") +
+          `. ${MOTIVO_CODIGO_NO_PERMITIDO} Ve a "Diferencias" y aplícalas una por una con su código.`,
+      }
+    }
     // La correccion pertenece al MES QUE SE ESTA CERRANDO, no al dia del
     // conteo (`cab.fecha` es el corte -- el primer dia del periodo nuevo,
     // igual que en calcularStockAlCorte). Un conteo total con fecha
@@ -4437,13 +4467,30 @@ export async function aplicarCorreccionesConteo(
   const vacio = { aplicadas: 0, saltadas: 0, pendientes: 0, errores: [] as string[] }
   try {
     const supabase: any = await getSupabaseAdmin()
-    const { data: cab } = await supabase.from("sig_inventario_cuadre").select("id,proyecto_id,fecha,estado,responsable").eq("id", cuadreId).single()
+    const { data: cab } = await supabase.from("sig_inventario_cuadre").select("id,proyecto_id,fecha,estado,responsable,tipo").eq("id", cuadreId).single()
     if (!cab) return { success: false, ...vacio, error: "Conteo no encontrado" }
     if (!["contado", "cerrado"].includes(String(cab.estado))) return { success: false, ...vacio, error: `El conteo está "${cab.estado}"; solo se aplican correcciones a un conteo contado.` }
     const proyectoId = Number(cab.proyecto_id)
-    // La corrección pertenece al mes que se cierra: víspera de la fecha del conteo (igual que generarAjustesCuadre).
+    const ciclico = esConteoCiclico((cab as any)?.tipo)
+    // EL AJUSTE GENÉRICO NO EXISTE EN UN CÍCLICO (gerencia 2026-10-10). El 701 y el 702 son del
+    // Conteo total de cierre de mes; en el conteo diario la diferencia se corrige con el código
+    // de su causa, porque un ajuste sin causa borra la evidencia del problema que el conteo
+    // acababa de encontrar. Se valida aquí, en el servidor, no solo en la pantalla.
+    if (ciclico) {
+      const prohibidos = items.filter((it) => !codigoPermitidoEnConteo(it.codigo, "ciclico"))
+      if (prohibidos.length > 0) {
+        return {
+          success: false,
+          ...vacio,
+          error: `${prohibidos.length} línea(s) se intentaron corregir con ${[...new Set(prohibidos.map((p) => p.codigo))].join("/")}. ${MOTIVO_CODIGO_NO_PERMITIDO}`,
+        }
+      }
+    }
+    // LA FECHA DE LA CORRECCIÓN. En un conteo TOTAL pertenece al mes que se cierra, así que va a
+    // la víspera (un conteo del 1-oct cierra septiembre). En un CÍCLICO no se cierra ningún mes:
+    // la corrección es del día del conteo, y fecharla la víspera la metería en un día que ya pasó.
     let fechaCorreccion: string | null = cab.fecha ?? null
-    if (fechaCorreccion) {
+    if (fechaCorreccion && !ciclico) {
       const d = new Date(`${fechaCorreccion}T00:00:00Z`)
       d.setUTCDate(d.getUTCDate() - 1)
       fechaCorreccion = d.toISOString().slice(0, 10)
@@ -5026,11 +5073,26 @@ export async function cerrarMesCuadre(
   try {
     const actor = await getCurrentUsuarioForInsert()
     const supabase: any = await getSupabaseAdmin()
+    const { data: cabCierre } = await supabase.from("sig_inventario_cuadre").select("tipo").eq("id", cuadreId).maybeSingle()
     const { data: ajustes } = await supabase
       .from("sig_inventario_ajuste")
       .select("*")
       .eq("cuadre_id", cuadreId)
       .eq("activo", true)
+    // Último filtro antes de mover stock: en un cíclico no se contabiliza un ajuste genérico,
+    // venga de donde venga. Protege también a los conteos cíclicos viejos que ya tengan un 701 o
+    // un 702 registrado y sin contabilizar de antes de esta regla (gerencia 2026-10-10).
+    if (esConteoCiclico((cabCierre as any)?.tipo)) {
+      const malos = (ajustes ?? []).filter((a: any) => !a.invtrans_id && !codigoPermitidoEnConteo(a.cod_movimiento, "ciclico"))
+      if (malos.length > 0) {
+        return {
+          success: false,
+          error:
+            `Este conteo cíclico tiene ${malos.length} corrección(es) con ${[...new Set(malos.map((m: any) => m.cod_movimiento))].join("/")} sin contabilizar. ` +
+            `${MOTIVO_CODIGO_NO_PERMITIDO} Cámbiales el código en "Diferencias" o anúlalas antes de cerrar.`,
+        }
+      }
+    }
     let posteados = 0
     for (const aj of ajustes ?? []) {
       if (aj.invtrans_id) continue // ya posteado

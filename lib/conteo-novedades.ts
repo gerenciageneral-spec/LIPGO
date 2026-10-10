@@ -13,6 +13,42 @@
 
 export type CodigoNovedad = "701" | "702" | "309" | "311" | "653" | "551" | "344"
 
+/**
+ * LOS DOS CONTEOS NO SON LO MISMO, y de aquí sale casi todo lo demás (gerencia, 2026-10-10):
+ *
+ *   TOTAL    Se hace el primer día (o los primeros días) del mes y FIJA el inventario inicial.
+ *            Es el único donde el 701 (sobrante) y el 702 (faltante) tienen sentido: la
+ *            diferencia ya se investigó durante el mes y se cierra con documento soporte y
+ *            aprobación de gerencia.
+ *   CÍCLICO  Se hace TODOS LOS DÍAS y compara la foto del día contra el sistema de ese día.
+ *            Aquí la diferencia **no es el problema, es el síntoma**: casi siempre es una avería
+ *            que nadie pasó por el 551 o una devolución que no se entró. Así que el cíclico
+ *            corrige, pero **con el código que es**, nunca con un ajuste genérico: un 701/702
+ *            iguala el número y borra la evidencia justo del problema que el conteo encontró.
+ *
+ * Es la misma disciplina del código de causa de los sistemas de clase mundial (SAP, Manhattan):
+ * el ajuste y su explicación son un solo registro, no dos cosas distintas.
+ */
+export type TipoConteo = "total" | "ciclico"
+
+/** Códigos que NO se pueden usar en un conteo cíclico: son el ajuste sin causa. */
+export const CODIGOS_SOLO_CONTEO_TOTAL: CodigoNovedad[] = ["701", "702"]
+
+export function esConteoCiclico(tipo: string | null | undefined): boolean {
+  return String(tipo ?? "total").trim().toLowerCase() === "ciclico"
+}
+
+/** ¿Ese código se puede aplicar en un conteo de este tipo? */
+export function codigoPermitidoEnConteo(codigo: string | null | undefined, tipo: string | null | undefined): boolean {
+  if (!esConteoCiclico(tipo)) return true
+  return !CODIGOS_SOLO_CONTEO_TOTAL.includes(String(codigo ?? "") as CodigoNovedad)
+}
+
+export const MOTIVO_CODIGO_NO_PERMITIDO =
+  "En un conteo cíclico no se puede ajustar con 701 ni 702: esos son del Conteo total de cierre de mes. " +
+  "La diferencia se corrige con el código de su causa (551 avería, 653 devolución, 309 cruce de lote, 311 mal ubicado). " +
+  "Si todavía no se sabe la causa, el hallazgo queda informado y sin corregir."
+
 export interface OpcionCodigo {
   codigo: CodigoNovedad
   etiqueta: string
@@ -143,10 +179,47 @@ export function proponerCodigo(novedad: string | null | undefined, diferencia: n
   return base(porDefecto, null, null)
 }
 
-/** Opciones válidas para el selector de una línea según el signo de su diferencia. */
-export function opcionesPara(diferencia: number): OpcionCodigo[] {
+/**
+ * Opciones válidas para el selector de una línea según el signo de su diferencia y el TIPO de
+ * conteo. En un cíclico no se ofrecen 701 ni 702: si no hay causa, no hay corrección.
+ */
+export function opcionesPara(diferencia: number, tipo?: string | null): OpcionCodigo[] {
   const signo = diferencia < 0 ? "faltante" : "sobrante"
-  return OPCIONES_CODIGO.filter((o) => o.aplicaA === "ambos" || o.aplicaA === signo)
+  return OPCIONES_CODIGO.filter(
+    (o) => (o.aplicaA === "ambos" || o.aplicaA === signo) && codigoPermitidoEnConteo(o.codigo, tipo),
+  )
+}
+
+export interface PropuestaConteo extends PropuestaNovedad {
+  /**
+   * true = esta línea NO se puede corregir todavía: es un cíclico y su novedad no dice ninguna
+   * causa real, así que el único código posible sería el genérico, y ese está prohibido aquí.
+   * El hallazgo se informa y se guarda, y espera a que alguien escriba qué pasó.
+   */
+  requiereCausa: boolean
+}
+
+/**
+ * La propuesta de código para una línea, ya mirando el tipo de conteo.
+ *
+ * En un conteo TOTAL se comporta igual que `proponerCodigo` (701/702 por defecto). En un CÍCLICO,
+ * si la novedad no lleva a una causa real, no se propone nada: `requiereCausa` queda en true y el
+ * `codigo` es el genérico solo como referencia de lo que NO se va a aplicar. Esto es lo que evita
+ * que el conteo diario tape con un ajuste lo que debería salir por avería o devolución.
+ */
+export function propuestaParaConteo(
+  novedad: string | null | undefined,
+  diferencia: number,
+  tipo?: string | null,
+  reglas?: ReglaNovedad[] | null,
+): PropuestaConteo {
+  const p = proponerCodigo(novedad, diferencia, reglas)
+  const requiereCausa = esConteoCiclico(tipo) && !codigoPermitidoEnConteo(p.codigo, tipo)
+  return {
+    ...p,
+    requiereCausa,
+    aviso: requiereCausa ? MOTIVO_CODIGO_NO_PERMITIDO : p.aviso,
+  }
 }
 
 /** Umbral por defecto (unidades) a partir del cual una corrección del conteo exige clave personal. */
