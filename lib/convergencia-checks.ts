@@ -776,7 +776,20 @@ export async function checkAsignacionVsInvtrans(sb: SB, dias = 30): Promise<Resu
           .range(from, to),
       )
       for (const m of movs) {
-        if (m.tipomov !== "Salida" || String(m.cod_movimiento ?? "") !== "601" || !norm(m.status).startsWith("apr")) continue
+        if (m.tipomov !== "Salida" || String(m.cod_movimiento ?? "") !== "601") continue
+        // CUENTA LA RESERVA, NO SOLO LO APROBADO (corregido el 2026-10-10). Antes solo sumaba las
+        // salidas aprobadas, así que CUALQUIER orden en curso salía como descuadre: el picking ya
+        // asignó los lotes y sus movimientos están "por descontar" hasta que el coordinador
+        // confirma. Medido ese día: las 8 "alertas" eran dos órdenes de ID2 cargando en ese
+        // momento (una había empezado a las 9:47, la otra ni había empezado), con la asignación y
+        // la reserva coincidiendo al dedillo.
+        //
+        // Lo que este chequeo vigila es que `historicolotes` no MIENTA respecto de invtrans, y
+        // una reserva es lo que invtrans dice de esa orden en ese momento: si coinciden, los
+        // papeles del despacho están bien. Las reservas que se quedan quietas tienen su propio
+        // vigilante (`reservas_viejas` y `ordenes_a_medias`), así que aquí no se pierde nada.
+        const st = norm(m.status)
+        if (!st.startsWith("apr") && st !== "por descontar") continue
         sumar(salida, `${m.ocargue}|${norm(m.nombreproducto)}`, n0(m.cantidad))
       }
       const hl = await fetchAllRows((from, to) =>
