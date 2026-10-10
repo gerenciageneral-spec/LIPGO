@@ -44,12 +44,30 @@ import {
 import { proponerCodigo, propuestaParaConteo, opcionesPara, opcionDe, codigoReversoDe, esConteoCiclico, MOTIVO_CODIGO_NO_PERMITIDO, OPCIONES_CODIGO, type ReglaNovedad } from "@/lib/conteo-novedades"
 import { AyudaClaveAutorizacion } from "@/components/mi-clave-autorizacion"
 import { useAuth } from "@/components/auth-provider"
-import { SigHeader, SigFilterBar, SigKpi } from "@/components/sst/sig-ui"
 import { SignaturePad, type SignaturePadHandle } from "@/components/rrhh/signature-pad"
 import type { SigInventarioCuadre, SigInventarioCuadreDetalle, SigInventarioAjuste } from "@/lib/sig-types"
 import { Loader2, ClipboardCheck, Plus, Lock, Trash2, FileCheck2, ArrowLeft, Pencil, BookOpen, CheckCircle2, ArrowDownToLine, ArrowUpFromLine, PackageSearch, User, ChevronDown, ChevronRight, ListChecks, Wand2, RotateCcw, Undo2, Settings2, Repeat, ShieldCheck } from "lucide-react"
 import { useClaveAccion } from "@/components/clave-accion-provider"
-import { TablaDesplazable } from "@/components/ui/lipgo"
+import { Cifra, Eyebrow, TablaDesplazable, type Tono } from "@/components/ui/lipgo"
+
+// El color que ya traia cada tarjeta se traduce al tono del sistema visual: la regla de cada
+// cifra sigue siendo la que tenia, no se vuelve a decidir aqui.
+const tonoDeColor = (c?: string): Tono =>
+  c === SST_TOKENS.ok ? "ok" : c === SST_TOKENS.warn ? "atencion" : c === SST_TOKENS.bad ? "critico" : "neutro"
+
+/**
+ * Las 15 tarjetas de esta pantalla pasaban por `SigKpi`, del kit anterior. Este envoltorio tiene
+ * los MISMOS nombres de propiedad, asi que cambiarlas al sistema visual fue renombrar el
+ * componente: misma etiqueta, mismo valor, misma unidad, mismo texto de apoyo y mismo criterio de
+ * color. Lo unico que se va es el icono decorativo ("nada ilustrativo, todo real").
+ */
+function KpiLip({ label, value, unit, accent, valueColor, sub }: { label: any; value: any; unit?: string; Icon?: any; accent?: string; valueColor?: string; sub?: any }) {
+  return (
+    <div className="rounded-lg border bg-card p-3 shadow-sm">
+      <Cifra label={label} valor={value} unidad={unit} sub={sub} tono={tonoDeColor(valueColor ?? accent)} tamano="compacta" />
+    </div>
+  )
+}
 
 const ESTADO_CUADRE: Record<string, { label: string; color: string }> = {
   borrador: { label: "Borrador", color: "#94a3b8" },
@@ -741,10 +759,10 @@ export function CuadreInventario() {
           </div>
 
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <SigKpi label="Líneas con diferencia" value={lineasDif.length} accent={SST_TOKENS.navy} />
-            <SigKpi label="Pendientes de aplicar" value={pendientesCount} accent={pendientesCount ? SST_TOKENS.bad : SST_TOKENS.ok} valueColor={pendientesCount ? SST_TOKENS.bad : SST_TOKENS.ok} />
-            <SigKpi label="Aplicadas" value={lineasDif.length - pendientesCount} accent={SST_TOKENS.ok} valueColor={SST_TOKENS.ok} />
-            <SigKpi label="Fecha de las correcciones" value={sel.fecha ? fechaAnteriorTexto(sel.fecha) : "víspera"} accent={SST_TOKENS.navy} />
+            <KpiLip label="Líneas con diferencia" value={lineasDif.length} accent={SST_TOKENS.navy} />
+            <KpiLip label="Pendientes de aplicar" value={pendientesCount} accent={pendientesCount ? SST_TOKENS.bad : SST_TOKENS.ok} valueColor={pendientesCount ? SST_TOKENS.bad : SST_TOKENS.ok} />
+            <KpiLip label="Aplicadas" value={lineasDif.length - pendientesCount} accent={SST_TOKENS.ok} valueColor={SST_TOKENS.ok} />
+            <KpiLip label="Fecha de las correcciones" value={sel.fecha ? fechaAnteriorTexto(sel.fecha) : "víspera"} accent={SST_TOKENS.navy} />
           </div>
 
           {lineasDif.some((d) => Math.abs(pendienteDe(d)) > umbral) && (
@@ -915,7 +933,7 @@ export function CuadreInventario() {
             <Button variant="ghost" size="sm" onClick={() => setSel(null)}>
               <ArrowLeft className="mr-1 h-4 w-4" /> Volver
             </Button>
-            <h2 className="text-lg font-bold" style={{ color: SST_TOKENS.ink }}>
+            <h2 className="text-lg font-bold">
               Conteo #{sel.id} · {sel.fecha}
             </h2>
             <Badge style={{ background: est.color, color: "white" }}>{est.label}</Badge>
@@ -945,20 +963,20 @@ export function CuadreInventario() {
 
         {/* Tarjetas: las dos de la derecha abren su pestaña (Diferencias / Correcciones). */}
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <SigKpi label={corregido ? "Sistema (ajustado)" : aCiegas ? "Sistema (oculto al contar)" : "Sistema"} value={aCiegas ? "· · ·" : fmt(corregido ? detalle.reduce((s, d) => s + (Number(d.conteo) || 0), 0) : sel.total_sistema)} accent={SST_TOKENS.navy} />
-          <SigKpi label="Conteo físico" value={fmt(detalle.reduce((s, d) => s + (Number(d.conteo) || 0), 0))} accent={SST_TOKENS.navy} />
+          <KpiLip label={corregido ? "Sistema (ajustado)" : aCiegas ? "Sistema (oculto al contar)" : "Sistema"} value={aCiegas ? "· · ·" : fmt(corregido ? detalle.reduce((s, d) => s + (Number(d.conteo) || 0), 0) : sel.total_sistema)} accent={SST_TOKENS.navy} />
+          <KpiLip label="Conteo físico" value={fmt(detalle.reduce((s, d) => s + (Number(d.conteo) || 0), 0))} accent={SST_TOKENS.navy} />
           <div role="button" tabIndex={0} className="cursor-pointer rounded-lg transition hover:ring-2 hover:ring-offset-1" title="Abrir Diferencias" onClick={abrirDiferencias} onKeyDown={(e) => e.key === "Enter" && abrirDiferencias()}>
             {corregido ? (
-              <SigKpi label="Diferencia · ver" value="0" accent={SST_TOKENS.ok} valueColor={SST_TOKENS.ok} />
+              <KpiLip label="Diferencia · ver" value="0" accent={SST_TOKENS.ok} valueColor={SST_TOKENS.ok} />
             ) : (
-              <SigKpi label={`Diferencia · ver${pendientesCount ? ` (${pendientesCount} pendientes)` : ""}`} value={fmt(difTotal)} accent={difTotal === 0 ? SST_TOKENS.ok : SST_TOKENS.bad} valueColor={difTotal === 0 ? SST_TOKENS.ok : SST_TOKENS.bad} />
+              <KpiLip label={`Diferencia · ver${pendientesCount ? ` (${pendientesCount} pendientes)` : ""}`} value={fmt(difTotal)} accent={difTotal === 0 ? SST_TOKENS.ok : SST_TOKENS.bad} valueColor={difTotal === 0 ? SST_TOKENS.ok : SST_TOKENS.bad} />
             )}
           </div>
           <div role="button" tabIndex={0} className="cursor-pointer rounded-lg transition hover:ring-2 hover:ring-offset-1" title="Abrir Correcciones de este conteo" onClick={() => setVista("correcciones")} onKeyDown={(e) => e.key === "Enter" && setVista("correcciones")}>
             {corregido ? (
-              <SigKpi label="Hallazgo corregido · ver" value={`${difTotal > 0 ? "+" : ""}${fmt(difTotal)} · ${conDif} ítems`} accent={SST_TOKENS.navy} />
+              <KpiLip label="Hallazgo corregido · ver" value={`${difTotal > 0 ? "+" : ""}${fmt(difTotal)} · ${conDif} ítems`} accent={SST_TOKENS.navy} />
             ) : (
-              <SigKpi label="Ítems con diferencia · ver" value={conDif} accent={conDif ? SST_TOKENS.bad : SST_TOKENS.ok} valueColor={conDif ? SST_TOKENS.bad : SST_TOKENS.ok} />
+              <KpiLip label="Ítems con diferencia · ver" value={conDif} accent={conDif ? SST_TOKENS.bad : SST_TOKENS.ok} valueColor={conDif ? SST_TOKENS.bad : SST_TOKENS.ok} />
             )}
           </div>
         </div>
@@ -1218,7 +1236,7 @@ export function CuadreInventario() {
         {/* ACTA DE REVISIÓN DE INVENTARIO — firma del cliente (auditoría) */}
         <Card className="p-3">
           <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-sm font-semibold" style={{ color: SST_TOKENS.ink }}>
+            <h3 className="text-sm font-semibold">
               Acta de Revisión de Inventario — Firma del cliente
               {sel.firmado && <Badge className="ml-2" style={{ background: SST_TOKENS.ok, color: "white" }}>Firmada</Badge>}
             </h3>
@@ -1258,15 +1276,18 @@ export function CuadreInventario() {
   // ---------- Vista LISTA ----------
   return (
     <div className="space-y-5">
-      <SigHeader
-        Icon={ClipboardCheck}
-        title="Cuadre y Correcciones de Inventario"
-        subtitle="Conteo físico vs sistema → correcciones que ajustan el stock → cierre mensual con acta · por cliente/sitio"
-      />
-
-      <SigFilterBar cliente={selectedEmpresaNombre}>
-        {loading && <Loader2 className="h-4 w-4 animate-spin" style={{ color: SST_TOKENS.teal }} />}
-      </SigFilterBar>
+      {/* Cabecera en el sistema visual. Mismo título y mismo texto que antes; el cliente sigue
+          viniendo del selector global, ahora en la línea de contexto en vez de en una barra. */}
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
+          <Eyebrow>{selectedEmpresaNombre || "Sin proyecto"} · Exactitud y cierre</Eyebrow>
+          <h1 className="text-xl font-bold leading-tight sm:text-2xl">Cuadre y Correcciones de Inventario</h1>
+          <p className="mt-0.5 max-w-3xl text-xs text-muted-foreground">
+            Conteo físico contra sistema, correcciones que ajustan el stock y cierre mensual con acta.
+          </p>
+        </div>
+        {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+      </div>
 
       {!proyecto ? (
         <Card className="p-8 text-center text-sm text-muted-foreground">Selecciona un cliente/sitio en el selector global para ver sus conteos y ajustes.</Card>
@@ -1292,7 +1313,7 @@ export function CuadreInventario() {
                   return (
                     <Card key={c.id} className="group flex items-center justify-between gap-3 p-3">
                       <button className="flex flex-1 items-center gap-3 text-left" onClick={() => abrir(c)}>
-                        <span className="font-semibold" style={{ color: SST_TOKENS.ink }}>#{c.id}</span>
+                        <span className="font-semibold">#{c.id}</span>
                         <span className="text-sm">{c.fecha}</span>
                         <Badge style={{ background: est.color, color: "white" }}>{est.label}</Badge>
                         {c.estado === "aprobado" ? (
@@ -1322,11 +1343,11 @@ export function CuadreInventario() {
           <TabsContent value="ajustes" className="space-y-3 pt-3">
             {/* Indicadores de ajustes — control y aprobación */}
             <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
-              <SigKpi label="Correcciones" value={indAj.total} accent={SST_TOKENS.navy} />
-              <SigKpi label="Pend. aprobar" value={indAj.pendientes} accent={indAj.pendientes ? SST_TOKENS.warn : SST_TOKENS.ok} valueColor={indAj.pendientes ? SST_TOKENS.warn : SST_TOKENS.ok} />
-              <SigKpi label="Aprobadas" value={indAj.aprobados} accent={SST_TOKENS.ok} valueColor={SST_TOKENS.ok} />
-              <SigKpi label="Faltante (−)" value={fmt(indAj.faltante)} accent={SST_TOKENS.bad} valueColor={SST_TOKENS.bad} />
-              <SigKpi label="Sobrante (+)" value={fmt(indAj.sobrante)} accent={SST_TOKENS.ok} valueColor={SST_TOKENS.ok} />
+              <KpiLip label="Correcciones" value={indAj.total} accent={SST_TOKENS.navy} />
+              <KpiLip label="Pend. aprobar" value={indAj.pendientes} accent={indAj.pendientes ? SST_TOKENS.warn : SST_TOKENS.ok} valueColor={indAj.pendientes ? SST_TOKENS.warn : SST_TOKENS.ok} />
+              <KpiLip label="Aprobadas" value={indAj.aprobados} accent={SST_TOKENS.ok} valueColor={SST_TOKENS.ok} />
+              <KpiLip label="Faltante (−)" value={fmt(indAj.faltante)} accent={SST_TOKENS.bad} valueColor={SST_TOKENS.bad} />
+              <KpiLip label="Sobrante (+)" value={fmt(indAj.sobrante)} accent={SST_TOKENS.ok} valueColor={SST_TOKENS.ok} />
             </div>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap gap-2">

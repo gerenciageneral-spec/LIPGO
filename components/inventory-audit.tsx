@@ -15,6 +15,7 @@ import {
   getInventoryForAudit,
 } from "@/lib/inventory-actions"
 import { useAuth } from "@/components/auth-provider"
+import { Eyebrow, TablaDesplazable } from "@/components/ui/lipgo"
 
 interface AuditItem {
   nombreproducto: string
@@ -180,14 +181,20 @@ export default function InventoryAudit() {
       : almacenes.find((a) => String(a.id) === selectedAlmacen)?.nombre ?? "—"
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
+      {/* Cabecera en el sistema visual LIPgo. Mismo nombre y mismo texto que antes. */}
+      <div>
+        <Eyebrow>Almacenamiento · Exactitud y cierre</Eyebrow>
+        <h1 className="text-xl font-bold leading-tight sm:text-2xl">Auditoría de Inventario</h1>
+        <p className="mt-0.5 max-w-3xl text-xs text-muted-foreground">
+          Realice el conteo físico del inventario y valide las diferencias. Filtre por almacén para reducir la lista de
+          localizaciones a contar.
+        </p>
+      </div>
+
       <Card>
-        <CardHeader>
-          <CardTitle>Auditoría de Inventario</CardTitle>
-          <CardDescription>
-            Realice el conteo físico del inventario y valide las diferencias. Filtre por
-            almacén para reducir la lista de localizaciones a contar.
-          </CardDescription>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Qué se va a contar</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -303,7 +310,7 @@ export default function InventoryAudit() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+            <TablaDesplazable alto="600px" className="overflow-x-auto">
               <table className="w-full border-collapse">
                 <thead className="sticky top-0 bg-background">
                   <tr className="border-b">
@@ -352,7 +359,7 @@ export default function InventoryAudit() {
                   })}
                 </tbody>
               </table>
-            </div>
+            </TablaDesplazable>
 
             {isValidated && (
               <div className="mt-4 space-y-2">
