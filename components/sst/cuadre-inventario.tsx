@@ -130,7 +130,7 @@ export function CuadreInventario() {
   // donde el revisor ve la novedad de cada línea, el código propuesto y aplica.
   const [vista, setVista] = useState<"hoja" | "diferencias" | "correcciones" | "acta">("hoja")
   // Propuesta por línea (id del detalle → código y pareja), editable por el revisor.
-  const [propuestas, setPropuestas] = useState<Map<number, { codigo: string; parejaId: number | null; aviso: string | null; coincidencia: string | null }>>(new Map())
+  const [propuestas, setPropuestas] = useState<Map<number, { codigo: string; parejaId: number | null; aviso: string | null; coincidencia: string | null; recontar?: boolean }>>(new Map())
   const [aplicando, setAplicando] = useState(false)
   // Diccionario de novedades (editable, SQL 214; sin filas se usan las reglas fijas) y umbral de clave.
   const [reglas, setReglas] = useState<ReglaNovedad[]>([])
@@ -580,7 +580,8 @@ export function CuadreInventario() {
           const cands = candidatasPareja(d, p.pareja).sort((a, b) => Math.abs(Math.abs(pendienteDe(a)) - Math.abs(pend)) - Math.abs(Math.abs(pendienteDe(b)) - Math.abs(pend)))
           parejaId = cands[0]?.id ?? null
         }
-        next.set(d.id, { codigo: p.requiereCausa ? "" : p.codigo, parejaId, aviso: p.aviso, coincidencia: p.coincidencia })
+        // Si la novedad dice que todavia estan verificando, la linea no lleva codigo: lleva recuento.
+        next.set(d.id, { codigo: p.requiereCausa || p.recontar ? "" : p.codigo, parejaId, aviso: p.aviso, coincidencia: p.coincidencia, recontar: p.recontar })
       }
       return next
     })
@@ -801,6 +802,13 @@ export function CuadreInventario() {
                           {d.observacion ? d.observacion : <span className="text-muted-foreground">sin novedad</span>}
                           {p?.coincidencia && <div className="text-[11px] text-muted-foreground">coincide: “{p.coincidencia}”</div>}
                           {p?.aviso && <div className="text-[11px]" style={{ color: SST_TOKENS.warn }}>{p.aviso}</div>}
+                          {/* "En verificación" no es una causa: la línea se recuenta, no se corrige. El
+                              botón de recuento ya existe en esta misma fila, aquí solo se señala. */}
+                          {p?.recontar && (
+                            <Button size="sm" variant="outline" className="mt-1 h-6 text-[11px]" onClick={() => recontar(d)}>
+                              <RotateCcw className="mr-1 h-3 w-3" /> Pedir recuento
+                            </Button>
+                          )}
                         </td>
                         <td className="px-3 py-1.5">
                           {pend !== 0 ? (

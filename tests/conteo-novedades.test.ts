@@ -1,7 +1,7 @@
 // Novedad del conteo físico → código de corrección (lib/conteo-novedades.ts).
 // Regla de gerencia 2026-10-02: el contador escribe la novedad, el sistema propone el código.
 import { describe, expect, it } from "vitest"
-import { codigoPermitidoEnConteo, codigoReversoDe, compilarPatron, esConteoCiclico, normalizarNovedad, opcionesPara, proponerCodigo, propuestaParaConteo } from "@/lib/conteo-novedades"
+import { codigoPermitidoEnConteo, codigoReversoDe, compilarPatron, esConteoCiclico, normalizarNovedad, opcionesPara, proponerCodigo, propuestaParaConteo, sugiereRecuento } from "@/lib/conteo-novedades"
 
 describe("proponerCodigo", () => {
   it("sin novedad: 701 si sobra, 702 si falta", () => {
@@ -43,7 +43,7 @@ describe("utilidades", () => {
   })
   it("opciones por signo y códigos de reverso", () => {
     expect(opcionesPara(-1).map((o) => o.codigo)).toEqual(["702", "309", "311", "551", "344"])
-    expect(opcionesPara(1).map((o) => o.codigo)).toEqual(["701", "309", "311", "653", "344"])
+    expect(opcionesPara(1).map((o) => o.codigo)).toEqual(["701", "309", "311", "653", "344", "654"])
     expect(codigoReversoDe("701", null)?.codigo).toBe("102")
     expect(codigoReversoDe("702", null)?.codigo).toBe("602")
     expect(codigoReversoDe("551", null)?.codigo).toBe("552")
@@ -60,7 +60,7 @@ describe("utilidades", () => {
 describe("el conteo cíclico no admite el ajuste genérico", () => {
   it("el selector de un cíclico no ofrece 701 ni 702", () => {
     expect(opcionesPara(-1, "ciclico").map((o) => o.codigo)).toEqual(["309", "311", "551", "344"])
-    expect(opcionesPara(1, "ciclico").map((o) => o.codigo)).toEqual(["309", "311", "653", "344"])
+    expect(opcionesPara(1, "ciclico").map((o) => o.codigo)).toEqual(["309", "311", "653", "344", "654"])
   })
 
   it("el del total sigue ofreciéndolos, que es donde sí van", () => {
@@ -109,5 +109,73 @@ describe("el conteo cíclico no admite el ajuste genérico", () => {
     expect(esConteoCiclico(" Ciclico ")).toBe(true)
     expect(esConteoCiclico("total")).toBe(false)
     expect(esConteoCiclico(null)).toBe(false)
+  })
+})
+
+// El vocabulario que de verdad usa el CEDI, explicado por gerencia el 2026-10-10 y medido en el
+// conteo #43 de ID3. Antes de esto, 8 de sus 10 diferencias no tenían camino.
+describe("el diccionario aprende lo que escribe el CEDI", () => {
+  it("'traslado a indupan por averia' es una AVERÍA, no un traslado de ubicación", () => {
+    // "el coordinador lo envió de regreso a la planta porque estaba dañado". El 311 se quedaba
+    // con la palabra "traslado" y exigía una pareja que nunca existía.
+    const p = propuestaParaConteo("traslado a indupan por averia", -2, "ciclico")
+    expect(p.codigo).toBe("551")
+    expect(p.pareja).toBeNull()
+    expect(p.requiereCausa).toBe(false)
+  })
+
+  it("un traslado normal sigue siendo 311", () => {
+    expect(propuestaParaConteo("mal ubicado, estaba en A8", -5, "ciclico").codigo).toBe("311")
+    expect(propuestaParaConteo("traslado a otra ubicacion", -5, "ciclico").codigo).toBe("311")
+  })
+
+  it("'producto en granel' es merma: al bulto le falta producto", () => {
+    const p = propuestaParaConteo("producto en granel", -2, "ciclico")
+    expect(p.codigo).toBe("551")
+    expect(p.requiereCausa).toBe(false)
+  })
+
+  it("'error de cargue' propone el 654, pero NO se puede aplicar desde el conteo", () => {
+    // Gerencia: "sin orden no debe funcionar". El 654 descuenta de la orden despachada y un
+    // conteo no sabe de qué orden se trata.
+    const p = propuestaParaConteo("pendiendiente error de cargue", 7, "ciclico")
+    expect(p.codigo).toBe("654")
+    expect(p.aplicable).toBe(false)
+    expect(p.etiqueta).toContain("Transacciones")
+  })
+
+  it("'en verificacion' no es una causa: manda a RECONTAR", () => {
+    const p = propuestaParaConteo("en verificacion", 1, "ciclico")
+    expect(p.recontar).toBe(true)
+    expect(p.aviso).toContain("RECONTAR")
+    expect(sugiereRecuento("por confirmar")).toBe(true)
+    expect(sugiereRecuento("revisando con el montacarguista")).toBe(true)
+    expect(sugiereRecuento("producto en averia")).toBe(false)
+    expect(sugiereRecuento("")).toBe(false)
+  })
+
+  it("una avería en un SOBRANTE sigue sin tener sentido y se queda como hallazgo", () => {
+    const p = propuestaParaConteo("producto en averia", 1, "ciclico")
+    expect(p.requiereCausa).toBe(true)
+  })
+
+  it("las 10 novedades del conteo #43 de ID3, una por una", () => {
+    const casos: Array<[string, number, string]> = [
+      ["traslado a indupan por averia", -2, "551"],
+      ["mal envio", -720, "pendiente"],
+      ["producto en avería ", -1, "551"],
+      ["en verificacion", 1, "recontar"],
+      ["producto en granel", -2, "551"],
+      ["en verificacion", 1, "recontar"],
+      ["pendiendiente error de cargue", 7, "654"],
+      ["producto en granel", -2, "551"],
+      ["producto en averia", -1, "551"],
+      ["producto en averia", 1, "pendiente"],
+    ]
+    for (const [novedad, dif, esperado] of casos) {
+      const p = propuestaParaConteo(novedad, dif, "ciclico")
+      const real = p.recontar ? "recontar" : p.requiereCausa ? "pendiente" : p.codigo
+      expect(real, `"${novedad}" (${dif})`).toBe(esperado)
+    }
   })
 })

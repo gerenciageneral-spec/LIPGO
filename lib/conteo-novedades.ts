@@ -11,7 +11,7 @@
 // hay reglas guardadas se usan las fijas de REGLAS_FIJAS. Decisión de
 // gerencia 2026-10-02.
 
-export type CodigoNovedad = "701" | "702" | "309" | "311" | "653" | "551" | "344"
+export type CodigoNovedad = "701" | "702" | "309" | "311" | "653" | "551" | "344" | "654"
 
 /**
  * LOS DOS CONTEOS NO SON LO MISMO, y de aquí sale casi todo lo demás (gerencia, 2026-10-10):
@@ -70,7 +70,33 @@ export const OPCIONES_CODIGO: OpcionCodigo[] = [
   { codigo: "653", etiqueta: "653 · Devolución de cliente", aplicaA: "sobrante", pareja: null, aplicable: true, tipo: "devolucion" },
   { codigo: "551", etiqueta: "551 · Avería / merma", aplicaA: "faltante", pareja: null, aplicable: true, tipo: "averia" },
   { codigo: "344", etiqueta: "344 · Cuarentena (se aplica en Transacciones)", aplicaA: "ambos", pareja: null, aplicable: false, tipo: "cuarentena" },
+  // Un sobrante por error de cargue es producto que volvió, y eso se corrige con el 654, que
+  // DESCUENTA de la orden despachada. Sin el número de la orden no se puede hacer, y un conteo no
+  // lo sabe: gerencia, 2026-10-10, "sin orden no debe funcionar". Así que el conteo lo PROPONE y
+  // manda a Transacciones de Inventario, pero no lo aplica (igual que el 344 de cuarentena).
+  { codigo: "654", etiqueta: "654 · Devolución por mal cargue (se aplica en Transacciones, con la orden)", aplicaA: "sobrante", pareja: null, aplicable: false, tipo: "devolucion_mal_cargue" },
 ]
+
+/**
+ * Novedades que NO son una causa: dicen que todavía se está mirando. Esas líneas no se corrigen
+ * con ningún código, se RECUENTAN — que es el paso que el estándar pone antes de creerle a una
+ * diferencia, y el que mata la mayoría de ellas (producto en otra ubicación, una entrada sin
+ * ubicar, un picking sin confirmar). Gerencia, 2026-10-10: "en verificación no es una causa".
+ */
+const PATRONES_RECUENTO = [
+  /\ben verificaci/,
+  /\bverificand/,
+  /\bpor (confirmar|verificar|revisar)\b/,
+  /\brevisand/,
+  /\bpendiente de (revis|confirm|verific)/,
+  /\bse esta (contando|revisando|verificando)/,
+]
+
+/** ¿La novedad dice "todavía estoy mirando" en vez de dar una causa? */
+export function sugiereRecuento(novedad: string | null | undefined): boolean {
+  const t = normalizarNovedad(novedad)
+  return t !== "" && PATRONES_RECUENTO.some((re) => re.test(t))
+}
 
 export function opcionDe(codigo: string | null | undefined): OpcionCodigo | undefined {
   return OPCIONES_CODIGO.find((o) => o.codigo === codigo)
@@ -101,12 +127,26 @@ export const REGLAS_FIJAS: ReglaNovedad[] = [
   { codigo: "344", patron: "cuarentena", etiqueta: "Cuarentena", orden: 10 },
   { codigo: "344", patron: "/\\bcalidad\\b/", etiqueta: "Retenido por calidad", orden: 11 },
   { codigo: "344", patron: "/bloquead|retenid/", etiqueta: "Bloqueado / retenido", orden: 12 },
+  // DEVUELTO A LA PLANTA POR AVERÍA. Va ANTES del 311 a propósito: el 311 se queda con cualquier
+  // frase que diga "traslado" y exige una línea pareja en otra ubicación, así que
+  // "traslado a indupan por averia" quedaba trabada sin pareja posible. Lo que manda aquí es la
+  // avería: gerencia, 2026-10-10, "el coordinador lo envió de regreso a la planta porque estaba
+  // dañado". Exige las DOS cosas en el texto (que se movió y que estaba dañado) para no robarle
+  // al 311 un traslado normal.
+  { codigo: "551", patron: "/(traslad|envi|regres|devolv|retorn)[\\s\\S]{0,40}(aver|danad|mal estado|vencid|mojad|rot)/", etiqueta: "Devuelto a la planta por avería", orden: 18 },
+  { codigo: "551", patron: "/(aver|danad|mal estado)[\\s\\S]{0,40}(traslad|envi|regres|devolv|retorn)/", etiqueta: "Devuelto a la planta por avería", orden: 19 },
   { codigo: "309", patron: "cruce de lote", etiqueta: "Cruce de lote", orden: 20 },
   { codigo: "309", patron: "/lote (equivocad|cruzad|cambiad|errad|trocad|incorrect)/", etiqueta: "Lote equivocado", orden: 21 },
   { codigo: "309", patron: "/\\bes del lote\\b|\\botro lote\\b|\\bmal lote\\b|lote mal|cambio de lote|lote diferente/", etiqueta: "Es de otro lote", orden: 22 },
   { codigo: "311", patron: "/mal ubicad|otra ubicaci|ubicaci\\S* (equivocad|errad|incorrect)|cambio de ubicaci/", etiqueta: "Mal ubicado", orden: 30 },
   { codigo: "311", patron: "/\\btraslad|\\bmovid[oa]|\\best(a|aba|an|aban) en [a-z]{1,3}-?\\d|\\ben (otra )?(bodega|estiba|posicion)/", etiqueta: "Está en otra ubicación", orden: 31 },
+  // ERROR DE CARGUE: producto que volvió porque se cargó mal. Se corrige con el 654, que descuenta
+  // de la orden despachada, así que necesita la orden y NO se aplica desde el conteo.
+  { codigo: "654", patron: "/error de cargue|mal cargue|mal cargad|cargue errad|se cargo mal/", etiqueta: "Volvió por error de cargue (necesita la orden)", orden: 35 },
   { codigo: "653", patron: "/devoluci|devuelt|\\bregres|rechaz|reingres/", etiqueta: "Devolución de cliente", orden: 40 },
+  // PASADO A GRANEL. Gerencia, 2026-10-10: "lo pasan a granel porque le falta producto al total
+  // original" — el bulto no tiene las unidades que debería, así que lo que falta es merma.
+  { codigo: "551", patron: "/\\bgranel/", etiqueta: "Pasado a granel: al bulto le falta producto", orden: 45 },
   { codigo: "551", patron: "/aver[i]a|\\brot[oa]s?\\b|danad|mojad|\\bmerma|reproces|vencid|contaminad|\\bplaga|humed|rasgad|desperdici|\\bmal estado/", etiqueta: "Avería / merma", orden: 50 },
   { codigo: "702", patron: "/faltante|\\bfalta|de menos|\\brobo\\b|hurto|perdid|no aparec|no esta|no hay/", etiqueta: "Faltante", orden: 60 },
   { codigo: "701", patron: "/sobrante|\\bsobra|de mas\\b|aparecio|encontrad/", etiqueta: "Sobrante", orden: 70 },
@@ -197,6 +237,8 @@ export interface PropuestaConteo extends PropuestaNovedad {
    * El hallazgo se informa y se guarda, y espera a que alguien escriba qué pasó.
    */
   requiereCausa: boolean
+  /** true = la novedad dice que todavía están mirando: lo que toca es RECONTAR, no corregir. */
+  recontar: boolean
 }
 
 /**
@@ -214,11 +256,17 @@ export function propuestaParaConteo(
   reglas?: ReglaNovedad[] | null,
 ): PropuestaConteo {
   const p = proponerCodigo(novedad, diferencia, reglas)
+  const recontar = sugiereRecuento(novedad)
   const requiereCausa = esConteoCiclico(tipo) && !codigoPermitidoEnConteo(p.codigo, tipo)
   return {
     ...p,
     requiereCausa,
-    aviso: requiereCausa ? MOTIVO_CODIGO_NO_PERMITIDO : p.aviso,
+    recontar,
+    aviso: recontar
+      ? "La novedad dice que todavía se está verificando, y eso no es una causa: lo que toca es RECONTAR la línea, no corregirla. La mayoría de las diferencias se caen en el recuento."
+      : requiereCausa
+        ? MOTIVO_CODIGO_NO_PERMITIDO
+        : p.aviso,
   }
 }
 
