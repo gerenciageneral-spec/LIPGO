@@ -15,6 +15,7 @@
 // Los colores salen de los tokens de app/globals.css (--color-ok-*, etc.).
 
 import type { ReactNode } from "react"
+import { useRef, type KeyboardEvent } from "react"
 import { cn } from "@/lib/utils"
 
 export type Tono = "ok" | "atencion" | "critico" | "info" | "neutro"
@@ -193,5 +194,105 @@ export function EstadoVacio({ icono, titulo, texto, accion, className }: { icono
       {texto && <p className="max-w-sm text-xs text-muted-foreground">{texto}</p>}
       {accion && <div className="mt-1">{accion}</div>}
     </div>
+  )
+}
+
+/**
+ * UNA TABLA LARGA QUE SE MUEVE CON EL TECLADO.
+ *
+ * Gerencia, 2026-10-10: "cuando no se ve una tabla en pantalla por lo extensa, con las flechas
+ * del teclado se pueda mover, para no tener que bajar a buscar la barra y correr; es improductivo
+ * y se pierde mucho tiempo".
+ *
+ * Reemplaza al `<div className="max-h-[60vh] overflow-auto">` de siempre. Dos cosas que hace y el
+ * div pelado no hacía:
+ *   · Se puede ENFOCAR (`tabIndex`), que es la condición para que el teclado llegue aquí. Con un
+ *     clic en la tabla, o con el tabulador, ya queda lista.
+ *   · Arriba/abajo mueven un renglón, izquierda/derecha una columna, Página arriba/abajo una
+ *     pantalla, Inicio y Fin a los extremos. Se toma la tecla solo cuando hay algo por mover en
+ *     ese sentido: así una tabla que ya está abajo no se come la tecla y la página sigue
+ *     desplazándose como siempre.
+ *
+ * No se roba el teclado de nadie: si el foco está en un campo de texto o en un select de la
+ * tabla (digitar un conteo, por ejemplo), la tecla se deja pasar.
+ */
+export function TablaDesplazable({
+  children,
+  className,
+  alto = "60vh",
+  ayuda = true,
+}: {
+  children: ReactNode
+  className?: string
+  /** Alto máximo antes de desplazarse. */
+  alto?: string
+  /** Muestra la pista de "clic y flechas" bajo la tabla. */
+  ayuda?: boolean
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+
+  function alTeclear(e: KeyboardEvent<HTMLDivElement>) {
+    const caja = ref.current
+    if (!caja) return
+    // Si se está escribiendo en la tabla, el teclado es del campo, no de la tabla.
+    const dentro = e.target as HTMLElement
+    if (dentro && /^(INPUT|TEXTAREA|SELECT)$/.test(dentro.tagName)) return
+    if (dentro?.isContentEditable) return
+    if (e.ctrlKey || e.altKey || e.metaKey) return
+
+    const renglon = 44
+    const columna = 120
+    const pantalla = Math.max(120, caja.clientHeight - 60)
+    const puede = (dx: number, dy: number) => {
+      if (dy < 0) return caja.scrollTop > 0
+      if (dy > 0) return caja.scrollTop + caja.clientHeight < caja.scrollHeight - 1
+      if (dx < 0) return caja.scrollLeft > 0
+      if (dx > 0) return caja.scrollLeft + caja.clientWidth < caja.scrollWidth - 1
+      return false
+    }
+    const mover = (dx: number, dy: number) => {
+      if (!puede(dx, dy)) return
+      e.preventDefault()
+      caja.scrollBy({ top: dy, left: dx, behavior: "auto" })
+    }
+    switch (e.key) {
+      case "ArrowDown": return mover(0, renglon)
+      case "ArrowUp": return mover(0, -renglon)
+      case "ArrowRight": return mover(columna, 0)
+      case "ArrowLeft": return mover(-columna, 0)
+      case "PageDown": return mover(0, pantalla)
+      case "PageUp": return mover(0, -pantalla)
+      case "Home":
+        if (!puede(0, -1)) return
+        e.preventDefault()
+        return caja.scrollTo({ top: 0, left: 0 })
+      case "End":
+        if (!puede(0, 1)) return
+        e.preventDefault()
+        return caja.scrollTo({ top: caja.scrollHeight })
+      default:
+        return
+    }
+  }
+
+  return (
+    <>
+      <div
+        ref={ref}
+        tabIndex={0}
+        role="region"
+        aria-label="Tabla desplazable con el teclado"
+        onKeyDown={alTeclear}
+        className={cn("overflow-auto outline-none ring-offset-1 focus-visible:ring-2 focus-visible:ring-ring", className)}
+        style={{ maxHeight: alto }}
+      >
+        {children}
+      </div>
+      {ayuda && (
+        <p className="px-3 py-1 text-[10px] text-muted-foreground">
+          Clic en la tabla y muévela con las flechas · Página arriba y abajo salta una pantalla · Inicio y Fin van a los extremos
+        </p>
+      )}
+    </>
   )
 }

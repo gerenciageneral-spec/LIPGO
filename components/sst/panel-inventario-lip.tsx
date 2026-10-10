@@ -21,13 +21,15 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { useToast } from "@/hooks/use-toast"
 import { SST_TOKENS } from "@/components/sst/sst-utils"
 import { SigField, sigControl } from "@/components/sst/sig-ui"
-import { Cifra, Eyebrow, type Tono } from "@/components/ui/lipgo"
+import { Cifra, Chip, Eyebrow, TablaDesplazable, type Tono } from "@/components/ui/lipgo"
+import { ETIQUETA_MIGRACION, rangoDelMes } from "@/lib/periodo-migracion"
 import { useAuth } from "@/components/auth-provider"
 import { getPanelInventarioLIP, getKardexInventario, getMovimientosProducto, getTiposMovimiento, getCuadreDiario, getPreservacionInventario, getConciliacionMensualInventario, guardarCierreMesInventario, getConciliacionPedidosVsSalidas, getConciliacionOrdenVsSalidas, getAuditoriaOrdenPedidoSalida, guardarCuadreManualPedidoSalida, getOrCrearActaCruce, corregirLineaActaCruce, firmarActaCruce, getProductosInventario, getConteoFisicoDelMes } from "@/lib/sig-actions"
 import { Truck, Loader2, Boxes, TrendingDown, ArrowDownToLine, AlertTriangle, RefreshCw, CalendarClock, Layers, FileText, BookOpen, ZoomIn, ClipboardList, ShieldAlert, FolderOpen, ExternalLink, CheckCircle2 } from "lucide-react"
 import { ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts"
 import { useClaveAccion } from "@/components/clave-accion-provider"
 
+const NUM_ORDSAL = new Intl.NumberFormat("es-CO")
 const DONUT_COLORS = ["#1E8449", "#0D3B6E", "#00B4CC", "#E0A800", "#7e57c2", "#C0392B"]
 
 // El color que ya traía cada tarjeta se traduce al tono del sistema visual, para no decidir de
@@ -110,7 +112,10 @@ export function PanelInventarioLIP() {
   const [pedSal, setPedSal] = useState<{ filas: any[]; resumen: any } | null>(null)
   const [loadingPedSal, setLoadingPedSal] = useState(false)
   // Conciliación del DESPACHO: la orden de cargue contra lo que salió del inventario.
-  const [ordSal, setOrdSal] = useState<{ filas: any[]; resumen: any } | null>(null)
+  const [ordSal, setOrdSal] = useState<{ filas: any[]; resumen: any; contexto?: any } | null>(null)
+  // El cruce orden vs salidas respeta el Año/Mes de arriba. Con esto en true se ve todo el
+  // histórico, que es como se va a cerrar la migración de enero y febrero.
+  const [ordSalTodo, setOrdSalTodo] = useState(false)
   const [loadingOrdSal, setLoadingOrdSal] = useState(false)
   const [filtroAlertaOrden, setFiltroAlertaOrden] = useState("DISC")
   const [filtroOrdenOC, setFiltroOrdenOC] = useState("")
@@ -182,7 +187,8 @@ export function PanelInventarioLIP() {
     else if (tab === "orden_salidas") cargarOrdenSalidas()
     else if (tab === "cruce") cargarCruce()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, selectedEmpresaId, anio, mes])
+  // `ordSalTodo` entra en las dependencias: al pedir el histórico completo hay que volver a leer.
+  }, [tab, selectedEmpresaId, anio, mes, ordSalTodo])
 
   async function cargarKardex() {
     setLoadingKardex(true)
@@ -779,7 +785,7 @@ export function PanelInventarioLIP() {
                   </div>
                 )}
                 <Card className="overflow-hidden">
-                  <div className="max-h-[60vh] overflow-auto">
+                  <TablaDesplazable alto="60vh">
                     <table className="w-full text-sm">
                       <thead className="sticky top-0 bg-background">
                         <tr className="border-b text-left text-[11px] uppercase text-muted-foreground">
@@ -830,7 +836,7 @@ export function PanelInventarioLIP() {
                         ))}
                       </tbody>
                     </table>
-                  </div>
+                  </TablaDesplazable>
                 </Card>
                 </>
               )}
@@ -882,7 +888,7 @@ export function PanelInventarioLIP() {
             <Card className="p-8 text-center text-sm text-muted-foreground">Sin movimientos para el periodo seleccionado.</Card>
           ) : (
             <Card className="overflow-hidden">
-              <div className="max-h-[60vh] overflow-auto">
+              <TablaDesplazable alto="60vh">
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 bg-background">
                     <tr className="border-b text-left text-[11px] uppercase text-muted-foreground">
@@ -923,7 +929,7 @@ export function PanelInventarioLIP() {
                       ))}
                   </tbody>
                 </table>
-              </div>
+              </TablaDesplazable>
             </Card>
           )}
           <p className="text-[11px] text-muted-foreground">Clic en un producto para ver sus movimientos y soportes (PDF de ingreso/aprobación y orden de cargue de cada salida).</p>
@@ -950,7 +956,7 @@ export function PanelInventarioLIP() {
             <Card className="p-8 text-center text-sm text-muted-foreground">Sin movimientos para el periodo. Tip: selecciona un mes para ver el detalle diario.</Card>
           ) : (
             <Card className="overflow-hidden">
-              <div className="max-h-[60vh] overflow-auto">
+              <TablaDesplazable alto="60vh">
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 bg-background">
                     <tr className="border-b text-left text-[11px] uppercase text-muted-foreground">
@@ -975,7 +981,7 @@ export function PanelInventarioLIP() {
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </TablaDesplazable>
             </Card>
           )}
           <p className="text-[11px] text-muted-foreground">"Otros" = ajustes, inventario inicial y merma (afectan el saldo). Los traslados de ubicación no se incluyen (no cambian el stock del sitio).</p>
@@ -996,7 +1002,7 @@ export function PanelInventarioLIP() {
                 <KPI label="Lotes con stock" valor={fmt(pres.resumen.total)} Icon={Layers} color={SST_TOKENS.navy} />
               </div>
               <Card className="overflow-hidden">
-                <div className="max-h-[55vh] overflow-auto">
+                <TablaDesplazable alto="55vh">
                   <table className="w-full text-sm">
                     <thead className="sticky top-0 bg-background">
                       <tr className="border-b text-left text-[11px] uppercase text-muted-foreground">
@@ -1025,7 +1031,7 @@ export function PanelInventarioLIP() {
                       })}
                     </tbody>
                   </table>
-                </div>
+                </TablaDesplazable>
               </Card>
               <p className="text-[11px] text-muted-foreground">FIFO: el sistema sugiere despachar el lote más antiguo primero (orden por lote). Vida útil = <code>productos.vidautildias</code> (p. ej. harina ~15 días → carpar). Antigüedad estimada desde la fecha del lote (AAAAMMDD). ISO 9001 8.5.4 (preservación).</p>
             </>
@@ -1044,8 +1050,40 @@ export function PanelInventarioLIP() {
             <Card className="p-8 text-center text-sm text-muted-foreground">Sin datos. Si la pantalla sigue vacía, falta correr <code>scripts/sig/63_orden_vs_salidas.sql</code>.</Card>
           ) : (
             <>
+              {/* EL PERÍODO MANDA (gerencia 2026-10-10). Antes esta pestaña traía todo el
+                  histórico y, como el 89 % de los casos de alerta son de la migración de enero y
+                  febrero, lo único que se veía era el ruido del arranque. */}
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-card px-3 py-2">
+                <span className="text-xs">
+                  {ordSalTodo ? (
+                    <>Mostrando <b>todo el histórico</b> del proyecto.</>
+                  ) : (
+                    <>Mostrando <b>{MESES.find((m) => m.v === mes)?.l ?? mes} de {anio}</b>, según el Año y el Mes de arriba.</>
+                  )}{" "}
+                  <span className="text-muted-foreground">{NUM_ORDSAL.format(ordSal.filas.length)} líneas de cruce.</span>
+                </span>
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setOrdSalTodo((v) => !v)}>
+                  {ordSalTodo ? "Ver solo el período" : "Ver todo el histórico"}
+                </Button>
+              </div>
+
+              {/* Lo que queda afuera, con nombre: la migración no es un error de operación. */}
+              {!ordSalTodo && (ordSal.contexto?.criticasFueraDelPeriodo ?? 0) > 0 && (
+                <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-xs">
+                  <span>
+                    Fuera de este período hay <b>{NUM_ORDSAL.format(ordSal.contexto.criticasFueraDelPeriodo)}</b> caso(s) por revisar
+                    en el histórico del proyecto.
+                  </span>
+                  {(ordSal.contexto?.criticasEnMigracion ?? 0) > 0 && (
+                    <Chip tono="neutro" title="Enero y febrero de 2026: el arranque del software. Se informan y se cierran aparte, no son errores de la operación de hoy.">
+                      {NUM_ORDSAL.format(ordSal.contexto.criticasEnMigracion)} son de la {ETIQUETA_MIGRACION}
+                    </Chip>
+                  )}
+                </div>
+              )}
+
               <p className="text-[11px] text-muted-foreground">
-                Cruce por <b>orden de cargue + producto</b>: lo que la <b>orden autorizó</b> (<code>detalleoc</code>) vs lo que <b>salió del inventario</b> (<code>invtrans</code>, movimiento 601 aprobado). La orden es el documento con el que el cliente autoriza el cargue: <b>puede salir menos</b> y la diferencia debe explicarse (una unidad dañada en el cargue), pero <b>nunca más</b>. No entran Tolva (es producción), Descargue, Distribución ni proyección, ni el movimiento 702 (salida de material). Todo el histórico del proyecto.
+                Cruce por <b>orden de cargue + producto</b>: lo que la <b>orden autorizó</b> (<code>detalleoc</code>) vs lo que <b>salió del inventario</b> (<code>invtrans</code>, movimiento 601 aprobado). La orden es el documento con el que el cliente autoriza el cargue: <b>puede salir menos</b> y la diferencia debe explicarse (una unidad dañada en el cargue), pero <b>nunca más</b>. No entran Tolva (es producción), Descargue, Distribución ni proyección, ni el movimiento 702 (salida de material). La fecha con la que se ubica cada línea es la del cargue y, cuando no la hay —las líneas de un producto que no estaba en la orden no tienen línea de orden—, la de la primera salida real.
               </p>
 
               {ordSal.resumen.criticas > 0 ? (
@@ -1259,7 +1297,7 @@ export function PanelInventarioLIP() {
                 if (vista.length === 0) return <Card className="p-8 text-center text-sm text-muted-foreground">No hay registros para el filtro seleccionado.</Card>
                 return (
                   <Card className="overflow-hidden">
-                    <div className="max-h-[60vh] overflow-auto">
+                    <TablaDesplazable alto="60vh">
                       <table className="w-full text-sm">
                         <thead className="sticky top-0 bg-background">
                           <tr className="border-b text-left text-[11px] uppercase text-muted-foreground">
@@ -1310,7 +1348,7 @@ export function PanelInventarioLIP() {
                           ))}
                         </tbody>
                       </table>
-                    </div>
+                    </TablaDesplazable>
                     <p className="p-2 text-[11px] text-muted-foreground">
                       {base.length > vista.length
                         ? `Mostrando ${vista.length.toLocaleString("es-CO")} de ${base.length.toLocaleString("es-CO")} filas. Afina con el filtro de Alerta u Orden.`
@@ -1387,7 +1425,7 @@ export function PanelInventarioLIP() {
                 })
                 return (
                   <Card className="overflow-hidden">
-                    <div className="max-h-[60vh] overflow-auto">
+                    <TablaDesplazable alto="60vh">
                       <table className="w-full text-sm">
                         <thead className="sticky top-0 bg-background">
                           <tr className="border-b text-left text-[11px] uppercase text-muted-foreground">
@@ -1425,7 +1463,7 @@ export function PanelInventarioLIP() {
                           ))}
                         </tbody>
                       </table>
-                    </div>
+                    </TablaDesplazable>
                     <p className="p-2 text-[11px] text-muted-foreground">
                       {cruce.detalle.length > vista.length
                         ? `Mostrando ${vista.length.toLocaleString("es-CO")} de ${cruce.detalle.length.toLocaleString("es-CO")} lotes. Afina con los filtros.`

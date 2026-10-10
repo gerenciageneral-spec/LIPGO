@@ -16,7 +16,7 @@
 import { useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Chip, Cifra, Esqueleto, EstadoVacio, Eyebrow, Seccion } from "@/components/ui/lipgo"
+import { Chip, Cifra, Esqueleto, EstadoVacio, Eyebrow, Seccion, TablaDesplazable } from "@/components/ui/lipgo"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/components/auth-provider"
 import { ChevronDown, ChevronRight, Download, Link2, Loader2, Search, Trash2, Wrench } from "lucide-react"
@@ -280,7 +280,7 @@ export function CuadrePorOrden({
             accion={<Chip tono="neutro">{n(ordenes.length)} de {n(data.ordenes.length)}</Chip>}
             sinPadding
           >
-            <div className="max-h-[60vh] overflow-auto">
+            <TablaDesplazable alto="60vh">
               <table className="w-full min-w-[1040px] text-sm">
                 <thead className="sticky top-0 z-10 bg-muted/50 text-[11px] uppercase tracking-wide text-muted-foreground">
                   <tr>
@@ -324,7 +324,7 @@ export function CuadrePorOrden({
                   )}
                 </tbody>
               </table>
-            </div>
+            </TablaDesplazable>
             <p className="border-t border-border px-4 py-2.5 text-[11px] text-muted-foreground sm:px-5">
               Salida = unidades 601 aprobadas que citan la orden, menos lo devuelto por mal cargue (654) · Ingreso = unidades 101 aprobadas que
               la citan. Distribución (clon “+D”) y Tolva no mueven inventario por diseño. Tolerancia de media unidad.

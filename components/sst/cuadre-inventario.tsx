@@ -49,6 +49,7 @@ import { SignaturePad, type SignaturePadHandle } from "@/components/rrhh/signatu
 import type { SigInventarioCuadre, SigInventarioCuadreDetalle, SigInventarioAjuste } from "@/lib/sig-types"
 import { Loader2, ClipboardCheck, Plus, Lock, Trash2, FileCheck2, ArrowLeft, Pencil, BookOpen, CheckCircle2, ArrowDownToLine, ArrowUpFromLine, PackageSearch, User, ChevronDown, ChevronRight, ListChecks, Wand2, RotateCcw, Undo2, Settings2, Repeat, ShieldCheck } from "lucide-react"
 import { useClaveAccion } from "@/components/clave-accion-provider"
+import { TablaDesplazable } from "@/components/ui/lipgo"
 
 const ESTADO_CUADRE: Record<string, { label: string; color: string }> = {
   borrador: { label: "Borrador", color: "#94a3b8" },
@@ -763,7 +764,7 @@ export function CuadreInventario() {
           </p>
 
           <Card className="overflow-hidden">
-            <div className="max-h-[60vh] overflow-auto">
+            <TablaDesplazable alto="60vh">
               <table className="w-full text-sm">
                 <thead className="sticky top-0 bg-background">
                   <tr className="border-b text-left text-[11px] uppercase text-muted-foreground">
@@ -902,7 +903,7 @@ export function CuadreInventario() {
                   )}
                 </tbody>
               </table>
-            </div>
+            </TablaDesplazable>
           </Card>
         </div>
     )
@@ -989,7 +990,7 @@ export function CuadreInventario() {
           {loadingDet ? (
             <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin" /></div>
           ) : (
-            <div className="max-h-[55vh] overflow-auto">
+            <TablaDesplazable alto="55vh">
               <table className="w-full text-sm">
                 <thead className="sticky top-0 bg-background">
                   <tr className="border-b text-left text-[11px] uppercase text-muted-foreground">
@@ -1110,7 +1111,7 @@ export function CuadreInventario() {
                   })}
                 </tbody>
               </table>
-            </div>
+            </TablaDesplazable>
           )}
         </Card>
           </TabsContent>

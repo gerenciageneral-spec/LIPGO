@@ -21,6 +21,7 @@ import { aplicarOrdenEstable } from "@/lib/orden-paginacion"
 // forma dinámica solo donde se valida una clave, para que los scripts de
 // mantenimiento (tsx) puedan seguir cargando este módulo.
 import { procesoInventarioEjecutar } from "@/lib/autorizaciones"
+import { dentroDelPeriodo, esDeLaMigracion, fechaEfectivaCruce } from "@/lib/periodo-migracion"
 import {
   PLAZO_HALLAZGO_DIAS,
   exactitudPorConteo,
@@ -7311,6 +7312,12 @@ export async function getConciliacionPedidosVsSalidas(
  */
 export async function getConciliacionOrdenVsSalidas(
   empresaId?: number | null,
+  // EL PERÍODO, que faltaba (gerencia 2026-10-10: "me está mostrando información vieja a pesar
+  // de que el selector indica octubre; este control es vital"). Antes devolvía TODO el histórico
+  // del proyecto, y como el 89 % de los casos de alerta son de la migración de enero y febrero,
+  // lo único que se veía era el ruido del arranque. Sin período se sigue devolviendo todo, para
+  // poder ir a cerrar esa migración a propósito.
+  periodo?: { desde?: string | null; hasta?: string | null } | null,
 ): Promise<{ success: boolean; data?: any; error?: string }> {
   try {
     if (!empresaId) {
@@ -7335,6 +7342,27 @@ export async function getConciliacionOrdenVsSalidas(
       from += 1000
       if (from > 200000) break
     }
+
+    // EL FILTRO DEL PERÍODO SE HACE AQUÍ, NO EN LA CONSULTA, y es a propósito: en las filas
+    // FUERA_DE_LA_ORDEN no hay línea de orden, así que `fechaorden` y `fechacargue` vienen NULAS
+    // — y son justo las más graves. Un `.gte("fechacargue", ...)` las borraba del tablero (pasó
+    // de verdad el 2026-10-07 en el chequeo de convergencia). Se usa la primera fecha utilizable,
+    // empezando por cuándo salió el producto de verdad. Ver lib/periodo-migracion.ts.
+    const desde = periodo?.desde ?? null
+    const hasta = periodo?.hasta ?? null
+    const todas = filas
+    const dentro = desde || hasta ? todas.filter((f: any) => dentroDelPeriodo(fechaEfectivaCruce(f), desde, hasta)) : todas
+    const fuera = todas.length - dentro.length
+    const alerta = (f: any) => ["SALIO_MAS", "FUERA_DE_LA_ORDEN"].includes(String(f.estado_alerta))
+    // Lo que queda afuera, contado aparte y con nombre: es la pregunta que seguía viva.
+    const contexto = {
+      fueraDelPeriodo: fuera,
+      criticasFueraDelPeriodo: todas.filter((f: any) => alerta(f) && !dentro.includes(f)).length,
+      criticasEnMigracion: todas.filter((f: any) => alerta(f) && esDeLaMigracion(fechaEfectivaCruce(f))).length,
+      criticasHistorico: todas.filter(alerta).length,
+    }
+    filas.length = 0
+    filas.push(...dentro)
 
     const resumen = {
       total: filas.length,
@@ -7389,7 +7417,7 @@ export async function getConciliacionOrdenVsSalidas(
       return Math.abs(Number(b.diferencia) || 0) - Math.abs(Number(a.diferencia) || 0)
     })
 
-    return { success: true, data: { filas, resumen } }
+    return { success: true, data: { filas, resumen, contexto, periodo: { desde, hasta } } }
   } catch (err: any) {
     return { success: false, error: err?.message || "Error desconocido" }
   }
