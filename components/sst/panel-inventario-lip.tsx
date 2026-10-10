@@ -1160,6 +1160,7 @@ export function PanelInventarioLIP() {
                       <thead className="bg-muted/50 text-[11px] uppercase tracking-wide text-muted-foreground">
                         <tr>
                           <th className="px-3 py-2 text-left font-semibold">Orden</th>
+                          <th className="px-3 py-2 text-left font-semibold" title="El pedido del cliente que esa orden atendió para ese producto. Una orden puede atender varios pedidos.">Pedido · cliente</th>
                           <th className="px-3 py-2 text-left font-semibold">Producto</th>
                           <th className="px-3 py-2 text-left font-semibold">Fecha · vehículo</th>
                           <th className="px-3 py-2 text-right font-semibold">Autorizado</th>
@@ -1176,6 +1177,21 @@ export function PanelInventarioLIP() {
                           return (
                             <tr key={`${f.ocargue}-${f.producto}-${i}`} className="border-t border-border/60">
                               <td className="px-3 py-2 font-mono text-[12px]">{f.ocargue}</td>
+                              {/* El pedido que originó la orden, cruzado por orden Y producto: una
+                                  orden puede atender varios pedidos con productos distintos. */}
+                              <td className="px-3 py-2 text-[12px]">
+                                {(f.pedidos ?? []).length === 0 ? (
+                                  <span className="text-muted-foreground" title="Esa orden no tiene pedido ligado para este producto">sin pedido</span>
+                                ) : (
+                                  (f.pedidos as any[]).map((p) => (
+                                    <div key={p.idpedido} className="leading-tight">
+                                      <span className="lg-num font-medium">{p.idpedido}</span>
+                                      {p.unidades ? <span className="text-muted-foreground"> · {NUM_ORDSAL.format(p.unidades)} und</span> : null}
+                                      {p.cliente ? <div className="text-[11px] text-muted-foreground">{p.cliente}{p.destino ? ` · ${p.destino}` : ""}</div> : null}
+                                    </div>
+                                  ))
+                                )}
+                              </td>
                               <td className="px-3 py-2">{f.producto}</td>
                               <td className="px-3 py-2 text-[12px] text-muted-foreground">
                                 {f.fechacargue ? String(f.fechacargue).slice(0, 10) : f.fechaorden ? String(f.fechaorden).slice(0, 10) : "—"}

@@ -7364,6 +7364,88 @@ export async function getConciliacionOrdenVsSalidas(
     filas.length = 0
     filas.push(...dentro)
 
+    // EL PEDIDO QUE ORIGINÓ LA ORDEN (gerencia 2026-10-10: "yo le agregaría el pedido a la
+    // tabla"). Con esto el cruce deja de ser orden ↔ salida y pasa a ser la cadena completa:
+    // pedido → orden → salida, que es la pregunta que de verdad se hace el cliente.
+    //
+    // Se cruza por ORDEN **y PRODUCTO**, no solo por orden: una orden puede atender varios
+    // pedidos y cada uno pide productos distintos, así que atribuirle a una línea todos los
+    // pedidos de su orden sería una verdad a medias. El libro `pedidodetalle_ocargue` sabe qué
+    // línea de qué pedido llevó cada orden.
+    try {
+      const codigos = [...new Set(filas.map((f: any) => String(f.ocargue ?? "")).filter(Boolean))]
+      const libro: any[] = []
+      for (let i = 0; i < codigos.length; i += 100) {
+        const r = await traerPaginasEnParalelo((desdeP: number, hastaP: number) =>
+          supabase
+            .from("pedidodetalle_ocargue")
+            .select("id, transid, idpedido, ocargue, unidades")
+            .in("ocargue", codigos.slice(i, i + 100))
+            .order("id", { ascending: true })
+            .range(desdeP, hastaP),
+        )
+        if (r.error) throw new Error(r.error.message)
+        libro.push(...r.data)
+      }
+      const transids = [...new Set(libro.map((l: any) => Number(l.transid)).filter(Boolean))]
+      const lineasPed: any[] = []
+      for (let i = 0; i < transids.length; i += 200) {
+        const r = await traerPaginasEnParalelo((desdeP: number, hastaP: number) =>
+          supabase
+            .from("pedidosdetalle")
+            .select("transid, idpedido, producto")
+            .in("transid", transids.slice(i, i + 200))
+            .order("transid", { ascending: true })
+            .range(desdeP, hastaP),
+        )
+        if (r.error) throw new Error(r.error.message)
+        lineasPed.push(...r.data)
+      }
+      const idpedidos = [...new Set(libro.map((l: any) => Number(l.idpedido)).filter(Boolean))]
+      const cabs: any[] = []
+      for (let i = 0; i < idpedidos.length; i += 200) {
+        const r = await traerPaginasEnParalelo((desdeP: number, hastaP: number) =>
+          supabase
+            .from("pedidoscabecera")
+            .select("idpedido, cliente, destino")
+            .in("idpedido", idpedidos.slice(i, i + 200))
+            .order("idpedido", { ascending: true })
+            .range(desdeP, hastaP),
+        )
+        if (r.error) throw new Error(r.error.message)
+        cabs.push(...r.data)
+      }
+      const productoDeTrans = new Map<number, string>(lineasPed.map((l: any) => [Number(l.transid), String(l.producto ?? "")]))
+      const cabPorPedido = new Map<number, any>(cabs.map((c: any) => [Number(c.idpedido), c]))
+      const nrm = (v: unknown) => String(v ?? "").trim().toUpperCase()
+      const porOrdenProducto = new Map<string, Array<{ idpedido: number; cliente: string; destino: string; unidades: number }>>()
+      for (const l of libro) {
+        const prod = productoDeTrans.get(Number(l.transid))
+        if (prod == null) continue
+        const k = `${nrm(l.ocargue)}|${nrm(prod)}`
+        const cab = cabPorPedido.get(Number(l.idpedido))
+        const ya = porOrdenProducto.get(k) ?? []
+        const existente = ya.find((x) => x.idpedido === Number(l.idpedido))
+        if (existente) existente.unidades = Math.round((existente.unidades + (Number(l.unidades) || 0)) * 100) / 100
+        else
+          ya.push({
+            idpedido: Number(l.idpedido),
+            cliente: String(cab?.cliente ?? ""),
+            destino: String(cab?.destino ?? ""),
+            unidades: Number(l.unidades) || 0,
+          })
+        porOrdenProducto.set(k, ya)
+      }
+      for (const f of filas) {
+        f.pedidos = porOrdenProducto.get(`${nrm(f.ocargue)}|${nrm(f.producto)}`) ?? []
+      }
+    } catch (e: any) {
+      // El pedido es información AÑADIDA: si no se puede leer, el cruce de la orden contra las
+      // salidas sigue sirviendo. Se deja el rastro y se continúa, nunca se tumba la pantalla.
+      void registrarErrorServidor("sig.getConciliacionOrdenVsSalidas.pedidos", e)
+      for (const f of filas) f.pedidos = []
+    }
+
     const resumen = {
       total: filas.length,
       cuadra: 0,
