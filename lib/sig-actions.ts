@@ -22,6 +22,16 @@ import { aplicarOrdenEstable } from "@/lib/orden-paginacion"
 // mantenimiento (tsx) puedan seguir cargando este módulo.
 import { procesoInventarioEjecutar } from "@/lib/autorizaciones"
 import {
+  PLAZO_HALLAZGO_DIAS,
+  exactitudPorConteo,
+  hallazgosPendientes,
+  resumirHallazgos,
+  tendenciaEri,
+  type ExactitudConteo,
+  type Hallazgo,
+  type ResumenHallazgos,
+} from "@/lib/conteo-hallazgos"
+import {
   UMBRAL_CLAVE_UNIDADES_DEFECTO,
   REGLAS_FIJAS,
   MOTIVO_CODIGO_NO_PERMITIDO,
@@ -4298,6 +4308,109 @@ export async function firmarCuadre(
  * botón normal de "Generar Acta" de Conciliación Mensual lo recoge solo.
  * Si hay varios cuadres cerrados ese mes, usa el más reciente.
  */
+/**
+ * HALLAZGOS PENDIENTES Y EXACTITUD DEL INVENTARIO.
+ *
+ * Alimenta la pestaña "Hallazgos y exactitud" de Exactitud y cierre. Dos preguntas que hasta hoy
+ * no tenían respuesta en ninguna pantalla:
+ *   1. ¿Qué diferencias encontró el conteo y siguen sin explicarse? Con su antigüedad, porque una
+ *      diferencia de hace una semana ya no se puede reconstruir (gerencia 2026-10-10: la
+ *      diferencia es el síntoma de un movimiento que no se registró el día que ocurrió).
+ *   2. ¿Está mejorando la bodega? Con el ERI en valor ABSOLUTO, que es el que no se puede
+ *      esconder: si un producto sobra 10 y otro falta 10, el neto es cero y parece perfecto.
+ *
+ * Solo lee. El cálculo vive en `lib/conteo-hallazgos.ts` (puro, con pruebas).
+ */
+export async function getHallazgosYExactitud(
+  proyectoId: number,
+  desde?: string | null,
+  hasta?: string | null,
+): Promise<{
+  success: boolean
+  hallazgos: Hallazgo[]
+  resumen: ResumenHallazgos
+  exactitud: ExactitudConteo[]
+  tendencia: { antes: number; ahora: number; delta: number }
+  plazoDias: number
+  error?: string
+}> {
+  const vacio = {
+    hallazgos: [] as Hallazgo[],
+    resumen: { total: 0, vencidos: 0, sinNovedad: 0, unidadesPendientes: 0, porProducto: [] } as ResumenHallazgos,
+    exactitud: [] as ExactitudConteo[],
+    tendencia: { antes: 0, ahora: 0, delta: 0 },
+    plazoDias: PLAZO_HALLAZGO_DIAS,
+  }
+  try {
+    if (!proyectoId) return { success: false, ...vacio, error: "Selecciona un cliente/sitio" }
+    const sb: any = await getSupabaseAdminAsSystem()
+    // Por defecto, los últimos 90 días: suficiente para ver tendencia sin arrastrar el histórico.
+    // La fecha de HOY en hora Colombia, igual que el resto del módulo: un conteo de las 7pm es
+    // del día de Bogotá, no del día UTC.
+    const hoy = fechaColombiaDe(new Date().toISOString())
+    const d1 = String(desde ?? "").trim() || new Date(Date.parse(`${hoy}T00:00:00Z`) - 90 * 86400000).toISOString().slice(0, 10)
+    const d2 = String(hasta ?? "").trim() || hoy
+
+    const rConteos = await traerPaginasEnParalelo((from: number, to: number) =>
+      sb
+        .from("sig_inventario_cuadre")
+        .select("id, proyecto_id, fecha, tipo, estado")
+        .eq("proyecto_id", proyectoId)
+        .gte("fecha", d1)
+        .lte("fecha", d2)
+        .order("id", { ascending: true })
+        .range(from, to),
+    )
+    if (rConteos.error) return { success: false, ...vacio, error: rConteos.error.message }
+    // Un conteo anulado no mide nada ni debe nada. Un borrador tampoco: todavía se está contando.
+    const vivos = (rConteos.data ?? []).filter((c: any) => !["anulado", "borrador"].includes(String(c.estado ?? "")))
+    if (vivos.length === 0) return { success: true, ...vacio }
+    const ids = vivos.map((c: any) => Number(c.id))
+
+    const lineas: any[] = []
+    const ajustes: any[] = []
+    for (let i = 0; i < ids.length; i += 50) {
+      const tanda = ids.slice(i, i + 50)
+      const rLin = await traerPaginasEnParalelo((from: number, to: number) =>
+        sb
+          .from("sig_inventario_cuadre_detalle")
+          .select("id, cuadre_id, codproducto, producto, lote, location, sistema, conteo, diferencia, observacion, contado_por")
+          .in("cuadre_id", tanda)
+          .order("id", { ascending: true })
+          .range(from, to),
+      )
+      if (rLin.error) return { success: false, ...vacio, error: rLin.error.message }
+      lineas.push(...rLin.data)
+
+      const rAj = await traerPaginasEnParalelo((from: number, to: number) =>
+        sb
+          .from("sig_inventario_ajuste")
+          .select("id, cuadre_id, codproducto, lote, location, cantidad, cod_movimiento")
+          .in("cuadre_id", tanda)
+          .eq("activo", true)
+          .order("id", { ascending: true })
+          .range(from, to),
+      )
+      if (rAj.error) return { success: false, ...vacio, error: rAj.error.message }
+      ajustes.push(...rAj.data)
+    }
+
+    const hallazgos = hallazgosPendientes(vivos, lineas, ajustes, hoy)
+    const exactitud = exactitudPorConteo(vivos, lineas)
+    return {
+      success: true,
+      hallazgos,
+      resumen: resumirHallazgos(hallazgos),
+      exactitud,
+      tendencia: tendenciaEri(exactitud),
+      plazoDias: PLAZO_HALLAZGO_DIAS,
+    }
+  } catch (err: any) {
+    void registrarErrorServidor("sig.getHallazgosYExactitud", err)
+    return { success: false, ...vacio, error: err?.message || "Error desconocido" }
+  }
+}
+
 export async function getConteoFisicoDelMes(
   proyectoId: number,
   mes: string, // 'YYYY-MM'

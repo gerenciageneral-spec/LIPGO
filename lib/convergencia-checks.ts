@@ -5,6 +5,7 @@
 // Cada check cruza dos fuentes que DEBEN coincidir. Lo que vigila cada uno está en la regla.
 
 import { fetchAllRows } from "@/lib/fetch-all-rows"
+import { hallazgosPendientes } from "@/lib/conteo-hallazgos"
 import { resultadoDe, sinDatos, type ResultadoCheck } from "@/lib/convergencia"
 
 const n0 = (v: unknown) => Number(v) || 0
@@ -860,6 +861,75 @@ export async function checkAjusteConteoSinMovimiento(sb: SB): Promise<ResultadoC
   }
 }
 
+const CHK_HALLAZGO_VENCIDO = {
+  clave: "hallazgo_conteo_vencido",
+  titulo: "Diferencias del conteo que llevan días sin explicarse",
+  regla:
+    "El conteo cíclico detecta; la diferencia que encuentra es el síntoma de un movimiento que no se registró el día que ocurrió. Si nadie la explica en dos días ya no se puede reconstruir: el producto se movió, la gente cambió de turno y la causa se pierde.",
+  gravedad: "alerta" as const,
+}
+/**
+ * El vigilante del plazo (gerencia 2026-10-10). El cálculo es el mismo de la pestaña "Hallazgos y
+ * exactitud" (`lib/conteo-hallazgos.ts`, puro y con pruebas), para que el correo de la madrugada y
+ * la pantalla nunca digan cosas distintas.
+ */
+export async function checkHallazgosVencidos(sb: SB, dias = 20): Promise<ResultadoCheck> {
+  try {
+    const desde = diasAtrasISO(dias).slice(0, 10)
+    const conteos = await fetchAllRows((from, to) =>
+      sb
+        .from("sig_inventario_cuadre")
+        .select("id, proyecto_id, fecha, tipo, estado")
+        .gte("fecha", desde)
+        .order("id", { ascending: true })
+        .range(from, to),
+    )
+    const vivos = (conteos ?? []).filter((c: any) => !["anulado", "borrador"].includes(String(c.estado ?? "")))
+    if (vivos.length === 0) return resultadoDe(CHK_HALLAZGO_VENCIDO, [])
+    const ids = vivos.map((c: any) => Number(c.id))
+    const lineas: any[] = []
+    const ajustes: any[] = []
+    for (let i = 0; i < ids.length; i += 50) {
+      const tanda = ids.slice(i, i + 50)
+      lineas.push(
+        ...(await fetchAllRows((from, to) =>
+          sb
+            .from("sig_inventario_cuadre_detalle")
+            .select("id, cuadre_id, codproducto, producto, lote, location, sistema, conteo, diferencia, observacion, contado_por")
+            .in("cuadre_id", tanda)
+            .order("id", { ascending: true })
+            .range(from, to),
+        )),
+      )
+      ajustes.push(
+        ...(await fetchAllRows((from, to) =>
+          sb
+            .from("sig_inventario_ajuste")
+            .select("id, cuadre_id, codproducto, lote, location, cantidad, cod_movimiento")
+            .in("cuadre_id", tanda)
+            .eq("activo", true)
+            .order("id", { ascending: true })
+            .range(from, to),
+        )),
+      )
+    }
+    const hoy = new Date().toISOString().slice(0, 10)
+    const vencidos = hallazgosPendientes(vivos, lineas, ajustes, hoy).filter((h) => h.vencido)
+    const casos = vencidos
+      .slice(0, 25)
+      .map(
+        (h) =>
+          `ID${h.proyectoId ?? "?"} · conteo #${h.cuadreId} del ${h.fecha} (${h.tipo}) · ${h.producto} lote ${h.lote || "—"} ${h.location || ""}: ` +
+          `${h.pendiente > 0 ? "+" : ""}${h.pendiente} sin explicar, ${h.diasAbierto} días` +
+          (h.novedad ? ` · novedad: "${h.novedad}"` : " · SIN novedad escrita"),
+      )
+    if (vencidos.length > 25) casos.push(`… y ${vencidos.length - 25} más`)
+    return resultadoDe(CHK_HALLAZGO_VENCIDO, casos)
+  } catch (e: any) {
+    return sinDatos(CHK_HALLAZGO_VENCIDO, e?.message ?? String(e))
+  }
+}
+
 const CHK_ORDEN_BORRADA_CON_VALOR = {
   clave: "orden_eliminada_con_valor",
   titulo: "Se borró una orden que se llevaba inventario o facturación",
@@ -914,7 +984,7 @@ export async function checkOrdenEliminadaConValor(sb: SB, dias = 15): Promise<Re
 }
 
 export async function correrChecks(sb: SB): Promise<ResultadoCheck[]> {
-  const [dup, mas, pend, stock, ped, err, rastro, vinculo, ciclo, ingresos, asignacion, huerfano, borradas] = await Promise.all([
+  const [dup, mas, pend, stock, ped, err, rastro, vinculo, ciclo, ingresos, asignacion, huerfano, borradas, hallazgos] = await Promise.all([
     checkSalidasDuplicadas(sb),
     checkSalioMasQueOrden(sb),
     checkPendientesInventario(sb),
@@ -928,6 +998,7 @@ export async function correrChecks(sb: SB): Promise<ResultadoCheck[]> {
     checkAsignacionVsInvtrans(sb),
     checkAjusteConteoSinMovimiento(sb),
     checkOrdenEliminadaConValor(sb),
+    checkHallazgosVencidos(sb),
   ])
-  return [dup, mas, ...pend, ...stock, ...ped, err, rastro, vinculo, ciclo, ingresos, asignacion, huerfano, borradas]
+  return [dup, mas, ...pend, ...stock, ...ped, err, rastro, vinculo, ciclo, ingresos, asignacion, huerfano, borradas, hallazgos]
 }

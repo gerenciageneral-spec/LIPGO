@@ -16,6 +16,7 @@ import { AyudaClaveAutorizacion } from "@/components/mi-clave-autorizacion"
 import { Orden360Dialog } from "@/components/orders/orden-360"
 import { Ingreso360Dialog } from "@/components/inventario/ingreso-360"
 import { CuadrePorOrden } from "@/components/inventario/cuadre-por-orden"
+import { HallazgosExactitud } from "@/components/inventario/hallazgos-exactitud"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { useToast } from "@/hooks/use-toast"
 import { SST_TOKENS } from "@/components/sst/sst-utils"
@@ -622,6 +623,7 @@ export function PanelInventarioLIP() {
         <TabsList className="h-auto w-full flex-nowrap justify-start overflow-x-auto">
           <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
           <TabsTrigger value="cuadre_orden">Cuadre por orden</TabsTrigger>
+          <TabsTrigger value="hallazgos">Hallazgos y exactitud</TabsTrigger>
           <TabsTrigger value="conciliacion">Conciliación mensual</TabsTrigger>
           <TabsTrigger value="kardex">Inventario detalle (Kardex)</TabsTrigger>
           <TabsTrigger value="diario">Cuadre diario</TabsTrigger>
@@ -736,6 +738,10 @@ export function PanelInventarioLIP() {
             todo lo que entró o salió sin número de orden. Cada fila abre su ciclo 360. */}
         <TabsContent value="cuadre_orden" className="space-y-3 pt-3">
           <CuadrePorOrden onAbrirOrden={(oc) => setOrden360(oc)} onAbrirIngreso={(ref) => setIngreso360(ref)} />
+        </TabsContent>
+
+        <TabsContent value="hallazgos" className="space-y-3 pt-3">
+          <HallazgosExactitud />
         </TabsContent>
 
         <TabsContent value="conciliacion" className="space-y-3 pt-3">

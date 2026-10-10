@@ -249,7 +249,16 @@ export function CuadreInventario() {
             ["Ítems contados", fmtN(sel.items)],
             ["Ítems corregidos", fmtN(sel.items_con_diferencia)],
           ]
-        : [
+        // CONTEO A CIEGAS: mientras está en borrador, el PDF tampoco puede llevar la cantidad del
+        // sistema. Si no, la hoja impresa es justamente la forma de saltarse el conteo a ciegas.
+        : sel.estado === "borrador"
+          ? [
+              ["Stock sistema (libro)", "oculto · conteo a ciegas"],
+              ["Conteo físico", fmtN(sel.total_conteo)],
+              ["Diferencia", "se calcula al terminar de contar"],
+              ["Ítems contados", fmtN(sel.items)],
+            ]
+          : [
             ["Stock sistema (libro)", fmtN(sel.total_sistema)],
             ["Conteo físico", fmtN(sel.total_conteo)],
             ["Diferencia", fmtN(sel.total_diferencia)],
@@ -259,7 +268,9 @@ export function CuadreInventario() {
       styles: { fontSize: 9 },
       headStyles: { fillColor: [13, 59, 110] },
     })
-    const difs = detalle.filter((d) => (Number(d.diferencia) || 0) !== 0)
+    // En borrador no se listan ítems con diferencia: todavía no se ha terminado de contar y
+    // publicarlas aquí sería decirle al contador dónde "no cuadra".
+    const difs = sel.estado === "borrador" ? [] : detalle.filter((d) => (Number(d.diferencia) || 0) !== 0)
     let y = (doc as any).lastAutoTable.finalY + 8
     if (difs.length > 0) {
       doc.text(sel.estado === "aprobado" ? "Ítems corregidos (701 sobrante / 702 faltante):" : "Ítems con diferencia:", 14, y)
@@ -677,6 +688,13 @@ export function CuadreInventario() {
     // Los campos guardados (sistema, diferencia) no se tocan: son el hallazgo
     // original y de ahí sale el ERI.
     const corregido = sel.estado === "aprobado"
+    // CONTEO A CIEGAS. Mientras el conteo está en borrador —es decir, mientras se está
+    // contando— no se muestra la cantidad del sistema ni la diferencia. Si el contador ve el
+    // número esperado no cuenta: confirma. Es la práctica de todos los sistemas de inventario
+    // serios y el cambio más barato que sube la exactitud. Al pasar el conteo a "contado"
+    // aparece todo, que es el momento de analizar las diferencias.
+    const aCiegas = sel.estado === "borrador"
+    const oculto = <span className="text-muted-foreground" title="Conteo a ciegas: la cantidad del sistema aparece al terminar de contar">· · ·</span>
 
     // ---------- Vista DIFERENCIAS: novedad → código → aplicar ----------
     const aplicadasDe = (d: SigInventarioCuadreDetalle) => ajustesDelConteo.filter((a) => claveLinea(a) === claveLinea(d))
@@ -904,7 +922,7 @@ export function CuadreInventario() {
 
         {/* Tarjetas: las dos de la derecha abren su pestaña (Diferencias / Correcciones). */}
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <SigKpi label={corregido ? "Sistema (ajustado)" : "Sistema"} value={fmt(corregido ? detalle.reduce((s, d) => s + (Number(d.conteo) || 0), 0) : sel.total_sistema)} accent={SST_TOKENS.navy} />
+          <SigKpi label={corregido ? "Sistema (ajustado)" : aCiegas ? "Sistema (oculto al contar)" : "Sistema"} value={aCiegas ? "· · ·" : fmt(corregido ? detalle.reduce((s, d) => s + (Number(d.conteo) || 0), 0) : sel.total_sistema)} accent={SST_TOKENS.navy} />
           <SigKpi label="Conteo físico" value={fmt(detalle.reduce((s, d) => s + (Number(d.conteo) || 0), 0))} accent={SST_TOKENS.navy} />
           <div role="button" tabIndex={0} className="cursor-pointer rounded-lg transition hover:ring-2 hover:ring-offset-1" title="Abrir Diferencias" onClick={abrirDiferencias} onKeyDown={(e) => e.key === "Enter" && abrirDiferencias()}>
             {corregido ? (
@@ -938,6 +956,7 @@ export function CuadreInventario() {
               </div>
               {editable ? (
                 <span className="text-[11px] text-muted-foreground">
+                  {aCiegas && <b className="text-foreground">Conteo a ciegas: la cantidad del sistema y la diferencia aparecen al terminar de contar. </b>}
                   Cada línea se guarda sola al contarla — varias personas pueden contar a la vez sin pisarse. En "Novedad" el contador escribe qué pasó (avería, cruce de lote, mal ubicado…).
                 </span>
               ) : (
@@ -978,7 +997,7 @@ export function CuadreInventario() {
                               {g.codproducto && <span className="ml-1 text-[11px] font-normal text-muted-foreground">· {g.codproducto}</span>}
                             </span>
                           </td>
-                          <td className="px-3 py-1.5 text-right font-semibold">{fmt(corregido ? g.conteo : g.sistema)}</td>
+                          <td className="px-3 py-1.5 text-right font-semibold">{aCiegas ? oculto : fmt(corregido ? g.conteo : g.sistema)}</td>
                           <td className="px-3 py-1.5 text-right font-semibold">{fmt(g.conteo)}</td>
                           {corregido ? (
                             <>
@@ -986,8 +1005,8 @@ export function CuadreInventario() {
                               <td className="px-3 py-1.5 text-right text-[11px] text-muted-foreground">{gDif === 0 ? "—" : `${gDif > 0 ? "+" : ""}${fmt(gDif)}`}</td>
                             </>
                           ) : (
-                            <td className="px-3 py-1.5 text-right font-semibold" style={{ color: gDif === 0 ? undefined : gDif > 0 ? SST_TOKENS.ok : SST_TOKENS.bad }}>
-                              {gDif > 0 ? "+" : ""}{fmt(gDif)}
+                            <td className="px-3 py-1.5 text-right font-semibold" style={{ color: aCiegas || gDif === 0 ? undefined : gDif > 0 ? SST_TOKENS.ok : SST_TOKENS.bad }}>
+                              {aCiegas ? oculto : `${gDif > 0 ? "+" : ""}${fmt(gDif)}`}
                             </td>
                           )}
                           <td className="px-3 py-1.5 text-right text-[11px] text-muted-foreground">{contadas}/{g.filas.length} líneas</td>
@@ -996,7 +1015,7 @@ export function CuadreInventario() {
                         {!colapsado && g.filas.map((d) => {
                           const dif = Number(d.diferencia) || 0
                           return (
-                            <tr key={d.id} className={`border-b last:border-0 ${!d.contado_en && String(d.contado_por || "").startsWith("RECONTAR") ? "bg-amber-50" : dif !== 0 && !corregido ? "bg-red-50" : ""}`}>
+                            <tr key={d.id} className={`border-b last:border-0 ${!d.contado_en && String(d.contado_por || "").startsWith("RECONTAR") ? "bg-amber-50" : dif !== 0 && !corregido && !aCiegas ? "bg-red-50" : ""}`}>
                               <td className="px-3 py-1.5 text-muted-foreground">
                                 {agrupar === "ubicacion" ? (
                                   <>
@@ -1007,7 +1026,7 @@ export function CuadreInventario() {
                               </td>
                               <td className="px-3 py-1.5 text-muted-foreground">{d.lote || "—"}</td>
                               <td className="px-3 py-1.5 text-muted-foreground">{d.location || "—"}</td>
-                              <td className="px-3 py-1.5 text-right">{fmt(corregido ? d.conteo : d.sistema)}</td>
+                              <td className="px-3 py-1.5 text-right">{aCiegas ? oculto : fmt(corregido ? d.conteo : d.sistema)}</td>
                               <td className="px-3 py-1.5 text-right">
                                 {editable ? (
                                   <span className="inline-flex items-center gap-1.5">
@@ -1032,8 +1051,8 @@ export function CuadreInventario() {
                                   </td>
                                 </>
                               ) : (
-                                <td className="px-3 py-1.5 text-right font-medium" style={{ color: dif === 0 ? undefined : dif > 0 ? SST_TOKENS.ok : SST_TOKENS.bad }}>
-                                  {dif > 0 ? "+" : ""}{fmt(dif)}
+                                <td className="px-3 py-1.5 text-right font-medium" style={{ color: aCiegas || dif === 0 ? undefined : dif > 0 ? SST_TOKENS.ok : SST_TOKENS.bad }}>
+                                  {aCiegas ? oculto : `${dif > 0 ? "+" : ""}${fmt(dif)}`}
                                 </td>
                               )}
                               <td className="px-3 py-1.5 text-[11px] text-muted-foreground">
