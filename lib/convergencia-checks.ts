@@ -860,8 +860,61 @@ export async function checkAjusteConteoSinMovimiento(sb: SB): Promise<ResultadoC
   }
 }
 
+const CHK_ORDEN_BORRADA_CON_VALOR = {
+  clave: "orden_eliminada_con_valor",
+  titulo: "Se borró una orden que se llevaba inventario o facturación",
+  regla:
+    "Borrar una orden finalizada devuelve al stock lo que el camión ya se llevó, y puede arrastrar la facturación de su clon de distribución. Si pasa, hay que saberlo el mismo día, no tres semanas después.",
+  gravedad: "critico" as const,
+}
+/**
+ * Nace de dos casos reales encontrados el 2026-10-10, ninguno de los cuales avisó a nadie:
+ *   · AVI202610069897 (ID2, 7-oct): se borró con 3 salidas APROBADAS → 114 unidades volvieron al
+ *     stock de ID2 mientras el camión ya las había entregado.
+ *   · MOL202609289628 (ID3, 8-oct): igual, con 126 unidades de Fideo a la Mesa.
+ *   · Y el clon AVI202610069897D facturaba 4,4397 t por $183.324 SIN un solo movimiento de
+ *     inventario: un aviso que solo mire inventario se lo pierde.
+ * La fuente es `ordenes_eliminadas` (script 279), que el disparador llena con esas señales en el
+ * momento del borrado. Mira los últimos 15 días: el pasado ya está informado y congelado.
+ */
+export async function checkOrdenEliminadaConValor(sb: SB, dias = 15): Promise<ResultadoCheck> {
+  try {
+    const desde = diasAtrasISO(dias)
+    const filas = await fetchAllRows((from, to) =>
+      sb
+        .from("ordenes_eliminadas")
+        .select(
+          "id, idempresa, ordendecargue, tipooperacion, status, eliminada_en, eliminada_por_nombre, origen, movimientos_inventario, unidades_inventario, facturaba_toneladas, facturaba_valor, tenia_clon",
+        )
+        .gte("eliminada_en", desde)
+        .order("id", { ascending: true })
+        .range(from, to),
+    )
+    const casos: string[] = []
+    for (const f of filas as any[]) {
+      const movs = n0(f.movimientos_inventario)
+      const valor = n0(f.facturaba_valor)
+      const ton = n0(f.facturaba_toneladas)
+      if (movs === 0 && valor === 0 && ton === 0) continue
+      const señales: string[] = []
+      if (movs > 0) señales.push(`se llevó ${movs} movimiento(s) de inventario por ${n0(f.unidades_inventario)} unidades`)
+      if (valor > 0 || ton > 0) señales.push(`facturaba ${ton} t por $${Math.round(valor).toLocaleString("es-CO")}`)
+      casos.push(
+        `ID${n0(f.idempresa)} · ${f.ordendecargue ?? "sin código"} (${f.tipooperacion ?? ""}, estado ${f.status ?? "—"}) ` +
+          `borrada el ${String(f.eliminada_en).slice(0, 16).replace("T", " ")} por ${f.eliminada_por_nombre} ` +
+          `desde ${f.origen}: ${señales.join(" y ")}`,
+      )
+    }
+    return resultadoDe(CHK_ORDEN_BORRADA_CON_VALOR, casos)
+  } catch (e: any) {
+    const msg = e?.message ?? String(e)
+    const falta = /ordenes_eliminadas|schema cache|does not exist/i.test(msg)
+    return sinDatos(CHK_ORDEN_BORRADA_CON_VALOR, falta ? "falta correr scripts/279_ordenes_eliminadas.sql" : msg)
+  }
+}
+
 export async function correrChecks(sb: SB): Promise<ResultadoCheck[]> {
-  const [dup, mas, pend, stock, ped, err, rastro, vinculo, ciclo, ingresos, asignacion, huerfano] = await Promise.all([
+  const [dup, mas, pend, stock, ped, err, rastro, vinculo, ciclo, ingresos, asignacion, huerfano, borradas] = await Promise.all([
     checkSalidasDuplicadas(sb),
     checkSalioMasQueOrden(sb),
     checkPendientesInventario(sb),
@@ -874,6 +927,7 @@ export async function correrChecks(sb: SB): Promise<ResultadoCheck[]> {
     checkIngresosSinCruce(sb),
     checkAsignacionVsInvtrans(sb),
     checkAjusteConteoSinMovimiento(sb),
+    checkOrdenEliminadaConValor(sb),
   ])
-  return [dup, mas, ...pend, ...stock, ...ped, err, rastro, vinculo, ciclo, ingresos, asignacion, huerfano]
+  return [dup, mas, ...pend, ...stock, ...ped, err, rastro, vinculo, ciclo, ingresos, asignacion, huerfano, borradas]
 }

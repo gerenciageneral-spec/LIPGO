@@ -2708,6 +2708,26 @@ async function eliminarClonesDeCargue(
         message: `No se pudo eliminar: la orden clon ${clon.ordendecargue} ya generó movimientos de inventario. Elimínala primero manualmente si corresponde.`,
       }
     }
+    // MIRAR EL INVENTARIO NO ALCANZA (2026-10-10). El clon de distribución es el que FACTURA la
+    // entrega a cada cliente final, y puede facturar SIN tener un solo movimiento de inventario:
+    // medido en AVI202610069897D, 4,4397 t y $183.324 en la vista `facturacion` con cero filas en
+    // `invtrans`. Borrar la madre arrastraba el clon y con él una factura que LIP no había
+    // emitido todavía. Desde aquí no se borra un clon que valga plata: se avisa con la cifra.
+    const { data: facturaClon } = await supabase
+      .from("facturacion")
+      .select("toneladas, valor_a_facturar")
+      .eq("numeroorden", clon.ordendecargue)
+    const valorClon = (facturaClon ?? []).reduce((s: number, f: any) => s + (Number(f.valor_a_facturar) || 0), 0)
+    const tonClon = (facturaClon ?? []).reduce((s: number, f: any) => s + (Number(f.toneladas) || 0), 0)
+    if ((facturaClon ?? []).length > 0 && (valorClon > 0 || tonClon > 0)) {
+      return {
+        success: false,
+        message:
+          `No se pudo eliminar: la orden clon ${clon.ordendecargue} está facturando ${tonClon} t por ` +
+          `$${Math.round(valorClon).toLocaleString("es-CO")} (${(facturaClon ?? []).length} líneas en facturación). ` +
+          `Si se borra se pierde esa facturación. Revísalo con Gerencia antes de eliminar la madre.`,
+      }
+    }
   }
 
   for (const clon of candidatos) {
@@ -2731,6 +2751,9 @@ export async function deleteLoadOrder(orderId: number, clave?: string) {
   // quedan con nombre y hora. Además se deja una fila explícita de auditoría
   // con el resumen de la orden antes de borrarla.
   const supabase: any = await getSupabaseAdmin()
+  // El texto de lo que era la orden. Se arma una vez y se usa dos: en la auditoría y, al final,
+  // como `motivo` de la fila que el disparador deja en `ordenes_eliminadas` (SQL 279).
+  let resumenTexto: string | null = null
   try {
     console.log("[v0] Starting deleteLoadOrder for orderId:", orderId)
     try {
@@ -2741,6 +2764,7 @@ export async function deleteLoadOrder(orderId: number, clave?: string) {
         .maybeSingle()
       if (resumen) {
         const { usuario } = await getCurrentUserContext()
+        resumenTexto = `Eliminó la orden ${resumen.ordendecargue} (${resumen.tipooperacion ?? ""}, placa ${resumen.placa ?? "sin placa"}, ${resumen.conductor ?? "sin conductor"}, ${resumen.pesoorden ?? "?"} t, estado ${resumen.status ?? "en curso"}, fecha ${resumen.fechaorden ?? ""})`
         await supabase.from("auditoria").insert({
           actor_nombre: usuario || "sistema",
           idempresa: resumen.idempresa ?? null,
@@ -2748,7 +2772,7 @@ export async function deleteLoadOrder(orderId: number, clave?: string) {
           tabla: "cabeceraoc",
           operacion: "DELETE",
           registro_id: String(orderId),
-          descripcion: `Eliminó la orden ${resumen.ordendecargue} (${resumen.tipooperacion ?? ""}, placa ${resumen.placa ?? "sin placa"}, ${resumen.conductor ?? "sin conductor"}, ${resumen.pesoorden ?? "?"} t, estado ${resumen.status ?? "en curso"}, fecha ${resumen.fechaorden ?? ""})`,
+          descripcion: resumenTexto,
           antes: resumen,
         })
       }
@@ -2930,6 +2954,18 @@ export async function deleteLoadOrder(orderId: number, clave?: string) {
     }
 
     console.log("[v0] Deleted cabeceraoc record for order:", orderId)
+
+    // El disparador de la base (SQL 279) ya archivó la orden en `ordenes_eliminadas` con su
+    // cabecera, sus líneas, quién la borró y las señales de riesgo. Aquí solo se le añade el
+    // texto de lo que era, que es lo único que la base no podía saber. Si falla, no importa: la
+    // fila ya está archivada y el borrado ya se hizo.
+    if (resumenTexto) {
+      try {
+        await supabase.from("ordenes_eliminadas").update({ motivo: resumenTexto }).eq("idorden", orderId).is("motivo", null)
+      } catch (e: any) {
+        console.error("[v0] motivo en ordenes_eliminadas:", e?.message ?? e)
+      }
+    }
 
     // Step 4: Clear fields in pedidoscabecera where ocargue matches ordenDeCargue.
     // `estado` vuelve a "aprobado" (no a null): un pedido SIEMPRE pasa por
