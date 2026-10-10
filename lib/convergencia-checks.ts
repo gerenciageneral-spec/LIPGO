@@ -932,9 +932,9 @@ export async function checkHallazgosVencidos(sb: SB, dias = 20): Promise<Resulta
 
 const CHK_ORDEN_BORRADA_CON_VALOR = {
   clave: "orden_eliminada_con_valor",
-  titulo: "Se borró una orden que se llevaba inventario o facturación",
+  titulo: "Se borró una orden FINALIZADA con inventario, o una que facturaba",
   regla:
-    "Borrar una orden finalizada devuelve al stock lo que el camión ya se llevó, y puede arrastrar la facturación de su clon de distribución. Si pasa, hay que saberlo el mismo día, no tres semanas después.",
+    "Borrar una orden en curso es normal y le devuelve el inventario a propósito. Borrar una FINALIZADA devuelve al stock lo que el camión ya se llevó, y borrar una que factura se lleva plata por cobrar. Si pasa, hay que saberlo el mismo día, no tres semanas después.",
   gravedad: "critico" as const,
 }
 /**
@@ -960,17 +960,29 @@ export async function checkOrdenEliminadaConValor(sb: SB, dias = 15): Promise<Re
         .order("id", { ascending: true })
         .range(from, to),
     )
+    // CUÁL ES EL CASO GRAVE, Y CUÁL NO (afinado el 2026-10-10 con las 209 filas del archivo).
+    // Borrar una orden EN CURSO que ya movió inventario es el camino normal: la hizo mal, la
+    // borra, y `deleteLoadOrder` le devuelve el inventario a propósito. Son 22 de las 25 que
+    // movieron inventario, y avisar de cada una convierte el correo en ruido: a la semana nadie
+    // lo lee, que es lo peor que le puede pasar a un vigilante.
+    // Lo GRAVE es otra cosa: que la orden estuviera FINALIZADA (el camión ya se fue, así que
+    // devolver el inventario es un error) o que estuviera FACTURANDO (se borra plata por cobrar,
+    // como el clon AVI202610069897D con sus $183.324). Esas son 3 en todo el histórico.
     const casos: string[] = []
     for (const f of filas as any[]) {
       const movs = n0(f.movimientos_inventario)
       const valor = n0(f.facturaba_valor)
       const ton = n0(f.facturaba_toneladas)
-      if (movs === 0 && valor === 0 && ton === 0) continue
+      const estado = norm(f.status)
+      const finalizada = /finaliz|cerrad/.test(estado)
+      const facturaba = valor > 0 || ton > 0
+      // El caso grave: finalizada con inventario, o con facturación (con o sin inventario).
+      if (!((finalizada && movs > 0) || facturaba)) continue
       const señales: string[] = []
-      if (movs > 0) señales.push(`se llevó ${movs} movimiento(s) de inventario por ${n0(f.unidades_inventario)} unidades`)
-      if (valor > 0 || ton > 0) señales.push(`facturaba ${ton} t por $${Math.round(valor).toLocaleString("es-CO")}`)
+      if (movs > 0) señales.push(`le devolvió al stock ${movs} movimiento(s) por ${n0(f.unidades_inventario)} unidades`)
+      if (facturaba) señales.push(`facturaba ${ton} t por $${Math.round(valor).toLocaleString("es-CO")}`)
       casos.push(
-        `ID${n0(f.idempresa)} · ${f.ordendecargue ?? "sin código"} (${f.tipooperacion ?? ""}, estado ${f.status ?? "—"}) ` +
+        `ID${n0(f.idempresa)} · ${f.ordendecargue ?? "sin código"} (${f.tipooperacion ?? ""}, estaba ${f.status ?? "en curso"}) ` +
           `borrada el ${String(f.eliminada_en).slice(0, 16).replace("T", " ")} por ${f.eliminada_por_nombre} ` +
           `desde ${f.origen}: ${señales.join(" y ")}`,
       )
