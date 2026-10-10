@@ -112,7 +112,7 @@ begin
     end if;
   end loop;
 
-  raise notice 'Ligadas ahora: % · ya estaban ligadas: % · total esperado: 26', v_tocadas, v_saltadas, v_tocadas + v_saltadas;
+  raise notice 'Ligadas ahora: % · ya estaban ligadas: % · total procesado: % (se esperan 26)', v_tocadas, v_saltadas, v_tocadas + v_saltadas;
   if v_tocadas + v_saltadas <> 26 then
     raise exception 'Se esperaban 26 filas y se procesaron %. Se deshace todo.', v_tocadas + v_saltadas;
   end if;
