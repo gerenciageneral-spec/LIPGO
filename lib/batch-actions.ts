@@ -5,6 +5,7 @@ import { fetchAllRows } from "@/lib/fetch-all-rows"
 import { generateAndUploadBatchAssignmentPDF } from "@/lib/pdf-actions"
 import { getColombiaDate, getColombiaISO, getColombiaTime } from "@/lib/date-utils"
 import { getCurrentUserContext } from "@/lib/company-filter"
+import { esUbicacionBloqueada } from "@/lib/picking-estado"
 import { generarDistribucionAutomatica, autoGenerarDescarguesCedi } from "@/lib/orders-actions"
 import { reportarInterno } from "@/lib/reporte-interno-actions"
 import { registrarErrorServidor } from "@/lib/errores-servidor"
@@ -190,7 +191,18 @@ export async function getInventoryForProduct(
       return []
     }
 
-    return data || []
+    // LO QUE ESTÁ EN CUARENTENA O EN AVERÍAS NO SE OFRECE PARA ASIGNAR (gerencia 2026-10-10:
+    // "si están ahí se bloquean para despacho"). Hasta hoy esta consulta traía TODAS las
+    // ubicaciones con stock, así que un lote averiado aparecía en la lista como cualquier otro:
+    // medido ese día, desde el 25-sep salieron 10 asignaciones en ID1 y 7 en ID3 tomando producto
+    // de la posición de averías. El picking ya lo frenaba al confirmar, pero avisar al final es
+    // tarde: el camión está cargado. Se corta aquí, que es donde se elige el lote.
+    const disponibles = (data || []).filter((l: any) => !esUbicacionBloqueada(l.location))
+    const bloqueados = (data || []).length - disponibles.length
+    if (bloqueados > 0) {
+      console.log(`[lotes] ${bloqueados} lote(s) de "${productName}" no se ofrecen: están en cuarentena o en averías.`)
+    }
+    return disponibles
   } catch (error) {
     console.error("[v0] Unexpected error:", error)
     return []

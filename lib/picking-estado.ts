@@ -130,7 +130,7 @@ export interface FilaParaValidar extends FilaSalida {
 }
 
 export interface Reparo {
-  tipo: "no_existe" | "cuarentena" | "otra_orden"
+  tipo: "no_existe" | "cuarentena" | "averia" | "otra_orden"
   id: number
   producto?: string | null
   lote?: string | null
@@ -138,8 +138,65 @@ export interface Reparo {
   ocargue?: string | null
 }
 
-/** ¿Está esa ubicación bloqueada por calidad? Misma regla que usaba el bucle. */
-export const esCuarentena = (location: unknown) => /CUARENTENA/i.test(String(location ?? ""))
+/**
+ * UBICACIONES QUE NO DESPACHAN.
+ *
+ * Hay posiciones que guardan producto que existe pero NO puede salir en una orden de cargue:
+ *   · CUARENTENA — bloqueo por calidad (se entra con 344 y se libera con 343).
+ *   · AVERÍAS    — producto con una novedad. Gerencia, 2026-10-10: "esos productos que están en
+ *                  AV que son averías no pueden estar habilitadas para despacho, pues tienen
+ *                  alguna novedad; si las necesitan deben realizar otros movimientos, pero si
+ *                  están ahí se bloquean para despacho".
+ *
+ * NO ES TEÓRICO: medido ese mismo día, desde el 25-sep salieron 10 asignaciones en ID1 y 7 en
+ * ID3 tomando producto de la posición de averías, y se despacharon. La posición se llama distinto
+ * en cada proyecto —`AV` en ID1 ("Localización Averías") y en ID3 ("Localizacion Reprocesos"),
+ * `CASA (AVERIAS)` en ID4—, así que la regla mira el código y no una lista fija.
+ *
+ * Lo que está aquí sigue CONTANDO como inventario, porque existe físicamente. Lo que se impide
+ * es que se asigne y se despache.
+ */
+export interface BloqueoUbicacion {
+  tipo: "cuarentena" | "averia"
+  etiqueta: string
+  /** Qué tiene que pasar para que ese producto pueda salir. */
+  comoSalir: string
+}
+
+const REGLAS_BLOQUEO: Array<{ re: RegExp; bloqueo: BloqueoUbicacion }> = [
+  {
+    re: /cuarentena/i,
+    bloqueo: {
+      tipo: "cuarentena",
+      etiqueta: "CUARENTENA (bloqueo por calidad)",
+      comoSalir: "Si calidad ya lo aprobó, libéralo con el código 343 en Transacciones de Inventario.",
+    },
+  },
+  {
+    // `AV` exacto (ID1 e ID3) y cualquier código que diga avería o reproceso (ID4: "CASA (AVERIAS)").
+    re: /^\s*av\s*$|averi|reproces/i,
+    bloqueo: {
+      tipo: "averia",
+      etiqueta: "AVERÍAS",
+      comoSalir:
+        "El producto en averías no se despacha. Si está bueno, sácalo primero de esa posición con el movimiento que corresponda en Transacciones de Inventario.",
+    },
+  },
+]
+
+/** El bloqueo de esa ubicación, o null si es una posición normal de despacho. */
+export function bloqueoDeUbicacion(location: unknown): BloqueoUbicacion | null {
+  const t = String(location ?? "")
+  if (!t.trim()) return null
+  for (const r of REGLAS_BLOQUEO) if (r.re.test(t)) return r.bloqueo
+  return null
+}
+
+/** ¿Esa ubicación no despacha, por la razón que sea? */
+export const esUbicacionBloqueada = (location: unknown) => bloqueoDeUbicacion(location) !== null
+
+/** ¿Está esa ubicación bloqueada por calidad? (se conserva: lo usaba el bucle del picking). */
+export const esCuarentena = (location: unknown) => bloqueoDeUbicacion(location)?.tipo === "cuarentena"
 
 /**
  * Revisa de una sola vez todas las filas que la confirmación va a tocar.
@@ -163,8 +220,9 @@ export function validarAntesDeEscribir(filas: FilaParaValidar[], idsRequeridos: 
     }
     // Una fila ya aprobada no se revisa: su despacho ya ocurrió.
     if (esAprobada(f)) continue
-    if (esCuarentena(f.location)) {
-      reparos.push({ tipo: "cuarentena", id: Number(f.id), producto: f.nombreproducto, lote: f.lote, location: f.location })
+    const bloqueo = bloqueoDeUbicacion(f.location)
+    if (bloqueo) {
+      reparos.push({ tipo: bloqueo.tipo, id: Number(f.id), producto: f.nombreproducto, lote: f.lote, location: f.location })
     }
   }
   return reparos
@@ -179,6 +237,14 @@ export function textoReparos(reparos: Reparo[]): string {
     const lista = cuarentena.map((r) => `${r.producto ?? "producto"}${r.lote ? ` lote ${r.lote}` : ""}`).join(", ")
     partes.push(
       `${cuarentena.length === 1 ? "Una estiba está" : `${cuarentena.length} estibas están`} BLOQUEADAS en CUARENTENA por calidad y no se pueden despachar: ${lista}. Si calidad ya las aprobó, libéralas con el código 343 en Transacciones de Inventario.`,
+    )
+  }
+  const averia = reparos.filter((r) => r.tipo === "averia")
+  if (averia.length > 0) {
+    const lista = averia.map((r) => `${r.producto ?? "producto"}${r.lote ? ` lote ${r.lote}` : ""}${r.location ? ` (${r.location})` : ""}`).join(", ")
+    partes.push(
+      `${averia.length === 1 ? "Una estiba está" : `${averia.length} estibas están`} en la posición de AVERÍAS y no se pueden despachar: ${lista}. ` +
+        `El producto en averías tiene una novedad; si está bueno, sácalo primero de esa posición con el movimiento que corresponda en Transacciones de Inventario.`,
     )
   }
   if (faltan.length > 0) {

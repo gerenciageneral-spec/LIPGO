@@ -15,6 +15,7 @@ import {
   itemsPorProcesar,
   textoReparos,
   textoYaVerificada,
+  bloqueoDeUbicacion,
   validarAntesDeEscribir,
   validarDespachos,
   textoDespachos,
@@ -1456,12 +1457,14 @@ export async function confirmPicking(
 
     const { id: _id, ...rest } = originalRow as Record<string, any>
 
-    // STOCK BLOQUEADO (calidad, 2026-09-27): una estiba en CUARENTENA sigue en
-    // el inventario pero NO se despacha. Se libera con 343 (clave de la
-    // gerencia del proyecto) o se desecha con 555 -- nunca sale por picking.
-    if (/CUARENTENA/i.test(String(rest.location ?? ""))) {
+    // STOCK BLOQUEADO: una estiba en CUARENTENA (calidad, 2026-09-27) o en AVERÍAS (gerencia,
+    // 2026-10-10) sigue en el inventario pero NO se despacha. La cuarentena se libera con 343 o
+    // se desecha con 555; lo averiado tiene que salir antes de esa posición con el movimiento que
+    // corresponda. Ninguna de las dos sale por picking.
+    const bloqueoEstiba = bloqueoDeUbicacion(rest.location)
+    if (bloqueoEstiba) {
       throw new Error(
-        `La estiba del lote ${rest.lote ?? ""} está BLOQUEADA en CUARENTENA (calidad) y no se puede despachar. Si calidad ya la aprobó, libérala primero con el código 343 en Transacciones de Inventario.`,
+        `La estiba del lote ${rest.lote ?? ""} está en ${bloqueoEstiba.etiqueta} y no se puede despachar. ${bloqueoEstiba.comoSalir}`,
       )
     }
 
