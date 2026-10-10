@@ -4191,14 +4191,49 @@ export async function guardarLineaConteoCuadre(
   cuadreId: number,
   linea: { codproducto?: string | null; producto?: string | null; lote?: string | null; location?: string | null; sistema: number; conteo: number; observacion?: string | null },
   contadoPor: string,
-): Promise<{ success: boolean; error?: string }> {
+  // `sistema` y `diferencia` vuelven con lo que de verdad quedó guardado: en un conteo cíclico el
+  // servidor relee el stock vivo al guardar, así que pueden no ser los que mandó la pantalla.
+): Promise<{ success: boolean; error?: string; sistema?: number; diferencia?: number }> {
   // Política por acción (catálogo lib/politicas-modulos.ts).
   const motivoAccion = await motivoSinAccion(["Cuadre de Inventario"], "editar")
   if (motivoAccion) return { success: false, error: motivoAccion }
   try {
     const supabase: any = await getSupabaseAdmin()
-    const sistema = Number(linea.sistema) || 0
+    let sistema = Number(linea.sistema) || 0
     const conteo = Number(linea.conteo) || 0
+
+    // EN UN CÍCLICO, EL SISTEMA SE LEE AL MOMENTO DE CONTAR, NO AL CREAR EL CONTEO.
+    //
+    // Encontrado con datos el 2026-10-10, conteo #43 de ID3: la foto del sistema se tomó a las
+    // 8:34 (896 unidades de Espagueti Caprissima), a las 8:58 salió una orden de cargue con 720,
+    // y el contador contó a las 10:01 y encontró 176. 896 − 720 = 176: el conteo estaba PERFECTO
+    // y el sistema mostraba un faltante de 720 que no existía. En una bodega que despacha toda la
+    // mañana, comparar la foto del amanecer contra un conteo de media mañana genera diferencias
+    // fantasma todos los días; y si alguien "corrige" una de esas con un ajuste, destruye stock
+    // real. (El mismo producto ya había salido con −796 en el conteo #42.)
+    //
+    // Así que para el conteo diario se vuelve a leer el stock vivo de esa línea justo cuando se
+    // guarda: la ventana baja de horas a segundos y la pregunta pasa a ser la correcta, "qué
+    // decía el sistema cuando yo conté esto". El Conteo TOTAL no se toca: su base es el congelado
+    // del corte a propósito (ver crearCuadre), y ahí la foto SÍ es la referencia.
+    const { data: cabTipo } = await supabase
+      .from("sig_inventario_cuadre")
+      .select("tipo, proyecto_id")
+      .eq("id", cuadreId)
+      .maybeSingle()
+    if (esConteoCiclico((cabTipo as any)?.tipo) && (cabTipo as any)?.proyecto_id) {
+      const { data: vivo, error: errVivo } = await supabase
+        .from("saldoinvdetalle")
+        .select("stock_actual")
+        .eq("idempresa", Number((cabTipo as any).proyecto_id))
+        .eq("codproducto", linea.codproducto ?? "")
+        .eq("lote", linea.lote ?? "")
+        .eq("location", linea.location ?? "")
+      // Si la línea ya no aparece en el saldo, su stock vivo es 0 (se consumió del todo). Si la
+      // lectura falla, se respeta el número que traía: nunca se inventa un cero.
+      if (!errVivo) sistema = (vivo ?? []).reduce((s: number, r: any) => s + (Number(r.stock_actual) || 0), 0)
+    }
+
     const fila = {
       cuadre_id: cuadreId,
       codproducto: linea.codproducto ?? null,
@@ -4237,7 +4272,9 @@ export async function guardarLineaConteoCuadre(
         updated_at: new Date().toISOString(),
       })
       .eq("id", cuadreId)
-    return { success: true }
+    // Se devuelve el sistema que de verdad quedó guardado (en un cíclico puede no ser el que mandó
+    // la pantalla), para que la fila no muestre un número viejo.
+    return { success: true, sistema, diferencia: fila.diferencia }
   } catch (err: any) {
     void registrarErrorServidor("sig.guardarLineaConteoCuadre", err)
     return { success: false, error: err?.message || "Error desconocido" }

@@ -355,7 +355,21 @@ export function CuadreInventario() {
     setSavingLineId(null)
     if (r.success) {
       const ahora = new Date().toISOString()
-      setDetalle((prev) => prev.map((x) => (x.id === id ? { ...x, contado_por: actor, contado_en: ahora } : x)))
+      // En un cíclico el servidor relee el stock vivo al guardar, así que `sistema` y
+      // `diferencia` pueden volver distintos de lo que tenía la pantalla: se adoptan los suyos.
+      setDetalle((prev) =>
+        prev.map((x) =>
+          x.id === id
+            ? {
+                ...x,
+                contado_por: actor,
+                contado_en: ahora,
+                ...(r.sistema != null ? { sistema: r.sistema } : {}),
+                ...(r.diferencia != null ? { diferencia: r.diferencia } : {}),
+              }
+            : x,
+        ),
+      )
       if (sel.estado !== "contado") setSel((prev) => (prev ? { ...prev, estado: "contado" } : prev))
     } else {
       dirtyRef.current.add(id) // no se pudo guardar — reintenta en el próximo blur
